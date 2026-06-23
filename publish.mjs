@@ -47,6 +47,40 @@ const ANCHOR_TIMEOUT_MS = intEnv('ANCHOR_TIMEOUT_MS', 120000)
 const MIN_ANCHOR_PEERS = intEnv('MIN_ANCHOR_PEERS', 1)
 const STRICT_ANCHOR = process.env.STRICT_ANCHOR === '1'
 
+// Verify the BLOBS core — the file BYTES — has been mirrored to a relay, not just
+// the metadata. A Hyperdrive splits into two hypercores: drive.core is the Hyperbee
+// metadata/file-index (tiny — replicates in milliseconds), and drive.blobs.core is
+// the content store holding index.html / js/app.js bytes (the big one). The SDK's
+// waitForDurable/getDurableStatus only watch drive.core, so durable:true there means
+// "the file LIST reached a relay", NOT "the file BYTES did". That false positive is
+// exactly how a drive serves index.html (early blocks) while js/app.js 404s — the
+// relay holds the index and some blocks but never finished the blobs core. So we poll
+// the blobs core's own replication peers until one has the full contiguous length.
+async function waitForBlobsDurable (drive, { timeoutMs = 120000, pollMs = 1000, minPeers = 1 } = {}) {
+  const blobs = await drive.getBlobs()            // forces the (lazy) content core open
+  const bcore = blobs.core                        // SEPARATE hypercore = the file bytes
+  await bcore.ready()
+  const deadline = Date.now() + timeoutMs
+  const snap = () => {
+    const peers = bcore.peers || []
+    const localLen = bcore.length || 0
+    let remoteMax = 0
+    for (const p of peers) {
+      const rl = (p && (p.remoteContiguousLength || p.remoteLength)) || 0
+      if (rl > remoteMax) remoteMax = rl
+    }
+    return {
+      activePeers: peers.length,
+      blobLocalLen: localLen,
+      blobRemoteMax: remoteMax,
+      durable: peers.length >= minPeers && localLen > 0 && remoteMax >= localLen
+    }
+  }
+  let s = snap()
+  while (Date.now() < deadline && !s.durable) { await sleep(pollMs); s = snap() }
+  return s
+}
+
 async function main () {
   const manifestPath = join(__dir, 'manifest.json')
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
@@ -109,12 +143,32 @@ async function main () {
     timeoutMs: ANCHOR_TIMEOUT_MS,
     minPeers: MIN_ANCHOR_PEERS
   })
-  console.log('[peerit] durable status:', JSON.stringify(durable))
-  if (!durable.durable || durable.activePeers < MIN_ANCHOR_PEERS) {
-    const msg = 'seed was accepted, but no relay proved it caught up to the local drive bytes'
+  console.log('[peerit] metadata durable status:', JSON.stringify(durable))
+
+  // The check that actually decides whether the site loads: did a relay mirror the
+  // BLOBS core (the file bytes)? Metadata-durable is necessary but NOT sufficient.
+  console.log('[peerit] waiting for relay BLOB replication (the file bytes — js/app.js etc.)…')
+  const blobDurable = await waitForBlobsDurable(drive, {
+    timeoutMs: ANCHOR_TIMEOUT_MS,
+    minPeers: MIN_ANCHOR_PEERS
+  })
+  console.log('[peerit] blob durable status:', JSON.stringify(blobDurable))
+
+  const metaOk = durable.durable && durable.activePeers >= MIN_ANCHOR_PEERS
+  if (!metaOk) {
+    const msg = 'seed accepted, but no relay proved it caught up to the drive METADATA'
     if (STRICT_ANCHOR) throw new Error(msg)
     console.warn('[peerit] WARNING:', msg)
-    console.warn('[peerit] Use KEEP=1 or STRICT_ANCHOR=1 for release publishes.')
+  }
+  if (!blobDurable.durable) {
+    const msg = `metadata anchored but NO relay mirrored the full BLOBS core ` +
+      `(${blobDurable.blobRemoteMax}/${blobDurable.blobLocalLen} blocks) — ` +
+      `index.html may load while js/app.js 404s. This is the silent partial-pin.`
+    if (STRICT_ANCHOR) throw new Error(msg)
+    console.warn('[peerit] WARNING:', msg)
+    console.warn('[peerit] Keep this alive (KEEP=1) until blobRemoteMax reaches blobLocalLen, or run peerit-mirror.')
+  } else {
+    console.log(`[peerit] ✓ blobs fully mirrored to a relay (${blobDurable.blobRemoteMax}/${blobDurable.blobLocalLen} blocks, ${blobDurable.activePeers} peers)`)
   }
 
   console.log('\n[peerit] Live at:  hyper://' + driveKey + '/')

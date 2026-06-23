@@ -23,6 +23,10 @@ import { dirname, join } from 'path'
 const __dir = dirname(fileURLToPath(import.meta.url))
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const relayCount = (s) => (s && (s.relays ? s.relays.length : s.relayCount)) || 0
+const intEnv = (name, fallback) => {
+  const n = Number(process.env[name])
+  return Number.isFinite(n) && n > 0 ? n : fallback
+}
 
 // Files that make up the served site (everything the browser needs, nothing else).
 const SITE_FILES = [
@@ -37,6 +41,11 @@ const SITE_FILES = [
 // private — the key isn't shared anywhere; only a peer you hand the key to (your
 // own PearBrowser on the same DHT) can fetch it, and only while this stays running.
 const LOCAL = process.argv.includes('--local')
+const REPLICAS = intEnv('REPLICAS', 4)
+const TTL_DAYS = intEnv('TTL_DAYS', 365)
+const ANCHOR_TIMEOUT_MS = intEnv('ANCHOR_TIMEOUT_MS', 120000)
+const MIN_ANCHOR_PEERS = intEnv('MIN_ANCHOR_PEERS', 1)
+const STRICT_ANCHOR = process.env.STRICT_ANCHOR === '1'
 
 async function main () {
   const manifestPath = join(__dir, 'manifest.json')
@@ -50,9 +59,17 @@ async function main () {
   // 1. publish the site folder as a drive (seed only on a real public deploy)
   const files = SITE_FILES.map((p) => ({ path: '/' + p, content: readFileSync(join(__dir, p)) }))
   console.log('[peerit] publishing site drive (' + files.length + ' files)…')
-  const drive = await client.publish(files, { appId: 'peerit', seed: !LOCAL, replicas: 4, ttlDays: 365 })
+  const drive = await client.publish(files, {
+    appId: 'peerit',
+    seed: !LOCAL,
+    replicas: REPLICAS,
+    ttlDays: TTL_DAYS,
+    timeout: Math.min(60000, ANCHOR_TIMEOUT_MS),
+    durability: process.env.DURABILITY || 'archive'
+  })
   const driveKey = drive.key.toString('hex')
   console.log('[peerit] site drive key:', driveKey)
+  if (drive.replicas) console.log('[peerit] publish seed status:', JSON.stringify(drive.replicas))
 
   if (LOCAL) {
     console.log('\n[peerit] ── LOCAL TEST (not seeded to relays, not in catalog) ──')
@@ -74,12 +91,30 @@ async function main () {
   // 3. publish the manifest under appId + seed the drive so the fleet lists it
   console.log('[peerit] publishing manifest + seeding for catalog…')
   await client.publish([{ path: '/manifest.json', content: JSON.stringify(manifest, null, 2) }],
-    { appId: 'peerit-manifest', seed: true, replicas: 4, ttlDays: 365 })
+    { appId: 'peerit-manifest', seed: true, replicas: REPLICAS, ttlDays: TTL_DAYS, timeout: Math.min(60000, ANCHOR_TIMEOUT_MS) })
   try {
-    const res = await client.seed(Buffer.from(driveKey, 'hex'), { replicas: 4, ttlDays: 365, timeout: 30000 })
+    const res = await client.seed(Buffer.from(driveKey, 'hex'), {
+      replicas: REPLICAS,
+      ttlDays: TTL_DAYS,
+      timeout: Math.min(60000, ANCHOR_TIMEOUT_MS),
+      durability: process.env.DURABILITY || 'archive'
+    })
     console.log('[peerit] seed acceptances:', (res || []).length)
   } catch (err) {
     console.log('[peerit] seed note:', err.message)
+  }
+
+  console.log('[peerit] waiting for relay byte replication evidence…')
+  const durable = await client.waitForDurable(drive.key, {
+    timeoutMs: ANCHOR_TIMEOUT_MS,
+    minPeers: MIN_ANCHOR_PEERS
+  })
+  console.log('[peerit] durable status:', JSON.stringify(durable))
+  if (!durable.durable || durable.activePeers < MIN_ANCHOR_PEERS) {
+    const msg = 'seed was accepted, but no relay proved it caught up to the local drive bytes'
+    if (STRICT_ANCHOR) throw new Error(msg)
+    console.warn('[peerit] WARNING:', msg)
+    console.warn('[peerit] Use KEEP=1 or STRICT_ANCHOR=1 for release publishes.')
   }
 
   console.log('\n[peerit] Live at:  hyper://' + driveKey + '/')

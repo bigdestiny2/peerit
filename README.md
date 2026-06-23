@@ -121,16 +121,23 @@ node test/smoke.mjs      # 30 checks: data layer, ranking, threading, votes, mod
 
 `publish.mjs` publishes the site folder as a Hyperdrive, writes the resulting
 `driveKey` into `manifest.json`, then seeds it on the live HiveRelay fleet and
-registers it in the PearBrowser catalog so it appears in the app's store.
+registers it in the PearBrowser catalog so it appears in the app's store. It now
+waits for relay byte-replication evidence after seed acceptance; use
+`STRICT_ANCHOR=1` for release publishes that should fail instead of warning when
+the drive is not durably reachable yet.
 
 ```bash
 node publish.mjs           # publish + seed, then exit
 KEEP=1 node publish.mjs     # stay online so relays fully anchor the drive
+STRICT_ANCHOR=1 node publish.mjs
 ```
 
 It uses the local HiveRelay client at
 `00-core/hiverelay/packages/client/`. This puts peerit on the public network —
 it is never invoked by the app or any build step.
+
+See [`docs/availability.md`](docs/availability.md) for the exact persistence and
+availability guarantees for the static app drive versus user-generated data.
 
 ---
 

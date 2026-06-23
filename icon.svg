@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff6b3d"/>
+      <stop offset="1" stop-color="#9b6cff"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#g)"/>
+  <!-- three peers connected in a mesh, with an upvote arrow -->
+  <g fill="none" stroke="#0a0e17" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 40 L44 40 M20 40 L32 20 M44 40 L32 20" opacity="0.5"/>
+  </g>
+  <circle cx="32" cy="20" r="6" fill="#0a0e17"/>
+  <circle cx="20" cy="40" r="6" fill="#0a0e17"/>
+  <circle cx="44" cy="40" r="6" fill="#0a0e17"/>
+  <path d="M32 50 L32 33 M32 33 L26 39 M32 33 L38 39" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

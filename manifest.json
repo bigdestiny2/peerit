@@ -1,0 +1,24 @@
+{
+  "id": "peerit",
+  "name": "peerit",
+  "description": "A peer-to-peer Reddit. No servers, no data center — communities, posts, threaded comments and votes live in a shared Holepunch (Autobase + Hyperbee) log and replicate directly between peers. Runs as a P2P site inside PearBrowser, seeded 24/7 on HiveRelay.",
+  "version": "1.0.0",
+  "author": "defidon",
+  "categories": [
+    "community",
+    "social",
+    "p2p",
+    "site"
+  ],
+  "publishedAt": "2026-06-22T00:00:00Z",
+  "type": "site",
+  "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
+  "url": "hyper://ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4/",
+  "homepage": "hyper://ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4/",
+  "license": "MIT",
+  "platforms": [
+    "macos",
+    "windows",
+    "linux"
+  ]
+}

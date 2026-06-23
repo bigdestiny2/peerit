@@ -1,0 +1,137 @@
+// model.js — the peerit data model expressed in terms of the PearBrowser sync
+// bridge's GENERIC REDUCER. The bridge applies an op { type, data } by storing
+// `data` at Hyperbee key `type + '!' + data.id` (last-write-wins). We use
+// colon-free type names so every op hits that generic path, and we encode
+// scope + identity into `data.id` to get cheap prefix/range queries.
+//
+//   community   community!<slug>
+//   post        post!<community>!<cid>
+//   comment     comment!<community>!<postCid>!<cid>
+//   vote        vote!<targetCid>!<authorPub>     (one per voter -> LWW dedup)
+//   profile     profile!<authorPub>
+//   modaction   modaction!<community>!<actionId>
+//
+// All record fields live INSIDE `data` (the reducer stores only data, not the
+// op envelope). Edits/deletes are re-writes of the full record (soft delete via
+// `deleted:true`) — correct for an append-only P2P log.
+
+export const TYPE = {
+  COMMUNITY: 'community',
+  POST: 'post',
+  COMMENT: 'comment',
+  VOTE: 'vote',
+  PROFILE: 'profile',
+  MOD: 'modaction'
+}
+
+export const keys = {
+  community: (slug) => `${TYPE.COMMUNITY}!${slug}`,
+  communityPrefix: () => `${TYPE.COMMUNITY}!`,
+
+  post: (community, cid) => `${TYPE.POST}!${community}!${cid}`,
+  postsIn: (community) => `${TYPE.POST}!${community}!`,
+
+  comment: (community, postCid, cid) => `${TYPE.COMMENT}!${community}!${postCid}!${cid}`,
+  commentsOn: (community, postCid) => `${TYPE.COMMENT}!${community}!${postCid}!`,
+
+  vote: (targetCid, author) => `${TYPE.VOTE}!${targetCid}!${author}`,
+  votesFor: (targetCid) => `${TYPE.VOTE}!${targetCid}!`,
+
+  profile: (author) => `${TYPE.PROFILE}!${author}`,
+
+  mod: (community, actionId) => `${TYPE.MOD}!${community}!${actionId}`,
+  modsIn: (community) => `${TYPE.MOD}!${community}!`
+}
+
+// data.id builders (the part after `type!`). These determine the storage key
+// because the reducer does k(type, data.id).
+export const id = {
+  community: (slug) => slug,
+  post: (community, cid) => `${community}!${cid}`,
+  comment: (community, postCid, cid) => `${community}!${postCid}!${cid}`,
+  vote: (targetCid, author) => `${targetCid}!${author}`,
+  profile: (author) => author,
+  mod: (community, actionId) => `${community}!${actionId}`
+}
+
+// MOD actions a community moderator may perform.
+export const MOD = {
+  REMOVE: 'remove', APPROVE: 'approve',
+  LOCK: 'lock', UNLOCK: 'unlock',
+  STICKY: 'sticky', UNSTICKY: 'unsticky',
+  BAN: 'ban', UNBAN: 'unban',
+  ADD_MOD: 'addmod', REMOVE_MOD: 'removemod'
+}
+
+// Build a threaded comment tree from a flat list. Each node carries `children`.
+// Orphaned replies (missing parent) are attached at root so nothing is lost.
+export function buildCommentTree (comments) {
+  const byCid = new Map()
+  for (const c of comments) byCid.set(c.cid, { ...c, children: [] })
+  const roots = []
+  for (const node of byCid.values()) {
+    const parent = node.parentCid && byCid.get(node.parentCid)
+    if (parent && parent !== node) parent.children.push(node)
+    else roots.push(node)
+  }
+  return { roots, index: byCid }
+}
+
+// Recursively sort a comment tree using a node comparator (from ranking).
+export function sortCommentTree (roots, sorter) {
+  const sorted = sorter(roots)
+  for (const n of sorted) if (n.children.length) n.children = sortCommentTree(n.children, sorter)
+  return sorted
+}
+
+// Count all descendants of a node (for "N replies" / collapse labels).
+export function countDescendants (node) {
+  let n = 0
+  for (const c of node.children) n += 1 + countDescendants(c)
+  return n
+}
+
+// Resolve the effective moderator set for a community: creator is always a mod;
+// addmod/removemod actions by an existing mod mutate the set (creator's actions
+// always trusted; a mod can add others). Returns a Set of author pubkeys.
+export function resolveMods (community, modActions) {
+  const mods = new Set()
+  if (community && community.creator) mods.add(community.creator)
+  // Apply addmod/removemod in timestamp order; only honor actions by current mods.
+  const actions = (modActions || [])
+    .filter(a => a.action === MOD.ADD_MOD || a.action === MOD.REMOVE_MOD)
+    .sort((a, b) => a.ts - b.ts)
+  for (const a of actions) {
+    if (!mods.has(a.by)) continue // action author must already be a mod
+    if (a.action === MOD.ADD_MOD && a.targetUser) mods.add(a.targetUser)
+    if (a.action === MOD.REMOVE_MOD && a.targetUser && a.targetUser !== community.creator) mods.delete(a.targetUser)
+  }
+  return mods
+}
+
+// Reduce mod actions into an overlay of effective states, honoring only actions
+// authored by a current moderator. Returns:
+//   { removed:Set<cid>, locked:Set<postCid>, stickied:Set<cid>, banned:Set<user> }
+export function modOverlay (community, modActions) {
+  const mods = resolveMods(community, modActions)
+  const removed = new Map()   // cid -> bool (last write wins)
+  const locked = new Map()    // postCid -> bool
+  const stickied = new Map()  // cid -> bool
+  const banned = new Map()    // user -> bool
+  const actions = (modActions || []).slice().sort((a, b) => a.ts - b.ts)
+  for (const a of actions) {
+    if (!mods.has(a.by)) continue
+    switch (a.action) {
+      case MOD.REMOVE: if (a.targetCid) removed.set(a.targetCid, true); break
+      case MOD.APPROVE: if (a.targetCid) removed.set(a.targetCid, false); break
+      case MOD.LOCK: if (a.targetCid) locked.set(a.targetCid, true); break
+      case MOD.UNLOCK: if (a.targetCid) locked.set(a.targetCid, false); break
+      case MOD.STICKY: if (a.targetCid) stickied.set(a.targetCid, true); break
+      case MOD.UNSTICKY: if (a.targetCid) stickied.set(a.targetCid, false); break
+      case MOD.BAN: if (a.targetUser) banned.set(a.targetUser, true); break
+      case MOD.UNBAN: if (a.targetUser) banned.set(a.targetUser, false); break
+    }
+  }
+  const toSet = (m) => new Set([...m.entries()].filter(([, v]) => v).map(([k]) => k))
+  return { mods, removed: toSet(removed), locked: toSet(locked), stickied: toSet(stickied), banned: toSet(banned) }
+}

@@ -138,6 +138,9 @@ it is never invoked by the app or any build step.
 
 See [`docs/availability.md`](docs/availability.md) for the exact persistence and
 availability guarantees for the static app drive versus user-generated data.
+See [`docs/identity-recovery-protocol.md`](docs/identity-recovery-protocol.md)
+for how PearBrowser's mnemonic, per-app identity, and app outbox recovery fit
+together.
 
 ---
 

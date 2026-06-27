@@ -126,8 +126,15 @@ export function renderMarkdown (src) {
 // Plain-text excerpt (for feed previews / meta descriptions).
 export function excerpt (src, n = 220) {
   const s = String(src || '')
-    .replace(/[`*_~#>\-]/g, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s{0,3}>\s?/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, ' ')
+    .replace(/^\s*\d+\.\s+/gm, ' ')
+    .replace(/[*_~]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
   return s.length > n ? s.slice(0, n).trimEnd() + '…' : s

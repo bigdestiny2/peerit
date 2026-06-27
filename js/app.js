@@ -7,6 +7,7 @@ import { createSync } from './sync.js'
 import { createIdentity } from './identity.js'
 import { createData } from './data.js'
 import { Prefs } from './prefs.js'
+import { STARTER_COMMUNITIES, STARTER_POSTS, WELCOME_COMMUNITY, starterCommunity } from './onboarding.js'
 import { renderMarkdown, excerpt } from './markdown.js'
 import { sortPosts, sortComments, POST_SORTS, COMMENT_SORTS, TIME_WINDOW_KEYS } from './ranking.js'
 import { buildCommentTree, sortCommentTree, countDescendants, MOD } from './model.js'
@@ -44,6 +45,7 @@ async function boot () {
   await sync.ready()
   data = createData(sync, identity)
   refreshPrefs()
+  sync.onChange(() => data.invalidateViewCaches())
 
   // Live updates: re-render the current view when the shared view changes,
   // unless the user is mid-typing in a composer.
@@ -78,6 +80,10 @@ async function boot () {
 
 function refreshPrefs () {
   prefs = new Prefs(typeof localStorage !== 'undefined' ? localStorage : null, identity.me().pubkey)
+}
+
+function isBridgeMode () {
+  return !!(sync && String(sync.mode || '').includes('bridge'))
 }
 
 // ---- chrome (header + sidebar shell) ----------------------------------------
@@ -123,7 +129,7 @@ async function renderUserMenu () {
   await primeNames([me.pubkey])
   const el = $('#usermenu')
   if (!el) return
-  const badge = sync.mode === 'dev'
+  const badge = !isBridgeMode()
     ? '<span class="mode-badge dev" title="Running on local dev fallback (no PearBrowser bridge detected)">dev</span>'
     : '<span class="mode-badge live" title="Connected to PearBrowser P2P bridge">p2p</span>'
   el.innerHTML = `
@@ -220,6 +226,7 @@ function postCard (post, ov, opts = {}) {
   const mine = post.author === identity.me().pubkey
   const permalink = buildRoute(['r', post.community, 'comments', post.cid])
   const commentCount = opts.commentCounts ? (opts.commentCounts.get(post.cid) || 0) : null
+  const overflow = actionOverflow(post, ov, { isMod, mine, full: opts.full })
 
   let bodyHtml = ''
   if (post.deleted) bodyHtml = `<div class="removed-note">[deleted by author]</div>`
@@ -246,12 +253,25 @@ function postCard (post, ov, opts = {}) {
         <a class="pa" href="${permalink}">💬 ${commentCount == null ? '' : fmtCount(commentCount) + ' '}comments</a>
         <button class="pa" data-act="save" data-ref="${esc(ref)}">${prefs.isSaved(ref) ? '★ saved' : '☆ save'}</button>
         <button class="pa" data-act="copylink" data-ref="${esc(ref)}">🔗 share</button>
-        ${mine && !post.deleted ? `<button class="pa" data-act="edit-post">✎ edit</button><button class="pa danger" data-act="delete-post">🗑 delete</button>` : ''}
         ${!opts.full ? `<button class="pa" data-act="hide" data-ref="${esc(ref)}">${prefs.isHidden(ref) ? 'unhide' : 'hide'}</button>` : ''}
-        ${isMod ? modMenu(post, ov) : ''}
+        ${overflow}
       </div>
     </div>
   </article>`
+}
+
+function actionOverflow (post, ov, { isMod, mine }) {
+  const items = []
+  if (mine && !post.deleted) {
+    items.push('<button class="pa" data-act="edit-post">✎ edit</button>')
+    items.push('<button class="pa danger" data-act="delete-post">🗑 delete</button>')
+  }
+  if (isMod && ov) items.push(modMenu(post, ov))
+  if (!items.length) return ''
+  return `<details class="more-actions">
+    <summary class="pa" aria-label="More post actions">More</summary>
+    <div class="more-menu">${items.join('')}</div>
+  </details>`
 }
 
 function modMenu (post, ov) {
@@ -295,7 +315,10 @@ async function viewFeed ({ scope, community, query, guard, token }) {
   let posts = []
   if (scope === 'community') {
     communityMeta = await data.getCommunity(community)
-    if (!communityMeta) return done(guard, token, notFound('r/' + esc(community) + " doesn't exist yet"), renderSidebarHome)
+    if (!communityMeta) {
+      const starter = starterCommunity(community)
+      return done(guard, token, starter ? starterCommunityLanding(starter) : notFound('r/' + esc(community) + " doesn't exist yet"), renderSidebarHome)
+    }
     ov = await data.overlay(community)
     mods = ov.mods
     posts = await data.listPostsIn(community)
@@ -334,11 +357,12 @@ async function viewFeed ({ scope, community, query, guard, token }) {
                         : `<div class="feed-head"><h1>Popular</h1><span class="dim">across all of peerit</span></div>`)
 
   const base = scope === 'community' ? ['r', community] : (scope === 'home' ? [] : ['all'])
+  const showWelcome = scope !== 'community' && !prefs.seenWelcome
   let body
   if (!ranked.length) {
-    body = emptyFeed(scope, community)
+    body = showWelcome ? starterFeed() : emptyFeed(scope, community)
   } else {
-    body = ranked.map(p => postCard(p, scope === 'community' ? ov : null, {
+    body = (showWelcome ? welcomePanel(true) : '') + ranked.map(p => postCard(p, scope === 'community' ? ov : null, {
       mods: scope === 'community' ? mods : null, commentCounts
     })).join('')
   }
@@ -349,11 +373,7 @@ async function viewFeed ({ scope, community, query, guard, token }) {
 }
 
 async function countCommentsFor (posts) {
-  const map = new Map()
-  await Promise.all(posts.map(async p => {
-    map.set(p.cid, await sync.count(`comment!${p.community}!${p.cid}!`))
-  }))
-  return map
+  return data.commentCountsFor(posts)
 }
 
 function emptyFeed (scope, community) {
@@ -361,12 +381,82 @@ function emptyFeed (scope, community) {
     return `<div class="empty"><h3>No posts in r/${esc(community)} yet</h3>
       <p>Be the first to post.</p><a class="btn btn-primary" href="#/submit?to=${esc(community)}">Create a post</a></div>`
   }
-  return `<div class="empty"><h3>It's quiet here</h3>
-    <p>No posts yet. Start a community and make the first post.</p>
+  return `<div class="empty"><h3>No live posts yet</h3>
+    <p>Start a community, make the first post, or bring back the starter feed.</p>
     <div class="empty-actions">
       <a class="btn btn-primary" href="#/create">Create a community</a>
-      <button class="btn btn-ghost" data-act="seed-demo">Load demo content</button>
+      <button class="btn btn-ghost" data-act="show-welcome">Show starter feed</button>
     </div></div>`
+}
+
+function starterFeed () {
+  return `${welcomePanel(false)}
+    <div class="starter-grid">
+      ${STARTER_COMMUNITIES.map(starterCommunityCard).join('')}
+    </div>
+    <h2 class="section-title starter-title">Starter feed</h2>
+    ${STARTER_POSTS.map(starterPostCard).join('')}
+    <div class="starter-note">Starter cards are local to this first screen. Live posts replace them as soon as peers sync or you create a community.</div>`
+}
+
+function welcomePanel (compact) {
+  const mode = isBridgeMode() ? 'p2p' : 'dev'
+  return `<section class="welcome-panel ${compact ? 'compact' : ''}">
+    <div class="welcome-copy">
+      <span class="tag">${esc(mode)}</span>
+      <h2>Welcome to peerit</h2>
+      <p>${compact
+        ? 'Your live feed is ready. Join the welcome desk when you want an easy first place to post.'
+        : 'A starter feed is waiting here while your peer graph fills in. Nothing below is written to the shared network until you choose a community.'}</p>
+    </div>
+    <div class="welcome-actions">
+      <button class="btn btn-primary" data-act="start-community" data-slug="${esc(WELCOME_COMMUNITY.slug)}">Join r/${esc(WELCOME_COMMUNITY.slug)}</button>
+      <a class="btn btn-ghost" href="#/create">Create community</a>
+      <button class="btn btn-ghost" data-act="dismiss-welcome">Dismiss</button>
+    </div>
+  </section>`
+}
+
+function starterCommunityCard (c) {
+  return `<article class="starter-community">
+    <span class="comm-icon" style="background:${colorFor(c.slug)}">r/</span>
+    <div>
+      <h3>r/${esc(c.slug)}</h3>
+      <p>${esc(c.description)}</p>
+      <button class="pa" data-act="start-community" data-slug="${esc(c.slug)}">Open or start</button>
+    </div>
+  </article>`
+}
+
+function starterPostCard (p) {
+  const c = starterCommunity(p.community)
+  return `<article class="starter-post">
+    <div class="starter-post-meta">
+      <span class="comm-icon sm" style="background:${colorFor(p.community)}">r/</span>
+      <span>r/${esc(p.community)}</span>
+      <span class="tag">starter</span>
+    </div>
+    <h2>${esc(p.title)}</h2>
+    <p>${esc(p.body)}</p>
+    <div class="post-actions">
+      <button class="pa" data-act="start-community" data-slug="${esc(p.community)}">Open or start r/${esc(p.community)}</button>
+      ${c ? `<span class="dim small">${esc(c.title)}</span>` : ''}
+    </div>
+  </article>`
+}
+
+function starterCommunityLanding (c) {
+  return `<section class="welcome-panel">
+    <div class="welcome-copy">
+      <span class="tag">starter</span>
+      <h2>r/${esc(c.slug)}</h2>
+      <p>${esc(c.description)}</p>
+    </div>
+    <div class="welcome-actions">
+      <button class="btn btn-primary" data-act="start-community" data-slug="${esc(c.slug)}">Start r/${esc(c.slug)}</button>
+      <a class="btn btn-ghost" href="#/">Home</a>
+    </div>
+  </section>`
 }
 
 // ---- POST + COMMENTS view ---------------------------------------------------
@@ -558,7 +648,12 @@ async function viewCommunities ({ guard, token }) {
           <div class="dim small">${fmtCount(c._count || 0)} posts</div>
         </div>
         <button class="btn ${prefs.isSubscribed(c.slug) ? 'btn-ghost' : 'btn-primary'} sm" data-act="sub" data-slug="${esc(c.slug)}">${prefs.isSubscribed(c.slug) ? 'Joined' : 'Join'}</button>
-      </div>`).join('') : `<div class="empty"><h3>No communities yet</h3><a class="btn btn-primary" href="#/create">Create the first one</a> <button class="btn btn-ghost" data-act="seed-demo">Load demo content</button></div>`}</div>`)
+      </div>`).join('') : `<div class="empty"><h3>No communities yet</h3>
+        <p>Start with the welcome desk or create your own space.</p>
+        <div class="empty-actions">
+          <button class="btn btn-primary" data-act="start-community" data-slug="${esc(WELCOME_COMMUNITY.slug)}">Start r/${esc(WELCOME_COMMUNITY.slug)}</button>
+          <a class="btn btn-ghost" href="#/create">Create community</a>
+        </div></div>`}</div>`)
   renderSidebar(await sidebarHome(), token)
 }
 
@@ -647,13 +742,9 @@ async function viewSearch ({ query, guard, token }) {
   const q = (query.q || '').trim()
   guard(skeleton('Search'))
   if (!q) return done(guard, token, `<div class="empty"><h3>Search peerit</h3><p>Type a query in the bar above.</p></div>`, renderSidebarHome)
-  const needle = q.toLowerCase()
-  const communities = (await data.listCommunities())
-  const commHits = communities.filter(c => (c.slug + ' ' + (c.title || '') + ' ' + (c.description || '')).toLowerCase().includes(needle))
-  const allPosts = await data.listAllPosts()
-  const postHits = allPosts.filter(p => !p.deleted && (p.title + ' ' + (p.body || '')).toLowerCase().includes(needle)).slice(0, 50)
+  const { communities: commHits, posts: postHits, comments: commentHits } = await data.search(q)
   const withT = await data.withTallies(postHits)
-  await primeNames(withT.map(p => p.author))
+  await primeNames([...withT.map(p => p.author), ...commentHits.map(c => c.author)])
   const counts = await countCommentsFor(withT)
   if (token !== renderToken) return
   guard(`<div class="feed-head"><h1>Results for "${esc(q)}"</h1></div>
@@ -661,7 +752,12 @@ async function viewSearch ({ query, guard, token }) {
       <div class="comm-row"><span class="comm-icon" style="background:${colorFor(c.slug)}">r/</span>
         <div class="comm-info"><a class="comm-name" href="#/r/${esc(c.slug)}">r/${esc(c.slug)}</a><div class="dim small">${esc(c.description || '')}</div></div></div>`).join('')}</div>` : ''}
     <h2 class="section-title">Posts</h2>
-    <div class="feed">${withT.length ? sortPosts(withT, 'top').map(p => postCard(p, null, { commentCounts: counts })).join('') : '<div class="empty"><p>No matching posts.</p></div>'}</div>`)
+    <div class="feed">${withT.length ? sortPosts(withT, 'top').map(p => postCard(p, null, { commentCounts: counts })).join('') : '<div class="empty"><p>No matching posts.</p></div>'}</div>
+    <h2 class="section-title">Comments</h2>
+    <div class="activity-feed">${commentHits.length ? commentHits.map(c => `
+      <div class="activity"><span class="atag">comment</span> by <a href="#/u/${esc(c.author)}">${esc(nameOf(c.author))}</a>
+        on <a href="${buildRoute(['r', c.community, 'comments', c.postCid])}">${esc(c.postTitle || 'a post')}</a>
+        <div class="md small">${renderMarkdown(excerpt(c.body, 220))}</div></div>`).join('') : '<div class="empty"><p>No matching comments.</p></div>'}</div>`)
   renderSidebar(await sidebarHome(), token)
 }
 
@@ -683,7 +779,7 @@ async function viewSettings ({ guard, token }) {
     <p class="mono small">pubkey: ${esc(me.pubkey)}</p>
     <h2>Network</h2>
     <ul class="kv">
-      <li><span>Mode</span><b>${sync.mode === 'dev' ? 'Local dev fallback' : 'PearBrowser P2P bridge'}</b></li>
+      <li><span>Mode</span><b>${isBridgeMode() ? 'PearBrowser P2P bridge' : 'Local dev fallback'}</b></li>
       <li><span>App id</span><b>peerit</b></li>
       <li><span>Records in view</span><b>${fmtCount(status.viewLength || 0)}</b></li>
       ${status.inviteKey ? `<li><span>Group key</span><b class="mono small">${esc(shortKey(status.inviteKey, 12))}</b></li>` : ''}
@@ -691,7 +787,7 @@ async function viewSettings ({ guard, token }) {
     ${identity.isDev ? `<h2>Dev tools</h2>
       <p class="dim small">You're running outside PearBrowser. Multiple browser tabs share one world via localStorage + BroadcastChannel, so you can simulate several users.</p>
       <div class="form-actions">
-        <button class="btn btn-ghost" data-act="seed-demo">Load demo content</button>
+        <button class="btn btn-ghost" data-act="show-welcome">Show starter feed</button>
         <button class="btn btn-ghost danger" data-act="wipe">Wipe all local data</button>
       </div>` : ''}
   </div>`)
@@ -779,7 +875,9 @@ async function onClick (e) {
       case 'netstatus': return void updateNetStatus()
       case 'switch-user': { identity.switchUser(t.dataset.pub); if (sync.announce) sync.announce(); refreshPrefs(); nameCache.clear(); renderUserMenu(); route(); toast('Switched user'); return }
       case 'new-user': return void await newDevUser()
-      case 'seed-demo': return void await seedDemo()
+      case 'start-community': return void await startCommunity(t.dataset.slug)
+      case 'dismiss-welcome': { prefs.markWelcomeSeen(); route(); return }
+      case 'show-welcome': { prefs.markWelcomeUnseen(); location.hash = '#/'; route(); return }
       case 'wipe': return void wipe()
       case 'timewindow': return // handled in change via select; ignore click
       case 'edit-post': return void editPost(t)
@@ -969,36 +1067,30 @@ async function newDevUser () {
   await renderUserMenu(); route(); toast('Created & switched to ' + name)
 }
 
-async function seedDemo () {
-  toast('Seeding demo content…')
-  const demo = [
-    { slug: 'p2p', title: 'Peer-to-Peer', desc: 'Everything decentralized, distributed, and serverless.' },
-    { slug: 'holepunch', title: 'Holepunch', desc: 'Hypercore, Hyperswarm, Autobase, Pear.' },
-    { slug: 'privacy', title: 'Privacy', desc: 'Own your data. Encrypt everything.' }
-  ]
-  for (const d of demo) {
-    try { await data.createCommunity({ slug: d.slug, title: d.title, description: d.desc }) } catch {}
-    prefs.subscribe(d.slug)
+async function startCommunity (slug) {
+  const starter = starterCommunity(slug)
+  if (!starter) throw new Error('Unknown starter community')
+  let community = await data.getCommunity(starter.slug)
+  if (!community) {
+    try {
+      community = await data.createCommunity({
+        slug: starter.slug,
+        title: starter.title,
+        description: starter.description,
+        rules: starter.rules
+      })
+      toast('Created r/' + starter.slug)
+    } catch (err) {
+      community = await data.getCommunity(starter.slug)
+      if (!community) throw err
+      toast('Joined r/' + starter.slug)
+    }
+  } else {
+    toast('Joined r/' + starter.slug)
   }
-  const posts = [
-    { c: 'p2p', kind: 'text', title: 'Why peer-to-peer beats the cloud', body: 'No servers means **no single point of failure**, no monthly bill, and no landlord who can deplatform you.\n\n- Data lives with the people who care about it\n- It works offline and syncs when you reconnect\n- Censorship-resistant by design' },
-    { c: 'holepunch', kind: 'text', title: 'Autobase is underrated', body: 'Multi-writer logs that linearize deterministically. Once it clicks, you stop reaching for a database.' },
-    { c: 'holepunch', kind: 'link', title: 'Hyperswarm DHT explained', url: 'https://docs.holepunch.to' },
-    { c: 'privacy', kind: 'text', title: 'Threat-model your apps', body: 'Ask: who can read this, who can write this, and what happens when a node goes rogue?' },
-    { c: 'p2p', kind: 'text', title: 'peerit is Reddit with no data center', body: 'This very app is a P2P site. The thread you are reading replicated to you directly from a peer.' }
-  ]
-  const created = []
-  for (const p of posts) {
-    try { created.push(await data.submitPost({ community: p.c, kind: p.kind, title: p.title, body: p.body, url: p.url })) } catch (e) { console.error('seed post failed', e) }
-  }
-  // a few comments + votes for texture
-  if (created[0]) {
-    const c1 = await data.addComment({ community: created[0].community, postCid: created[0].cid, body: 'This is exactly why I switched. No regrets.' })
-    await data.addComment({ community: created[0].community, postCid: created[0].cid, parentCid: c1.cid, body: 'Same. The offline-first part sold me.' })
-    await data.vote(created[0].cid, created[0].community, 'post', 1)
-  }
-  toast('Demo content ready')
-  location.hash = '#/'
+  prefs.subscribe(starter.slug)
+  prefs.markWelcomeSeen()
+  location.hash = '#/r/' + starter.slug
   route()
 }
 

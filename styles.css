@@ -19,6 +19,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:
 a{color:inherit;text-decoration:none}
 a:hover{text-decoration:none}
 button{font-family:inherit}
+[hidden]{display:none!important}
 .mono{font-family:var(--mono)}
 .dim{color:var(--muted)}
 .small{font-size:12.5px}
@@ -128,7 +129,13 @@ button{font-family:inherit}
 .pa:hover{background:var(--surface-2);color:var(--text)}
 .pa.danger:hover{color:var(--danger)}
 .pa.mod{color:var(--accent-2)}
-.modtools{display:inline-flex;gap:2px;border-left:1px solid var(--border);margin-left:4px;padding-left:4px}
+.more-actions{position:relative;display:inline-flex}
+.more-actions summary{list-style:none}
+.more-actions summary::-webkit-details-marker{display:none}
+.more-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:30;min-width:160px;background:var(--surface);
+  border:1px solid var(--border-2);border-radius:10px;padding:6px;box-shadow:0 14px 36px rgba(0,0,0,.45)}
+.more-menu .pa{display:flex;width:100%;justify-content:flex-start}
+.modtools{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--border);margin-top:4px;padding-top:4px}
 .lock{color:var(--up)}
 
 /* post detail + comments */
@@ -242,6 +249,23 @@ label input:focus,label textarea:focus,label select:focus{border-color:var(--acc
 .empty h3{margin:0 0 8px;font-size:19px}
 .empty p{color:var(--muted);margin:0 0 16px}
 .empty-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.welcome-panel{display:flex;align-items:center;justify-content:space-between;gap:18px;background:linear-gradient(135deg,rgba(79,140,255,.18),rgba(45,212,191,.10));
+  border:1px solid var(--border-2);border-radius:var(--radius);padding:20px}
+.welcome-panel.compact{padding:16px 18px}
+.welcome-copy{min-width:0}
+.welcome-copy h2{margin:5px 0 6px;font-size:22px}
+.welcome-copy p{margin:0;color:var(--muted);max-width:680px}
+.welcome-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;flex-shrink:0}
+.starter-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.starter-community,.starter-post{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+.starter-community{display:flex;gap:12px;align-items:flex-start}
+.starter-community h3{margin:0 0 5px;font-size:15px}
+.starter-community p,.starter-post p{margin:0;color:var(--muted);font-size:13.5px}
+.starter-title{margin:2px 0 -4px}
+.starter-post{display:flex;flex-direction:column;gap:8px}
+.starter-post-meta{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12.5px;font-weight:700}
+.starter-post h2{font-size:17px;margin:0;line-height:1.3}
+.starter-note{color:var(--faint);font-size:12.5px;text-align:center;padding:2px 8px 8px}
 .skel{opacity:.6}
 .sk-line{height:12px;border-radius:6px;background:linear-gradient(90deg,var(--surface-2),var(--border),var(--surface-2));
   background-size:200% 100%;animation:sh 1.3s infinite;margin:8px 0}
@@ -260,6 +284,9 @@ label input:focus,label textarea:focus,label select:focus{border-color:var(--acc
 @media(max-width:920px){
   .layout{grid-template-columns:1fr}
   .sidebar{display:none}
+  .starter-grid{grid-template-columns:1fr}
+  .welcome-panel{align-items:flex-start;flex-direction:column}
+  .welcome-actions{justify-content:flex-start}
 }
 @media(max-width:560px){
   /* keep search reachable on phones — just shrink the chrome around it */

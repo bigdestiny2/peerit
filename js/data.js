@@ -13,10 +13,36 @@ export class Data {
     this.sync = sync
     this.id = identity
     this._profileCache = new Map() // pub -> { rec, at }
-    this._tallyCache = new Map()   // cid -> { val, at }
+    this._tallyCache = new Map()   // `${viewer}:${cid}` -> { val, epoch }
+    this._commentCountCache = new Map() // `${community}/${postCid}` -> { val, epoch }
+    this._searchIndex = null
+    this._epoch = 0
   }
 
   me () { return this.id.me() }
+
+  invalidateViewCaches () {
+    this._epoch++
+    this._tallyCache.clear()
+    this._commentCountCache.clear()
+    this._searchIndex = null
+  }
+
+  async _listPrefix (prefix, { limit = 1000 } = {}) {
+    const rows = []
+    let gt = null
+    while (true) {
+      const opts = gt
+        ? { gt, lt: prefix + '\xff', limit }
+        : { gte: prefix, lt: prefix + '\xff', limit }
+      const batch = await this.sync.range(opts)
+      rows.push(...batch)
+      const last = batch[batch.length - 1] && batch[batch.length - 1].key
+      if (!last || batch.length < limit) break
+      gt = last
+    }
+    return rows
+  }
 
   // Sign a record's canonical form and attach verification metadata. MUST be
   // called on every create AND every edit/delete — the gossip merge recomputes
@@ -45,6 +71,7 @@ export class Data {
     }
     Object.assign(data, await this._sign(TYPE.COMMUNITY, data))
     await this.sync.append({ type: TYPE.COMMUNITY, data })
+    this.invalidateViewCaches()
     return data
   }
 
@@ -66,6 +93,7 @@ export class Data {
     const data = { ...c, ...patch, id: mkid.community(slug), slug, creator: c.creator, createdAt: c.createdAt, updatedAt: now }
     Object.assign(data, await this._sign(TYPE.COMMUNITY, data))
     await this.sync.append({ type: TYPE.COMMUNITY, data })
+    this.invalidateViewCaches()
     return data
   }
 
@@ -94,6 +122,7 @@ export class Data {
     }
     Object.assign(data, await this._sign(TYPE.POST, data))
     await this.sync.append({ type: TYPE.POST, data })
+    this.invalidateViewCaches()
     return data
   }
 
@@ -111,6 +140,7 @@ export class Data {
     const data = { ...p, body: String(body || '').slice(0, 40000), editedAt: Date.now() }
     Object.assign(data, await this._sign(TYPE.POST, data))
     await this.sync.append({ type: TYPE.POST, data })
+    this.invalidateViewCaches()
     return data
   }
 
@@ -121,6 +151,7 @@ export class Data {
     const data = { ...p, deleted: true, body: '', url: '', title: p.title, editedAt: Date.now() }
     Object.assign(data, await this._sign(TYPE.POST, data))
     await this.sync.append({ type: TYPE.POST, data })
+    this.invalidateViewCaches()
   }
 
   // Aggregate posts across communities (for home/all feeds).
@@ -147,6 +178,7 @@ export class Data {
     }
     Object.assign(data, await this._sign(TYPE.COMMENT, data))
     await this.sync.append({ type: TYPE.COMMENT, data })
+    this.invalidateViewCaches()
     return data
   }
 
@@ -162,6 +194,7 @@ export class Data {
     const data = { ...c, body: String(body || '').slice(0, 10000), editedAt: Date.now() }
     Object.assign(data, await this._sign(TYPE.COMMENT, data))
     await this.sync.append({ type: TYPE.COMMENT, data })
+    this.invalidateViewCaches()
     return data
   }
 
@@ -172,6 +205,7 @@ export class Data {
     const data = { ...c, deleted: true, body: '', editedAt: Date.now() }
     Object.assign(data, await this._sign(TYPE.COMMENT, data))
     await this.sync.append({ type: TYPE.COMMENT, data })
+    this.invalidateViewCaches()
   }
 
   // ---- Votes ----------------------------------------------------------------
@@ -185,7 +219,7 @@ export class Data {
     }
     Object.assign(data, await this._sign(TYPE.VOTE, data))
     await this.sync.append({ type: TYPE.VOTE, data })
-    this._tallyCache.delete(targetCid)
+    this.invalidateViewCaches()
     return data
   }
 
@@ -204,14 +238,62 @@ export class Data {
   async tallyMany (cids) {
     const me = this.me().pubkey
     const uniq = [...new Set(cids)]
-    const results = await Promise.all(uniq.map(async cid => [cid, tallyVotes(await this.rawVotes(cid), me)]))
-    return new Map(results)
+    const out = new Map()
+    const missing = []
+    for (const cid of uniq) {
+      const key = me + ':' + cid
+      const cached = this._tallyCache.get(key)
+      if (cached && cached.epoch === this._epoch) out.set(cid, cached.val)
+      else missing.push(cid)
+    }
+    if (missing.length) {
+      const wanted = new Set(missing)
+      const grouped = new Map(missing.map(cid => [cid, []]))
+      const rows = await this._listPrefix(keys.voteAll())
+      for (const { value: v } of rows) {
+        if (v && wanted.has(v.targetCid)) grouped.get(v.targetCid).push(v)
+      }
+      for (const cid of missing) {
+        const val = tallyVotes(grouped.get(cid) || [], me)
+        this._tallyCache.set(me + ':' + cid, { val, epoch: this._epoch })
+        out.set(cid, val)
+      }
+    }
+    return out
   }
 
   // Attach `.tally` to each post/comment record.
   async withTallies (records) {
     const map = await this.tallyMany(records.map(r => r.cid))
     return records.map(r => ({ ...r, tally: map.get(r.cid) || { up: 0, down: 0, score: 0, myVote: 0, total: 0 } }))
+  }
+
+  async commentCountsFor (posts) {
+    const out = new Map()
+    const missing = []
+    for (const p of posts) {
+      const key = p.community + '/' + p.cid
+      const cached = this._commentCountCache.get(key)
+      if (cached && cached.epoch === this._epoch) out.set(p.cid, cached.val)
+      else missing.push(p)
+    }
+    if (missing.length) {
+      const wanted = new Set(missing.map(p => p.community + '/' + p.cid))
+      const counts = new Map([...wanted].map(k => [k, 0]))
+      const rows = await this._listPrefix(keys.commentPrefix())
+      for (const { value: c } of rows) {
+        if (!c) continue
+        const key = c.community + '/' + c.postCid
+        if (wanted.has(key)) counts.set(key, (counts.get(key) || 0) + 1)
+      }
+      for (const p of missing) {
+        const key = p.community + '/' + p.cid
+        const val = counts.get(key) || 0
+        this._commentCountCache.set(key, { val, epoch: this._epoch })
+        out.set(p.cid, val)
+      }
+    }
+    return out
   }
 
   // ---- Profiles -------------------------------------------------------------
@@ -229,6 +311,7 @@ export class Data {
     Object.assign(data, await this._sign(TYPE.PROFILE, data))
     await this.sync.append({ type: TYPE.PROFILE, data })
     this._profileCache.set(me.pubkey, { rec: data, at: Date.now() })
+    this.invalidateViewCaches()
     return data
   }
 
@@ -293,6 +376,45 @@ export class Data {
     return { posts: posts.slice(0, limit), comments: comments.slice(0, limit) }
   }
 
+  async _ensureSearchIndex () {
+    if (this._searchIndex && this._searchIndex.epoch === this._epoch) return this._searchIndex
+    const communities = await this.listCommunities()
+    const posts = await this.listAllPosts(communities.map(c => c.slug))
+    const postTitle = new Map(posts.map(p => [p.community + '/' + p.cid, p.title]))
+    const comments = (await this._listPrefix(keys.commentPrefix()))
+      .map(r => r.value)
+      .filter(c => c && !c.deleted)
+      .map(c => ({ ...c, postTitle: postTitle.get(c.community + '/' + c.postCid) || '' }))
+    const index = {
+      epoch: this._epoch,
+      communities: communities.map(c => ({
+        record: c,
+        text: (c.slug + ' ' + (c.title || '') + ' ' + (c.description || '')).toLowerCase()
+      })),
+      posts: posts.filter(p => !p.deleted).map(p => ({
+        record: p,
+        text: (p.title + ' ' + (p.body || '') + ' ' + (p.url || '')).toLowerCase()
+      })),
+      comments: comments.map(c => ({
+        record: c,
+        text: ((c.body || '') + ' ' + (c.postTitle || '')).toLowerCase()
+      }))
+    }
+    this._searchIndex = index
+    return index
+  }
+
+  async search (query, { limit = 50 } = {}) {
+    const needle = String(query || '').trim().toLowerCase()
+    if (!needle) return { communities: [], posts: [], comments: [] }
+    const index = await this._ensureSearchIndex()
+    return {
+      communities: index.communities.filter(it => it.text.includes(needle)).map(it => it.record),
+      posts: index.posts.filter(it => it.text.includes(needle)).slice(0, limit).map(it => it.record),
+      comments: index.comments.filter(it => it.text.includes(needle)).slice(0, limit).map(it => it.record)
+    }
+  }
+
   // ---- Moderation -----------------------------------------------------------
   async listModActions (community) {
     const rows = await this.sync.list(keys.modsIn(community), { limit: 1000 })
@@ -324,6 +446,7 @@ export class Data {
     }
     Object.assign(data, await this._sign(TYPE.MOD, data))
     await this.sync.append({ type: TYPE.MOD, data })
+    this.invalidateViewCaches()
     return data
   }
 

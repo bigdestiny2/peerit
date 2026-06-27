@@ -32,9 +32,11 @@ export const keys = {
   postsIn: (community) => `${TYPE.POST}!${community}!`,
 
   comment: (community, postCid, cid) => `${TYPE.COMMENT}!${community}!${postCid}!${cid}`,
+  commentPrefix: () => `${TYPE.COMMENT}!`,
   commentsOn: (community, postCid) => `${TYPE.COMMENT}!${community}!${postCid}!`,
 
   vote: (targetCid, author) => `${TYPE.VOTE}!${targetCid}!${author}`,
+  voteAll: () => `${TYPE.VOTE}!`,
   votesFor: (targetCid) => `${TYPE.VOTE}!${targetCid}!`,
 
   profile: (author) => `${TYPE.PROFILE}!${author}`,

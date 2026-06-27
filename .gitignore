@@ -2,6 +2,7 @@
 .claude/
 .hiverelay-local/
 .hiverelay-seed/
+.deploy/
 .catalog-publish-*/
 node_modules/
 *.log

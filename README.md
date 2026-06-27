@@ -25,6 +25,48 @@ and injects a `window.pear` bridge. peerit uses three parts of it:
 There is **no backend process and no build step**. Everything is vanilla ES
 modules in [`js/`](js/).
 
+## Public repo setup
+
+From a fresh machine or clean workspace:
+
+```bash
+mkdir peerit-workspace
+cd peerit-workspace
+git clone https://github.com/bigdestiny2/peerit.git
+cd peerit
+node --version                 # needs Node 20+
+npm test
+npm run dev                    # opens the loopback dev server on 127.0.0.1:8777
+```
+
+The app itself has no install step and no runtime npm dependencies. Publishing is
+the only workflow that needs the HiveRelay client. For a public GitHub checkout,
+clone HiveRelay next to peerit and install its own dependencies:
+
+```bash
+cd ..
+git clone https://github.com/bigdestiny2/p2p-hiverelay.git
+cd p2p-hiverelay
+npm install
+cd ../peerit
+HIVERELAY_ROOT=../p2p-hiverelay npm run publish:local
+```
+
+`publish.mjs` resolves the HiveRelay client in this order:
+
+1. an installed `p2p-hiverelay-client` package in `peerit`;
+2. `HIVERELAY_CLIENT_PATH` pointing to `packages/client/index.js`, the client
+   directory, or the HiveRelay repo root;
+3. `HIVERELAY_ROOT` or `P2P_HIVERELAY_ROOT` pointing to the HiveRelay repo root;
+4. common workspace layouts such as `../p2p-hiverelay`,
+   `../hiverelay`, or `../../00-core/hiverelay`.
+
+For a real public publish:
+
+```bash
+HIVERELAY_ROOT=../p2p-hiverelay STRICT_ANCHOR=1 KEEP=1 npm run publish
+```
+
 ### Data model — riding the bridge's generic reducer
 
 The bridge applies an op `{ type, data }` by writing `data` into Hyperbee at key
@@ -56,12 +98,13 @@ backend that reimplements the bridge reducer exactly. Multiple tabs share one wo
 so you can simulate several peers.
 
 ```bash
-cd 02-apps/peerit
+# from the peerit repo root
 node dev-server.mjs              # serves only the public app files on 127.0.0.1
 # open http://localhost:8777
 ```
 
-- Click **Load demo content** (empty feed / Settings) to seed communities + posts.
+- The first screen shows local starter cards. Click **Join r/welcome** (or another
+  starter community) to create/join a real community explicitly.
 - Open Settings → **Dev: switch user** (or the user menu) to act as different people.
 - Open a second tab to watch live cross-tab updates.
 
@@ -103,6 +146,7 @@ peerit/
 │   ├── sync.js         # BridgeSync (window.pear.sync) | DevSync (localStorage)
 │   ├── identity.js     # BridgeIdentity (window.pear.identity) | DevIdentity (multi-user)
 │   ├── prefs.js        # per-device local prefs
+│   ├── onboarding.js   # local starter feed + welcome community metadata
 │   ├── data.js         # domain API (CRUD + queries + vote tallies + karma + mod)
 │   └── app.js          # router + views + event delegation + live refresh
 ├── manifest.json       # PearBrowser catalog manifest (driveKey filled by publish.mjs)
@@ -114,8 +158,14 @@ peerit/
 ## Test
 
 ```bash
-node test/smoke.mjs      # 30 checks: data layer, ranking, threading, votes, moderation, markdown
+npm test
+# or run the files directly:
+node test/smoke.mjs      # core checks: data layer, ranking, threading, votes, moderation, markdown
+node test/gossip.mjs     # signed gossip, convergence, forgery rejection
 ```
+
+For the current local command surface, known gaps, and operator-run publish/runtime
+gates, see [`TEST-COMMAND-MATRIX-2026-06-27.md`](TEST-COMMAND-MATRIX-2026-06-27.md).
 
 ## Publish (outward-facing — run deliberately)
 
@@ -127,14 +177,25 @@ waits for relay byte-replication evidence after seed acceptance; use
 the drive is not durably reachable yet.
 
 ```bash
-node publish.mjs           # publish + seed, then exit
-KEEP=1 node publish.mjs     # stay online so relays fully anchor the drive
-STRICT_ANCHOR=1 node publish.mjs
+npm run ship:check        # tests + manifest/file/git served-file preflight
+npm run ship:live         # preflight, then strict publish with a 240s anchor wait
+npm run publish:local       # local PearBrowser test, not cataloged or seeded
+npm run publish             # publish + seed, then exit
+KEEP=1 npm run publish      # stay online so relays fully anchor the drive
+STRICT_ANCHOR=1 npm run publish
 ```
 
-It uses the local HiveRelay client at
-`00-core/hiverelay/packages/client/`. This puts peerit on the public network —
-it is never invoked by the app or any build step.
+`ship:live` sets `STRICT_ANCHOR=1`, `DURABILITY=archive`, and a longer
+`ANCHOR_TIMEOUT_MS=240000` by default. It writes ignored operator evidence to
+`.deploy/last-ship.json` and `.deploy/last-publish.json`. If strict anchoring
+fails after `manifest.json` was updated, `publish.mjs` restores the previous
+manifest so a partial relay anchor does not masquerade as the current release.
+By default the ship check blocks when served app files are dirty in git; use
+`node ship.mjs --allow-dirty` only for an intentional uncommitted test publish.
+
+The publisher loads `p2p-hiverelay-client` from an installed package, an explicit
+HiveRelay env path, or a discoverable sibling/workspace checkout. This puts
+peerit on the public network — it is never invoked by the app or any build step.
 
 See [`docs/availability.md`](docs/availability.md) for the exact persistence and
 availability guarantees for the static app drive versus user-generated data.

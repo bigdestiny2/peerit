@@ -62,8 +62,9 @@ relay has every blob block, then logs `✓ blobs fully mirrored`. `durability:'a
 keeps AutoHeal maintaining ≥7 replicas across ≥4 regions / ≥5 operators.
 
 ```bash
-cd 02-apps/peerit
-STRICT_ANCHOR=1 KEEP=1 REPLICAS=6 node publish.mjs   # throws unless BLOBS prove durable
+# from the peerit repo root
+npm run ship:live                                    # preflight + strict publish
+STRICT_ANCHOR=1 KEEP=1 REPLICAS=6 npm run publish    # manual long-running anchor
 ```
 
 Confirm the **`blob durable status … durable:true`** line (not just `metadata
@@ -80,7 +81,7 @@ on `drive.discoveryKey`. Run it on an always-on box so a complete copy is always
 hop away even if the fleet is mid-repair:
 
 ```bash
-cd 02-apps/peerit-mirror
+cd ../peerit-mirror
 node mirror.mjs                 # mirrors the drive in ../peerit/manifest.json
 node mirror.mjs <driveKeyHex>   # or specific drives
 ```
@@ -94,7 +95,7 @@ always-on box. It replicates each outbox (a single-writer hypercore, so its
 pins it with archive durability:
 
 ```bash
-cd 02-apps/peerit-seeder
+cd ../peerit-seeder
 node seeder.mjs <outboxInviteKey> [<more> …]   # keys from peerit → Settings → "Group key"
 ```
 

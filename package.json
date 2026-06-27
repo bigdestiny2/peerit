@@ -1,0 +1,22 @@
+{
+  "name": "peerit",
+  "version": "0.1.0",
+  "description": "A peer-to-peer Reddit that runs as a P2P site inside PearBrowser.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bigdestiny2/peerit.git"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "node dev-server.mjs",
+    "test": "node test/smoke.mjs && node test/gossip.mjs",
+    "ship:check": "node ship.mjs",
+    "ship:live": "node ship.mjs --publish",
+    "publish:local": "node publish.mjs --local",
+    "publish": "node publish.mjs"
+  }
+}

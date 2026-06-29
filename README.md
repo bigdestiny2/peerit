@@ -146,6 +146,7 @@ peerit/
 │   ├── sync.js         # BridgeSync (window.pear.sync) | DevSync (localStorage)
 │   ├── identity.js     # BridgeIdentity (window.pear.identity) | DevIdentity (multi-user)
 │   ├── prefs.js        # per-device local prefs
+│   ├── recovery.js     # app data recovery bundle + peerit-seeder command helpers
 │   ├── onboarding.js   # local starter feed + welcome community metadata
 │   ├── data.js         # domain API (CRUD + queries + vote tallies + karma + mod)
 │   └── app.js          # router + views + event delegation + live refresh
@@ -202,6 +203,9 @@ availability guarantees for the static app drive versus user-generated data.
 See [`docs/identity-recovery-protocol.md`](docs/identity-recovery-protocol.md)
 for how PearBrowser's mnemonic, per-app identity, and app outbox recovery fit
 together.
+Inside the app, Settings -> Identity / Recovery shows identity fingerprints,
+the current Group key, recovery bundle export/import, and a ready-to-copy
+`peerit-seeder` command for user data availability.
 
 ---
 

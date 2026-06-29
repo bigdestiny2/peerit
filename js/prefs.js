@@ -15,9 +15,9 @@ export class Prefs {
     try {
       const s = this.storage.getItem(this.key)
       const d = s ? JSON.parse(s) : {}
-      return Object.assign({ subs: [], saved: [], hidden: [], sort: 'hot', theme: 'dark', seenWelcome: false }, d)
+      return Object.assign({ subs: [], saved: [], hidden: [], sort: 'hot', theme: 'dark', seenWelcome: false, identityBackupAcked: false }, d)
     } catch {
-      return { subs: [], saved: [], hidden: [], sort: 'hot', theme: 'dark', seenWelcome: false }
+      return { subs: [], saved: [], hidden: [], sort: 'hot', theme: 'dark', seenWelcome: false, identityBackupAcked: false }
     }
   }
 
@@ -51,8 +51,12 @@ export class Prefs {
   // Misc prefs
   setSort (s) { this.data.sort = s; this._save() }
   get sort () { return this.data.sort }
-  markWelcomeSeen () { this.data.seenWelcome = true; this._save() }
+  setWelcomeSeen (seen = true) { this.data.seenWelcome = !!seen; this._save() }
+  markWelcomeSeen () { this.setWelcomeSeen(true) }
+  markWelcomeUnseen () { this.setWelcomeSeen(false) }
   get seenWelcome () { return this.data.seenWelcome }
+  acknowledgeIdentityBackup () { this.data.identityBackupAcked = true; this._save() }
+  get identityBackupAcked () { return !!this.data.identityBackupAcked }
 }
 
 function memShim () {

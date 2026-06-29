@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-06-27",
+  "launchTarget": {
+    "activatedPosters": 500,
+    "livingBoards": 20,
+    "d7ReturningPosterRate": 0.2,
+    "maxCostPerActivatedPosterUsd": 40
+  },
+  "communities": [
+    {
+      "slug": "p2pbuilders",
+      "title": "P2P Builders",
+      "audience": "Pear, Holepunch, local-first, and decentralized app builders.",
+      "launchRole": "Technical flagship and proof community.",
+      "founderBrief": "Seed practical build logs, protocol questions, and demos. Keep posts concrete and source-linked.",
+      "starterPostCount": 18,
+      "discussionPromptCount": 4,
+      "risk": "low"
+    },
+    {
+      "slug": "nostr",
+      "title": "Nostr",
+      "audience": "Nostr users, relays, client builders, and censorship-resistant social users.",
+      "launchRole": "Best ideological fit for the no-server social pitch.",
+      "founderBrief": "Compare relay-based social networks with P2P outboxes without turning the board into token promotion.",
+      "starterPostCount": 15,
+      "discussionPromptCount": 4,
+      "risk": "medium"
+    },
+    {
+      "slug": "selfhosted",
+      "title": "Self-Hosted",
+      "audience": "People who run home servers, NAS boxes, personal cloud, and homelab services.",
+      "launchRole": "Practical operator funnel for future HiveRelay nodes.",
+      "founderBrief": "Focus on durable ownership, migration away from SaaS, and what should run at home versus on relays.",
+      "starterPostCount": 15,
+      "discussionPromptCount": 3,
+      "risk": "low"
+    },
+    {
+      "slug": "privacy",
+      "title": "Privacy",
+      "audience": "PrivacyGuides, degoogle, Tor, Brave, and no-account software users.",
+      "launchRole": "Core message fit for no-account posting and local identity.",
+      "founderBrief": "Keep claims precise: no central account, signed identities, public boards, and no magic anonymity promises.",
+      "starterPostCount": 15,
+      "discussionPromptCount": 4,
+      "risk": "medium"
+    },
+    {
+      "slug": "linux",
+      "title": "Linux",
+      "audience": "Linux desktop, FOSS, package maintainers, and power users.",
+      "launchRole": "Technical adoption and install feedback.",
+      "founderBrief": "Seed posts about PearBrowser support, distro packaging, and desktop P2P UX.",
+      "starterPostCount": 12,
+      "discussionPromptCount": 3,
+      "risk": "low"
+    },
+    {
+      "slug": "localfirst",
+      "title": "Local-First",
+      "audience": "People building sync-first, offline-capable, user-owned software.",
+      "launchRole": "High-signal product philosophy community.",
+      "founderBrief": "Bring rigorous comparisons: CRDTs, Hypercore, sync UX, offline trust, and recovery.",
+      "starterPostCount": 12,
+      "discussionPromptCount": 4,
+      "risk": "low"
+    },
+    {
+      "slug": "ai_local",
+      "title": "Local AI",
+      "audience": "Ollama, llama.cpp, MLX, homelab GPU, and local model users.",
+      "launchRole": "Bridge to future HiveCompute and GPU marketplace demand.",
+      "founderBrief": "Seed practical benchmarks, model notes, and local inference workflows. Avoid hype-only posts.",
+      "starterPostCount": 12,
+      "discussionPromptCount": 3,
+      "risk": "medium"
+    },
+    {
+      "slug": "fediverse",
+      "title": "Fediverse",
+      "audience": "Lemmy, Mastodon, Mbin, and federation users.",
+      "launchRole": "Warm decentralized-community audience.",
+      "founderBrief": "Frame Peerit as a no-server experiment, not a replacement war. Invite bridge ideas.",
+      "starterPostCount": 12,
+      "discussionPromptCount": 3,
+      "risk": "medium"
+    },
+    {
+      "slug": "cypherpunk",
+      "title": "Cypherpunk",
+      "audience": "Bitcoin, Lightning, privacy engineering, and censorship-resistance builders.",
+      "launchRole": "Narrative engine for signed records and PoW-gated posting.",
+      "founderBrief": "Keep discussion technical and lawful. No darknet-market positioning.",
+      "starterPostCount": 12,
+      "discussionPromptCount": 4,
+      "risk": "medium"
+    },
+    {
+      "slug": "redditalternatives",
+      "title": "Reddit Alternatives",
+      "audience": "People actively looking for community platforms outside Reddit.",
+      "launchRole": "High-intent switcher board.",
+      "founderBrief": "Host comparisons, migration checklists, and honest limits of P2P community software.",
+      "starterPostCount": 12,
+      "discussionPromptCount": 3,
+      "risk": "medium"
+    },
+    {
+      "slug": "homelab",
+      "title": "Homelab",
+      "audience": "Operators who may eventually run relays, seeders, and compute nodes.",
+      "launchRole": "Future operator acquisition.",
+      "founderBrief": "Seed posts about always-on peers, storage proofs, monitoring, and low-power nodes.",
+      "starterPostCount": 10,
+      "discussionPromptCount": 3,
+      "risk": "low"
+    },
+    {
+      "slug": "hiverelay",
+      "title": "HiveRelay",
+      "audience": "Relay operators, node-curious users, seeders, and people who want to make P2P apps reliably available.",
+      "launchRole": "Infrastructure-as-growth channel for Peerit and PearBrowser.",
+      "founderBrief": "Seed posts about running nodes, proof receipts, app/outbox seeding, referral links, regional coverage, and operator rewards.",
+      "starterPostCount": 12,
+      "discussionPromptCount": 4,
+      "risk": "low"
+    },
+    {
+      "slug": "showcase",
+      "title": "Showcase",
+      "audience": "People launching demos, tools, boards, bots, and importers.",
+      "launchRole": "Front-page freshness and builder momentum.",
+      "founderBrief": "Keep this useful: demos, screenshots, source links, and feedback requests.",
+      "starterPostCount": 10,
+      "discussionPromptCount": 3,
+      "risk": "low"
+    }
+  ]
+}

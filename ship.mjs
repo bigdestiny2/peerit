@@ -222,7 +222,8 @@ async function runTests () {
   try {
     await run('node', ['test/smoke.mjs'])
     await run('node', ['test/gossip.mjs'])
-    addCheck('tests:node', 'pass', 'Smoke and gossip suites passed.')
+    await run('node', ['test/bridge.mjs'])
+    addCheck('tests:node', 'pass', 'Smoke, gossip, and bridge suites passed.')
   } catch (err) {
     addCheck('tests:node', 'fail', err.message)
   }

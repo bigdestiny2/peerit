@@ -92,12 +92,12 @@ function comparator (sort, now, isComment) {
     case 'controversial':
       return (a, b) => (controversyScore(b.tally.up, b.tally.down) - controversyScore(a.tally.up, a.tally.down)) || (b.createdAt - a.createdAt)
     case 'rising':
-      return (a, b) => risingScore(b.tally.score, b.createdAt, now) - risingScore(a.tally.score, a.createdAt, now)
+      return (a, b) => (risingScore(b.tally.score, b.createdAt, now) - risingScore(a.tally.score, a.createdAt, now)) || (b.createdAt - a.createdAt)
     case 'best':
       return (a, b) => (wilsonScore(b.tally.up, b.tally.down) - wilsonScore(a.tally.up, a.tally.down)) || (b.createdAt - a.createdAt)
     case 'hot':
     default:
-      return (a, b) => hotScore(b.tally.score, b.createdAt) - hotScore(a.tally.score, a.createdAt)
+      return (a, b) => (hotScore(b.tally.score, b.createdAt) - hotScore(a.tally.score, a.createdAt)) || (b.createdAt - a.createdAt)
   }
 }
 

@@ -16,6 +16,7 @@
 // pearbrowser-desktop/backend/pear-bridge.js _defaultApply generic fallback.
 
 import { createGossip } from './gossip.js'
+import { hasAnyPearBridgeSurface, hasGossipPearSurface, resolvePear } from './pear-api.js'
 
 export const APP_ID = 'peerit'
 
@@ -203,9 +204,12 @@ const GLOBAL_GROUP_KEY = null
 //                    simple case and the original tests.
 export function createSync (opts = {}) {
   const storage = opts.storage || (typeof localStorage !== 'undefined' ? localStorage : memoryStorage())
-  const pear = opts.pear || (typeof window !== 'undefined' ? window.pear : null)
+  const pear = resolvePear(opts)
   if ((opts.mode || 'gossip') === 'gossip') {
-    return createGossip({ storage, pear, getMe: opts.getMe, identity: opts.identity, channelName: opts.channelName, forceDev: opts.forceDev, bus: opts.bus })
+    if (!opts.forceDev && hasAnyPearBridgeSurface(pear) && !hasGossipPearSurface(pear)) {
+      throw new Error('PearBrowser bridge is present but sync, identity, and swarm.v1 are not all available; refusing to fall back to local dev sync.')
+    }
+    return createGossip({ storage, pear, getMe: opts.getMe, identity: opts.identity, channelName: opts.channelName, forceDev: opts.forceDev, bus: opts.bus, validate: opts.validate, pollMs: opts.pollMs })
   }
   if (pear && pear.sync && !opts.forceDev) return new BridgeSync(pear.sync, storage)
   return new DevSync(storage, opts.channelName)

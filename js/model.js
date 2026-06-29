@@ -67,13 +67,30 @@ export const MOD = {
 
 // Build a threaded comment tree from a flat list. Each node carries `children`.
 // Orphaned replies (missing parent) are attached at root so nothing is lost.
+//
+// Cycle-safe: records arrive signed but a malicious peer can sign comments whose
+// parentCid chain loops (A→B→A). Such records pass the merge's per-record
+// validation (each is individually well-formed), so the tree builder must reject
+// the back-edge itself — otherwise the looped nodes never become roots (they
+// vanish from the rendered thread) and sortCommentTree/countDescendants recurse
+// forever. We attach a node under its parent only when doing so can't form a
+// cycle; every node ends up exactly once, either under a parent or at root.
 export function buildCommentTree (comments) {
   const byCid = new Map()
   for (const c of comments) byCid.set(c.cid, { ...c, children: [] })
   const roots = []
+  const wouldCycle = (node, parent) => {
+    let cur = parent
+    let hops = 0
+    while (cur && hops++ <= byCid.size) {
+      if (cur === node) return true
+      cur = cur.parentCid ? byCid.get(cur.parentCid) : null
+    }
+    return false
+  }
   for (const node of byCid.values()) {
     const parent = node.parentCid && byCid.get(node.parentCid)
-    if (parent && parent !== node) parent.children.push(node)
+    if (parent && parent !== node && !wouldCycle(node, parent)) parent.children.push(node)
     else roots.push(node)
   }
   return { roots, index: byCid }
@@ -91,6 +108,21 @@ export function countDescendants (node) {
   let n = 0
   for (const c of node.children) n += 1 + countDescendants(c)
   return n
+}
+
+// Annotate every node with `_descendants` (total nodes beneath it) in ONE
+// bottom-up pass, so a renderer can read node._descendants in O(1) instead of
+// calling countDescendants() per node (which re-walks each subtree — O(n²) over
+// a full tree). Call after the tree is built/sorted. Returns `roots` for chaining.
+export function annotateDescendants (roots) {
+  const visit = (node) => {
+    let n = 0
+    for (const c of node.children) n += 1 + visit(c)
+    node._descendants = n
+    return n
+  }
+  for (const r of roots) visit(r)
+  return roots
 }
 
 // Resolve the effective moderator set for a community: creator is always a mod;

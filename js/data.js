@@ -7,25 +7,35 @@ import { keys, id as mkid, TYPE, MOD, modOverlay, resolveMods } from './model.js
 import { tally as tallyVotes } from './ranking.js'
 import { canonical } from './canon.js'
 import { uid, isValidSlug, normalizeSlug, safeUserUrl } from './util.js'
+import { mint, MIN_BITS } from './pow.js'
+import { assertRecoveryBundleMatches, buildRecoveryBundle, isHex64 } from './recovery.js'
 
 export class Data {
-  constructor (sync, identity) {
+  constructor (sync, identity, opts = {}) {
     this.sync = sync
     this.id = identity
+    this.minBits = opts.minBits || MIN_BITS
     this._profileCache = new Map() // pub -> { rec, at }
     this._tallyCache = new Map()   // `${viewer}:${cid}` -> { val, epoch }
-    this._commentCountCache = new Map() // `${community}/${postCid}` -> { val, epoch }
+    this._commentCountCache = new Map() // `${community}/${postCid}` -> { val, contentEpoch }
     this._searchIndex = null
-    this._epoch = 0
+    this._epoch = 0          // bumped on EVERY write; gates vote tallies
+    this._contentEpoch = 0   // bumped only when searchable content changes; gates comment-count + search caches
   }
 
   me () { return this.id.me() }
 
-  invalidateViewCaches () {
+  // `opClass === 'vote'` means only vote tallies changed — comment counts and the
+  // search index (which votes never touch) survive, so a vote no longer forces a
+  // full search-index rebuild on the next search.
+  invalidateViewCaches (opClass) {
     this._epoch++
     this._tallyCache.clear()
-    this._commentCountCache.clear()
-    this._searchIndex = null
+    if (opClass !== 'vote') {
+      this._contentEpoch++
+      this._commentCountCache.clear()
+      this._searchIndex = null
+    }
   }
 
   async _listPrefix (prefix, { limit = 1000 } = {}) {
@@ -55,8 +65,14 @@ export class Data {
     return { _sig: s.signature, _k: s.publicKey, _dk: s.driveKey, _ns: s.namespace, _alg: s.algorithm }
   }
 
+  async _powSign (type, data, onProgress) {
+    data.pow = await mint(type, data, this.minBits[type] || 0, { onProgress })
+    Object.assign(data, await this._sign(type, data))
+    return data
+  }
+
   // ---- Communities ----------------------------------------------------------
-  async createCommunity ({ slug, title, description, rules }) {
+  async createCommunity ({ slug, title, description, rules, onProgress }) {
     slug = normalizeSlug(slug)
     if (!isValidSlug(slug)) throw new Error('Community name must be 2–24 chars: a–z, 0–9, _')
     const existing = await this.getCommunity(slug)
@@ -69,7 +85,7 @@ export class Data {
       rules: Array.isArray(rules) ? rules.slice(0, 20) : [],
       creator: me.pubkey, createdAt: now, updatedAt: now, author: me.pubkey
     }
-    Object.assign(data, await this._sign(TYPE.COMMUNITY, data))
+    await this._powSign(TYPE.COMMUNITY, data, onProgress)
     await this.sync.append({ type: TYPE.COMMUNITY, data })
     this.invalidateViewCaches()
     return data
@@ -98,7 +114,7 @@ export class Data {
   }
 
   // ---- Posts ----------------------------------------------------------------
-  async submitPost ({ community, kind, title, body, url }) {
+  async submitPost ({ community, kind, title, body, url, onProgress }) {
     const c = await this.getCommunity(community)
     if (!c) throw new Error('No such community')
     const me = this.me()
@@ -120,7 +136,7 @@ export class Data {
       url: kind !== 'text' ? postUrl : '',
       author: me.pubkey, createdAt: now, editedAt: 0, deleted: false
     }
-    Object.assign(data, await this._sign(TYPE.POST, data))
+    await this._powSign(TYPE.POST, data, onProgress)
     await this.sync.append({ type: TYPE.POST, data })
     this.invalidateViewCaches()
     return data
@@ -163,7 +179,7 @@ export class Data {
   }
 
   // ---- Comments -------------------------------------------------------------
-  async addComment ({ community, postCid, parentCid, body }) {
+  async addComment ({ community, postCid, parentCid, body, onProgress }) {
     if (!body || !body.trim()) throw new Error('Comment cannot be empty')
     const me = this.me()
     const ov = await this.overlay(community)
@@ -176,7 +192,7 @@ export class Data {
       parentCid: parentCid || null, body: body.trim().slice(0, 10000),
       author: me.pubkey, createdAt: now, editedAt: 0, deleted: false
     }
-    Object.assign(data, await this._sign(TYPE.COMMENT, data))
+    await this._powSign(TYPE.COMMENT, data, onProgress)
     await this.sync.append({ type: TYPE.COMMENT, data })
     this.invalidateViewCaches()
     return data
@@ -219,7 +235,7 @@ export class Data {
     }
     Object.assign(data, await this._sign(TYPE.VOTE, data))
     await this.sync.append({ type: TYPE.VOTE, data })
-    this.invalidateViewCaches()
+    this.invalidateViewCaches('vote')
     return data
   }
 
@@ -247,14 +263,14 @@ export class Data {
       else missing.push(cid)
     }
     if (missing.length) {
-      const wanted = new Set(missing)
-      const grouped = new Map(missing.map(cid => [cid, []]))
-      const rows = await this._listPrefix(keys.voteAll())
-      for (const { value: v } of rows) {
-        if (v && wanted.has(v.targetCid)) grouped.get(v.targetCid).push(v)
-      }
-      for (const cid of missing) {
-        const val = tallyVotes(grouped.get(cid) || [], me)
+      // Scan only the votes for each missing target (vote!<cid>!…) instead of the
+      // whole vote table — turns a feed render from O(all votes) into O(votes on
+      // the visible posts). Same prefix scheme rawVotes uses.
+      const lists = await Promise.all(missing.map(cid => this._listPrefix(keys.votesFor(cid))))
+      for (let i = 0; i < missing.length; i++) {
+        const cid = missing[i]
+        const votes = lists[i].map(r => r.value).filter(Boolean)
+        const val = tallyVotes(votes, me)
         this._tallyCache.set(me + ':' + cid, { val, epoch: this._epoch })
         out.set(cid, val)
       }
@@ -274,22 +290,19 @@ export class Data {
     for (const p of posts) {
       const key = p.community + '/' + p.cid
       const cached = this._commentCountCache.get(key)
-      if (cached && cached.epoch === this._epoch) out.set(p.cid, cached.val)
+      if (cached && cached.epoch === this._contentEpoch) out.set(p.cid, cached.val)
       else missing.push(p)
     }
     if (missing.length) {
-      const wanted = new Set(missing.map(p => p.community + '/' + p.cid))
-      const counts = new Map([...wanted].map(k => [k, 0]))
-      const rows = await this._listPrefix(keys.commentPrefix())
-      for (const { value: c } of rows) {
-        if (!c) continue
-        const key = c.community + '/' + c.postCid
-        if (wanted.has(key)) counts.set(key, (counts.get(key) || 0) + 1)
-      }
-      for (const p of missing) {
+      // Count per post via the comment!<community>!<postCid>! prefix instead of
+      // scanning the entire comment table on every feed render. Deleted comments
+      // are still counted (truthy value), matching the prior behaviour.
+      const lists = await Promise.all(missing.map(p => this._listPrefix(keys.commentsOn(p.community, p.cid))))
+      for (let i = 0; i < missing.length; i++) {
+        const p = missing[i]
         const key = p.community + '/' + p.cid
-        const val = counts.get(key) || 0
-        this._commentCountCache.set(key, { val, epoch: this._epoch })
+        const val = lists[i].reduce((n, r) => n + (r.value ? 1 : 0), 0)
+        this._commentCountCache.set(key, { val, epoch: this._contentEpoch })
         out.set(p.cid, val)
       }
     }
@@ -338,15 +351,17 @@ export class Data {
     const communities = (await this.listCommunities()).map(c => c.slug)
     let postKarma = 0, commentKarma = 0, postCount = 0, commentCount = 0
     for (const slug of communities) {
-      const posts = (await this.listPostsIn(slug)).filter(p => p.author === pub && !p.deleted)
-      postCount += posts.length
-      const postTallies = await this.tallyMany(posts.map(p => p.cid))
-      for (const p of posts) postKarma += (postTallies.get(p.cid) || { score: 0 }).score
-    }
-    // Comments aren't prefix-listable by author cheaply; scan per community post.
-    for (const slug of communities) {
-      const posts = await this.listPostsIn(slug)
-      for (const p of posts) {
+      // List each community's posts ONCE and reuse for both the author's own
+      // posts (post karma) and the per-post comment scan (comment karma).
+      const allPosts = await this.listPostsIn(slug)
+      const mine = allPosts.filter(p => p.author === pub && !p.deleted)
+      postCount += mine.length
+      if (mine.length) {
+        const postTallies = await this.tallyMany(mine.map(p => p.cid))
+        for (const p of mine) postKarma += (postTallies.get(p.cid) || { score: 0 }).score
+      }
+      // Comments aren't prefix-listable by author cheaply; scan per community post.
+      for (const p of allPosts) {
         const cs = (await this.listComments(slug, p.cid)).filter(c => c.author === pub && !c.deleted)
         commentCount += cs.length
         if (cs.length) {
@@ -364,10 +379,11 @@ export class Data {
     const posts = []
     const comments = []
     for (const slug of communities) {
-      for (const p of await this.listPostsIn(slug)) {
+      const slugPosts = await this.listPostsIn(slug) // list once, reuse for both passes
+      for (const p of slugPosts) {
         if (p.author === pub && !p.deleted) posts.push(p)
       }
-      for (const p of await this.listPostsIn(slug)) {
+      for (const p of slugPosts) {
         for (const c of await this.listComments(slug, p.cid)) {
           if (c.author === pub && !c.deleted) comments.push({ ...c, postTitle: p.title })
         }
@@ -377,7 +393,7 @@ export class Data {
   }
 
   async _ensureSearchIndex () {
-    if (this._searchIndex && this._searchIndex.epoch === this._epoch) return this._searchIndex
+    if (this._searchIndex && this._searchIndex.epoch === this._contentEpoch) return this._searchIndex
     const communities = await this.listCommunities()
     const posts = await this.listAllPosts(communities.map(c => c.slug))
     const postTitle = new Map(posts.map(p => [p.community + '/' + p.cid, p.title]))
@@ -386,7 +402,7 @@ export class Data {
       .filter(c => c && !c.deleted)
       .map(c => ({ ...c, postTitle: postTitle.get(c.community + '/' + c.postCid) || '' }))
     const index = {
-      epoch: this._epoch,
+      epoch: this._contentEpoch,
       communities: communities.map(c => ({
         record: c,
         text: (c.slug + ' ' + (c.title || '') + ' ' + (c.description || '')).toLowerCase()
@@ -460,6 +476,30 @@ export class Data {
   addMod (community, user) { return this.modAction(community, { action: MOD.ADD_MOD, targetUser: user }) }
 
   async status () { return this.sync.status() }
+
+  async recoveryOutboxes () {
+    if (this.sync.recoveryOutboxes) return this.sync.recoveryOutboxes()
+    const s = await this.status()
+    return isHex64(s.inviteKey) ? [{ appId: this.me().pubkey, inviteKey: s.inviteKey }] : []
+  }
+
+  async recoveryBundle () {
+    const me = this.me()
+    return buildRecoveryBundle({
+      driveKey: me.driveKey,
+      publicKey: me.pubkey,
+      outboxes: await this.recoveryOutboxes()
+    })
+  }
+
+  async importRecoveryBundle (bundle) {
+    const me = this.me()
+    const accepted = assertRecoveryBundleMatches(bundle, { driveKey: me.driveKey, publicKey: me.pubkey })
+    if (!this.sync.importRecoveryBundle) throw new Error('This backend cannot import app recovery bundles.')
+    const result = await this.sync.importRecoveryBundle(accepted)
+    this.invalidateViewCaches()
+    return result
+  }
 }
 
-export function createData (sync, identity) { return new Data(sync, identity) }
+export function createData (sync, identity, opts) { return new Data(sync, identity, opts) }

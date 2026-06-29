@@ -5,6 +5,9 @@ in a shared **Holepunch** log (Autobase + Hyperbee) and replicate directly betwe
 peers. peerit ships as a **P2P site** that runs inside **PearBrowser** and is kept
 online 24/7 by **HiveRelay**.
 
+> **New here? Read [EXPLAINER.md](EXPLAINER.md)** — what peerit is and how it works,
+> in plain language.
+
 ```
 hyper://<driveKey>/        ← what users open in PearBrowser
 ```

@@ -5,12 +5,14 @@
 
 import { createSync } from './sync.js'
 import { createIdentity } from './identity.js'
+import { resolveRuntime } from './runtime.js'
 import { createData } from './data.js'
 import { Prefs } from './prefs.js'
 import { STARTER_COMMUNITIES, STARTER_POSTS, WELCOME_COMMUNITY, starterCommunity } from './onboarding.js'
 import { renderMarkdown, excerpt } from './markdown.js'
 import { sortPosts, sortComments, POST_SORTS, COMMENT_SORTS, TIME_WINDOW_KEYS } from './ranking.js'
-import { buildCommentTree, sortCommentTree, countDescendants, MOD } from './model.js'
+import { buildCommentTree, sortCommentTree, annotateDescendants, countDescendants, MOD } from './model.js'
+import { COPY as RECOVERY_COPY, buildRecoveryBundle, cleanOutboxes, peeritSeederCommand, recoveryBundleFilename, recoveryBundleJson } from './recovery.js'
 import {
   escapeHtml as esc, timeAgo, fmtCount, parseRoute, buildRoute,
   colorFor, shortKey, debounce, normalizeSlug, safeUserUrl
@@ -18,9 +20,11 @@ import {
 
 // ---- app singletons ---------------------------------------------------------
 let sync, identity, data, prefs
+let runtime = null                 // { mode, identityOpts, syncOpts, readOnly } from resolveRuntime
 let renderToken = 0
 let _lastHash = ''
 const openReplies = new Set()      // comment cids with an open reply box
+const collapsedComments = new Set() // comment cids the user has collapsed (survives re-renders)
 let editing = null                 // { kind:'post'|'comment', ... } inline editor
 const nameCache = new Map()        // pub -> display name (sync-ish for render)
 
@@ -37,32 +41,82 @@ const nameOf = (pub) => nameCache.get(pub) || ('u/' + String(pub || '?').slice(0
 
 // ---- boot -------------------------------------------------------------------
 async function boot () {
+  // Decide the runtime from the environment. In PearBrowser (window.pear) this
+  // resolves to empty opts == the existing host path, untouched. Only a normal
+  // browser with no host bridge and a configured relay gets the web path
+  // (local keys + remote untrusted relay). See js/runtime.js.
+  runtime = resolveRuntime({
+    rawPear: (typeof window !== 'undefined' ? window.pear : null),
+    doc: (typeof document !== 'undefined' ? document : null)
+  })
   // Identity first — the gossip layer needs to know who "me" is to pick which
   // outbox to write to (getMe is read dynamically so user-switching just works).
-  identity = createIdentity()
+  // In web mode this is a browser-LOCAL key (forceDev); the relay never signs.
+  identity = createIdentity(runtime.identityOpts)
   await identity.ready()
-  sync = createSync({ getMe: () => identity.me().pubkey, identity })
+
+  // Web mode transport selection (PearBrowser/dev use runtime.syncOpts = {}):
+  //   1) strongest: an in-browser DHT pipe (Phase 3) if a dht-relay is configured
+  //      AND its built bundle loads — the relay can't even read the traffic.
+  //   2) otherwise: a first-visit token on the (failover) /api relay.
+  //   3) on any failure: local-only (no token → no bridge surface → dev fallback).
+  let pearOverride = null
+  if (runtime.mode === 'web') {
+    if (runtime.dhtRelay) {
+      try {
+        const m = await import('./dht-bundle.js') // esbuilt Phase 3 bundle (absent in the base site)
+        pearOverride = await m.createDhtTransport({ relayWsUrl: runtime.dhtRelay, identity })
+        console.log('[peerit] using in-browser DHT transport')
+      } catch (e) { console.warn('[peerit] DHT transport unavailable; using /api relay:', e && e.message) }
+    }
+    if (!pearOverride && !runtime.syncOpts.apiToken) {
+      let acquired = false
+      for (const base of (runtime.relays || [runtime.syncOpts.apiBase])) {
+        const token = await acquireRelayToken(base)
+        if (token) { runtime.syncOpts.apiBase = base; runtime.syncOpts.apiToken = token; acquired = true; break }
+      }
+      if (!acquired) console.warn('[peerit] no relay reachable — falling back to local-only mode')
+    }
+  }
+  sync = pearOverride
+    ? createSync({ getMe: () => identity.me().pubkey, identity, pear: pearOverride })
+    : createSync({ getMe: () => identity.me().pubkey, identity, ...runtime.syncOpts })
   await sync.ready()
   data = createData(sync, identity)
   refreshPrefs()
   sync.onChange(() => data.invalidateViewCaches())
 
-  // Live updates: re-render the current view when the shared view changes,
-  // unless the user is mid-typing in a composer.
-  const soft = debounce(() => {
+  // Live updates: when peers' data changes, repaint just the affected vote
+  // widgets in place when we can, and only fall back to a full re-render for
+  // structural changes (new/edited/deleted posts & comments, mod actions). The
+  // bridge tells us WHICH keys changed (gossip.js); dev mode reports nothing, so
+  // it always does a full render. Changes accumulate across the debounce window.
+  let pendingKeys = null   // Set of changed storage keys since the last flush
+  let pendingFull = false  // a change we can't patch → must full-render
+  const flush = async () => {
     const a = document.activeElement
     // Don't rip focus from anything the user is interacting with: a form field,
     // a select, or any focused control inside the content area. The live update
     // lands as soon as focus moves on. (Local actions re-render explicitly.)
     if (a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable)) return
     if (a && a !== document.body && app() && app().contains(a)) return
+    const full = pendingFull, keys = pendingKeys
+    pendingFull = false; pendingKeys = null
+    if (!full && keys && await patchVotesInPlace(keys)) return // repainted in place; no re-render
     route()
-  }, 350)
-  sync.onChange(soft)
+  }
+  const soft = debounce(flush, 350)
+  sync.onChange((changed) => {
+    if (!changed) pendingFull = true
+    else { if (!pendingKeys) pendingKeys = new Set(); for (const k of changed) pendingKeys.add(k) }
+    soft()
+  })
   sync.onChange(() => updateNetStatus())
-  setInterval(updateNetStatus, 3000) // reflects bridge poll / background peer arrivals
+  // The gossip layer already re-merges + emits onChange on its own poll and on
+  // every real event, so a separate status timer here is redundant.
 
   window.addEventListener('hashchange', route)
+  window.addEventListener('pagehide', () => { try { if (sync && sync.destroy) sync.destroy() } catch {} })
   document.addEventListener('click', onClick)
   document.addEventListener('submit', onSubmit)
   document.addEventListener('input', onInput)
@@ -84,6 +138,21 @@ function refreshPrefs () {
 
 function isBridgeMode () {
   return !!(sync && String(sync.mode || '').includes('bridge'))
+}
+
+// Web read-only mode: the page is served from a normal origin against a relay
+// with writes disabled. Content is fetched + verified, but posting/voting is
+// blocked until a write path (local keys + writable relay) is enabled.
+function isReadOnly () { return !!(runtime && runtime.readOnly) }
+
+// Fetch a first-visit token from the relay. The token is not a secret credential
+// (anyone can request one) — it only scopes the relay's rate-limiting.
+async function acquireRelayToken (apiBase) {
+  try {
+    const r = await fetch(String(apiBase).replace(/\/$/, '') + '/api/token', { method: 'POST' })
+    const j = await r.json()
+    return j && typeof j.token === 'string' ? j.token : null
+  } catch { return null }
 }
 
 // ---- chrome (header + sidebar shell) ----------------------------------------
@@ -108,6 +177,16 @@ function renderChrome () {
     <div id="toasts" class="toasts"></div>
     <div id="modal-root"></div>
     <button id="netstatus" class="netstatus" data-act="netstatus" title="P2P sync status — click to refresh">…</button>`
+  // Web read-only: hide write affordances (composer, vote arrows, post/create
+  // links) via a body class, and explain why. The write handlers are guarded
+  // independently, so this is purely about not offering dead controls.
+  document.body.classList.toggle('web-readonly', isReadOnly())
+  if (isReadOnly()) {
+    const banner = document.createElement('div')
+    banner.className = 'readonly-banner'
+    banner.innerHTML = 'Read-only — you\'re viewing peerit over a public relay. Posts and votes are verified here, but to participate, <a href="https://pears.com/" target="_blank" rel="noopener">open peerit in PearBrowser</a>.'
+    document.body.insertBefore(banner, document.body.firstChild)
+  }
   renderUserMenu()
   updateNetStatus()
 }
@@ -120,7 +199,7 @@ async function updateNetStatus () {
     const me = identity.me()
     const secure = s.secure !== false
     el.className = 'netstatus ' + (s.mode && s.mode.includes('bridge') ? 'bridge' : (secure ? 'ok' : 'warn'))
-    el.innerHTML = `<b>${esc(s.mode || 'sync')}</b> · ${s.peers != null ? s.peers : 1}p · ${s.viewLength || 0} recs · <span class="mono">${esc((me.pubkey || '').slice(0, 6))}…</span>${secure ? '' : ' · ⚠ insecure'}`
+    el.innerHTML = `<b>${esc(s.mode || 'sync')}</b> · ${s.peers != null ? s.peers : 1}p · ${s.viewLength || 0} recs · <span class="mono">${esc((me.pubkey || '').slice(0, 6))}…</span>${secure ? '' : ' · ⚠ insecure'}${isReadOnly() ? ' · read-only' : ''}`
   } catch (e) { el.textContent = 'sync: ' + (e.message || 'error') }
 }
 
@@ -129,9 +208,11 @@ async function renderUserMenu () {
   await primeNames([me.pubkey])
   const el = $('#usermenu')
   if (!el) return
-  const badge = !isBridgeMode()
-    ? '<span class="mode-badge dev" title="Running on local dev fallback (no PearBrowser bridge detected)">dev</span>'
-    : '<span class="mode-badge live" title="Connected to PearBrowser P2P bridge">p2p</span>'
+  const badge = (runtime && runtime.mode === 'web')
+    ? '<span class="mode-badge web" title="Bridged to peerit\'s P2P network over a public relay — records are verified, but install PearBrowser for fully trustless P2P">web</span>'
+    : !isBridgeMode()
+      ? '<span class="mode-badge dev" title="Running on local dev fallback (no PearBrowser bridge detected)">dev</span>'
+      : '<span class="mode-badge live" title="Connected to PearBrowser P2P bridge">p2p</span>'
   el.innerHTML = `
     ${badge}
     <button class="user-pill" data-act="toggle-usermenu" aria-haspopup="menu" aria-label="Account menu">
@@ -157,7 +238,10 @@ function devUserSwitcher () {
     users.map(u => `<button class="dd-user ${u.pubkey === me ? 'active' : ''}" data-act="switch-user" data-pub="${esc(u.pubkey)}">
         <span class="avatar sm" style="background:${colorFor(u.pubkey)}"></span>${esc(u.label || ('u/' + u.pubkey.slice(0, 8)))}
       </button>`).join('') +
-    `<button class="dd-user new" data-act="new-user">＋ New dev user</button>`
+    `<form class="dd-new-user" data-form="dev-user">
+      <input name="name" placeholder="New dev user" maxlength="32" autocomplete="off" required>
+      <button type="submit" title="Create dev user">＋</button>
+    </form>`
 }
 
 // ---- router -----------------------------------------------------------------
@@ -204,7 +288,7 @@ function voteWidget (rec, type) {
   const up = t.myVote === 1 ? 'on' : ''
   const down = t.myVote === -1 ? 'on' : ''
   const cls = t.myVote === 1 ? 'pos' : t.myVote === -1 ? 'neg' : ''
-  return `<div class="votes" data-cid="${esc(rec.cid)}" data-community="${esc(rec.community)}" data-type="${type}">
+  return `<div class="votes" data-cid="${esc(rec.cid)}" data-community="${esc(rec.community)}" data-type="${type}" data-myvote="${t.myVote || 0}">
     <button class="arrow up ${up}" data-act="vote" data-dir="1" aria-label="upvote">▲</button>
     <span class="score ${cls}">${fmtCount(t.score)}</span>
     <button class="arrow down ${down}" data-act="vote" data-dir="-1" aria-label="downvote">▼</button>
@@ -480,6 +564,7 @@ async function viewPost ({ community, cid, query, guard, token }) {
   const { roots } = buildCommentTree(comments)
   const sorter = (nodes) => sortComments(nodes, csort)
   const sorted = sortCommentTree(roots, sorter)
+  annotateDescendants(sorted) // one bottom-up pass so commentNode reads node._descendants in O(1)
 
   if (token !== renderToken) return
   const locked = ov.locked.has(cid)
@@ -517,17 +602,18 @@ async function viewPost ({ community, cid, query, guard, token }) {
 
 function countDescendantsTotal (roots) {
   let n = roots.length
-  for (const r of roots) n += countDescendants(r)
+  for (const r of roots) n += (r._descendants != null ? r._descendants : countDescendants(r))
   return fmtCount(n)
 }
 
 function commentNode (node, post, ov, isMod, depth) {
   const mine = node.author === identity.me().pubkey
   const collapsedId = 'c_' + node.cid
+  const isCollapsed = collapsedComments.has(node.cid) // preserved across live re-renders
   const removed = node._removed
   const deleted = node.deleted
   const locked = !!(ov.locked && ov.locked.has(post.cid))
-  const childCount = countDescendants(node)
+  const childCount = node._descendants != null ? node._descendants : countDescendants(node)
   let bodyHtml
   if (deleted) bodyHtml = `<div class="removed-note">[deleted]</div>`
   else if (removed) bodyHtml = `<div class="removed-note">[removed by moderators]</div>`
@@ -546,9 +632,9 @@ function commentNode (node, post, ov, isMod, depth) {
   const children = node.children.length
     ? `<div class="children">${node.children.map(c => commentNode(c, post, ov, isMod, depth + 1)).join('')}</div>` : ''
 
-  return `<div class="comment" data-cid="${esc(node.cid)}" data-community="${esc(node.community)}" id="${collapsedId}">
+  return `<div class="comment${isCollapsed ? ' collapsed' : ''}" data-cid="${esc(node.cid)}" data-community="${esc(node.community)}" id="${collapsedId}">
     <div class="comment-row">
-      <button class="collapse" data-act="collapse" data-target="${collapsedId}" title="collapse" aria-label="Collapse or expand comment thread">[–]</button>
+      <button class="collapse" data-act="collapse" data-target="${collapsedId}" title="collapse" aria-label="Collapse or expand comment thread">${isCollapsed ? '[+]' : '[–]'}</button>
       <div class="comment-body">
         <div class="comment-head">
           ${voteWidgetInline(node)}
@@ -571,7 +657,7 @@ function commentNode (node, post, ov, isMod, depth) {
 function voteWidgetInline (rec) {
   const t = rec.tally || { score: 0, myVote: 0 }
   const cls = t.myVote === 1 ? 'pos' : t.myVote === -1 ? 'neg' : ''
-  return `<span class="votes inline" data-cid="${esc(rec.cid)}" data-community="${esc(rec.community)}" data-type="comment">
+  return `<span class="votes inline" data-cid="${esc(rec.cid)}" data-community="${esc(rec.community)}" data-type="comment" data-myvote="${t.myVote || 0}">
     <button class="arrow up ${t.myVote === 1 ? 'on' : ''}" data-act="vote" data-dir="1" aria-label="upvote">▲</button>
     <span class="score ${cls}">${fmtCount(t.score)}</span>
     <button class="arrow down ${t.myVote === -1 ? 'on' : ''}" data-act="vote" data-dir="-1" aria-label="downvote">▼</button>
@@ -588,12 +674,14 @@ async function viewSubmit ({ query, guard, token }) {
       <p>You need a community before you can post.</p>
       <a class="btn btn-primary" href="#/create">Create a community</a></div>`, renderSidebarHome)
   }
+  const showBackupWarning = await needsFirstPostBackupWarning(communities)
   const bannedHere = (await data.overlay(to)).banned.has(identity.me().pubkey)
   if (token !== renderToken) return
   guard(`<div class="panel">
     <h1>Create a post</h1>
     ${bannedHere ? `<div class="locked-note">🚫 You are banned from r/${esc(to)} — pick another community.</div>` : ''}
     <form data-form="submit-post">
+      ${showBackupWarning ? firstPostBackupWarningHtml() : ''}
       <label>Community
         <select name="community">${communities.map(c => `<option value="${esc(c.slug)}" ${c.slug === to ? 'selected' : ''}>r/${esc(c.slug)}</option>`).join('')}</select>
       </label>
@@ -762,12 +850,95 @@ async function viewSearch ({ query, guard, token }) {
 }
 
 // ---- SETTINGS view ----------------------------------------------------------
+function settingsOutboxes (status, me) {
+  const fallback = status && status.inviteKey
+    ? { appId: status.outboxAppId || (me && me.pubkey) || 'peerit', inviteKey: status.inviteKey }
+    : null
+  return cleanOutboxes(status && status.outboxes, fallback)
+}
+
+function currentSettingsOutbox (status, me) {
+  const outboxes = settingsOutboxes(status, me)
+  const currentAppId = (status && status.outboxAppId) || (me && me.pubkey)
+  return outboxes.find(o => o.appId === currentAppId) || outboxes[0] || null
+}
+
+function settingsRecoveryBundle (status, me, createdAt) {
+  return buildRecoveryBundle({
+    publicKey: me && me.pubkey,
+    driveKey: me && me.driveKey,
+    outboxes: settingsOutboxes(status, me),
+    createdAt
+  })
+}
+
+function settingsSeederCommand (status, me) {
+  return peeritSeederCommand(settingsOutboxes(status, me))
+}
+
+function outboxListHtml (outboxes, current) {
+  if (outboxes.length < 2) return ''
+  return `<details class="outbox-list">
+    <summary>${fmtCount(outboxes.length)} known outboxes included in the command and bundle</summary>
+    <ul>${outboxes.map(o => `<li><span class="mono small">${esc(shortKey(o.appId, 10))}</span>${current && o.appId === current.appId ? '<b>current</b>' : ''}<code class="mono">${esc(shortKey(o.inviteKey, 10))}</code></li>`).join('')}</ul>
+  </details>`
+}
+
+async function pearBackupStatus () {
+  const pearIdentity = typeof window !== 'undefined' && window.pear && window.pear.identity
+  if (!pearIdentity) return { known: false }
+  for (const name of ['getBackupStatus', 'backupStatus', 'getRecoveryStatus']) {
+    if (typeof pearIdentity[name] !== 'function') continue
+    try {
+      const r = await pearIdentity[name]()
+      const backedUp = !!(r && (r.backedUp || r.phraseBackedUp || r.mnemonicBackedUp || r.status === 'backed-up' || r.status === 'backedUp'))
+      return { known: true, backedUp }
+    } catch {}
+  }
+  return { known: false }
+}
+
+function backupStatusHtml (backup) {
+  if (backup && backup.known && backup.backedUp) {
+    return '<span class="status-pill good">PearBrowser phrase backed up</span>'
+  }
+  const label = backup && backup.known ? 'Open PearBrowser backup instructions' : 'Open PearBrowser backup instructions'
+  return `<button class="btn btn-ghost sm" type="button" data-act="pear-backup-help">${label}</button>`
+}
+
+function firstPostBackupWarningHtml () {
+  return `<div class="notice warn identity-backup-warning">
+    <b>${esc(RECOVERY_COPY.backupSummary)}</b>
+    <p>${esc(RECOVERY_COPY.identityBackup)}</p>
+    <label class="checkline"><input type="checkbox" name="identity-backup-ack" required> I understand that peerit cannot recover my PearBrowser recovery phrase.</label>
+  </div>`
+}
+
+async function hasPostsBy (pub, communities) {
+  for (const c of communities || []) {
+    const posts = await data.listPostsIn(c.slug).catch(() => [])
+    if (posts.some(p => p && p.author === pub)) return true
+  }
+  return false
+}
+
+async function needsFirstPostBackupWarning (communities) {
+  if (prefs.identityBackupAcked) return false
+  return !(await hasPostsBy(identity.me().pubkey, communities))
+}
+
 async function viewSettings ({ guard, token }) {
   const me = identity.me()
   const profile = await data.getProfile(me.pubkey)
   const status = await data.status()
+  const outboxes = settingsOutboxes(status, me)
+  const currentOutbox = currentSettingsOutbox(status, me)
+  const seederCommand = settingsSeederCommand(status, me)
+  const hasOutbox = !!(currentOutbox && currentOutbox.inviteKey && seederCommand)
+  const modeLabel = isBridgeMode() ? 'PearBrowser P2P bridge' : 'Local dev fallback'
+  const backup = await pearBackupStatus()
   if (token !== renderToken) return
-  guard(`<div class="panel">
+  guard(`<div class="panel settings-panel">
     <h1>Settings</h1>
     <h2>Profile</h2>
     <form data-form="profile">
@@ -775,15 +946,64 @@ async function viewSettings ({ guard, token }) {
       <label>Bio <textarea name="bio" rows="3" maxlength="500" placeholder="about you">${esc(profile && profile.bio || '')}</textarea></label>
       <div class="form-actions"><button class="btn btn-primary" type="submit">Save profile</button></div>
     </form>
-    <h2>Identity</h2>
-    <p class="mono small">pubkey: ${esc(me.pubkey)}</p>
-    <h2>Network</h2>
-    <ul class="kv">
-      <li><span>Mode</span><b>${isBridgeMode() ? 'PearBrowser P2P bridge' : 'Local dev fallback'}</b></li>
-      <li><span>App id</span><b>peerit</b></li>
-      <li><span>Records in view</span><b>${fmtCount(status.viewLength || 0)}</b></li>
-      ${status.inviteKey ? `<li><span>Group key</span><b class="mono small">${esc(shortKey(status.inviteKey, 12))}</b></li>` : ''}
+    <h2>Identity / Recovery</h2>
+    <p class="settings-copy"><b>${esc(RECOVERY_COPY.backupSummary)}</b></p>
+    <p class="dim small settings-copy">${esc(RECOVERY_COPY.identityBackup)}</p>
+    <ul class="kv settings-kv">
+      <li><span>App identity fingerprint</span><b class="mono small key-inline" title="${esc(me.pubkey)}">${esc(shortKey(me.pubkey, 12))}</b></li>
+      <li><span>App drive key fingerprint</span><b class="mono small" title="${esc(me.driveKey)}">${esc(shortKey(me.driveKey, 12))}</b></li>
+      <li><span>Backup status</span><b>${backupStatusHtml(backup)}</b></li>
+      <li><span>Sync mode</span><b>${modeLabel}</b></li>
     </ul>
+    <h2>Outbox seeding</h2>
+    <div class="outbox-workflow">
+      <p class="dim small settings-copy">Your posts, comments, votes, profile, communities, and mod actions are signed records in your outbox. Signatures prove authorship; seeding improves availability.</p>
+      <div class="notice">
+        <b>What the Group key does</b>
+        <p>Your Group key helps your app data stay discoverable. It is not your identity phrase and does not let anyone sign as you, but it can let another device or seeder replicate your public outbox.</p>
+      </div>
+      ${hasOutbox ? `
+        <label class="key-label">Full outbox/group key
+          <textarea class="keybox mono" readonly spellcheck="false" rows="3">${esc(currentOutbox.inviteKey)}</textarea>
+          <span class="hint">Treat this as an app data recovery / seeding key. Share it deliberately with an always-on seeder, not as a public profile field.</span>
+        </label>
+        <div class="form-actions wrap">
+          <button class="btn btn-primary" type="button" data-act="copy-outbox-key">Copy Group key</button>
+          <button class="btn btn-ghost" type="button" data-act="copy-recovery-bundle">Copy recovery bundle</button>
+          <button class="btn btn-ghost" type="button" data-act="export-recovery-bundle">Export bundle</button>
+        </div>
+        <label class="key-label">peerit-seeder command
+          <textarea class="keybox command mono" readonly spellcheck="false" rows="${outboxes.length > 1 ? 4 : 3}">${esc(seederCommand)}</textarea>
+          <span class="hint">Run this from a checkout next to peerit, or adjust the directory before running it on an always-on box.</span>
+        </label>
+        <div class="form-actions wrap">
+          <button class="btn btn-primary" type="button" data-act="copy-seeder-command">Copy seeder command</button>
+        </div>
+        ${outboxListHtml(outboxes, currentOutbox)}
+        <ul class="kv settings-kv">
+          <li><span>Outboxes in bundle</span><b>${fmtCount(outboxes.length)}</b></li>
+          <li><span>Peers discovered</span><b>${fmtCount(status.peers != null ? status.peers : 1)}</b></li>
+          <li><span>Records in merged view</span><b>${fmtCount(status.viewLength || 0)}</b></li>
+          <li><span>Seeder status</span><b>Not measured in app</b></li>
+        </ul>
+        <p class="dim small settings-copy">Availability is still conditional: a seeder or relay must hold the bytes and stay reachable. Seeder logs should confirm byte replication because seed accepted is not the same as bytes replicated.</p>
+      ` : `
+        <div class="empty compact">
+          <h3>No seedable outbox here</h3>
+          <p>PearBrowser outbox keys are available when peerit is running on the P2P bridge. The local dev fallback is useful for testing, but it does not produce a seeder-ready Group key.</p>
+        </div>
+      `}
+    </div>
+    <h2>Import app recovery bundle</h2>
+    <form data-form="import-recovery" class="import-recovery">
+      <p class="dim small settings-copy">Import compares the bundle drive key and public key with this app before accepting it. Restore your PearBrowser phrase first, then open the same production app drive key.</p>
+      <label>Recovery bundle JSON
+        <textarea class="keybox mono" name="bundle" rows="8" spellcheck="false" placeholder='{"version":1,"app":"peerit",...}' required></textarea>
+      </label>
+      <div class="form-actions wrap">
+        <button class="btn btn-primary" type="submit">Import bundle</button>
+      </div>
+    </form>
     ${identity.isDev ? `<h2>Dev tools</h2>
       <p class="dim small">You're running outside PearBrowser. Multiple browser tabs share one world via localStorage + BroadcastChannel, so you can simulate several users.</p>
       <div class="form-actions">
@@ -867,14 +1087,19 @@ async function onClick (e) {
       case 'save': { prefs.toggleSaved(t.dataset.ref); t.textContent = prefs.isSaved(t.dataset.ref) ? '★ saved' : '☆ save'; return }
       case 'hide': { prefs.toggleHidden(t.dataset.ref); route(); return }
       case 'sub': { const slug = t.dataset.slug; const now = prefs.toggleSub(slug); toast(now ? 'Joined r/' + slug : 'Left r/' + slug); route(); return }
-      case 'copylink': return void copyLink(t.dataset.ref)
+      case 'copylink': return void await copyLink(t.dataset.ref)
+      case 'copy-outbox-key': return void await copyOutboxKey()
+      case 'copy-seeder-command': return void await copySeederCommand()
+      case 'copy-recovery-bundle': return void await copyRecoveryBundle()
+      case 'export-recovery-bundle': return void await exportRecoveryBundle()
+      case 'pear-backup-help': return void showPearBackupInstructions()
+      case 'close-modal': return void closeModal()
       case 'collapse': return toggleCollapse(t)
       case 'reply': { openReplies.add(t.dataset.cid); route(); return }
       case 'cancel-reply': { openReplies.delete(t.dataset.cid); route(); return }
       case 'toggle-usermenu': { const d = $('#userdrop'); if (d) { d.hidden = !d.hidden; t.setAttribute('aria-expanded', String(!d.hidden)) } return }
       case 'netstatus': return void updateNetStatus()
-      case 'switch-user': { identity.switchUser(t.dataset.pub); if (sync.announce) sync.announce(); refreshPrefs(); nameCache.clear(); renderUserMenu(); route(); toast('Switched user'); return }
-      case 'new-user': return void await newDevUser()
+      case 'switch-user': { identity.switchUser(t.dataset.pub); data.invalidateViewCaches(); if (sync.announce) sync.announce(); refreshPrefs(); nameCache.clear(); renderUserMenu(); route(); toast('Switched user'); return }
       case 'start-community': return void await startCommunity(t.dataset.slug)
       case 'dismiss-welcome': { prefs.markWelcomeSeen(); route(); return }
       case 'show-welcome': { prefs.markWelcomeUnseen(); location.hash = '#/'; route(); return }
@@ -914,21 +1139,25 @@ document.addEventListener('change', (e) => {
 })
 
 async function onVote (t) {
+  if (isReadOnly()) { toast('Read-only here — open peerit in PearBrowser to vote.', 'error'); return }
   const box = t.closest('.votes')
   const cid = box.dataset.cid
   const community = box.dataset.community
   const type = box.dataset.type
   const dir = Number(t.dataset.dir)
-  const cur = box.querySelector('.arrow.up').classList.contains('on') ? 1 : box.querySelector('.arrow.down').classList.contains('on') ? -1 : 0
-  const next = cur === dir ? 0 : dir
+  const up = box.querySelector('.arrow.up')
+  const down = box.querySelector('.arrow.down')
   const scoreEl = box.querySelector('.score')
+  const cur = Number(box.dataset.myvote) || 0
+  const next = cur === dir ? 0 : dir
   const base = parseScore(scoreEl.textContent) - cur
   const paint = (v) => {
     scoreEl.textContent = fmtCount(base + v)
-    box.querySelector('.arrow.up').classList.toggle('on', v === 1)
-    box.querySelector('.arrow.down').classList.toggle('on', v === -1)
+    up.classList.toggle('on', v === 1)
+    down.classList.toggle('on', v === -1)
     scoreEl.classList.toggle('pos', v === 1)
     scoreEl.classList.toggle('neg', v === -1)
+    box.dataset.myvote = v
   }
   paint(next) // optimistic
   try {
@@ -945,10 +1174,57 @@ function parseScore (s) {
   return parseInt(s, 10) || 0
 }
 
+const cssEscape = (s) => (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(String(s)) : String(s).replace(/["\\]/g, '\\$&')
+
+function repaintVotes (box, t) {
+  const score = box.querySelector('.score')
+  const up = box.querySelector('.arrow.up')
+  const down = box.querySelector('.arrow.down')
+  if (score) { score.textContent = fmtCount(t.score); score.classList.toggle('pos', t.myVote === 1); score.classList.toggle('neg', t.myVote === -1) }
+  if (up) up.classList.toggle('on', t.myVote === 1)
+  if (down) down.classList.toggle('on', t.myVote === -1)
+  box.dataset.myvote = t.myVote || 0
+}
+
+// Try to satisfy a live update by repainting vote widgets in place. Returns true
+// only if EVERY changed key was a vote (so no structural re-render is needed);
+// any post/comment/community/mod/profile change returns false → full route().
+// Off-screen targets are simply skipped — their data is already in the store.
+async function patchVotesInPlace (keys) {
+  const cids = new Set()
+  for (const k of keys) {
+    if (k.startsWith('vote!')) {
+      // vote!<targetCid>!<author> — the author (pubkey) is the '!'-free LAST
+      // segment, so strip from the last '!' to recover the full targetCid
+      // (robust even if a targetCid ever contains '!').
+      const rest = k.slice(5)
+      const i = rest.lastIndexOf('!')
+      cids.add(i >= 0 ? rest.slice(0, i) : rest)
+    } else {
+      return false                        // a structural change — let route() handle it
+    }
+  }
+  // NB: vote patches intentionally do NOT re-sort the feed — a remote vote
+  // nudging a score won't reshuffle posts under the reader (Reddit behaves the
+  // same). The next navigation re-ranks via sortPosts.
+  for (const cid of cids) {
+    const boxes = document.querySelectorAll('.votes[data-cid="' + cssEscape(cid) + '"]')
+    if (!boxes.length) continue           // not on screen; nothing to paint
+    const t = await data.tallyFor(cid)
+    for (const box of boxes) repaintVotes(box, t)
+  }
+  return true
+}
+
 function toggleCollapse (btn) {
   const node = document.getElementById(btn.dataset.target)
   if (!node) return
+  const cid = btn.dataset.target.slice(2) // strip the 'c_' prefix of collapsedId
   const collapsed = node.classList.toggle('collapsed')
+  if (collapsed) {
+    collapsedComments.add(cid)
+    if (collapsedComments.size > 5000) collapsedComments.delete(collapsedComments.values().next().value) // bound memory (FIFO)
+  } else collapsedComments.delete(cid)
   btn.textContent = collapsed ? '[+]' : '[–]'
 }
 
@@ -1009,25 +1285,34 @@ async function onSubmit (e) {
   e.preventDefault()
   const f = form.dataset.form
   const fd = new FormData(form)
+  // Read-only web mode: search still works; everything else is a write.
+  if (f !== 'search' && isReadOnly()) { toast('peerit is read-only here — open it in PearBrowser to post, comment, or vote.', 'error'); return }
   if (form.dataset.busy) return // block double-submit while the write is in flight
   const btn = form.querySelector('button[type="submit"]')
   if (f !== 'search') {
     form.dataset.busy = '1'
     if (btn) { btn.dataset.label = btn.textContent; btn.disabled = true; btn.textContent = '…' }
   }
+  // Proof-of-work (community/post/comment) can run hundreds of thousands of
+  // hashes; surface progress on the submit button so it doesn't look frozen.
+  const onProgress = btn ? (nonce) => { btn.textContent = '… ' + nonce.toLocaleString() } : undefined
   try {
     if (f === 'search') { const q = (fd.get('q') || '').trim(); if (q) location.hash = buildRoute(['search'], { q }); return }
     if (f === 'create-community') {
-      const c = await data.createCommunity({ slug: fd.get('slug'), title: fd.get('title'), description: fd.get('description') })
+      const c = await data.createCommunity({ slug: fd.get('slug'), title: fd.get('title'), description: fd.get('description'), onProgress })
       prefs.subscribe(c.slug)
       toast('Created r/' + c.slug)
       location.hash = '#/r/' + c.slug
       return
     }
     if (f === 'submit-post') {
+      if (await needsFirstPostBackupWarning(await data.listCommunities())) {
+        if (fd.get('identity-backup-ack') !== 'on') throw new Error('Please acknowledge the PearBrowser identity backup warning before posting.')
+        prefs.acknowledgeIdentityBackup()
+      }
       const p = await data.submitPost({
         community: fd.get('community'), kind: fd.get('kind'),
-        title: fd.get('title'), body: fd.get('body'), url: fd.get('url')
+        title: fd.get('title'), body: fd.get('body'), url: fd.get('url'), onProgress
       })
       toast('Posted')
       location.hash = buildRoute(['r', p.community, 'comments', p.cid])
@@ -1036,7 +1321,7 @@ async function onSubmit (e) {
     if (f === 'comment') {
       const body = fd.get('body')
       const parent = form.dataset.parent || null
-      await data.addComment({ community: form.dataset.community, postCid: form.dataset.post, parentCid: parent, body })
+      await data.addComment({ community: form.dataset.community, postCid: form.dataset.post, parentCid: parent, body, onProgress })
       if (parent) openReplies.delete(parent)
       form.reset()
       toast('Comment added'); route()
@@ -1050,6 +1335,22 @@ async function onSubmit (e) {
       toast('Profile saved'); route()
       return
     }
+    if (f === 'import-recovery') {
+      const result = await data.importRecoveryBundle(String(fd.get('bundle') || ''))
+      if (result.failures && result.failures.length) {
+        toast(`Recovery bundle accepted, but ${result.failures.length} outbox${result.failures.length === 1 ? '' : 'es'} failed to join`, 'error')
+      } else if (result.imported) {
+        toast('Recovery bundle imported: identity restored, outboxes joined, records visible.')
+      } else {
+        toast('Recovery bundle imported: identity restored, no outboxes were included.')
+      }
+      route()
+      return
+    }
+    if (f === 'dev-user') {
+      await createDevUser(String(fd.get('name') || '').trim())
+      return
+    }
   } catch (err) { toast(err.message || String(err), 'error') }
   finally {
     delete form.dataset.busy
@@ -1058,10 +1359,10 @@ async function onSubmit (e) {
 }
 
 // ---- dev helpers ------------------------------------------------------------
-async function newDevUser () {
-  const name = prompt('New dev user name:', 'user_' + Math.floor(Math.random() * 999))
+async function createDevUser (name) {
   if (!name) return
   await identity.createUser(name)
+  data.invalidateViewCaches()
   if (sync.announce) await sync.announce()
   refreshPrefs(); nameCache.clear()
   await renderUserMenu(); route(); toast('Created & switched to ' + name)
@@ -1105,10 +1406,101 @@ function wipe () {
 }
 
 // ---- misc -------------------------------------------------------------------
-function copyLink (ref) {
+function showPearBackupInstructions () {
+  const root = $('#modal-root')
+  const body = `${RECOVERY_COPY.identityBackup}\n\nOpen PearBrowser settings and back up your 12-word recovery phrase before relying on this app identity. peerit will never ask you to paste that phrase here.`
+  if (!root) { alert(body); return }
+  root.innerHTML = `<div class="modal-backdrop">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="backup-title">
+      <h2 id="backup-title">PearBrowser backup</h2>
+      <p>${esc(RECOVERY_COPY.identityBackup)}</p>
+      <p class="dim small">Open PearBrowser settings and back up your 12-word recovery phrase before relying on this app identity. peerit will never ask you to paste that phrase here.</p>
+      <div class="form-actions"><button class="btn btn-primary" type="button" data-act="close-modal">Done</button></div>
+    </div>
+  </div>`
+}
+
+function closeModal () {
+  const root = $('#modal-root')
+  if (root) root.innerHTML = ''
+}
+
+async function currentRecoveryExport () {
+  const me = identity.me()
+  const status = await data.status()
+  const outboxes = settingsOutboxes(status, me)
+  if (!outboxes.length) throw new Error('No seedable outbox here')
+  const bundle = settingsRecoveryBundle(status, me, new Date())
+  return {
+    me,
+    status,
+    outboxes,
+    currentOutbox: currentSettingsOutbox(status, me),
+    command: settingsSeederCommand(status, me),
+    bundle,
+    json: recoveryBundleJson(bundle)
+  }
+}
+
+async function copyText (text, message) {
+  if (!text) throw new Error('Nothing to copy')
+  if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+    await navigator.clipboard.writeText(text)
+  } else {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.setAttribute('readonly', '')
+    ta.style.position = 'fixed'
+    ta.style.left = '-9999px'
+    document.body.appendChild(ta)
+    ta.select()
+    const ok = document.execCommand && document.execCommand('copy')
+    ta.remove()
+    if (!ok) throw new Error('Copy failed')
+  }
+  toast(message)
+}
+
+function downloadText (filename, text, type) {
+  if (typeof Blob === 'undefined' || typeof URL === 'undefined' || !URL.createObjectURL) throw new Error('Download is not available here')
+  const blob = new Blob([text], { type: type || 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+async function copyOutboxKey () {
+  const snapshot = await currentRecoveryExport()
+  if (!snapshot.currentOutbox || !snapshot.currentOutbox.inviteKey) throw new Error('No Group key available')
+  await copyText(snapshot.currentOutbox.inviteKey, 'Group key copied')
+}
+
+async function copySeederCommand () {
+  const snapshot = await currentRecoveryExport()
+  await copyText(snapshot.command, 'Seeder command copied')
+}
+
+async function copyRecoveryBundle () {
+  const snapshot = await currentRecoveryExport()
+  await copyText(snapshot.json, 'Recovery bundle copied')
+}
+
+async function exportRecoveryBundle () {
+  const snapshot = await currentRecoveryExport()
+  downloadText(recoveryBundleFilename(snapshot.bundle), snapshot.json, 'application/json;charset=utf-8')
+  toast('Recovery bundle exported')
+}
+
+async function copyLink (ref) {
   const [c, cid] = ref.split('/')
   const url = location.origin + location.pathname + buildRoute(['r', c, 'comments', cid])
-  try { navigator.clipboard.writeText(url); toast('Link copied') }
+  try { await copyText(url, 'Link copied') }
   catch { toast(url) }
 }
 

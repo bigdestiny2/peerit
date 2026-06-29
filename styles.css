@@ -76,7 +76,13 @@ button{font-family:inherit}
 .dd-sep{height:1px;background:var(--border);margin:6px 4px}
 .dd-label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);padding:6px 12px 2px}
 .dd-user.active{color:var(--accent);font-weight:600}
-.dd-user.new{color:var(--good)}
+.dd-new-user{display:grid;grid-template-columns:1fr 36px;gap:6px;padding:8px 6px 4px}
+.dd-new-user input{min-width:0;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--bg-2);
+  color:var(--text);padding:0 9px;font:inherit;font-size:13px}
+.dd-new-user input:focus{border-color:var(--accent)}
+.dd-new-user button{height:34px;border-radius:8px;border:1px solid rgba(73,204,139,.35);background:rgba(73,204,139,.10);
+  color:var(--good);font-weight:800;cursor:pointer}
+.dd-new-user button:hover{background:rgba(73,204,139,.18)}
 
 /* layout */
 .layout{max-width:1180px;margin:22px auto;padding:0 18px;display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:24px;align-items:start}
@@ -228,6 +234,33 @@ label input:focus,label textarea:focus,label select:focus{border-color:var(--acc
 .kv{list-style:none;margin:0;padding:0}
 .kv li{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:14px}
 .kv li span{color:var(--muted)}
+.settings-copy{max-width:760px}
+.settings-kv{margin-bottom:4px}
+.settings-kv li{gap:18px;align-items:flex-start}
+.key-inline{max-width:min(100%,520px);text-align:right;overflow-wrap:anywhere;word-break:break-word}
+.outbox-workflow{display:flex;flex-direction:column;gap:12px}
+.notice{border:1px solid rgba(45,212,191,.28);background:rgba(45,212,191,.07);border-radius:10px;padding:12px 14px}
+.notice b{display:block;font-size:14px;margin-bottom:3px;color:var(--good)}
+.notice p{margin:0;color:var(--muted);font-size:13.5px}
+.notice.warn{border-color:rgba(255,107,61,.35);background:rgba(255,107,61,.08)}
+.notice.warn b{color:var(--up)}
+.identity-backup-warning{margin-bottom:14px}
+.checkline{display:flex;align-items:flex-start;gap:8px;margin:10px 0 0;color:var(--text);font-weight:600}
+.checkline input{width:auto;margin:3px 0 0;flex:0 0 auto}
+.status-pill{display:inline-flex;align-items:center;border:1px solid var(--border-2);border-radius:999px;padding:4px 10px;font-size:12.5px}
+.status-pill.good{border-color:rgba(45,212,191,.35);color:var(--good);background:rgba(45,212,191,.09)}
+.key-label{margin:0}
+label textarea.keybox{min-height:88px;font-size:12.5px;line-height:1.45;resize:vertical;overflow-wrap:anywhere;word-break:break-all}
+label textarea.keybox.command{min-height:78px;word-break:normal}
+.import-recovery{margin-top:4px}
+.form-actions.wrap{flex-wrap:wrap}
+.outbox-list{border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:rgba(10,14,23,.28)}
+.outbox-list summary{cursor:pointer;color:var(--muted);font-size:13.5px;font-weight:600}
+.outbox-list ul{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.outbox-list li{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(80px,auto);gap:8px;align-items:center;color:var(--muted);font-size:12.5px}
+.outbox-list b{color:var(--good);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+.outbox-list code{color:var(--text);background:var(--bg-2);border:1px solid var(--border);border-radius:6px;padding:2px 6px}
+.empty.compact{padding:24px 18px}
 
 /* profile */
 .profile-head{display:flex;align-items:center;gap:18px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:14px}
@@ -280,6 +313,12 @@ label input:focus,label textarea:focus,label select:focus{border-color:var(--acc
 .toast.out{opacity:0;transform:translateY(8px);transition:.3s}
 @keyframes tin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 
+/* modal */
+.modal-backdrop{position:fixed;inset:0;z-index:90;display:grid;place-items:center;padding:18px;background:rgba(4,7,13,.68);backdrop-filter:blur(8px)}
+.modal-card{width:min(520px,100%);background:var(--surface);border:1px solid var(--border-2);border-radius:var(--radius);padding:20px;box-shadow:0 24px 70px rgba(0,0,0,.55)}
+.modal-card h2{margin:0 0 10px;font-size:19px}
+.modal-card p{margin:0 0 10px}
+
 /* responsive */
 @media(max-width:920px){
   .layout{grid-template-columns:1fr}
@@ -326,6 +365,10 @@ label input:focus,label textarea:focus,label select:focus{border-color:var(--acc
   .pa{padding:8px 10px}
   /* tighter comment nesting on small screens */
   .children{margin-left:8px;padding-left:8px}
+  .settings-kv li{display:block}
+  .settings-kv li b{display:block;text-align:left;margin-top:2px}
+  .key-inline{max-width:100%;text-align:left}
+  .outbox-list li{grid-template-columns:1fr}
 }
 
 /* respect reduced-motion preference */
@@ -345,3 +388,17 @@ label input:focus,label textarea:focus,label select:focus{border-color:var(--acc
 .netstatus.warn{border-color:rgba(255,107,61,.4)}
 .netstatus.warn b{color:var(--up)}
 @media(max-width:560px){ .netstatus{left:8px;bottom:8px;font-size:10.5px;padding:5px 9px} }
+
+/* ---- web read-only mode (peerit.com over a public relay) -------------------- */
+.readonly-banner {
+  position: sticky; top: 0; z-index: 60;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff; padding: 8px 16px; font-size: 13px; line-height: 1.5; text-align: center;
+}
+.readonly-banner a { color: #fff; text-decoration: underline; font-weight: 500; }
+/* Don't offer write controls that the read-only relay will refuse. */
+.web-readonly [href="#/submit"],
+.web-readonly [href="#/create"],
+.web-readonly .composer,
+.web-readonly .votes .arrow { display: none !important; }
+.mode-badge.web{background:rgba(79,140,255,.14);color:var(--accent);border:1px solid rgba(79,140,255,.32)}

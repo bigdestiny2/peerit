@@ -18,7 +18,11 @@ Green in this loop:
   runtime, relay roster, and DHT adapter suites
 - `npm run ship:check`: served files clean, smoke/gossip/bridge suites passed,
   `.deploy/last-ship.json` status `ready`
-- `npm run proof:availability`
+- `npm run ship:live`: strict HiveRelay publish completed; metadata and blob
+  bytes durable on relays; live at
+  `hyper://ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4/`
+- `npm run proof:availability`: status `ready`
+- `npm run proof:availability:live`: status `ready`
 - `npm run proof:availability -- --url http://127.0.0.1:8777` with the local dev server running
 - Browser UI path through the in-app browser: create community, create post, add
   comment in tab A, open tab B, create/switch dev user, add second comment, and
@@ -32,10 +36,7 @@ Expected local limitation:
 Not run in this loop:
 
 - `npm run publish:local`
-- `npm run publish`
 - Real PearBrowser bridge runtime
-- Public catalog visibility
-- Live relay durability from a fresh publish report
 - Fresh user-data seeder/cold-reader proof
 
 ## Package Scripts
@@ -44,11 +45,11 @@ Not run in this loop:
 | --- | --- | --- |
 | `npm test` | Headless product/gossip/bridge/runtime/relay checks | Green: 211 checks passed. |
 | `npm run test:browser` | Optional Playwright dev-browser smoke | Checked in; requires `npm install --no-save playwright` and `npx playwright install chromium`. |
-| `npm run proof:availability` | Static app/file/manifest/seeder/mirror evidence | Review: 10 pass, 1 warn, 1 info; warns only because no live publish report exists. |
+| `npm run proof:availability` | Static app/file/manifest/seeder/mirror evidence | Ready: 11 pass, 0 warn, 1 info. |
 | `npm run proof:availability -- --url http://127.0.0.1:8777` | Same proof plus HTTP fetch of every published asset | Green against `npm run dev` on 2026-07-01. |
-| `npm run proof:availability:live` | Strict live evidence mode | Operator gate; fails unless live publish/ship reports prove durable metadata + blob bytes. |
+| `npm run proof:availability:live` | Strict live evidence mode | Ready: live publish report proves durable metadata + blob bytes. |
 | `npm run publish:local` | Local Hyperdrive publish for PearBrowser testing | Not run; deliberate PearBrowser runtime gate. |
-| `npm run publish` | Public publish/seed/catalog workflow | Not run; outward-facing release gate. |
+| `npm run ship:live` | Public publish/seed/catalog workflow | Green: strict publish completed with durable metadata and blobs. |
 
 ## Focused Checks Run
 
@@ -62,13 +63,13 @@ npm run proof:availability
 
 Result:
 
-- Green/review: 10 pass, 1 warn, 1 info.
+- Green: 11 pass, 0 warn, 1 info.
 - Verified 23 published files, non-empty bytes, `index.html` references,
   static module imports, manifest drive key/url consistency, peerit-seeder
   byte catch-up heuristics, and peerit-mirror metadata/blob mirroring.
 - Consumed a fresh `npm run ship:check` report with status `ready`.
-- Warning: `.deploy/last-publish.json` is absent, so live relay byte anchoring is
-  not proven by this local checkout.
+- Consumed a fresh `.deploy/last-publish.json` report proving durable metadata
+  and blob byte replication.
 
 ### Default Test Suite
 
@@ -99,6 +100,42 @@ Result:
   present, served app files clean in git.
 - Smoke, gossip, and bridge suites passed.
 - Wrote `.deploy/last-ship.json` with status `ready`.
+
+### Live Publish
+
+Command:
+
+```sh
+npm run ship:live
+```
+
+Result:
+
+- Green: release preflight passed and public publish completed.
+- HiveRelay client: `../../00-core/hiverelay/packages/client/index.js`.
+- Relays connected: 7.
+- Publish seed acceptances: 4.
+- Metadata seed acceptances: 4.
+- Content/blob seed acceptances: 4.
+- Metadata durable: 6 active peers, remote bytes caught up.
+- Blob durable: 7 active peers, `168/168` blocks mirrored.
+- Live URL:
+  `hyper://ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4/`.
+
+### Strict Live Availability Proof
+
+Command:
+
+```sh
+npm run proof:availability:live
+```
+
+Result:
+
+- Green: 11 pass, 0 warn, 1 info.
+- Verified static file surface, manifest drive key, current ship report, live
+  publish report, seeder byte catch-up heuristic, and mirror byte-mirroring
+  heuristic.
 
 ### Local HTTP Asset Proof
 
@@ -148,10 +185,6 @@ npm run test:browser
 Treat these as unproven until intentionally run:
 
 - `npm run publish:local`: local Hyperdrive publish and PearBrowser bridge proof.
-- `npm run ship:live`: release preflight plus strict HiveRelay publish and
-  durability report.
-- `npm run proof:availability:live`: strict verification of current
-  `.deploy/last-ship.json` and `.deploy/last-publish.json`.
 - Real PearBrowser bridge path: `window.pear.sync`, `window.pear.identity`, and
   `window.pear.swarm` behavior.
 - Fresh-client user-data availability proof for representative outboxes.
@@ -163,7 +196,8 @@ Treat these as unproven until intentionally run:
 - Post/comment edit controls still use `prompt()` and are not covered by the
   browser smoke.
 - No local PearBrowser `publish:local` bridge test was run in this loop.
-- Live relay/catalog/durability proof remains a deliberate operator action.
+- Live relay durability is proven by the current publish report; catalog
+  visibility still needs an independent PearBrowser/browser check.
 - User-data availability still depends on seeder/mirror evidence and fresh-reader
   checks, not the static app proof alone.
 

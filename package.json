@@ -14,6 +14,9 @@
   "scripts": {
     "dev": "node dev-server.mjs",
     "test": "node test/smoke.mjs && node test/gossip.mjs && node test/bridge.mjs && node test/bridge-convergence.mjs && node test/runtime.mjs && node test/relay-roster.mjs && node test/dht-adapter.mjs",
+    "test:browser": "node scripts/browser-smoke.mjs",
+    "proof:availability": "node scripts/availability-proof.mjs",
+    "proof:availability:live": "node scripts/availability-proof.mjs --require-live",
     "launch:readiness": "node scripts/launch-readiness.mjs",
     "launch:seed-plan": "node scripts/launch-seed-plan.mjs",
     "ship:check": "node ship.mjs",

@@ -69,6 +69,37 @@ Hyperdrive fallback. If the app drive is unavailable, a user can inspect the
 source on GitHub, but PearBrowser will not automatically reconstruct the
 `hyper://` drive from GitHub.
 
+## Repeatable Availability Proof
+
+The local proof command checks the published file list, module graph, manifest
+drive key/url consistency, sibling seeder/mirror tooling, and any available ship
+or publish evidence:
+
+```bash
+npm run proof:availability
+```
+
+To prove the current static app surface is actually fetchable over the local
+HTTP preview, run the dev server in one terminal and point the proof at it from
+another:
+
+```bash
+npm run dev
+npm run proof:availability -- --url http://127.0.0.1:8777
+```
+
+For release evidence, the strict mode expects fresh `.deploy/last-ship.json` and
+`.deploy/last-publish.json` reports and fails when durable metadata plus blob
+byte replication are not proven:
+
+```bash
+npm run proof:availability:live
+```
+
+This is still not a full PearBrowser bridge proof and it does not prove every
+user outbox is available. It closes the repeatability gap for the static app
+surface and makes missing live relay evidence explicit.
+
 ## 2. User-Generated Data
 
 Posts, comments, votes, communities, profiles, and moderation actions are not

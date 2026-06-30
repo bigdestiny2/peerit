@@ -1,5 +1,9 @@
 # Peerit Test Command Matrix - 2026-06-27
 
+> Superseded for current command status by
+> [`TEST-COMMAND-MATRIX-2026-07-01.md`](TEST-COMMAND-MATRIX-2026-07-01.md).
+> This file remains as historical evidence for the June browser-dev smoke.
+
 Source root: `/Users/localllm/Projects/pear-ecosystem/02-apps/peerit`
 
 Peerit is a dependency-free P2P site: static HTML/CSS/JS plus headless Node tests for the data model, UI-adjacent pure logic, and signed gossip security model. This matrix is for local validation only. Publish, relay, catalog, and real PearBrowser runtime checks are intentionally separate operator-run gates.

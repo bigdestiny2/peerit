@@ -165,6 +165,7 @@ peerit/
 ├── manifest.json       # PearBrowser catalog manifest (driveKey filled by publish.mjs)
 ├── dev-server.mjs      # locked-down loopback static preview
 ├── publish.mjs         # publish to HiveRelay + register in catalog (outward-facing)
+├── scripts/            # launch, browser smoke, and availability proof commands
 └── test/               # headless verification of core logic + gossip security
 ```
 
@@ -177,8 +178,33 @@ node test/smoke.mjs      # core checks: data layer, ranking, threading, votes, m
 node test/gossip.mjs     # signed gossip, convergence, forgery rejection
 ```
 
+Repeatable browser and availability gates live outside the default dependency-free
+test suite:
+
+```bash
+npm run proof:availability
+
+# with npm run dev already running in another terminal:
+npm run proof:availability -- --url http://127.0.0.1:8777
+
+# optional browser UI gate; install Playwright only in the operator/dev checkout
+npm install --no-save playwright
+npx playwright install chromium
+npm run test:browser
+
+# strict live evidence gate; expects fresh .deploy publish/ship reports
+npm run proof:availability:live
+```
+
+`npm run test:browser` starts the dev server when no `--url` is supplied, then
+creates a community, creates a post, comments from two tabs/users, and verifies
+the cross-tab update path. Playwright is deliberately not a runtime dependency.
+`npm run proof:availability` verifies the published file list, static module
+imports, manifest drive key, sibling seeder/mirror tooling, optional HTTP asset
+fetches, and live publish durability reports when present.
+
 For the current local command surface, known gaps, and operator-run publish/runtime
-gates, see [`TEST-COMMAND-MATRIX-2026-06-27.md`](TEST-COMMAND-MATRIX-2026-06-27.md).
+gates, see [`TEST-COMMAND-MATRIX-2026-07-01.md`](TEST-COMMAND-MATRIX-2026-07-01.md).
 
 ## Publish (outward-facing — run deliberately)
 
@@ -192,6 +218,7 @@ the drive is not durably reachable yet.
 ```bash
 npm run ship:check        # tests + manifest/file/git served-file preflight
 npm run ship:live         # preflight, then strict publish with a 240s anchor wait
+npm run proof:availability  # local static + availability evidence summary
 npm run publish:local       # local PearBrowser test, not cataloged or seeded
 npm run publish             # publish + seed, then exit
 KEEP=1 npm run publish      # stay online so relays fully anchor the drive

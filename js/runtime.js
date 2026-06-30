@@ -15,6 +15,7 @@
 // and js/verify.js re-checks every record the relay delivers.
 
 import { hasAnyPearBridgeSurface } from './pear-api.js'
+import { parseRelayList, readRelayRosterConfig } from './relay-roster.js'
 
 function metaContent (doc, name) {
   try {
@@ -31,17 +32,17 @@ function metaContent (doc, name) {
 export function readRelayConfig (doc) {
   const raw = metaContent(doc, 'peerit-relay')
   if (!raw) return null
-  // Comma-separated failover list. Each entry is a relay base URL, or
-  // "same-origin"/"/" (relay proxied under this origin — no CORS). Boot tries
-  // them in order until one issues a token, so no single relay DNS is a hard
-  // dependency. (A signed roster fetched at runtime is a further hardening.)
-  const relays = raw.split(',').map((s) => s.trim()).filter(Boolean).map((s) => (s === 'same-origin' || s === '/') ? '' : s)
+  // Comma-separated bootstrap failover list. Each entry is a relay base URL, or
+  // "same-origin"/"/" (relay proxied under this origin — no CORS). A signed
+  // roster, when present, is verified at boot and takes priority for ordering.
+  const relays = parseRelayList(raw)
   if (!relays.length) return null
   const readonly = metaContent(doc, 'peerit-relay-readonly')
   return {
     relays,
     apiBase: relays[0],
     apiToken: metaContent(doc, 'peerit-relay-token') || '',
+    relayRoster: readRelayRosterConfig(doc),
     // Phase 3 (optional): a dht-relay WebSocket for the in-browser DHT transport.
     dhtRelay: metaContent(doc, 'peerit-dht-relay') || '',
     // Default to read-only: a fresh web deployment shows verified content before
@@ -71,6 +72,7 @@ export function resolveRuntime ({ rawPear = null, doc = null } = {}) {
       identityOpts: { forceDev: true, apiBase: relay.apiBase, apiToken: relay.apiToken },
       syncOpts: { apiBase: relay.apiBase, apiToken: relay.apiToken },
       relays: relay.relays,
+      relayRoster: relay.relayRoster,
       dhtRelay: relay.dhtRelay,
       readOnly: relay.readOnly
     }

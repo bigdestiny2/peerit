@@ -44,7 +44,7 @@ working — the web is additive publishing.
 |---|---|---|
 | **0 — read-only verified mirror** | runtime dispatch, read-only UI + banner, static export | ✅ built, browser-verified |
 | **1 — relay + local keys (full app)** | `02-apps/peerit-relay` (token, CORS, rate-limit, swarm hub, memory + hypercore cores), client token acquisition + write path | ✅ built; Node e2e over real HTTP + browser `gossip-bridge` verified |
-| **2 — hardened delivery** | `build-web.mjs` (SRI, Service Worker `sw.js`, `asset-manifest.json`, `verify.html`), multi-relay failover | ✅ built, browser-verified; signed relay roster = remaining hardening |
+| **2 — hardened delivery** | `build-web.mjs` (SRI, Service Worker `sw.js`, `asset-manifest.json`, `verify.html`), signed relay roster, boot-time multi-relay failover | ✅ built; signed roster + failover covered by Node e2e/unit tests, browser smoke still recommended per deploy |
 | **3 — in-browser DHT pipe** | `js/dht-adapter.js` (maps hypercore stack → pear surface, **adapter logic unit-tested** via `test/dht-adapter.mjs`), `js/dht-transport.js` (wires the real deps), boot wiring + `build-web --dht-relay` | ⚠ adapter tested + wired; the real DHT/Noise/protomux wire + esbuild bundle need live validation |
 
 ## Build & serve the web bundle
@@ -53,6 +53,7 @@ working — the web is additive publishing.
 # produce web/ — relay can be an absolute URL, a comma-separated failover list,
 # or "same-origin" (relay proxied under peerit.com/api/*, no CORS)
 node build-web.mjs --relay https://relay.peerit.com --readonly false \
+  --relay-roster relay-roster.json --relay-roster-key <roster signing pubkey> \
   --drive-key <the published hyper:// key>
 
 # local end-to-end (what the browser test does):
@@ -65,16 +66,67 @@ The exported `index.html` gets the relay `<meta>`, SRI on the entry module +
 stylesheet, and a Service Worker that pins the audited bundle by SHA-256
 (so the app survives the origin going down and global JS swaps are detectable).
 
+## Signed relay roster
+
+The static `<meta name="peerit-relay">` remains a bootstrap fallback. For normal
+deploys, publish a signed roster so clients can prefer the current relay fleet
+without trusting DNS, the relay, or the roster host:
+
+```json
+{
+  "payload": {
+    "version": 1,
+    "expires": "2026-12-31T00:00:00.000Z",
+    "relays": ["https://relay-a.peerit.com", "https://relay-b.peerit.com"]
+  },
+  "signature": {
+    "alg": "Ed25519",
+    "key": "<64-hex public key pinned in index.html>",
+    "sig": "<128-hex signature over peerit-relay-roster-v1|canonical(payload)>"
+  }
+}
+```
+
+Generate it offline from the relay package:
+
+```sh
+cd 02-apps/peerit-relay
+npm run roster:sign -- --generate-key
+PEERIT_ROSTER_SEED=<seed from offline key storage> npm run roster:sign -- \
+  --relay https://relay-a.peerit.com --relay https://relay-b.peerit.com \
+  --expires 2026-12-31T00:00:00.000Z --out ../peerit/relay-roster.json
+```
+
+Build with `--relay-roster relay-roster.json --relay-roster-key <public key>`.
+At boot, a normal browser verifies the roster key + expiry, tries the signed
+relays in order, obtains a first-visit token from the first reachable relay, and
+falls back to the baked `peerit-relay` list if the roster is unavailable or bad.
+
 ## Deploy checklist (operator — these are your steps, not the code's)
 
 1. **Relay:** deploy `02-apps/peerit-relay` (see its README) behind TLS at
    `relay.peerit.com`, or proxy it same-origin at `peerit.com/api/*`. Run more
-   than one and list them comma-separated in `--relay` for failover.
+   than one; put the fleet in `relay-roster.json`, and keep `--relay` as a
+   conservative bootstrap fallback.
 2. **Seeders:** run `02-apps/peerit-seeder` so outboxes stay available offline.
 3. **Code:** host `web/` on peerit.com; also pin to IPFS (DNSLink), Arweave, and
    set ENS `peerit.eth` contenthash → CID so the app survives DNS/registrar seizure.
 4. **Verify path:** publish the `hyper://` drive (`KEEP=1 node publish.mjs`) and put
    its key in `--drive-key`; `peerit.com/verify.html` lets anyone cross-check.
+
+## Manual validation still required
+
+- Failover is boot-time selection: the client chooses the first reachable relay
+  before opening its gossip bridge. If the active relay dies mid-session, the
+  user should reload to re-run selection; live migration of an already-open
+  SSE/swarm channel is intentionally out of this hardening pass.
+- Validate the production relay fleet behind real TLS/CORS, shared
+  `PEERIT_RELAY_SECRET`, and reverse-proxy headers. CI proves the HTTP/SSE
+  contract and failover flow against local relays, not public network routing.
+- Validate cross-relay data availability with the hypercore production core and
+  seeders online. The memory e2e proves browser convergence through one selected
+  relay; real multi-region liveness still depends on the deployed DHT/seeder
+  topology.
 
 ## Phase 3 build recipe (when ready to validate on a network)
 
@@ -108,6 +160,7 @@ Live-path caveats to fix before relying on it (called out in the code):
   ICE — none reach PearBrowser parity.
 - **Liveness:** the relay (+ its DNS) is a chokepoint that can be blocked or
   pressured (it can withhold, never forge). Mitigate with multiple relays + a
-  signed roster.
+  signed roster; boot-time failover selects a reachable relay, while mid-session
+  relay death still requires reconnect/reload.
 - **Key durability:** a cleared browser loses the key unless the recovery bundle
   was backed up — made mandatory on first mint.

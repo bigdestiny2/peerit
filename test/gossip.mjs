@@ -215,6 +215,28 @@ async function main () {
   polled.destroy()
   ok(polled._poll === null, 'destroy() stops the default re-merge timer')
 
+  console.log('\n— bridge UX change signals —')
+  const uxPear = rememberingPear()
+  const uxId = new DevIdentity(mem(), mem()); await uxId.ready(); await uxId.createUser('ux')
+  const uxSync = new BridgeGossipSync({ pear: uxPear, getMe: () => uxId.me().pubkey, identity: uxId, validate: makeValidator(BITS), pollMs: 0 }); await uxSync.ready()
+  const uxData = createData(uxSync, uxId, { minBits: BITS })
+  const events = []
+  uxSync.onChange((changed) => events.push(changed))
+  await uxData.createCommunity({ slug: 'signals', title: 'Signals', description: '' })
+  ok(events.some(keys => Array.isArray(keys) && keys.includes('community!signals')), 'bridge emits the precise community key for a visible local append')
+  events.length = 0
+  const uxPost = await uxData.submitPost({ community: 'signals', kind: 'text', title: 'vote patch target', body: 'hi' })
+  ok(events.some(keys => Array.isArray(keys) && keys.includes('post!signals!' + uxPost.cid)), 'bridge emits the precise post key for a structural feed update')
+  events.length = 0
+  await uxData.vote(uxPost.cid, 'signals', 'post', 1)
+  ok(events.some(keys => Array.isArray(keys) && keys.length === 1 && keys[0] === 'vote!' + uxPost.cid + '!' + uxId.me().pubkey), 'bridge emits a single vote key so the UI can patch vote widgets in place')
+  events.length = 0
+  ok((await uxSync._refresh()).length === 0, 'idle bridge refresh returns no visible change keys')
+  const unsigned = { id: 'signals!bad', cid: 'bad', community: 'signals', kind: 'text', title: 'unsigned', author: uxId.me().pubkey, createdAt: Date.now(), editedAt: 0, deleted: false }
+  await uxPear.sync.append(uxId.me().pubkey, { type: 'post', data: unsigned })
+  ok((await uxSync._refresh()).length === 0, 'rejected bridge rows do not create spurious UI change keys')
+  uxSync.destroy()
+
   console.log('\n— app recovery bundle import —')
   const recoveryStore = mem()
   const exportSync = new BridgeGossipSync({ pear, getMe: () => rid.me().pubkey, identity: rid, storage: recoveryStore, validate: makeValidator(BITS) }); await exportSync.ready()

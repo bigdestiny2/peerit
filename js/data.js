@@ -29,6 +29,7 @@ export class Data {
   // search index (which votes never touch) survive, so a vote no longer forces a
   // full search-index rebuild on the next search.
   invalidateViewCaches (opClass) {
+    if (opClass === 'none') return
     this._epoch++
     this._tallyCache.clear()
     if (opClass !== 'vote') {
@@ -503,3 +504,11 @@ export class Data {
 }
 
 export function createData (sync, identity, opts) { return new Data(sync, identity, opts) }
+
+export function cacheClassForChangedKeys (changed) {
+  if (Array.isArray(changed)) {
+    if (changed.length === 0) return 'none'
+    return changed.every(k => String(k).startsWith(keys.voteAll())) ? 'vote' : 'content'
+  }
+  return 'content'
+}

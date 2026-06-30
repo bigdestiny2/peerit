@@ -13,7 +13,7 @@
   },
   "scripts": {
     "dev": "node dev-server.mjs",
-    "test": "node test/smoke.mjs && node test/gossip.mjs && node test/bridge.mjs && node test/bridge-convergence.mjs && node test/runtime.mjs && node test/dht-adapter.mjs",
+    "test": "node test/smoke.mjs && node test/gossip.mjs && node test/bridge.mjs && node test/bridge-convergence.mjs && node test/runtime.mjs && node test/relay-roster.mjs && node test/dht-adapter.mjs",
     "launch:readiness": "node scripts/launch-readiness.mjs",
     "launch:seed-plan": "node scripts/launch-seed-plan.mjs",
     "ship:check": "node ship.mjs",

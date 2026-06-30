@@ -6,7 +6,7 @@
 import assert from 'node:assert'
 import { DevSync, memoryStorage } from '../js/sync.js'
 import { DevIdentity } from '../js/identity.js'
-import { createData } from '../js/data.js'
+import { cacheClassForChangedKeys, createData } from '../js/data.js'
 import { Prefs } from '../js/prefs.js'
 import { STARTER_COMMUNITIES, STARTER_POSTS, WELCOME_COMMUNITY, starterCommunity } from '../js/onboarding.js'
 import { renderMarkdown, excerpt } from '../js/markdown.js'
@@ -216,12 +216,28 @@ async function main () {
   // local prefs
   const pf = new Prefs(mem(), 'tester')
   pf.subscribe('p2p'); ok(pf.isSubscribed('p2p') && !pf.isSubscribed('nope'), 'prefs: subscribe')
+  pf.subscribe('P2P'); ok(pf.subs().filter(s => s === 'p2p').length === 1, 'prefs: subscriptions normalize and dedupe slugs')
+  pf.toggleSub('x'); ok(!pf.isSubscribed('x') && !pf.subs().includes('x'), 'prefs: invalid community slugs are ignored')
   pf.toggleSaved('p2p/abc'); ok(pf.isSaved('p2p/abc'), 'prefs: save')
+  pf.toggleSaved('P2P/def'); ok(pf.isSaved('p2p/def'), 'prefs: saved refs normalize the community slug')
   pf.toggleHidden('p2p/xyz'); ok(pf.isHidden('p2p/xyz'), 'prefs: hide')
   pf.toggleSaved('p2p/abc'); ok(!pf.isSaved('p2p/abc'), 'prefs: toggle off')
+  pf.setSort('sideways'); ok(pf.sort === 'hot', 'prefs: invalid feed sort falls back to hot')
+  pf.setSort('new'); ok(pf.sort === 'new', 'prefs: valid feed sort persists')
   pf.markWelcomeSeen(); ok(pf.seenWelcome, 'prefs: welcome can be dismissed')
   pf.markWelcomeUnseen(); ok(!pf.seenWelcome, 'prefs: welcome can be shown again')
   pf.acknowledgeIdentityBackup(); ok(pf.identityBackupAcked, 'prefs: identity backup acknowledgement persists')
+  const messyStore = mem()
+  messyStore.setItem('peerit:prefs:messy', JSON.stringify({
+    subs: ['P2P', 'p2p', 'a', 'Help'],
+    saved: ['P2P/abc', 'p2p/abc', 'badref'],
+    hidden: ['P2P/xyz', 'p2p/xyz'],
+    sort: 'wat',
+    seenWelcome: 1
+  }))
+  const messy = new Prefs(messyStore, 'messy')
+  ok(messy.subs().join(',') === 'p2p,help' && messy.sort === 'hot' && messy.seenWelcome, 'prefs: malformed stored prefs are sanitized on load')
+  ok(messy.saved().join(',') === 'p2p/abc' && messy.hidden().join(',') === 'p2p/xyz', 'prefs: stored saved/hidden refs dedupe on load')
 
   // markdown extras
   const md2 = renderMarkdown('```\ncode\n```\n\n- a\n- b\n\n> quote\n\n[hp](https://holepunch.to)')
@@ -285,6 +301,14 @@ async function main () {
     await d2.vote(pa.cid, 'opt', 'post', -1)
     ok(d2._searchIndex === idxBefore && idxBefore !== null, 'a vote does NOT rebuild the search index (content unchanged)')
     ok((await d2.tallyFor(pa.cid)).score === -1, 'the vote still updated the tally (cache correctly invalidated)')
+    ok(cacheClassForChangedKeys([]) === 'none' && cacheClassForChangedKeys(['vote!' + pa.cid + '!' + id2.me().pubkey]) === 'vote', 'changed-key classifier distinguishes idle and vote-only gossip updates')
+    d2.invalidateViewCaches(cacheClassForChangedKeys([]))
+    ok(d2._searchIndex === idxBefore, 'idle gossip update does not invalidate content caches')
+    d2.invalidateViewCaches(cacheClassForChangedKeys(['vote!' + pa.cid + '!' + id2.me().pubkey]))
+    ok(d2._searchIndex === idxBefore, 'vote-only gossip update preserves content caches')
+    ok(cacheClassForChangedKeys(['post!opt!placeholder']) === 'content', 'changed-key classifier treats structural records as content')
+    d2.invalidateViewCaches(cacheClassForChangedKeys(['post!opt!placeholder']))
+    ok(d2._searchIndex === null, 'structural gossip update invalidates content caches')
     await d2.submitPost({ community: 'opt', kind: 'text', title: 'Gamma', body: 'g' })
     ok(d2._searchIndex === null, 'a new post DOES invalidate the search index')
   }

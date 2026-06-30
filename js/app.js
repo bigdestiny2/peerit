@@ -6,7 +6,8 @@
 import { createSync } from './sync.js'
 import { createIdentity } from './identity.js'
 import { resolveRuntime } from './runtime.js'
-import { createData } from './data.js'
+import { resolveRelayCandidates, selectRelay } from './relay-roster.js'
+import { cacheClassForChangedKeys, createData } from './data.js'
 import { Prefs } from './prefs.js'
 import { STARTER_COMMUNITIES, STARTER_POSTS, WELCOME_COMMUNITY, starterCommunity } from './onboarding.js'
 import { renderMarkdown, excerpt } from './markdown.js'
@@ -58,7 +59,8 @@ async function boot () {
   // Web mode transport selection (PearBrowser/dev use runtime.syncOpts = {}):
   //   1) strongest: an in-browser DHT pipe (Phase 3) if a dht-relay is configured
   //      AND its built bundle loads — the relay can't even read the traffic.
-  //   2) otherwise: a first-visit token on the (failover) /api relay.
+  //   2) otherwise: verify the signed relay roster (when configured), then get
+  //      a first-visit token from the first reachable /api relay.
   //   3) on any failure: local-only (no token → no bridge surface → dev fallback).
   let pearOverride = null
   if (runtime.mode === 'web') {
@@ -69,13 +71,25 @@ async function boot () {
         console.log('[peerit] using in-browser DHT transport')
       } catch (e) { console.warn('[peerit] DHT transport unavailable; using /api relay:', e && e.message) }
     }
-    if (!pearOverride && !runtime.syncOpts.apiToken) {
-      let acquired = false
-      for (const base of (runtime.relays || [runtime.syncOpts.apiBase])) {
-        const token = await acquireRelayToken(base)
-        if (token) { runtime.syncOpts.apiBase = base; runtime.syncOpts.apiToken = token; acquired = true; break }
+    if (!pearOverride) {
+      const candidates = await resolveRelayCandidates({
+        relays: runtime.relays || [runtime.syncOpts.apiBase],
+        roster: runtime.relayRoster,
+        fetch: globalThis.fetch && globalThis.fetch.bind(globalThis),
+        onWarning: (e) => console.warn('[peerit] relay roster unavailable:', e && e.message)
+      })
+      const selected = await selectRelay(candidates.relays, {
+        apiToken: runtime.syncOpts.apiToken,
+        fetch: globalThis.fetch && globalThis.fetch.bind(globalThis)
+      })
+      if (selected) {
+        runtime.syncOpts.apiBase = selected.apiBase
+        runtime.syncOpts.apiToken = selected.apiToken
+        if (candidates.rosterVerified) console.log('[peerit] verified signed relay roster; using', selected.apiBase || 'same-origin relay')
+      } else {
+        runtime.syncOpts.apiToken = ''
+        console.warn('[peerit] no relay reachable — falling back to local-only mode')
       }
-      if (!acquired) console.warn('[peerit] no relay reachable — falling back to local-only mode')
     }
   }
   sync = pearOverride
@@ -84,7 +98,7 @@ async function boot () {
   await sync.ready()
   data = createData(sync, identity)
   refreshPrefs()
-  sync.onChange(() => data.invalidateViewCaches())
+  sync.onChange((changed) => data.invalidateViewCaches(cacheClassForChangedKeys(changed)))
 
   // Live updates: when peers' data changes, repaint just the affected vote
   // widgets in place when we can, and only fall back to a full re-render for
@@ -144,16 +158,6 @@ function isBridgeMode () {
 // with writes disabled. Content is fetched + verified, but posting/voting is
 // blocked until a write path (local keys + writable relay) is enabled.
 function isReadOnly () { return !!(runtime && runtime.readOnly) }
-
-// Fetch a first-visit token from the relay. The token is not a secret credential
-// (anyone can request one) — it only scopes the relay's rate-limiting.
-async function acquireRelayToken (apiBase) {
-  try {
-    const r = await fetch(String(apiBase).replace(/\/$/, '') + '/api/token', { method: 'POST' })
-    const j = await r.json()
-    return j && typeof j.token === 'string' ? j.token : null
-  } catch { return null }
-}
 
 // ---- chrome (header + sidebar shell) ----------------------------------------
 function renderChrome () {
@@ -283,6 +287,10 @@ function sortTabs (active, base, query) {
   `</div>`
 }
 
+function postSort (sort) {
+  return POST_SORTS.includes(sort) ? sort : 'hot'
+}
+
 function voteWidget (rec, type) {
   const t = rec.tally || { score: 0, myVote: 0 }
   const up = t.myVote === 1 ? 'on' : ''
@@ -391,11 +399,12 @@ function onResourceError (e) {
 
 // ---- FEED views (home / all / community) ------------------------------------
 async function viewFeed ({ scope, community, query, guard, token }) {
-  const sort = query.sort || prefs.sort || 'hot'
+  const sort = postSort(query.sort || prefs.sort)
   const tw = query.t || 'all'
   guard(skeleton(scope === 'community' ? 'r/' + esc(community) : (scope === 'home' ? 'Home' : 'Popular')))
 
   let communityMeta = null, ov = null, mods = null
+  let followedSlugs = []
   let posts = []
   if (scope === 'community') {
     communityMeta = await data.getCommunity(community)
@@ -407,12 +416,12 @@ async function viewFeed ({ scope, community, query, guard, token }) {
     mods = ov.mods
     posts = await data.listPostsIn(community)
   } else if (scope === 'home') {
-    const subs = prefs.subs()
-    if (!subs.length) {
+    followedSlugs = prefs.subs()
+    if (!followedSlugs.length) {
       // No subscriptions yet -> behave like "all" but nudge onboarding.
       posts = await data.listAllPosts()
     } else {
-      posts = await data.listAllPosts(subs)
+      posts = await data.listAllPosts(followedSlugs)
     }
   } else {
     posts = await data.listAllPosts()
@@ -437,11 +446,11 @@ async function viewFeed ({ scope, community, query, guard, token }) {
 
   const title = scope === 'community'
     ? communityCard(communityMeta, mods)
-    : (scope === 'home' ? `<div class="feed-head"><h1>Home</h1><span class="dim">posts from communities you follow</span></div>`
+    : (scope === 'home' ? `<div class="feed-head"><h1>Home</h1><span class="dim">${followedSlugs.length ? 'posts from communities you follow' : 'all communities until you join some'}</span></div>`
                         : `<div class="feed-head"><h1>Popular</h1><span class="dim">across all of peerit</span></div>`)
 
   const base = scope === 'community' ? ['r', community] : (scope === 'home' ? [] : ['all'])
-  const showWelcome = scope !== 'community' && !prefs.seenWelcome
+  const showWelcome = scope === 'home' && !prefs.seenWelcome
   let body
   if (!ranked.length) {
     body = showWelcome ? starterFeed() : emptyFeed(scope, community)
@@ -484,7 +493,7 @@ function starterFeed () {
 }
 
 function welcomePanel (compact) {
-  const mode = isBridgeMode() ? 'p2p' : 'dev'
+  const mode = runtime && runtime.mode === 'web' ? 'web' : (isBridgeMode() ? 'p2p' : 'dev')
   return `<section class="welcome-panel ${compact ? 'compact' : ''}">
     <div class="welcome-copy">
       <span class="tag">${esc(mode)}</span>
@@ -1086,7 +1095,14 @@ async function onClick (e) {
       case 'vote': return void await onVote(t)
       case 'save': { prefs.toggleSaved(t.dataset.ref); t.textContent = prefs.isSaved(t.dataset.ref) ? '★ saved' : '☆ save'; return }
       case 'hide': { prefs.toggleHidden(t.dataset.ref); route(); return }
-      case 'sub': { const slug = t.dataset.slug; const now = prefs.toggleSub(slug); toast(now ? 'Joined r/' + slug : 'Left r/' + slug); route(); return }
+      case 'sub': {
+        const slug = normalizeSlug(t.dataset.slug)
+        const now = prefs.toggleSub(slug)
+        if (now) prefs.markWelcomeSeen()
+        toast(now ? 'Joined r/' + slug : 'Left r/' + slug)
+        route()
+        return
+      }
       case 'copylink': return void await copyLink(t.dataset.ref)
       case 'copy-outbox-key': return void await copyOutboxKey()
       case 'copy-seeder-command': return void await copySeederCommand()
@@ -1301,6 +1317,7 @@ async function onSubmit (e) {
     if (f === 'create-community') {
       const c = await data.createCommunity({ slug: fd.get('slug'), title: fd.get('title'), description: fd.get('description'), onProgress })
       prefs.subscribe(c.slug)
+      prefs.markWelcomeSeen()
       toast('Created r/' + c.slug)
       location.hash = '#/r/' + c.slug
       return
@@ -1314,6 +1331,7 @@ async function onSubmit (e) {
         community: fd.get('community'), kind: fd.get('kind'),
         title: fd.get('title'), body: fd.get('body'), url: fd.get('url'), onProgress
       })
+      prefs.markWelcomeSeen()
       toast('Posted')
       location.hash = buildRoute(['r', p.community, 'comments', p.cid])
       return
@@ -1323,6 +1341,7 @@ async function onSubmit (e) {
       const parent = form.dataset.parent || null
       await data.addComment({ community: form.dataset.community, postCid: form.dataset.post, parentCid: parent, body, onProgress })
       if (parent) openReplies.delete(parent)
+      prefs.markWelcomeSeen()
       form.reset()
       toast('Comment added'); route()
       return

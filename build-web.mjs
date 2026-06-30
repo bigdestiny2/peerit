@@ -13,12 +13,13 @@
 //     cross-check against the published hyper:// drive key.
 //
 // Usage:
-//   node build-web.mjs --relay https://relay.peerit.com --readonly false --drive-key <hyperkey>
-//   PEERIT_RELAY=... PEERIT_RELAY_READONLY=... PEERIT_DRIVE_KEY=... node build-web.mjs
+//   node build-web.mjs --relay https://relay.peerit.com --readonly false \
+//     --relay-roster relay-roster.json --relay-roster-key <pubkey> --drive-key <hyperkey>
+//   PEERIT_RELAY=... PEERIT_RELAY_ROSTER=... PEERIT_RELAY_ROSTER_KEY=... node build-web.mjs
 
-import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { join, dirname } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SITE_FILES } from './publish.mjs'
 
@@ -30,9 +31,12 @@ const RELAY = process.env.PEERIT_RELAY || arg('--relay') || ''
 const READONLY = String(process.env.PEERIT_RELAY_READONLY || arg('--readonly') || 'true')
 const DRIVE_KEY = process.env.PEERIT_DRIVE_KEY || arg('--drive-key') || ''
 const DHT_RELAY = process.env.PEERIT_DHT_RELAY || arg('--dht-relay') || '' // Phase 3 (optional)
+const RELAY_ROSTER = process.env.PEERIT_RELAY_ROSTER || arg('--relay-roster') || ''
+const RELAY_ROSTER_KEY = process.env.PEERIT_RELAY_ROSTER_KEY || arg('--relay-roster-key') || ''
 
 const sri = (buf) => 'sha384-' + createHash('sha384').update(buf).digest('base64')
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex')
+const attr = (s) => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
 
 // 1. read + hash every served file
 const files = {}
@@ -46,11 +50,22 @@ for (const p of SITE_FILES) {
 }
 
 // 2. transform index.html: relay meta + SW registration (external, CSP-safe) + SRI
+let relayRosterMeta = RELAY_ROSTER
+if (RELAY_ROSTER) {
+  const rosterFile = resolve(__dir, RELAY_ROSTER)
+  if (!/^https?:\/\//i.test(RELAY_ROSTER) && existsSync(rosterFile)) {
+    files['relay-roster.json'] = readFileSync(rosterFile)
+    manifest['relay-roster.json'] = sha256(files['relay-roster.json'])
+    relayRosterMeta = 'relay-roster.json'
+  }
+}
 let html = files['index.html'].toString('utf8')
 const head = [
-  RELAY ? `<meta name="peerit-relay" content="${RELAY}">` : '',
-  RELAY ? `<meta name="peerit-relay-readonly" content="${READONLY}">` : '',
-  DHT_RELAY ? `<meta name="peerit-dht-relay" content="${DHT_RELAY}">` : '',
+  RELAY ? `<meta name="peerit-relay" content="${attr(RELAY)}">` : '',
+  RELAY ? `<meta name="peerit-relay-readonly" content="${attr(READONLY)}">` : '',
+  relayRosterMeta ? `<meta name="peerit-relay-roster" content="${attr(relayRosterMeta)}">` : '',
+  RELAY_ROSTER_KEY ? `<meta name="peerit-relay-roster-key" content="${attr(RELAY_ROSTER_KEY)}">` : '',
+  DHT_RELAY ? `<meta name="peerit-dht-relay" content="${attr(DHT_RELAY)}">` : '',
   '<script src="sw-register.js"></script>'
 ].filter(Boolean).join('\n  ')
 html = html.replace('</head>', '  ' + head + '\n</head>')
@@ -63,6 +78,7 @@ manifest['index.html'] = sha256(files['index.html'])
 rmSync(OUT, { recursive: true, force: true })
 mkdirSync(join(OUT, 'js'), { recursive: true })
 for (const p of SITE_FILES) writeFileSync(join(OUT, p), files[p])
+if (files['relay-roster.json']) writeFileSync(join(OUT, 'relay-roster.json'), files['relay-roster.json'])
 
 const swRegister = "if ('serviceWorker' in navigator) { addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}) }) }\n"
 writeFileSync(join(OUT, 'sw-register.js'), swRegister)
@@ -77,9 +93,11 @@ writeFileSync(join(OUT, 'asset-manifest.json'), JSON.stringify({
 writeFileSync(join(OUT, 'sw.js'), serviceWorker(manifest))
 writeFileSync(join(OUT, 'verify.html'), verifyPage(DRIVE_KEY))
 
-console.log(`[build-web] wrote ${SITE_FILES.length + 4} files to web/`)
+console.log(`[build-web] wrote ${SITE_FILES.length + 4 + (files['relay-roster.json'] ? 1 : 0)} files to web/`)
 console.log(`           relay=${RELAY || '(none — local-only)'} readonly=${READONLY} driveKey=${DRIVE_KEY || '(unset)'}`)
+console.log(`           relayRoster=${relayRosterMeta || '(none)'} rosterKey=${RELAY_ROSTER_KEY ? RELAY_ROSTER_KEY.slice(0, 12) + '...' : '(unset)'}`)
 if (!RELAY) console.log('           NOTE: no --relay → the bundle loads but stays local-only (gossip-dev) until a relay is configured.')
+if (RELAY_ROSTER && !RELAY_ROSTER_KEY) console.log('           NOTE: --relay-roster without --relay-roster-key is ignored by clients (no pinned verification key).')
 
 // ---- generated assets -------------------------------------------------------
 function serviceWorker (man) {

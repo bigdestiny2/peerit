@@ -60,6 +60,9 @@ async function main () {
   // comma-separated failover list
   const rtMulti = resolveRuntime({ rawPear: null, doc: doc({ 'peerit-relay': 'https://a.example, https://b.example' }) })
   ok(rtMulti.mode === 'web' && Array.isArray(rtMulti.relays) && rtMulti.relays.length === 2 && rtMulti.relays[0] === 'https://a.example' && rtMulti.identityOpts.apiBase === 'https://a.example', 'web: comma-separated relays parse into a failover list (first is primary)')
+  const rtRoster = resolveRuntime({ rawPear: null, doc: doc({ 'peerit-relay': 'https://a.example', 'peerit-relay-roster': 'relay-roster.json', 'peerit-relay-roster-key': 'f'.repeat(64) }) })
+  ok(rtRoster.mode === 'web' && rtRoster.relayRoster.url === 'relay-roster.json' && rtRoster.relayRoster.key === 'f'.repeat(64),
+    'web: signed relay roster metadata is retained for boot-time verification')
 
   // nothing configured → local dev fallback.
   const rt4 = resolveRuntime({ rawPear: null, doc: doc({}) })

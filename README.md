@@ -2,17 +2,24 @@
 
 No servers. No data center. Communities, posts, threaded comments and votes live
 in a shared **Holepunch** log (Autobase + Hyperbee) and replicate directly between
-peers. peerit ships as a **P2P site** that runs inside **PearBrowser** and is kept
-online 24/7 by **HiveRelay**.
+peers. peerit ships as a **P2P site** that runs inside **PearBrowser** (kept
+online 24/7 by **HiveRelay**) — and now also in **any normal browser** at
+**[peerit.site](https://peerit.site)** through an untrusted relay.
 
 > **New here? Read [EXPLAINER.md](EXPLAINER.md)** — what peerit is and how it works,
 > in plain language.
 
 ![How peerit assembles your feed: each user writes a signed outbox; your device verifies every signature and merges them into your feed; forged records are dropped.](docs/how-peerit-works.svg)
 
-```
-hyper://<driveKey>/        ← what users open in PearBrowser
-```
+**Two ways to run it — same signed data, same guarantees:**
+
+| Where | How |
+|---|---|
+| **PearBrowser** (fully P2P) | open `hyper://<driveKey>/` — joins Hyperswarm directly, no relay |
+| **Any normal browser** | open **[peerit.site](https://peerit.site)** — reaches the same P2P network through an **untrusted relay** ([peerit-relay](https://github.com/bigdestiny2/peerit-relay)). Your ed25519 key and every signature check stay in the browser, so the relay can carry or withhold data but can **never forge, tamper, or impersonate**. Full design: [docs/WEB-DEPLOYMENT.md](docs/WEB-DEPLOYMENT.md). |
+
+The same audited ES modules run in both — the `<meta name="peerit-relay">` tag is
+ignored by PearBrowser, so adding web support never touched the native P2P build.
 
 ---
 

@@ -55,12 +55,13 @@ async function until (fn, { tries = 120, gap = 75 } = {}) {
 // The swarm hub links every EventSource on the same topic as mutual peers and
 // routes `/api/swarm/send` to the recipient's event stream.
 function makeBridgeWorld () {
-  const groups = new Map()        // appId -> { inviteKey, rows: Map }
+  const groups = new Map()        // appId -> { inviteKey, rows: Map, version }
   const channels = new Map()      // channelId -> { topic, es, linked:Set }
   let chanSeq = 0
+  let reads = 0                   // count of full outbox reads (list/range) — proves heads-gating cuts them
 
   const ensureGroup = (appId) => {
-    if (!groups.has(appId)) groups.set(appId, { inviteKey: randomBytes(32).toString('hex'), rows: new Map() })
+    if (!groups.has(appId)) groups.set(appId, { inviteKey: randomBytes(32).toString('hex'), rows: new Map(), version: 0 })
     return groups.get(appId)
   }
   const sortedRows = (g) => [...g.rows.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => ({ key, value }))
@@ -97,9 +98,11 @@ function makeBridgeWorld () {
     try {
       if (p === '/api/sync/create') { const g = ensureGroup(body.appId); return response({ appId: body.appId, inviteKey: g.inviteKey, writerPublicKey: body.appId }) }
       if (p === '/api/sync/join') { const g = ensureGroup(body.appId); if (body.inviteKey !== g.inviteKey) return response({ error: 'bad invite' }, 400); return response({ appId: body.appId, inviteKey: g.inviteKey, writerPublicKey: body.appId }) }
-      if (p === '/api/sync/append') { const g = ensureGroup(body.appId); const op = body.op; g.rows.set(op.type.replace(':', '!') + '!' + op.data.id, op.data); return response({ ok: true }) }
+      if (p === '/api/sync/append') { const g = ensureGroup(body.appId); const op = body.op; g.rows.set(op.type.replace(':', '!') + '!' + op.data.id, op.data); g.version++; return response({ ok: true }) }
+      if (p === '/api/sync/heads') { const out = {}; for (const a of (body.appIds || [])) { const g = groups.get(a); out[a] = g ? g.version : 0 }; return response({ heads: out }) }
       if (p === '/api/sync/get') { const g = ensureGroup(u.searchParams.get('appId')); return response(g.rows.get(u.searchParams.get('key')) || null) }
       if (p === '/api/sync/list' || p === '/api/sync/range') {
+        reads++
         const g = ensureGroup(u.searchParams.get('appId'))
         let rows = sortedRows(g)
         const prefix = u.searchParams.get('prefix')
@@ -135,7 +138,7 @@ function makeBridgeWorld () {
     close () {}
   }
 
-  return { base: 'https://peerit.test', fetch, EventSource: HubEventSource, groups }
+  return { base: 'https://peerit.test', fetch, EventSource: HubEventSource, groups, getReads: () => reads }
 }
 
 // A client is a real Ed25519 identity whose sync + swarm transport runs entirely
@@ -260,6 +263,28 @@ async function main () {
   ok(afterFlip.includes('vote!' + cp.cid + '!' + dave.pub), 'a peer flipping an EXISTING vote (key overwrite) is detected by the _sig change-token')
   ok((await carol.data.tallyFor(cp.cid)).score === -1, 'carol\'s tally reflects the flipped vote (overwrite applied, not missed)')
   ok(sameView(await viewOf(carol.sync), await fullMergeOf(w2)), 'after edits + overwrites, incremental view still equals the full merge')
+
+  console.log('\n— heads-gating: idle polls stop re-reading every outbox —')
+  await carol.sync._refresh() // settle the heads baseline
+  const readsBefore = w2.getReads()
+  await carol.sync._refresh(); await carol.sync._refresh() // two IDLE polls
+  ok(w2.getReads() === readsBefore, `idle polls re-read ZERO outboxes — /api/sync/heads gated them (reads stayed ${readsBefore})`)
+  await dave.data.vote(cp.cid, 'inc', 'post', 1) // dave's outbox version moves
+  await carol.sync._refresh()
+  ok(w2.getReads() > readsBefore, 'a peer whose outbox version moved IS re-read (only the changed one, not all peers)')
+
+  console.log('\n— persistent cache: a reload renders instantly with the relay OFFLINE —')
+  const sharedStore = mem()
+  const gid = new DevIdentity(sharedStore, mem()); await gid.ready(); await gid.createUser('grace')
+  const mkGrace = (f) => createSync({ apiToken: 'tok-grace', apiBase: w2.base, fetch: f, EventSource: w2.EventSource, storage: sharedStore, getMe: () => gid.me().pubkey, identity: gid, validate: makeValidator(BITS), pollMs: 0 })
+  const grace1 = mkGrace(w2.fetch); await grace1.ready()
+  ok(await until(() => grace1.list('community!', { limit: 100 }).then((r) => r.some((x) => x.key.includes('inc')))), 'grace discovers r/inc and persists the verified view to local cache')
+  grace1.destroy()
+  // Reload with the SAME storage but a fetch that always throws: any content shown
+  // now can only have come from the persisted cache, not the network.
+  const grace2 = mkGrace(async () => { throw new Error('relay offline') }); await grace2.ready()
+  ok((await grace2.list('', { limit: 1000 })).some((x) => x.key.includes('inc')), 'after reload with NO relay, the feed renders instantly from cache (no blank screen)')
+  grace2.destroy()
   carol.sync.destroy(); dave.sync.destroy(); alice.sync.destroy(); bob.sync.destroy()
 
   console.log(`\n✅ all ${passed} bridge-convergence checks passed\n`)

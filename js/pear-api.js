@@ -276,7 +276,10 @@ export function createPearApi (opts = {}) {
         limit: rangeOpts.limit
       })),
       count: (appId, prefix) => apiGet(pathWithParams('/api/sync/count', { appId, prefix })),
-      status: (appId) => apiGet(pathWithParams('/api/sync/status', { appId }))
+      status: (appId) => apiGet(pathWithParams('/api/sync/status', { appId })),
+      // Batched change-markers: one request returns a version per outbox so the
+      // client only re-reads outboxes whose version moved (see gossip.js _doRefresh).
+      heads: (appIds) => apiPost('/api/sync/heads', { appIds })
     },
     identity: {
       getPublicKey: () => apiGet('/api/identity'),

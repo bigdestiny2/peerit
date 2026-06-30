@@ -33,6 +33,12 @@ const MAX_DESCRIPTOR_BYTES = 8192
 const MAX_ROWS_PER_PEER = 50000
 const HEX64 = /^[0-9a-f]{64}$/i
 const HEX128 = /^[0-9a-f]{128}$/i
+// Persisted verified view, so a reload renders instantly instead of blanking
+// while it re-discovers. Plus per-outbox change-markers (heads) so each poll
+// only re-reads outboxes that actually changed.
+const CACHE_KEY = 'peerit:gossip-view'
+const MAX_CACHE_BYTES = 3 * 1024 * 1024 // skip persisting if the view is huge (graceful)
+const RECONCILE_EVERY = 30 // every N polls, ignore heads + re-verify everything (defends against a stale/lying relay or a tampered local cache)
 
 // ---- local reducer + range over a {key:value} view --------------------------
 function applyOp (view, op) {
@@ -318,10 +324,13 @@ class BridgeGossipSync {
     this._cache = null            // current merged view (maintained incrementally)
     this._peerViews = new Map()   // pub -> admitted {key:value} view (verified rows only)
     this._peerSigs = new Map()    // pub -> Map(key -> changeToken) seen last refresh
+    this._peerHeads = new Map()   // pub -> last-seen outbox version (from /api/sync/heads)
     this._claimed = null          // sticky community owners (slug -> creator), persisted
     this._refreshing = null       // in-flight refresh promise (serialises concurrent merges)
     this._destroyed = false
     this._poll = null
+    this._pollTimer = null
+    this._refreshCount = 0
     this._pollMs = pollMs // remote writes don't notify us; a periodic re-merge surfaces peers' new rows (tunable/testable)
     this.validate = validate
   }
@@ -354,6 +363,58 @@ class BridgeGossipSync {
     }
   }
 
+  // Persist the VERIFIED merged state (discovered peers + their admitted rows +
+  // last-seen heads) so a reload renders instantly instead of blanking while it
+  // re-discovers. Only the final winning view is user-visible; cached rows are a
+  // render hint that the next refresh re-checks (and a periodic full reconcile
+  // re-verifies), so a tampered cache self-heals and can never forge for anyone.
+  _saveCache () {
+    try {
+      const peers = []; const views = {}; const heads = {}
+      for (const [pub, info] of this._peers) { if (!info.self && HEX64.test(pub) && info.appId === pub && typeof info.inviteKey === 'string') peers.push({ pub, appId: info.appId, inviteKey: info.inviteKey }) }
+      for (const [pub, view] of this._peerViews) { const o = {}; for (const k in view) o[k] = view[k]; views[pub] = o }
+      for (const [pub, v] of this._peerHeads) heads[pub] = v
+      const blob = JSON.stringify({ v: 1, peers, views, heads })
+      if (blob.length > MAX_CACHE_BYTES) { this._setLocal(CACHE_KEY, ''); return } // too large → skip (graceful, just slower first paint)
+      this._setLocal(CACHE_KEY, blob)
+    } catch {}
+  }
+
+  // Restore the cached view BEFORE any network, so list()/get() return content on
+  // the very first paint. Discovered peers go back into _peers so the first poll
+  // re-reads them (heads-gated). Returns true if a view was restored.
+  _loadCache () {
+    try {
+      const raw = this._getLocal(CACHE_KEY)
+      if (!raw) return false
+      const c = JSON.parse(raw)
+      if (!c || typeof c !== 'object') return false
+      if (Array.isArray(c.peers)) for (const p of c.peers) {
+        if (p && HEX64.test(p.pub || '') && p.appId === p.pub && p.pub !== this.getMe() && typeof p.inviteKey === 'string' && !this._peers.has(p.pub) && this._peers.size < MAX_PEERS) {
+          this._peers.set(p.pub, { appId: p.appId, inviteKey: p.inviteKey })
+        }
+      }
+      if (c.views && typeof c.views === 'object') for (const pub in c.views) {
+        if (PROTO_KEYS.has(pub) || !this._peers.has(pub)) continue
+        const v = c.views[pub]; if (!v || typeof v !== 'object') continue
+        const view = Object.create(null); const sig = new Map()
+        for (const k in v) { if (PROTO_KEYS.has(k)) continue; view[k] = v[k]; sig.set(k, changeToken(v[k])) }
+        this._peerViews.set(pub, view)
+        this._peerSigs.set(pub, sig)
+      }
+      // Deliberately do NOT restore cached heads: the production relay is the
+      // EPHEMERAL memory core whose per-outbox version resets to 0 on restart, so a
+      // cached version could coincidentally match a different post-restart state and
+      // suppress a real change. Leaving _peerHeads empty forces the first poll to
+      // re-read (and thus re-validate) every cached peer against the live relay;
+      // heads-gating then kicks in for subsequent polls.
+      if (!this._claimed) { try { this._claimed = JSON.parse(this._getLocal(CLAIMED_KEY) || '{}') } catch { this._claimed = {} } }
+      const boxes = []; for (const [pub, view] of this._peerViews) boxes.push({ pub, view })
+      if (boxes.length) { this._cache = combineAdmitted(boxes, this._claimed); this._sortedFor = null; return true }
+      return false
+    } catch { return false }
+  }
+
   async _openMyOutbox () {
     const appId = this._myAppId()
     let key = null
@@ -369,20 +430,42 @@ class BridgeGossipSync {
     }
   }
 
+  // Idempotent: open the writable outbox if we haven't yet. Tolerates a network
+  // failure (returns false) so boot/posting degrade gracefully and self-heal when
+  // the relay comes back.
+  async _ensureMyOutbox () {
+    if (this._myInvite) return true
+    try {
+      const r = await this._openMyOutbox()
+      this._myInvite = r.inviteKey
+      this._setLocal('peerit:my-outbox-key', r.inviteKey)
+      this._peers.set(this.getMe(), { appId: this._myAppId(), inviteKey: r.inviteKey, self: true })
+      this._rememberOutbox(this._myAppId(), r.inviteKey)
+      return true
+    } catch (e) { console.warn('[gossip] outbox open deferred (offline?):', e && e.message); return false }
+  }
+
   async ready () {
     await cryptoReady()
-    const r = await this._openMyOutbox()
-    this._myInvite = r.inviteKey
-    this._setLocal('peerit:my-outbox-key', r.inviteKey)
-    this._peers.set(this.getMe(), { appId: this._myAppId(), inviteKey: this._myInvite, self: true })
-    this._rememberOutbox(this._myAppId(), this._myInvite)
-    // Re-join + merge EVERY outbox we've ever owned, so a changed identity key
-    // can't strand earlier posts.
+    // Register our own outbox FIRST (with the locally-remembered key) so a reload
+    // renders our content from cache even if the relay is unreachable at boot.
+    const myKey = this._getLocal('peerit:my-outbox-key')
+    this._peers.set(this.getMe(), { appId: this._myAppId(), inviteKey: myKey || null, self: true })
+    if (HEX64.test(myKey || '')) this._rememberOutbox(this._myAppId(), myKey)
+    // Open (or create) the WRITABLE outbox so we can post. A network failure here
+    // is non-fatal — reads + the cached render still work, and the poll retries.
+    await this._ensureMyOutbox()
+    // Re-join EVERY outbox we've ever owned, so a changed identity key can't
+    // strand earlier posts. (Best-effort; offline-tolerant.)
     for (const o of this._knownOutboxes()) {
       if (this._peers.has(o.appId)) continue
       try { await this.pear.sync.join(o.appId, o.inviteKey); this._peers.set(o.appId, { appId: o.appId, inviteKey: o.inviteKey, self: true }) } catch {}
     }
-    try { console.log('[peerit persist] me=' + (this.getMe() || '').slice(0, 12) + ' outbox=' + (this._myInvite || '').slice(0, 12) + ' knownOutboxes=' + this._knownOutboxes().length) } catch {}
+    // Restore last session's verified view (+ discovered peers + heads) so the
+    // first list()/get() paints instantly instead of blanking; the poll below then
+    // re-reads only what changed and a periodic reconcile re-verifies everything.
+    this._loadCache()
+    try { console.log('[peerit persist] me=' + (this.getMe() || '').slice(0, 12) + ' outbox=' + (this._myInvite || '').slice(0, 12) + ' knownOutboxes=' + this._knownOutboxes().length + ' cachedPeers=' + this._peers.size) } catch {}
     try {
       this._channel = await this.pear.swarm.v1.join(TOPIC, { server: true, client: true, appName: 'peerit', reason: 'Discover other peerit users' })
       this._channel.on('peer', () => this._announce())
@@ -391,11 +474,20 @@ class BridgeGossipSync {
     } catch (e) { console.warn('[gossip] swarm unavailable:', e && e.message) }
     if (this._pollMs > 0) {
       // Re-merge incrementally and notify ONLY when a peer's rows actually
-      // changed — an idle network no longer triggers a re-render every tick.
-      this._poll = setInterval(async () => {
+      // changed. Self-scheduling with ±15% jitter so many clients don't hit the
+      // relay in lockstep; each tick is now a single cheap heads call plus reads
+      // of only the outboxes that moved.
+      const jittered = () => this._pollMs * (0.85 + Math.random() * 0.3)
+      const tick = async () => {
+        if (this._destroyed) return
+        if (!this._myInvite) { try { if (await this._ensureMyOutbox()) await this._announce() } catch {} } // relay came back → resume writing/discovery
         try { const changed = await this._refresh(); if (changed.length) this._emit(changed) } catch (e) { console.warn('[gossip poll]', e && e.message) }
-      }, this._pollMs)
-      if (this._poll && this._poll.unref) this._poll.unref()
+        if (this._destroyed) return
+        this._pollTimer = setTimeout(tick, jittered())
+        if (this._pollTimer && this._pollTimer.unref) this._pollTimer.unref()
+      }
+      this._pollTimer = setTimeout(tick, jittered())
+      if (this._pollTimer && this._pollTimer.unref) this._pollTimer.unref()
     }
     return this
   }
@@ -405,6 +497,7 @@ class BridgeGossipSync {
   destroy () {
     this._destroyed = true
     if (this._poll) { clearInterval(this._poll); this._poll = null }
+    if (this._pollTimer) { clearTimeout(this._pollTimer); this._pollTimer = null }
     if (this._channel && this._channel.destroy) { try { this._channel.destroy() } catch {} }
     if (this._refreshing) this._refreshing.catch(() => {}) // don't leave the in-flight refresh's rejection unhandled
     this._channel = null
@@ -450,6 +543,7 @@ class BridgeGossipSync {
   announce () { return this._announce() }
 
   async append (op) {
+    await this._ensureMyOutbox() // re-open if a boot-time relay outage deferred it
     const r = await this.pear.sync.append(this._myAppId(), { type: op.type, data: op.data, timestamp: new Date().toISOString() })
     const changed = await this._refresh(); this._emit(changed)
     return r
@@ -466,8 +560,44 @@ class BridgeGossipSync {
     if (this._destroyed) return [] // torn down (e.g. pagehide) — don't touch a discarded instance
     const secure = isSecure()
     if (!this._claimed) { try { this._claimed = JSON.parse(this._getLocal(CLAIMED_KEY) || '{}') } catch { this._claimed = {} } }
+    this._refreshCount++
+
+    // Pick which outboxes to re-read. Cheap path: ONE /api/sync/heads call returns
+    // a version per outbox; only the ones whose version moved get re-read — so an
+    // idle network costs a single request instead of one-read-per-peer. Every
+    // RECONCILE_EVERY rounds (or when the relay has no heads endpoint) we read
+    // everyone, dropping cached signatures so rows are genuinely RE-VERIFIED — this
+    // self-heals against a stale/lying relay or a tampered local cache.
+    const reconcile = (this._refreshCount % RECONCILE_EVERY) === 0
+    let heads = null
+    let headsErrored = false
+    const headsFn = this.pear.sync && this.pear.sync.heads
+    if (headsFn && this._peers.size) {
+      try {
+        const appIds = []; for (const [, info] of this._peers) appIds.push(info.appId)
+        const resp = await headsFn(appIds)
+        heads = resp && resp.heads && typeof resp.heads === 'object' ? resp.heads : null
+      } catch { headsErrored = true } // rate-limited/transient
+    }
+    let toRead
+    if (reconcile) {
+      this._peerSigs.clear()                 // periodic full RE-VERIFY (relay is untrusted)
+      toRead = [...this._peers.keys()]
+    } else if (heads) {
+      toRead = []                            // cheap path: only outboxes whose version moved
+      for (const [pub, info] of this._peers) {
+        const v = heads[info.appId]
+        if (v === undefined || this._peerHeads.get(pub) !== v) toRead.push(pub)
+      }
+    } else if (headsErrored) {
+      toRead = []                            // transient heads failure → skip this round, don't pile load on a throttled relay
+    } else {
+      toRead = [...this._peers.keys()]       // relay has no heads endpoint → read everyone (old/dev fallback)
+    }
+
     let anyRowChanged = false
-    for (const [pub, info] of this._peers) {
+    for (const pub of toRead) {
+      const info = this._peers.get(pub); if (!info) continue
       let rows
       try { rows = await this._rowsForPeer(info) } catch { continue }
       const prevSig = this._peerSigs.get(pub) || new Map()
@@ -487,7 +617,9 @@ class BridgeGossipSync {
       for (const key of prevSig.keys()) { if (!newSig.has(key)) { if (key in view) delete view[key]; anyRowChanged = true } } // key removed (rare)
       this._peerViews.set(pub, view)
       this._peerSigs.set(pub, newSig)
+      if (heads && heads[info.appId] !== undefined) this._peerHeads.set(pub, heads[info.appId]) // baseline for next round's gating
     }
+
     if (this._cache && !anyRowChanged) return [] // nothing moved anywhere — keep cache (and its sorted-key cache)
     const boxes = []
     for (const [pub, view] of this._peerViews) boxes.push({ pub, view })
@@ -496,6 +628,7 @@ class BridgeGossipSync {
     const changed = diffViews(this._cache, merged)
     if (this._cache && changed.length === 0) { /* winning view identical — keep object identity */ }
     else { this._cache = merged; this._sortedFor = null }
+    if (changed.length || (anyRowChanged && !reconcile)) this._saveCache() // persist the latest verified view for an instant reload
     return changed
   }
 

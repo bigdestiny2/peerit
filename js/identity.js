@@ -12,6 +12,7 @@
 //   isDev, listUsers(), switchUser(pub), createUser(name)  (createUser is async)
 
 import { genKeyPair, sign as edSign } from './crypto.js'
+import { hasAnyPearBridgeSurface, hasIdentityPearSurface, resolvePear } from './pear-api.js'
 
 const NS = 'peerit'
 
@@ -94,8 +95,11 @@ class BridgeIdentity {
 }
 
 export function createIdentity (opts = {}) {
-  const pear = opts.pear || (typeof window !== 'undefined' ? window.pear : null)
-  if (pear && pear.identity && !opts.forceDev) return new BridgeIdentity(pear.identity)
+  const pear = resolvePear(opts)
+  if (hasIdentityPearSurface(pear) && !opts.forceDev) return new BridgeIdentity(pear.identity)
+  if (hasAnyPearBridgeSurface(pear) && !opts.forceDev) {
+    throw new Error('PearBrowser bridge is present but identity signing is unavailable; refusing to fall back to dev identity.')
+  }
   const storage = opts.storage || (typeof localStorage !== 'undefined' ? localStorage : memShim())
   const session = opts.session || (typeof sessionStorage !== 'undefined' ? sessionStorage : memShim())
   return new DevIdentity(storage, session)

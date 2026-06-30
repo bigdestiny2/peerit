@@ -175,6 +175,7 @@ Each app should expose an Identity / Recovery panel with:
 - copy/export app recovery bundle;
 - import app recovery bundle;
 - copy Group key for seeding;
+- seeder-ready command for `peerit-seeder`;
 - seeder status if known;
 - warning before first post if the user has not acknowledged identity backup.
 
@@ -188,6 +189,14 @@ Suggested copy:
 - peerit and p2pbuilders already sign records and verify owner binding before
   merge.
 - Both apps persist the current outbox key and a known-outboxes list locally.
+- peerit Settings -> Outbox seeding now shows the full current outbox/group key,
+  copies the Group key, copies a `peerit-seeder` command, and copies/exports the
+  app data recovery / seeding bundle.
+- peerit Settings imports app recovery bundles only after comparing bundle
+  `driveKey` and `publicKey` with the current app identity. A matching bundle
+  rejoins known outboxes and re-announces the current signed descriptor.
+- peerit does not yet verify seeder status inside the app; operators still need
+  seeder logs or health checks to prove byte replication.
 - p2pbuilders adds proof-of-work through the shared gossip `validate` hook.
 - p2pbuilders currently inherits the `peerit` signature namespace string for
   compatibility with the copied engine. New apps should choose an app-specific

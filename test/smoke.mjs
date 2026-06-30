@@ -6,15 +6,29 @@
 import assert from 'node:assert'
 import { DevSync, memoryStorage } from '../js/sync.js'
 import { DevIdentity } from '../js/identity.js'
-import { createData } from '../js/data.js'
+import { cacheClassForChangedKeys, createData } from '../js/data.js'
 import { Prefs } from '../js/prefs.js'
+import { STARTER_COMMUNITIES, STARTER_POSTS, WELCOME_COMMUNITY, starterCommunity } from '../js/onboarding.js'
 import { renderMarkdown, excerpt } from '../js/markdown.js'
 import { sortPosts, hotScore, wilsonScore, controversyScore, tally } from '../js/ranking.js'
-import { buildCommentTree, sortCommentTree, modOverlay, resolveMods } from '../js/model.js'
+import { buildCommentTree, sortCommentTree, annotateDescendants, countDescendants, modOverlay, resolveMods } from '../js/model.js'
 import { parseRoute, safeUserUrl } from '../js/util.js'
+import { verify as verifyPow } from '../js/pow.js'
+import {
+  COPY as RECOVERY_COPY,
+  assertRecoveryBundleMatches,
+  buildRecoveryBundle,
+  cleanOutboxes,
+  compareRecoveryBundle,
+  peeritSeederCommand,
+  recoveryBundleFilename,
+  recoveryBundleJson,
+  shellArg
+} from '../js/recovery.js'
 
 let passed = 0
 const ok = (cond, msg) => { assert.ok(cond, msg); passed++; console.log('  ✓ ' + msg) }
+const BITS = { community: 7, post: 6, comment: 5 }
 
 function mem () {
   const m = new Map()
@@ -36,6 +50,27 @@ async function main () {
   ok(excerpt('## Heading\n\nsome **text** here', 10).length <= 11, 'excerpt strips + truncates')
   ok(safeUserUrl('https://holepunch.to') && !safeUserUrl('javascript:alert(1)') && !safeUserUrl('//evil.example'), 'safeUserUrl allows only intended schemes')
   ok(parseRoute('#/%E0%A4%A').path[0] === '%E0%A4%A', 'malformed hash routes do not throw')
+  ok(WELCOME_COMMUNITY.slug === 'welcome' && starterCommunity('welcome') === WELCOME_COMMUNITY, 'onboarding exposes a welcome community')
+  ok(new Set(STARTER_COMMUNITIES.map(c => c.slug)).size === STARTER_COMMUNITIES.length, 'starter community slugs are unique')
+  ok(STARTER_COMMUNITIES.every(c => /^[a-z0-9_]{2,24}$/.test(c.slug)), 'starter community slugs are valid')
+  ok(STARTER_POSTS.every(p => starterCommunity(p.community)), 'starter posts point at starter communities')
+
+  console.log('\n— recovery bundle helpers —')
+  const pub = 'a'.repeat(64)
+  const drive = 'b'.repeat(64)
+  const invite = 'c'.repeat(64)
+  const outboxes = cleanOutboxes([{ appId: pub, inviteKey: invite }, { appId: 'bad', inviteKey: invite }])
+  const bundle = buildRecoveryBundle({ publicKey: pub, driveKey: drive, outboxes, createdAt: '2026-06-23T00:00:00.000Z' })
+  ok(bundle.version === 1 && bundle.app === 'peerit' && bundle.outboxes.length === 1, 'recovery bundle has the documented shape')
+  ok(compareRecoveryBundle(bundle, { publicKey: pub, driveKey: drive }).ok, 'recovery bundle comparison accepts matching app identity')
+  assert.throws(() => assertRecoveryBundleMatches({ ...bundle, driveKey: 'e'.repeat(64) }, { publicKey: pub, driveKey: drive }), /different app drive key/)
+  ok(true, 'recovery bundle comparison rejects a different drive key')
+  assert.throws(() => assertRecoveryBundleMatches({ ...bundle, publicKey: 'd'.repeat(64) }, { publicKey: pub, driveKey: drive }), /different app identity/)
+  ok(true, 'recovery bundle comparison rejects a different public key')
+  ok(recoveryBundleJson(bundle).includes('"outboxes"') && recoveryBundleFilename(bundle).startsWith('peerit-app-data-recovery-aaaaaaaaaaaa-2026-06-23'), 'recovery bundle serializes with a stable filename')
+  ok(peeritSeederCommand(outboxes) === `cd ../peerit-seeder\nnode seeder.mjs ${invite}`, 'seeder command is ready for peerit-seeder')
+  ok(shellArg("abc def'ghi") === "'abc def'\"'\"'ghi'", 'shellArg quotes unusual command arguments')
+  ok(RECOVERY_COPY.identityBackup === 'Your identity lives in PearBrowser. Back up your 12-word PearBrowser recovery phrase. peerit/p2pbuilders only see an app-specific public key and cannot recover this phrase for you.', 'identity backup warning copy matches protocol')
 
   console.log('\n— data layer (dev backend) —')
   const storage = mem()
@@ -43,12 +78,13 @@ async function main () {
   await sync.ready()
   const id = new DevIdentity(mem(), mem())
   await id.ready()
-  const data = createData(sync, id)
+  const data = createData(sync, id, { minBits: BITS })
   const alice = data.me().pubkey
 
   // community
   const c = await data.createCommunity({ slug: 'p2p', title: 'P2P', description: 'serverless' })
   ok(c.slug === 'p2p' && c.creator === alice, 'alice creates r/p2p as founder')
+  ok(await verifyPow('community', c, BITS.community), 'community creation includes valid proof-of-work')
   await assert.rejects(() => data.createCommunity({ slug: 'p2p' }), /already exists/)
   ok(true, 'duplicate community rejected')
   await assert.rejects(() => data.createCommunity({ slug: 'a' }), /2–24/)
@@ -57,6 +93,7 @@ async function main () {
   // posts
   const p1 = await data.submitPost({ community: 'p2p', kind: 'text', title: 'First post', body: 'hello **world**' })
   const p2 = await data.submitPost({ community: 'p2p', kind: 'link', title: 'A link', url: 'https://holepunch.to' })
+  ok(await verifyPow('post', p1, BITS.post), 'post creation includes valid proof-of-work')
   await assert.rejects(() => data.submitPost({ community: 'p2p', kind: 'link', title: 'Bad link', url: 'javascript:alert(1)' }), /URL must start/)
   ok(true, 'unsafe post URLs are rejected at creation')
   ok((await data.listPostsIn('p2p')).length === 2, 'two posts listed in r/p2p')
@@ -66,6 +103,7 @@ async function main () {
   // comments (threaded)
   const cm1 = await data.addComment({ community: 'p2p', postCid: p1.cid, body: 'top-level' })
   const cm2 = await data.addComment({ community: 'p2p', postCid: p1.cid, parentCid: cm1.cid, body: 'reply to top' })
+  ok(await verifyPow('comment', cm1, BITS.comment), 'comment creation includes valid proof-of-work')
   await data.addComment({ community: 'p2p', postCid: p1.cid, body: 'another top-level' })
   const comments = await data.listComments('p2p', p1.cid)
   ok(comments.length === 3, 'three comments stored')
@@ -178,13 +216,102 @@ async function main () {
   // local prefs
   const pf = new Prefs(mem(), 'tester')
   pf.subscribe('p2p'); ok(pf.isSubscribed('p2p') && !pf.isSubscribed('nope'), 'prefs: subscribe')
+  pf.subscribe('P2P'); ok(pf.subs().filter(s => s === 'p2p').length === 1, 'prefs: subscriptions normalize and dedupe slugs')
+  pf.toggleSub('x'); ok(!pf.isSubscribed('x') && !pf.subs().includes('x'), 'prefs: invalid community slugs are ignored')
   pf.toggleSaved('p2p/abc'); ok(pf.isSaved('p2p/abc'), 'prefs: save')
+  pf.toggleSaved('P2P/def'); ok(pf.isSaved('p2p/def'), 'prefs: saved refs normalize the community slug')
   pf.toggleHidden('p2p/xyz'); ok(pf.isHidden('p2p/xyz'), 'prefs: hide')
   pf.toggleSaved('p2p/abc'); ok(!pf.isSaved('p2p/abc'), 'prefs: toggle off')
+  pf.setSort('sideways'); ok(pf.sort === 'hot', 'prefs: invalid feed sort falls back to hot')
+  pf.setSort('new'); ok(pf.sort === 'new', 'prefs: valid feed sort persists')
+  pf.markWelcomeSeen(); ok(pf.seenWelcome, 'prefs: welcome can be dismissed')
+  pf.markWelcomeUnseen(); ok(!pf.seenWelcome, 'prefs: welcome can be shown again')
+  pf.acknowledgeIdentityBackup(); ok(pf.identityBackupAcked, 'prefs: identity backup acknowledgement persists')
+  const messyStore = mem()
+  messyStore.setItem('peerit:prefs:messy', JSON.stringify({
+    subs: ['P2P', 'p2p', 'a', 'Help'],
+    saved: ['P2P/abc', 'p2p/abc', 'badref'],
+    hidden: ['P2P/xyz', 'p2p/xyz'],
+    sort: 'wat',
+    seenWelcome: 1
+  }))
+  const messy = new Prefs(messyStore, 'messy')
+  ok(messy.subs().join(',') === 'p2p,help' && messy.sort === 'hot' && messy.seenWelcome, 'prefs: malformed stored prefs are sanitized on load')
+  ok(messy.saved().join(',') === 'p2p/abc' && messy.hidden().join(',') === 'p2p/xyz', 'prefs: stored saved/hidden refs dedupe on load')
 
   // markdown extras
   const md2 = renderMarkdown('```\ncode\n```\n\n- a\n- b\n\n> quote\n\n[hp](https://holepunch.to)')
   ok(md2.includes('<pre><code>') && md2.includes('<ul>') && md2.includes('<blockquote>') && md2.includes('href="https://holepunch.to"'), 'markdown renders code/list/quote/link')
+
+  console.log('\n— optimization invariants: comment tree —')
+  const flatCids = (roots) => { const out = []; const walk = n => { out.push(n.cid); n.children.forEach(walk) }; roots.forEach(walk); return out }
+  // A malicious parentCid cycle (A<->B) must not drop nodes or recurse forever.
+  const cyc = buildCommentTree([
+    { cid: 'A', parentCid: 'B', community: 'x' },
+    { cid: 'B', parentCid: 'A', community: 'x' }
+  ])
+  const cf = flatCids(cyc.roots)
+  ok(cf.length === 2 && new Set(cf).size === 2, 'comment tree with a parentCid cycle keeps every node exactly once (no loss)')
+  const csorted = sortCommentTree(cyc.roots, (n) => n.slice())
+  annotateDescendants(csorted)
+  ok(csorted.reduce((s, n) => s + 1 + n._descendants, 0) === 2, 'sort + descendant annotation terminate on cyclic input')
+  // Deep linear chain builds, counts correctly, and the memoized count matches.
+  const N = 500
+  const chain = []
+  for (let i = 0; i < N; i++) chain.push({ cid: 'n' + i, parentCid: i ? 'n' + (i - 1) : null, community: 'x' })
+  const deep = buildCommentTree(chain)
+  const dsorted = sortCommentTree(deep.roots, (n) => n.slice())
+  annotateDescendants(dsorted)
+  ok(deep.roots.length === 1 && dsorted[0]._descendants === N - 1, `deep ${N}-level chain builds with one root + ${N - 1} descendants`)
+  ok(countDescendants(dsorted[0]) === dsorted[0]._descendants, 'annotateDescendants matches countDescendants exactly')
+
+  console.log('\n— optimization invariants: ranking determinism —')
+  const nowR = Date.now()
+  // Both posts are >24h old → risingScore is -Infinity for both → comparator
+  // would be NaN without the createdAt tiebreaker; assert newest-first order.
+  const agedOut = sortPosts([
+    { cid: 'old', createdAt: nowR - 48 * 3600000, tally: { score: 3, up: 3, down: 0 }, stickied: false },
+    { cid: 'new', createdAt: nowR - 25 * 3600000, tally: { score: 3, up: 3, down: 0 }, stickied: false }
+  ], 'rising', 'all', nowR)
+  ok(agedOut[0].cid === 'new', 'rising deterministically orders aged-out (-Infinity) posts newest-first via tiebreaker')
+
+  console.log('\n— optimization invariants: targeted scans + cache decoupling —')
+  {
+    const s2 = new DevSync(mem(), 'opt'); await s2.ready()
+    const id2 = new DevIdentity(mem(), mem()); await id2.ready()
+    const d2 = createData(s2, id2, { minBits: BITS })
+    await d2.createCommunity({ slug: 'opt', title: 'Opt', description: '' })
+    const pa = await d2.submitPost({ community: 'opt', kind: 'text', title: 'Alpha', body: 'a' })
+    const pb = await d2.submitPost({ community: 'opt', kind: 'text', title: 'Beta', body: 'b' })
+    await d2.vote(pa.cid, 'opt', 'post', 1)
+    await d2.vote(pb.cid, 'opt', 'post', -1)
+    await d2.addComment({ community: 'opt', postCid: pa.cid, body: 'c1' })
+    await d2.addComment({ community: 'opt', postCid: pa.cid, body: 'c2' })
+    // tallyMany (per-target prefix scan) matches per-target tallyFor.
+    const many = await d2.tallyMany([pa.cid, pb.cid])
+    const ta = await d2.tallyFor(pa.cid), tb = await d2.tallyFor(pb.cid)
+    ok(many.get(pa.cid).score === ta.score && many.get(pb.cid).score === tb.score && ta.score === 1 && tb.score === -1, 'tallyMany (per-target scan) matches tallyFor on every target')
+    // commentCountsFor (per-post prefix scan) matches listComments length.
+    const counts = await d2.commentCountsFor(await d2.listPostsIn('opt'))
+    ok(counts.get(pa.cid) === (await d2.listComments('opt', pa.cid)).length && counts.get(pa.cid) === 2, 'commentCountsFor (per-post scan) matches listComments length')
+    ok(counts.get(pb.cid) === 0, 'commentCountsFor returns 0 for a post with no comments')
+    // search index is decoupled from vote churn.
+    ok((await d2.search('Alpha')).posts.some(p => p.cid === pa.cid), 'search finds post by title')
+    const idxBefore = d2._searchIndex
+    await d2.vote(pa.cid, 'opt', 'post', -1)
+    ok(d2._searchIndex === idxBefore && idxBefore !== null, 'a vote does NOT rebuild the search index (content unchanged)')
+    ok((await d2.tallyFor(pa.cid)).score === -1, 'the vote still updated the tally (cache correctly invalidated)')
+    ok(cacheClassForChangedKeys([]) === 'none' && cacheClassForChangedKeys(['vote!' + pa.cid + '!' + id2.me().pubkey]) === 'vote', 'changed-key classifier distinguishes idle and vote-only gossip updates')
+    d2.invalidateViewCaches(cacheClassForChangedKeys([]))
+    ok(d2._searchIndex === idxBefore, 'idle gossip update does not invalidate content caches')
+    d2.invalidateViewCaches(cacheClassForChangedKeys(['vote!' + pa.cid + '!' + id2.me().pubkey]))
+    ok(d2._searchIndex === idxBefore, 'vote-only gossip update preserves content caches')
+    ok(cacheClassForChangedKeys(['post!opt!placeholder']) === 'content', 'changed-key classifier treats structural records as content')
+    d2.invalidateViewCaches(cacheClassForChangedKeys(['post!opt!placeholder']))
+    ok(d2._searchIndex === null, 'structural gossip update invalidates content caches')
+    await d2.submitPost({ community: 'opt', kind: 'text', title: 'Gamma', body: 'g' })
+    ok(d2._searchIndex === null, 'a new post DOES invalidate the search index')
+  }
 
   console.log('\n— status —')
   const st = await sync.status()

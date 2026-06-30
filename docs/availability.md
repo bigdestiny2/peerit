@@ -111,6 +111,36 @@ peerit does not yet guarantee:
 - Sybil resistance;
 - global first-claim fairness for brand-new community names.
 
+## Current Outbox Seeding Workflow
+
+Settings -> Outbox seeding exposes the current user's full outbox/group key and
+an app data recovery / seeding bundle. This is the operational path for keeping
+one user's public records discoverable while their own device is offline:
+
+- Copy Group key copies the current outbox invite key.
+- Copy seeder command produces a `peerit-seeder` command:
+
+```bash
+cd ../peerit-seeder
+node seeder.mjs <outboxInviteKey> [<more> ...]
+```
+
+- Copy recovery bundle and Export bundle produce the non-root app recovery data:
+  app drive key, app public key, and known outbox invite keys.
+- Import recovery bundle validates the bundle `driveKey` and `publicKey` against
+  the current app identity before accepting it. When both match, peerit stores
+  and joins the listed outboxes, then announces the current signed descriptor.
+
+The Group key is not a PearBrowser mnemonic and does not let anyone sign as the
+user. It does let another device or an always-on seeder replicate the user's
+public outbox, so it should be shared deliberately rather than posted as a public
+profile field.
+
+This workflow prepares an outbox for seeding. It does not, by itself, prove that
+a seeder or relay has already downloaded all bytes. Operators still need seeder
+logs or health checks that confirm byte replication; as with the static app
+drive, `seed accepted != bytes fully replicated`.
+
 ## What Would Make Data Always Available
 
 To move from "P2P best effort" to "production durable," peerit needs an always-on
@@ -120,7 +150,9 @@ data availability layer in addition to the static app seed:
 2. Let readers opt in to co-seed outboxes they have replicated.
 3. Store signed outbox descriptors in a durable directory so new peers can find
    historical outboxes without relying only on live swarm discovery.
-4. Add an export/import backup for identity and outbox keys.
+4. Add durable directory and relay pinning for imported outbox descriptors so
+   fresh clients can find historical outboxes without relying only on live swarm
+   discovery.
 5. Add a health monitor that periodically verifies a fresh client can fetch both
    the static app drive and representative outboxes.
 

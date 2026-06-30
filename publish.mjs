@@ -106,9 +106,10 @@ async function loadHiveRelayClient () {
 // Files that make up the served site (everything the browser needs, nothing else).
 export const SITE_FILES = [
   'index.html', 'styles.css', 'icon.svg',
-  'js/app.js', 'js/canon.js', 'js/crypto.js', 'js/data.js', 'js/gossip.js',
-  'js/identity.js', 'js/markdown.js', 'js/model.js', 'js/onboarding.js', 'js/prefs.js',
-  'js/ranking.js', 'js/sync.js', 'js/util.js', 'js/verify.js'
+  'js/app.js', 'js/canon.js', 'js/crypto.js', 'js/data.js', 'js/dht-bundle.js', 'js/gossip.js',
+  'js/identity.js', 'js/markdown.js', 'js/model.js', 'js/onboarding.js', 'js/pear-api.js',
+  'js/prefs.js', 'js/pow.js', 'js/ranking.js', 'js/recovery.js', 'js/relay-roster.js', 'js/runtime.js',
+  'js/sync.js', 'js/util.js', 'js/verify.js'
 ]
 
 // --local: create the Hyperdrive locally and host it for PearBrowser testing,

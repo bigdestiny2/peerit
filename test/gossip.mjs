@@ -5,28 +5,76 @@
 // Run: node test/gossip.mjs
 
 import assert from 'node:assert'
-import { GossipSync, makeHub, mergeOutboxes } from '../js/gossip.js'
+import { BridgeGossipSync, GossipSync, makeHub, mergeOutboxes } from '../js/gossip.js'
 import { DevIdentity } from '../js/identity.js'
 import { createData } from '../js/data.js'
 import { canonical } from '../js/canon.js'
 import { ready as cryptoReady, isSecure } from '../js/crypto.js'
+import { makeValidator, mint, verify as verifyPow } from '../js/pow.js'
 
 let passed = 0
 const ok = (c, m) => { assert.ok(c, m); passed++; console.log('  ✓ ' + m) }
+const BITS = { community: 7, post: 6, comment: 5 }
 function mem () {
   const m = new Map()
   return { getItem: k => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: k => m.delete(k), clear: () => m.clear() }
+}
+function rememberingPear () {
+  const groups = new Map()
+  const channel = { peers: [], on: () => {} }
+  const ensure = (appId) => {
+    if (!groups.has(appId)) groups.set(appId, { inviteKey: 'a'.repeat(64), rows: new Map() })
+    return groups.get(appId)
+  }
+  const sortedRows = (g) => [...g.rows.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => ({ key, value }))
+  return {
+    sync: {
+      create: async (appId) => ({ appId, inviteKey: ensure(appId).inviteKey, writerPublicKey: 'b'.repeat(64) }),
+      join: async (appId, inviteKey) => {
+        const g = ensure(appId)
+        if (inviteKey !== g.inviteKey) throw new Error('bad invite')
+        return { appId, inviteKey, writerPublicKey: 'b'.repeat(64) }
+      },
+      append: async (appId, op) => {
+        const key = op.type.replace(':', '!') + '!' + op.data.id
+        ensure(appId).rows.set(key, op.data)
+        return { ok: true, key }
+      },
+      range: async (appId, opts = {}) => {
+        let rows = sortedRows(ensure(appId))
+        if (opts.gt != null) rows = rows.filter(r => r.key > opts.gt)
+        if (opts.gte != null) rows = rows.filter(r => r.key >= opts.gte)
+        if (opts.lt != null) rows = rows.filter(r => r.key < opts.lt)
+        if (opts.lte != null) rows = rows.filter(r => r.key <= opts.lte)
+        return rows.slice(0, Number(opts.limit) || 100)
+      },
+      list: async (appId, prefix = '', opts = {}) => {
+        let rows = sortedRows(ensure(appId))
+        if (prefix) rows = rows.filter(r => r.key >= prefix && r.key < prefix + '\xff')
+        return rows.slice(0, Number(opts.limit) || 100)
+      },
+      status: async (appId) => {
+        const g = ensure(appId)
+        return { appId, inviteKey: g.inviteKey, viewLength: g.rows.size }
+      }
+    },
+    swarm: { v1: { join: async () => channel } }
+  }
 }
 // Attach a real signature from `id` to a record (mirrors data._sign).
 async function sign (id, type, data) {
   const s = await id.sign(canonical(type, data))
   return { ...data, _sig: s.signature, _k: s.publicKey, _dk: s.driveKey, _ns: s.namespace, _alg: s.algorithm }
 }
+async function powSign (id, type, data) {
+  data.pow = await mint(type, data, BITS[type] || 0)
+  return sign(id, type, data)
+}
 async function makePeer (hub, name) {
   const id = new DevIdentity(mem(), mem()); await id.ready(); await id.createUser(name)
-  const sync = new GossipSync({ storage: mem(), bus: hub.connect(), getMe: () => id.me().pubkey })
+  const sync = new GossipSync({ storage: mem(), bus: hub.connect(), getMe: () => id.me().pubkey, validate: makeValidator(BITS) })
   await sync.ready()
-  return { id, sync, data: createData(sync, id), pub: id.me().pubkey, name }
+  return { id, sync, data: createData(sync, id, { minBits: BITS }), pub: id.me().pubkey, name }
 }
 
 async function main () {
@@ -47,6 +95,12 @@ async function main () {
   const forged2 = { ...forged, _k: A }
   ok(!(await mergeOutboxes([{ pub: A, view: { 'post!p2p!x': forged2 } }]))['post!p2p!x'], 'forged post claiming _k=A but with an invalid signature is REJECTED')
 
+  // Author binding holds for comments and votes too, not just posts.
+  const forgedComment = await sign(mal, 'comment', { id: 'p2p!x!y', cid: 'y', community: 'p2p', postCid: 'x', parentCid: null, body: 'FAKE', author: A, createdAt: 1, editedAt: 0, deleted: false })
+  ok(!(await mergeOutboxes([{ pub: A, view: { 'comment!p2p!x!y': forgedComment } }]))['comment!p2p!x!y'], 'forged comment (author=A, signed by attacker) is REJECTED')
+  const forgedVote = await sign(mal, 'vote', { id: 'x!' + A, targetCid: 'x', targetType: 'post', community: 'p2p', value: 1, author: A, ts: 1 })
+  ok(!(await mergeOutboxes([{ pub: A, view: { ['vote!x!' + A]: forgedVote } }]))['vote!x!' + A], 'forged vote (author=A, signed by attacker) is REJECTED')
+
   // Tamper after signing.
   const tampered = { ...comm, title: 'HIJACK' }
   ok(!(await mergeOutboxes([{ pub: A, view: { 'community!p2p': tampered } }]))['community!p2p'], 'tampered record (content changed post-sign) is rejected')
@@ -56,6 +110,16 @@ async function main () {
 
   // Relaying someone ELSE's validly-signed record is fine (you can't forge it).
   ok((await mergeOutboxes([{ pub: M, view: { 'community!p2p': comm } }]))['community!p2p'], "a peer relaying A's validly-signed record is honored (transport label is not authority)")
+
+  console.log('\n— proof-of-work spam gate —')
+  const validator = makeValidator(BITS)
+  const noPow = await sign(aid, 'post', { id: 'p2p!nopow', cid: 'nopow', community: 'p2p', kind: 'text', title: 'No PoW', body: '', url: '', author: A, createdAt: 10, editedAt: 0, deleted: false })
+  ok(!(await mergeOutboxes([{ pub: A, view: { 'post!p2p!nopow': noPow } }], {}, validator))['post!p2p!nopow'], 'signed post without proof-of-work is rejected by the validate hook')
+  const worked = await powSign(aid, 'post', { id: 'p2p!worked', cid: 'worked', community: 'p2p', kind: 'text', title: 'Worked', body: '', url: '', author: A, createdAt: 11, editedAt: 0, deleted: false })
+  ok(await verifyPow('post', worked, BITS.post), 'minted post proof verifies')
+  ok((await mergeOutboxes([{ pub: A, view: { 'post!p2p!worked': worked } }], {}, validator))['post!p2p!worked'], 'signed post with valid proof-of-work is admitted')
+  const powTampered = { ...worked, cid: 'moved', id: 'p2p!moved' }
+  ok(!(await mergeOutboxes([{ pub: A, view: { 'post!p2p!moved': powTampered } }], {}, validator))['post!p2p!moved'], 'proof-of-work target binding rejects identity tampering')
 
   // Deterministic community winner (earliest createdAt), order-independent.
   const bid = new DevIdentity(mem(), mem()); await bid.ready(); const B = bid.me().pubkey
@@ -123,6 +187,70 @@ async function main () {
   await bob.data.editPost('p2p', post.cid, 'edited by bob')
   const fromAlice = await alice.data.getPost('p2p', post.cid)
   ok(fromAlice && fromAlice.body === 'edited by bob', "bob's signed edit propagates and verifies on alice")
+
+  console.log('\n— bridge restart without page-local outbox key —')
+  const pear = rememberingPear()
+  const rid = new DevIdentity(mem(), mem()); await rid.ready(); await rid.createUser('restart')
+  const restart1 = new BridgeGossipSync({ pear, getMe: () => rid.me().pubkey, identity: rid, validate: makeValidator(BITS) }); await restart1.ready()
+  const d1 = createData(restart1, rid, { minBits: BITS })
+  await d1.createCommunity({ slug: 'persist', title: 'Persists', description: '' })
+  const persisted = await d1.submitPost({ community: 'persist', kind: 'text', title: 'survives restart', body: 'no localStorage key' })
+  ok(await d1.getPost('persist', persisted.cid), 'first bridge launch wrote a signed post')
+  const restart2 = new BridgeGossipSync({ pear, getMe: () => rid.me().pubkey, identity: rid, validate: makeValidator(BITS) }); await restart2.ready()
+  const d2 = createData(restart2, rid, { minBits: BITS })
+  ok(await d2.getPost('persist', persisted.cid), 'second bridge launch reopens browser-remembered outbox without localStorage')
+  const rst = await restart2.status()
+  ok(rst.outboxAppId === rid.me().pubkey && rst.outboxes.some(o => o.appId === rst.outboxAppId && o.inviteKey === rst.inviteKey), 'bridge status exposes the current outbox for seeding/export')
+
+  console.log('\n— bridge lifecycle: configurable poll + destroy —')
+  const pid = new DevIdentity(mem(), mem()); await pid.ready(); await pid.createUser('poll')
+  const noPoll = new BridgeGossipSync({ pear: rememberingPear(), getMe: () => pid.me().pubkey, identity: pid, validate: makeValidator(BITS), pollMs: 0 }); await noPoll.ready()
+  ok(noPoll._poll === null, 'pollMs:0 disables the background re-merge timer')
+  noPoll.onChange(() => {})
+  noPoll.destroy()
+  ok(noPoll._poll === null && noPoll._listeners.size === 0, 'destroy() clears timers and listeners')
+  ok(noPoll._destroyed === true && (await noPoll._refresh()).length === 0, 'after destroy() a refresh is a no-op (returns [], cannot mutate a discarded instance)')
+  const polled = new BridgeGossipSync({ pear: rememberingPear(), getMe: () => pid.me().pubkey, identity: pid, validate: makeValidator(BITS) }); await polled.ready()
+  ok(polled._poll !== null, 'default pollMs starts a re-merge timer')
+  polled.destroy()
+  ok(polled._poll === null, 'destroy() stops the default re-merge timer')
+
+  console.log('\n— bridge UX change signals —')
+  const uxPear = rememberingPear()
+  const uxId = new DevIdentity(mem(), mem()); await uxId.ready(); await uxId.createUser('ux')
+  const uxSync = new BridgeGossipSync({ pear: uxPear, getMe: () => uxId.me().pubkey, identity: uxId, validate: makeValidator(BITS), pollMs: 0 }); await uxSync.ready()
+  const uxData = createData(uxSync, uxId, { minBits: BITS })
+  const events = []
+  uxSync.onChange((changed) => events.push(changed))
+  await uxData.createCommunity({ slug: 'signals', title: 'Signals', description: '' })
+  ok(events.some(keys => Array.isArray(keys) && keys.includes('community!signals')), 'bridge emits the precise community key for a visible local append')
+  events.length = 0
+  const uxPost = await uxData.submitPost({ community: 'signals', kind: 'text', title: 'vote patch target', body: 'hi' })
+  ok(events.some(keys => Array.isArray(keys) && keys.includes('post!signals!' + uxPost.cid)), 'bridge emits the precise post key for a structural feed update')
+  events.length = 0
+  await uxData.vote(uxPost.cid, 'signals', 'post', 1)
+  ok(events.some(keys => Array.isArray(keys) && keys.length === 1 && keys[0] === 'vote!' + uxPost.cid + '!' + uxId.me().pubkey), 'bridge emits a single vote key so the UI can patch vote widgets in place')
+  events.length = 0
+  ok((await uxSync._refresh()).length === 0, 'idle bridge refresh returns no visible change keys')
+  const unsigned = { id: 'signals!bad', cid: 'bad', community: 'signals', kind: 'text', title: 'unsigned', author: uxId.me().pubkey, createdAt: Date.now(), editedAt: 0, deleted: false }
+  await uxPear.sync.append(uxId.me().pubkey, { type: 'post', data: unsigned })
+  ok((await uxSync._refresh()).length === 0, 'rejected bridge rows do not create spurious UI change keys')
+  uxSync.destroy()
+
+  console.log('\n— app recovery bundle import —')
+  const recoveryStore = mem()
+  const exportSync = new BridgeGossipSync({ pear, getMe: () => rid.me().pubkey, identity: rid, storage: recoveryStore, validate: makeValidator(BITS) }); await exportSync.ready()
+  const exportData = createData(exportSync, rid, { minBits: BITS })
+  const bundle = await exportData.recoveryBundle()
+  ok(bundle.driveKey === rid.me().driveKey && bundle.publicKey === rid.me().pubkey && bundle.outboxes.length >= 1, 'bridge recovery export includes current drive/public keys and outbox')
+  const importStore = mem()
+  const importSync = new BridgeGossipSync({ pear, getMe: () => rid.me().pubkey, identity: rid, storage: importStore, validate: makeValidator(BITS) }); await importSync.ready()
+  const importData = createData(importSync, rid, { minBits: BITS })
+  const imported = await importData.importRecoveryBundle(bundle)
+  ok(imported.joined === bundle.outboxes.length && imported.failures.length === 0, 'matching recovery bundle imports and joins every outbox')
+  ok(JSON.parse(importStore.getItem('peerit:my-outboxes') || '[]').length >= 1, 'import persists known outboxes locally')
+  await assert.rejects(() => importData.importRecoveryBundle({ ...bundle, publicKey: 'f'.repeat(64) }), /different app identity/)
+  ok(true, 'recovery import rejects a bundle for another app public key')
 
   console.log('\n— status —')
   const st = await carol.sync.status()

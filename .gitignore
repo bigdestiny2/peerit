@@ -6,3 +6,4 @@
 .catalog-publish-*/
 node_modules/
 *.log
+web/

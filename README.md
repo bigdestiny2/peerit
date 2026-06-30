@@ -5,6 +5,11 @@ in a shared **Holepunch** log (Autobase + Hyperbee) and replicate directly betwe
 peers. peerit ships as a **P2P site** that runs inside **PearBrowser** and is kept
 online 24/7 by **HiveRelay**.
 
+> **New here? Read [EXPLAINER.md](EXPLAINER.md)** — what peerit is and how it works,
+> in plain language.
+
+![How peerit assembles your feed: each user writes a signed outbox; your device verifies every signature and merges them into your feed; forged records are dropped.](docs/how-peerit-works.svg)
+
 ```
 hyper://<driveKey>/        ← what users open in PearBrowser
 ```
@@ -146,6 +151,7 @@ peerit/
 │   ├── sync.js         # BridgeSync (window.pear.sync) | DevSync (localStorage)
 │   ├── identity.js     # BridgeIdentity (window.pear.identity) | DevIdentity (multi-user)
 │   ├── prefs.js        # per-device local prefs
+│   ├── recovery.js     # app data recovery bundle + peerit-seeder command helpers
 │   ├── onboarding.js   # local starter feed + welcome community metadata
 │   ├── data.js         # domain API (CRUD + queries + vote tallies + karma + mod)
 │   └── app.js          # router + views + event delegation + live refresh
@@ -202,6 +208,9 @@ availability guarantees for the static app drive versus user-generated data.
 See [`docs/identity-recovery-protocol.md`](docs/identity-recovery-protocol.md)
 for how PearBrowser's mnemonic, per-app identity, and app outbox recovery fit
 together.
+Inside the app, Settings -> Identity / Recovery shows identity fingerprints,
+the current Group key, recovery bundle export/import, and a ready-to-copy
+`peerit-seeder` command for user data availability.
 
 ---
 

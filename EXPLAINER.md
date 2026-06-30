@@ -17,6 +17,8 @@ not because a server vouches for it.
 
 ## How it works, in four ideas
 
+![How peerit assembles your feed: each user writes a signed outbox; your device verifies every signature and merges them into your feed; forged records are dropped.](docs/how-peerit-works.svg)
+
 ### 1. Everyone writes only their own "outbox"
 When you create a community, post, comment, or vote, peerit writes a **signed
 record** to *your own* append-only log — your outbox. You never write to anyone

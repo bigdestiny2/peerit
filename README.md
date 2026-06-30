@@ -8,6 +8,8 @@ online 24/7 by **HiveRelay**.
 > **New here? Read [EXPLAINER.md](EXPLAINER.md)** — what peerit is and how it works,
 > in plain language.
 
+![How peerit assembles your feed: each user writes a signed outbox; your device verifies every signature and merges them into your feed; forged records are dropped.](docs/how-peerit-works.svg)
+
 ```
 hyper://<driveKey>/        ← what users open in PearBrowser
 ```

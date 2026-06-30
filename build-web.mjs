@@ -80,7 +80,24 @@ mkdirSync(join(OUT, 'js'), { recursive: true })
 for (const p of SITE_FILES) writeFileSync(join(OUT, p), files[p])
 if (files['relay-roster.json']) writeFileSync(join(OUT, 'relay-roster.json'), files['relay-roster.json'])
 
-const swRegister = "if ('serviceWorker' in navigator) { addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}) }) }\n"
+const swRegister = `if ('serviceWorker' in navigator) {
+  // A new deploy changes the bundle hashes -> a new sw.js. The SW skipWaiting()s +
+  // clients.claim()s, so it activates immediately, but the page already loaded with
+  // the OLD cached assets. Reload ONCE when the new SW takes control so returning
+  // visitors actually run the new audited bundle instead of stale code. Guard with
+  // hadController so a brand-new visitor (first install) does not reload.
+  var hadController = !!navigator.serviceWorker.controller, refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', function () {
+    if (refreshing || !hadController) return;
+    refreshing = true; location.reload();
+  });
+  addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js').then(function (reg) {
+      if (reg && reg.update) { try { reg.update(); } catch (e) {} } // check for a newer bundle each load
+    }).catch(function () {});
+  });
+}
+`
 writeFileSync(join(OUT, 'sw-register.js'), swRegister)
 manifest['sw-register.js'] = sha256(Buffer.from(swRegister))
 

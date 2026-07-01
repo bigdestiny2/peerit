@@ -310,13 +310,15 @@ The pool degrades to one relay (detection-only) today; the durable floor is acti
 - **Public content is plaintext on whoever seeds it.** No app-side encryption; a
   relay/seeder can't forge or (across the pool) silently withhold, but it *can* read
   post bodies and see IPs — a liveness/privacy cost, not an integrity one.
-- **Rollback resistance covers what you've seen, not a fresh visitor facing total
-  collusion.** The durable floor (Phase C) catches a rollback across your own restart and
-  even an all-relays-collude rollback — *for content you have already seen*. A brand-new
-  visitor with *every* relay serving the same stale state has no floor yet; that needs an
-  independent, HiveRelay-pinned signed directory (Phase D). Detection isn't content-recovery:
-  if no relay serves the newer content, you're flagged but shown the stale set. A closed tab
-  can't seed, so cold-start still needs an always-on provider.
+- **Rollback resistance ends at all-relays collusion against a first-time visitor.** The
+  durable floor (Phase C) catches a rollback across your own restart and an all-relays-collude
+  rollback *for content you've seen*; the signed directory (Phase D) extends that to a **fresh**
+  visitor for a *single* relay rolling back (the pool takes the cross-relay max). What's left
+  open: a brand-new visitor where *every* relay serves the same stale directory — that needs an
+  **independent** anchor (a HiveRelay-pinned directory the browser reads out-of-band), the
+  remaining Phase D work. Detection isn't content-recovery: if no relay serves the newer content
+  you're flagged but shown the stale set. A closed tab can't seed, so cold-start needs an
+  always-on provider.
 - **Sybil / vote weight.** Identities are free to mint, so each can cast one valid
   vote — raw scores are *advisory*, not Sybil-resistant. Real resistance needs an
   identity-cost or web-of-trust layer (out of scope).

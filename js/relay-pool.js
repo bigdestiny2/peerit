@@ -90,6 +90,28 @@ export function createRelayPool ({ relays = [], fetch, EventSource, document } =
     return null
   }
 
+  // Phase D directory: every outbox's signed head, merged across relays with the
+  // HIGHEST VERIFIED version winning per author (a relay serving a stale directory
+  // loses to one serving the current head). A fresh visitor calls this once to
+  // bootstrap its rollback floor for every author at cross-relay strength, instead
+  // of accumulating floors over a session. Relay can't forge — each head re-verified.
+  async function directory () {
+    const results = await Promise.all(apis.map((a) => (a.sync.directory ? a.sync.directory() : null)).map((p) => Promise.resolve(p).catch(() => null)))
+    const out = {}
+    for (const r of results) {
+      const heads = r && r.heads
+      if (!heads || typeof heads !== 'object') continue
+      for (const appId in heads) {
+        const h = heads[appId]
+        if (!h || h._k !== appId || typeof h.count !== 'number') continue
+        if ((await verifyRecord(TYPE.HEAD, h)) !== 'ok') continue
+        const ex = out[appId]
+        if (!ex || (h.version | 0) > (ex.version | 0)) out[appId] = h
+      }
+    }
+    return { heads: out }
+  }
+
   // The authoritative write must land on the primary; mirror best-effort to the
   // rest so an independent relay can reconstruct the state (durability + lets
   // crossHead find the newest head even if the primary later rolls back/strips).
@@ -101,7 +123,7 @@ export function createRelayPool ({ relays = [], fetch, EventSource, document } =
 
   return {
     ...primary,
-    sync: { ...primary.sync, append: fanoutAppend, crossHead, crossRows, recoverRows },
+    sync: { ...primary.sync, append: fanoutAppend, crossHead, crossRows, recoverRows, directory },
     _relayBases: bases.slice(),
     _relayCount: apis.length
   }

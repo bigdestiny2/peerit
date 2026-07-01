@@ -143,9 +143,18 @@ node build-web.mjs --relay https://relay.peerit.com --readonly false \
   --dht-relay wss://dht-relay.peerit.com --drive-key <key>
 ```
 
-Live-path caveats to fix before relying on it (called out in the code):
-- protomux message `encoding` must be a real compact-encoding codec (`require('compact-encoding').raw`), not the pass-through the in-memory fake uses.
-- `@hyperswarm/dht-relay` is pinned old on npm and marked do-not-use-in-production — pin to maintained HEAD and own the risk; watch in-browser Hyperbee memory.
+Live-path caveats:
+- ✅ **fixed in code (2026-07-01):** the protomux descriptor codec is now
+  dependency-injected — `dht-transport.js` passes `compact-encoding`'s `raw` to
+  `dht-adapter.js` (`createHyperPearSurface({… codec})`); the in-memory fake still
+  uses the pass-through default, so `test/dht-adapter.mjs` stays green. No hand-patch
+  needed before bundling.
+- ⚠ still needs LIVE validation on a real DHT (Noise handshake + hypercore replication
+  timing + hole-punch) — the fakes model replication as a shared registry, not the wire.
+- `@hyperswarm/dht-relay` is pinned old on npm and marked do-not-use-in-production — pin
+  to maintained HEAD and own the risk; watch in-browser Hyperbee memory. **Keep this a
+  best-effort path with `/api`-relay fallback (it already is); do not make it the default
+  until validated.**
 
 ## Honest limits (what the web can never match vs PearBrowser)
 

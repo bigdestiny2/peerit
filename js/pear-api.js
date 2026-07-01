@@ -279,7 +279,10 @@ export function createPearApi (opts = {}) {
       status: (appId) => apiGet(pathWithParams('/api/sync/status', { appId })),
       // Batched change-markers: one request returns a version per outbox so the
       // client only re-reads outboxes whose version moved (see gossip.js _doRefresh).
-      heads: (appIds) => apiPost('/api/sync/heads', { appIds })
+      heads: (appIds) => apiPost('/api/sync/heads', { appIds }),
+      // Phase D durable directory: every outbox's SIGNED head in one call, so a
+      // fresh visitor bootstraps its rollback floor + author discovery at once.
+      directory: () => apiGet('/api/directory')
     },
     identity: {
       getPublicKey: () => apiGet('/api/identity'),

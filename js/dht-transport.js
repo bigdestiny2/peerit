@@ -30,9 +30,9 @@ export async function createDhtTransport ({ relayWsUrl, storage = 'peerit-dht', 
   if (!relayWsUrl) throw new Error('createDhtTransport requires relayWsUrl (wss://…)')
   // Dynamic imports: bundled by esbuild, absent in the plain site (so this file
   // is harmless to load there; the caller falls back to the /api relay on throw).
-  const [{ default: DHT }, { default: WSStream }, { default: Hyperswarm }, { default: Corestore }, { default: Hyperbee }, { default: Protomux }, { default: b4a }] = await Promise.all([
+  const [{ default: DHT }, { default: WSStream }, { default: Hyperswarm }, { default: Corestore }, { default: Hyperbee }, { default: Protomux }, { default: b4a }, cencMod] = await Promise.all([
     import('@hyperswarm/dht-relay'), import('@hyperswarm/dht-relay/ws'),
-    import('hyperswarm'), import('corestore'), import('hyperbee'), import('protomux'), import('b4a')
+    import('hyperswarm'), import('corestore'), import('hyperbee'), import('protomux'), import('b4a'), import('compact-encoding')
   ])
 
   const ws = new WebSocket(relayWsUrl)
@@ -42,5 +42,8 @@ export async function createDhtTransport ({ relayWsUrl, storage = 'peerit-dht', 
   const store = new Corestore(storage) // random-access-web → IndexedDB in the browser
   await store.ready()
 
-  return createHyperPearSurface({ store, swarm, Hyperbee, Protomux, b4a, sha256, identity })
+  const cenc = cencMod.default || cencMod
+  // The REAL wire codec (fixes the pass-through fake): protomux frames the
+  // descriptor channel with compact-encoding raw bytes, not identity functions.
+  return createHyperPearSurface({ store, swarm, Hyperbee, Protomux, b4a, sha256, identity, codec: cenc.raw })
 }

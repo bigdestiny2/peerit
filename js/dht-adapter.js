@@ -17,7 +17,12 @@
 //         via the identity passed to BridgeGossipSync, never here) }
 const DESC_PROTOCOL = 'peerit/desc/v1'
 
-export function createHyperPearSurface ({ store, swarm, Hyperbee, Protomux, b4a, sha256, identity }) {
+export function createHyperPearSurface ({ store, swarm, Hyperbee, Protomux, b4a, sha256, identity, codec }) {
+  // The descriptor channel's wire codec. Real protomux needs a compact-encoding
+  // (dht-transport.js injects `require('compact-encoding').raw`); the in-memory
+  // fake in test/dht-adapter.mjs works with this pass-through. Default keeps the
+  // fakes green; the live bundle MUST pass the real codec or frames corrupt.
+  codec = codec || { encode: (b) => b, decode: (b) => b }
   const bees = new Map() // appId -> { bee, core, writable }
   const keyHex = (core) => b4a.toString(core.key, 'hex')
 
@@ -78,11 +83,8 @@ export function createHyperPearSurface ({ store, swarm, Hyperbee, Protomux, b4a,
         const peer = {
           id,
           pubkey: id,
-          // NB (live path): real protomux wants a compact-encoding codec here —
-          // use `require('compact-encoding').raw` for raw bytes. The pass-through
-          // below is what the in-memory fake uses; swap it when bundling for the wire.
           _msg: channel.addMessage({
-            encoding: { encode: (b) => b, decode: (b) => b },
+            encoding: codec, // pass-through for the fake; compact-encoding.raw on the real wire (injected by dht-transport.js)
             onmessage: (data) => emit('message', peer, data instanceof Uint8Array ? data : new Uint8Array(data))
           }),
           send (bytes) { try { this._msg.send(b4a.from(bytes)) } catch (e) { emit('error', e) } }

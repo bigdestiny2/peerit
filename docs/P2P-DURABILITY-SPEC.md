@@ -214,10 +214,25 @@ content-recovery (if no relay serves the newer content you're flagged but shown 
 restart + author self-rollback). Review fixes: evict the floor by **recency, not
 author-controlled version** (F1 — a Sybil can't evict a followed author by minting a high
 version); audit **self** too (F2); persist before the early return (F3); dropped the dead `root`
-field (F4). **The shared HiveRelay-pinned signed directory (fresh-visitor-vs-all-collude, the
-open ceiling) becomes Phase D** alongside seeder pin-on-append.
+field (F4). **The shared signed directory (fresh-visitor protection) becomes Phase D.**
 
-### Phase D — Seeder auto-discovery + pin-on-append · NODE WORK (closes a real gap)
+### Phase D — Durable signed directory + seeder auto-discovery + pin-on-append
+**DELIVERED 2026-07-01 (directory + fresh-visitor floor bootstrap — the buildable half).**
+The relay now serves **every outbox's signed head in one call**: `core.sync.directory()` +
+`GET /api/directory` (memory core; durable via the disk snapshot). The pool merges it across
+relays taking the **highest VERIFIED version** per author (`relay-pool.js directory()`), and
+the client **bootstraps its rollback floor from it at boot** (`gossip.js _bootstrapFloor`,
+every head re-verified, floor only ratchets up). So a **fresh visitor has a cross-relay floor
+for every author immediately** — it no longer has to browse an author before it's protected
+from a single relay rolling that author back. [directory.mjs](02-apps/peerit/test/directory.mjs)
+(5 checks: endpoint serves signed heads; fresh visitor bootstraps; cross-relay max beats a stale
+directory on one relay; the bootstrapped floor arms rollback detection from the first read).
+**STILL OPEN (needs live infra):** the directory is served by the *relays* — an INDEPENDENT
+anchor (a HiveRelay-pinned copy the browser can read out-of-band) is what a fresh visitor needs
+against *all-relays-collude*, and requires HiveRelay HTTP-catalog work. Seeder auto-discovery
+(below) + `/seed-core` pin-on-append make it durable; both need a live HiveRelay to validate.
+
+#### D.1 — Seeder auto-discovery + pin-on-append · NODE WORK (needs live HiveRelay)
 Today `peerit-seeder/seeder.mjs` is **manual** (`seeds.json`/argv) — an operator whitelist,
 the analysis's sharpest "still centralized" finding.
 - Teach the seeder to join `peerit-gossip-v1`, speak the `peerit/desc/v1` descriptor
@@ -233,9 +248,12 @@ The "removes plaintext from the transport" tier. Ship best-effort with `/api` fa
 - Make `js/dht-bundle.js` real: esbuild `js/dht-transport.js` (deps: `@hyperswarm/dht-relay`,
   `hyperswarm`, `corestore`, `hyperbee`, `protomux`, `b4a`, `random-access-web`,
   `compact-encoding`) → ship in `publish.mjs` SITE_FILES. `app.js:66-73` already prefers it.
-- **Fix the known live-wire bug** first: `dht-adapter.js:~82-87` uses a pass-through
-  protomux codec `{encode:b=>b,decode:b=>b}` (works only with the in-memory test fake) →
-  replace with `compact-encoding`.`raw`.
+- ✅ **DONE 2026-07-01 — the known live-wire bug is fixed.** The protomux codec is now
+  dependency-injected: `createHyperPearSurface({… codec})` (`dht-adapter.js`) defaults to the
+  pass-through for the fake but `dht-transport.js` injects `compact-encoding`'s `raw` for the
+  real wire. `test/dht-adapter.mjs` stays green. What remains is purely the LIVE steps below —
+  esbuild the bundle + validate the real Noise/DHT wire on hardware (recipe + caveats in
+  `docs/WEB-DEPLOYMENT.md`). No hand-patch needed anymore.
 - Browser owns the outbox core (keypair-derived, `inviteKey===core.key`); relay/seeder are
   read-only replicas. Transport is Noise ciphertext → the pipe operator can't read content.
 - **Honest scope:** blind *transport*, not blind *storage*; seeders still hold public

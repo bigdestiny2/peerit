@@ -498,6 +498,31 @@ class BridgeGossipSync {
     try { this._setLocal(FLOOR_KEY, blob); this._floorDirty = false } catch (e) { console.warn('[gossip] head-floor persist failed (rollback protection not durable this round):', e && e.message) }
   }
 
+  // Phase D: seed the durable floor from the relay directory at boot. One call
+  // returns every outbox's signed head (the pool merges to the highest verified
+  // version across relays), so even a FRESH visitor has a rollback floor for every
+  // author immediately — instead of accumulating floors as it browses. Every head
+  // is re-verified here; the floor is only ever ratcheted UP, so a relay serving a
+  // stale directory can't lower it. Offline-tolerant.
+  async _bootstrapFloor () {
+    const dirFn = this.pear.sync && this.pear.sync.directory
+    if (!dirFn) return
+    let heads
+    try { const dir = await dirFn(); heads = dir && dir.heads ? dir.heads : dir } catch { return }
+    if (!heads || typeof heads !== 'object') return
+    const me = this.getMe()
+    for (const appId in heads) {
+      if (PROTO_KEYS.has(appId) || !HEX64.test(appId) || appId === me) continue
+      const h = heads[appId]
+      if (!h || h._k !== appId) continue
+      if ((await verifyRecord(TYPE.HEAD, h)) !== 'ok') continue // never seed the floor from an unverified head
+      const v = h.version | 0
+      const fl = this._floor.get(appId)
+      if (!fl || v > fl.v) { this._floor.set(appId, { v, t: ++this._floorTick }); this._floorDirty = true }
+    }
+    if (this._floorDirty) this._saveFloor()
+  }
+
   async _openMyOutbox () {
     const appId = this._myAppId()
     let key = null
@@ -552,6 +577,7 @@ class BridgeGossipSync {
     // re-reads only what changed and a periodic reconcile re-verifies everything.
     this._loadCache()
     this._loadFloor() // Phase C: restore the durable rollback floor (survives restart by design)
+    await this._bootstrapFloor() // Phase D: seed it from the durable directory (fresh visitor gets a cross-relay floor immediately)
     try { console.log('[peerit persist] me=' + (this.getMe() || '').slice(0, 12) + ' outbox=' + (this._myInvite || '').slice(0, 12) + ' knownOutboxes=' + this._knownOutboxes().length + ' cachedPeers=' + this._peers.size) } catch {}
     try {
       this._channel = await this.pear.swarm.v1.join(TOPIC, { server: true, client: true, appName: 'peerit', reason: 'Discover other peerit users' })

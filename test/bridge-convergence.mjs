@@ -229,6 +229,42 @@ async function main () {
   const cm = await bob.data.addComment({ community: 'p2p', postCid: aPost.cid, body: 'nice post' })
   ok(await until(() => alice.data.listComments('p2p', aPost.cid).then((cs) => cs.some((c) => c.cid === cm.cid))), "alice sees bob's comment")
 
+  console.log('\n— browser-local identity switch opens a new bridge outbox —')
+  const wSwitch = makeBridgeWorld()
+  const switchStore = mem()
+  const switchSession = mem()
+  const switchId = new DevIdentity(switchStore, switchSession)
+  await switchId.ready()
+  const first = await switchId.createUser('switch-first')
+  const switchedSync = createSync({
+    apiToken: 'tok-switch',
+    apiBase: wSwitch.base,
+    fetch: wSwitch.fetch,
+    EventSource: wSwitch.EventSource,
+    storage: switchStore,
+    getMe: () => switchId.me().pubkey,
+    identity: switchId,
+    validate: makeValidator(BITS),
+    pollMs: 100
+  })
+  await switchedSync.ready()
+  const switchedData = createData(switchedSync, switchId, { minBits: BITS })
+  const observer = await makeClient(wSwitch, 'tok-observer', 'observer', 100)
+  ok(await until(() => Promise.all([switchedSync.status(), observer.sync.status()]).then(([s, o]) => s.peers >= 2 && o.peers >= 2)), 'observer discovers the first browser-local identity')
+  await switchedData.createCommunity({ slug: 'idswitch', title: 'Identity Switch', description: 'same tab, new signer' })
+  const switchPost = await switchedData.submitPost({ community: 'idswitch', kind: 'text', title: 'first identity post', body: 'first writer' })
+  ok(await until(() => observer.data.getPost('idswitch', switchPost.cid)), 'observer sees the first identity post')
+  const second = await switchId.createUser('switch-second')
+  ok(first.pubkey !== second.pubkey, 'identity switch minted a distinct signing key')
+  await switchedSync.announce()
+  const switchedComment = await switchedData.addComment({ community: 'idswitch', postCid: switchPost.cid, body: 'second identity comment' })
+  ok(switchedComment.author === second.pubkey, 'second identity signs the comment')
+  ok(await until(() => switchedData.listComments('idswitch', switchPost.cid).then((cs) => cs.some((c) => c.cid === switchedComment.cid))), 'the switched tab reads its own second-identity comment from the bridge outbox')
+  ok(await until(() => observer.data.listComments('idswitch', switchPost.cid).then((cs) => cs.some((c) => c.cid === switchedComment.cid && c.author === second.pubkey))), 'observer sees the second identity comment through the live bridge path')
+  const switchedStatus = await switchedSync.status()
+  ok(switchedStatus.outboxes.some((o) => o.appId === first.pubkey) && switchedStatus.outboxes.some((o) => o.appId === second.pubkey && o.current), 'bridge status tracks both identity-bound outboxes and marks the current one')
+  switchedSync.destroy(); observer.sync.destroy()
+
   console.log('\n— signed edits propagate; tamper does not —')
   await alice.data.editPost('p2p', aPost.cid, 'hello from alice (edited)')
   ok(await until(() => bob.data.getPost('p2p', aPost.cid).then((p) => p && p.body === 'hello from alice (edited)')), "alice's re-signed edit propagates and verifies on bob")

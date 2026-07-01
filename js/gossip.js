@@ -331,6 +331,7 @@ class BridgeGossipSync {
     this._poll = null
     this._pollTimer = null
     this._refreshCount = 0
+    this._myInviteAppId = null
     this._pollMs = pollMs // remote writes don't notify us; a periodic re-merge surfaces peers' new rows (tunable/testable)
     this.validate = validate
   }
@@ -346,6 +347,16 @@ class BridgeGossipSync {
   _store () { return this.storage || (typeof localStorage !== 'undefined' ? localStorage : null) }
   _getLocal (key) { try { const s = this._store(); return s ? s.getItem(key) : null } catch { return null } }
   _setLocal (key, value) { try { const s = this._store(); if (s) s.setItem(key, value) } catch {} }
+  _outboxKeyName (appId) { return `peerit:my-outbox-key:${appId}` }
+  _getOutboxKey (appId) {
+    if (!HEX64.test(appId || '')) return null
+    return this._getLocal(this._outboxKeyName(appId)) || this._getLocal('peerit:my-outbox-key')
+  }
+  _setOutboxKey (appId, inviteKey) {
+    if (!HEX64.test(appId || '') || !HEX64.test(inviteKey || '')) return
+    this._setLocal(this._outboxKeyName(appId), inviteKey)
+    this._setLocal('peerit:my-outbox-key', inviteKey)
+  }
   _knownOutboxes () {
     try {
       const list = JSON.parse(this._getLocal('peerit:my-outboxes') || '[]')
@@ -418,7 +429,7 @@ class BridgeGossipSync {
   async _openMyOutbox () {
     const appId = this._myAppId()
     let key = null
-    key = this._getLocal('peerit:my-outbox-key')
+    key = this._getOutboxKey(appId)
     try {
       // If localStorage was stranded under an old random proxy origin, key is
       // null. In modern PearBrowser create(appId) is open-or-create: it reopens
@@ -434,13 +445,15 @@ class BridgeGossipSync {
   // failure (returns false) so boot/posting degrade gracefully and self-heal when
   // the relay comes back.
   async _ensureMyOutbox () {
-    if (this._myInvite) return true
+    const appId = this._myAppId()
+    if (this._myInvite && this._myInviteAppId === appId) return true
     try {
       const r = await this._openMyOutbox()
       this._myInvite = r.inviteKey
-      this._setLocal('peerit:my-outbox-key', r.inviteKey)
-      this._peers.set(this.getMe(), { appId: this._myAppId(), inviteKey: r.inviteKey, self: true })
-      this._rememberOutbox(this._myAppId(), r.inviteKey)
+      this._myInviteAppId = appId
+      this._setOutboxKey(appId, r.inviteKey)
+      this._peers.set(appId, { appId, inviteKey: r.inviteKey, self: true })
+      this._rememberOutbox(appId, r.inviteKey)
       return true
     } catch (e) { console.warn('[gossip] outbox open deferred (offline?):', e && e.message); return false }
   }
@@ -449,9 +462,10 @@ class BridgeGossipSync {
     await cryptoReady()
     // Register our own outbox FIRST (with the locally-remembered key) so a reload
     // renders our content from cache even if the relay is unreachable at boot.
-    const myKey = this._getLocal('peerit:my-outbox-key')
-    this._peers.set(this.getMe(), { appId: this._myAppId(), inviteKey: myKey || null, self: true })
-    if (HEX64.test(myKey || '')) this._rememberOutbox(this._myAppId(), myKey)
+    const appId = this._myAppId()
+    const myKey = this._getOutboxKey(appId)
+    this._peers.set(appId, { appId, inviteKey: myKey || null, self: true })
+    if (HEX64.test(myKey || '')) this._rememberOutbox(appId, myKey)
     // Open (or create) the WRITABLE outbox so we can post. A network failure here
     // is non-fatal — reads + the cached render still work, and the poll retries.
     await this._ensureMyOutbox()
@@ -540,10 +554,13 @@ class BridgeGossipSync {
     } catch (e) { console.warn('[gossip] join failed', e && e.message) }
   }
 
-  announce () { return this._announce() }
+  async announce () {
+    if (!await this._ensureMyOutbox()) return
+    return this._announce()
+  }
 
   async append (op) {
-    await this._ensureMyOutbox() // re-open if a boot-time relay outage deferred it
+    if (!await this._ensureMyOutbox()) throw new Error('Peerit outbox is unavailable; check relay connectivity and try again.')
     const r = await this.pear.sync.append(this._myAppId(), { type: op.type, data: op.data, timestamp: new Date().toISOString() })
     const changed = await this._refresh(); this._emit(changed)
     return r

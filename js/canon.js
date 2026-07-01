@@ -11,7 +11,7 @@ export function ownerOf (type, data) {
   switch (type) {
     case TYPE.COMMUNITY: return data.creator
     case TYPE.MOD: return data.by
-    default: return data.author // post, comment, vote, profile
+    default: return data.author // post, comment, vote, profile, head
   }
 }
 
@@ -26,6 +26,7 @@ export function expectedKey (type, data) {
     case TYPE.VOTE: return data.targetCid != null && data.author != null ? keys.vote(data.targetCid, data.author) : null
     case TYPE.PROFILE: return data.author != null ? keys.profile(data.author) : null
     case TYPE.MOD: return data.community != null && data.actionId != null ? keys.mod(data.community, data.actionId) : null
+    case TYPE.HEAD: return data.author != null ? keys.head(data.author) : null
     default: return null
   }
 }
@@ -50,6 +51,27 @@ export function canonical (type, data) {
 
 // Type prefix of a Hyperbee key (`type!...`).
 export function typeFromKey (key) { return String(key).split('!')[0] }
+
+// ---- signed-outbox-head census ---------------------------------------------
+// The set a signed `head` commits to: the sorted `key\0sig` of every SIGNED,
+// NON-head record in one author's outbox. The head's `root` is a hash of this
+// (joined by \x01). The producer (sync layer) and the auditor (reader) MUST
+// compute it identically, so it lives here, next to canonical()/expectedKey().
+// Excluding the head itself keeps appending a new head from changing the root it
+// commits to; excluding unsigned rows means an injected junk row can't shift it.
+export function outboxCensus (rows) {
+  const c = []
+  for (const r of (rows || [])) {
+    const key = r && r.key
+    const value = r && r.value
+    if (!key || !value || !value._sig) continue
+    if (typeFromKey(key) === TYPE.HEAD) continue
+    c.push(key + '\x00' + value._sig)
+  }
+  c.sort()
+  return c
+}
+export function censusString (census) { return (census || []).join('\x01') }
 
 // Timestamp for last-writer-wins conflict resolution.
 export function recordTs (data) {

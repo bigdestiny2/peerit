@@ -18,9 +18,10 @@
 // Without a crypto backend (a browser lacking SubtleCrypto Ed25519) this degrades
 // to cooperative owner-binding (NOT secure — local simulation only).
 
-import { ownerOf, expectedKey, typeFromKey, recordTs, canonical } from './canon.js'
+import { TYPE, keys } from './model.js'
+import { ownerOf, expectedKey, typeFromKey, recordTs, canonical, outboxCensus, censusString } from './canon.js'
 import { verifyRecord } from './verify.js'
-import { verify as edVerify, isSecure, ready as cryptoReady } from './crypto.js'
+import { verify as edVerify, isSecure, ready as cryptoReady, hashHex } from './crypto.js'
 import { makeValidator } from './pow.js'
 
 const PEERS_KEY = 'peerit:peers'
@@ -150,6 +151,21 @@ export async function mergeOutboxes (boxes, claimed, validate) {
     if (typeFromKey(key) === 'community') { const s = out[key].slug; if (s && !claimed[s]) claimed[s] = out[key].creator }
   }
   return out
+}
+
+// Audit an author's replicated rows against their SIGNED head (verify the head
+// with verifyRecord first; this only compares the census). A relay/seeder that
+// withholds records can only shrink the set — it can't forge signed rows — so
+// `!complete` (got < the signed count) reliably flags a source to fail over
+// from; `exact` additionally confirms the byte-for-byte set matches the root.
+//   { hasHead, complete, exact, expected, got, rootMatch }
+export async function auditOutbox (rows, head) {
+  const census = outboxCensus(rows)
+  const got = census.length
+  if (!head || typeof head.count !== 'number') return { hasHead: false, complete: true, exact: false, expected: null, got, rootMatch: null }
+  const expected = head.count | 0
+  const rootMatch = head.root === await hashHex(censusString(census))
+  return { hasHead: true, complete: got >= expected, exact: rootMatch && got === expected, expected, got, rootMatch }
 }
 
 // ---- incremental merge primitives (BridgeGossipSync delta path) -------------
@@ -313,12 +329,17 @@ class GossipSync {
 
 // ---- real PearBrowser gossip ------------------------------------------------
 class BridgeGossipSync {
-  constructor ({ pear, getMe, identity, storage, validate = makeValidator(), pollMs = 4000 }) {
+  constructor ({ pear, getMe, identity, storage, validate = makeValidator(), pollMs = 4000, writeHead = false }) {
     this.mode = 'gossip-bridge'
     this.pear = pear
     this.getMe = getMe
     this.identity = identity
     this.storage = storage
+    // When on, maintain a signed head!<me> record after each of my writes (the
+    // outbox "merkle root": a census of my own records so a reader can detect a
+    // relay withholding rows). Off by default so existing count-based tests are
+    // untouched; app.js turns it on in production.
+    this._writeHead = writeHead
     this._listeners = new Set()
     this._peers = new Map() // pub -> { appId, inviteKey }
     this._cache = null            // current merged view (maintained incrementally)
@@ -562,8 +583,43 @@ class BridgeGossipSync {
   async append (op) {
     if (!await this._ensureMyOutbox()) throw new Error('Peerit outbox is unavailable; check relay connectivity and try again.')
     const r = await this.pear.sync.append(this._myAppId(), { type: op.type, data: op.data, timestamp: new Date().toISOString() })
-    const changed = await this._refresh(); this._emit(changed)
+    const changed = await this._refresh()
+    // Re-commit my signed head so it always reflects my full record set. It's a
+    // low-level append (no re-entry into append()), and we UNION its change set
+    // with the record's so the UI still sees the record it just wrote (the head
+    // key itself is inert to the UI).
+    if (this._writeHead && this.identity && op.type !== TYPE.HEAD) {
+      try {
+        const headChanged = await this._maintainHead()
+        if (headChanged) for (const k of headChanged) if (!changed.includes(k)) changed.push(k)
+      } catch (e) { console.warn('[gossip] head update failed:', e && e.message) }
+    }
+    this._emit(changed)
     return r
+  }
+
+  // Compute + sign + append the outbox head (the "merkle root" census over my own
+  // records). Returns the refresh change-set. No PoW (makeValidator passes the
+  // 'head' type); signed with the same Ed25519 envelope as every record, so a
+  // reader verifies it with the identical verifyRecord() path.
+  async _maintainHead () {
+    const me = this.getMe()
+    if (!HEX64.test(me || '')) return null // no real key -> no meaningful head
+    const view = this._peerViews.get(me) || {}
+    const rows = []
+    for (const k in view) rows.push({ key: k, value: view[k] })
+    const census = outboxCensus(rows)
+    const root = await hashHex(censusString(census))
+    const prev = view[keys.head(me)]
+    const data = {
+      id: me, author: me,
+      version: (((prev && prev.version) | 0)) + 1,
+      count: census.length, root, updatedAt: Date.now()
+    }
+    const s = await this.identity.sign(canonical(TYPE.HEAD, data))
+    data._sig = s.signature; data._k = s.publicKey; data._dk = s.driveKey; data._ns = s.namespace; data._alg = s.algorithm
+    await this.pear.sync.append(this._myAppId(), { type: TYPE.HEAD, data, timestamp: new Date().toISOString() })
+    return this._refresh()
   }
 
   // Incremental re-merge. Re-reads each peer's replicated outbox (the bridge has
@@ -777,8 +833,8 @@ function browserBus (name) {
   return { send: (m) => { bc.postMessage(m) }, onMessage: (fn) => { bc.onmessage = (e) => fn(e.data) } }
 }
 
-export function createGossip ({ storage, pear, getMe, identity, channelName, forceDev, bus, validate, pollMs } = {}) {
-  if (pear && pear.sync && pear.swarm && !forceDev) return new BridgeGossipSync({ pear, getMe, identity, storage, validate, pollMs })
+export function createGossip ({ storage, pear, getMe, identity, channelName, forceDev, bus, validate, pollMs, writeHead } = {}) {
+  if (pear && pear.sync && pear.swarm && !forceDev) return new BridgeGossipSync({ pear, getMe, identity, storage, validate, pollMs, writeHead })
   const theBus = bus || (typeof BroadcastChannel !== 'undefined' ? browserBus(channelName || 'peerit-gossip') : null)
   return new GossipSync({ storage, bus: theBus, getMe, validate })
 }

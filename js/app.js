@@ -92,9 +92,12 @@ async function boot () {
       }
     }
   }
+  // writeHead: maintain a signed head!<me> census after each write (the outbox
+  // "merkle root" — lets any reader detect a relay withholding records). Real
+  // runs only; existing count-based tests don't set it.
   sync = pearOverride
-    ? createSync({ getMe: () => identity.me().pubkey, identity, pear: pearOverride })
-    : createSync({ getMe: () => identity.me().pubkey, identity, ...runtime.syncOpts })
+    ? createSync({ getMe: () => identity.me().pubkey, identity, pear: pearOverride, writeHead: true })
+    : createSync({ getMe: () => identity.me().pubkey, identity, ...runtime.syncOpts, writeHead: true })
   await sync.ready()
   data = createData(sync, identity)
   refreshPrefs()

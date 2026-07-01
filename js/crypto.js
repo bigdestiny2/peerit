@@ -101,3 +101,19 @@ export async function verify (pubHex, message, sigHex) {
   } catch { return false }
   return false
 }
+
+// SHA-256 of a UTF-8 string -> hex. Used for the signed outbox "head" root — a
+// census fingerprint over an author's records, so a reader can detect a relay
+// that withholds records. SubtleCrypto.digest is available even where Ed25519
+// subtle isn't; node:crypto is the fallback; the non-cryptographic fold only
+// runs in no-crypto cooperative-dev, where heads aren't trusted anyway.
+export async function hashHex (message) {
+  await ready()
+  const bytes = utf8(String(message))
+  const subtle = globalThis.crypto && globalThis.crypto.subtle
+  if (subtle) { try { return toHex(new Uint8Array(await subtle.digest('SHA-256', bytes))) } catch {} }
+  if (nodeCrypto) { return nodeCrypto.createHash('sha256').update(Buffer.from(bytes)).digest('hex') }
+  let h = 0x811c9dc5 >>> 0 // FNV-1a (insecure) — dev-only, isSecure() is false here
+  for (let i = 0; i < bytes.length; i++) { h ^= bytes[i]; h = Math.imul(h, 0x01000193) >>> 0 }
+  return ('0000000' + h.toString(16)).slice(-8).repeat(8)
+}

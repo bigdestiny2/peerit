@@ -21,7 +21,11 @@ export const TYPE = {
   COMMENT: 'comment',
   VOTE: 'vote',
   PROFILE: 'profile',
-  MOD: 'modaction'
+  MOD: 'modaction',
+  // A per-outbox signed census (the "merkle root"): head!<authorPub> commits to
+  // the complete set of that author's records, so a reader can detect a relay
+  // that withholds records and no relay is the authoritative source of truth.
+  HEAD: 'head'
 }
 
 export const keys = {
@@ -42,7 +46,10 @@ export const keys = {
   profile: (author) => `${TYPE.PROFILE}!${author}`,
 
   mod: (community, actionId) => `${TYPE.MOD}!${community}!${actionId}`,
-  modsIn: (community) => `${TYPE.MOD}!${community}!`
+  modsIn: (community) => `${TYPE.MOD}!${community}!`,
+
+  head: (author) => `${TYPE.HEAD}!${author}`,
+  headPrefix: () => `${TYPE.HEAD}!`
 }
 
 // data.id builders (the part after `type!`). These determine the storage key
@@ -53,7 +60,8 @@ export const id = {
   comment: (community, postCid, cid) => `${community}!${postCid}!${cid}`,
   vote: (targetCid, author) => `${targetCid}!${author}`,
   profile: (author) => author,
-  mod: (community, actionId) => `${community}!${actionId}`
+  mod: (community, actionId) => `${community}!${actionId}`,
+  head: (author) => author
 }
 
 // MOD actions a community moderator may perform.

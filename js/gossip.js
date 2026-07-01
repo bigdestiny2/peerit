@@ -154,18 +154,26 @@ export async function mergeOutboxes (boxes, claimed, validate) {
 }
 
 // Audit an author's replicated rows against their SIGNED head (verify the head
-// with verifyRecord first; this only compares the census). A relay/seeder that
-// withholds records can only shrink the set — it can't forge signed rows — so
-// `!complete` (got < the signed count) reliably flags a source to fail over
-// from; `exact` additionally confirms the byte-for-byte set matches the root.
-//   { hasHead, complete, exact, expected, got, rootMatch }
-export async function auditOutbox (rows, head) {
-  const census = outboxCensus(rows)
+// itself with verifyRecord first — this only compares the census). Pass `owner`
+// (the outbox pubkey) so a foreign validly-signed row a relay injects can't pad
+// the census. The SOUND "this source is not serving the author's committed set"
+// signal is `hasHead && !matches`: a root mismatch means rows were withheld,
+// reordered, or substituted. `countSufficient` (got >= count) is NOT sound on
+// its own — a relay can hold cardinality constant while dropping a committed key
+// — so never fail over on count alone. `hasHead:false` means UN-AUDITABLE
+// (fail-OPEN), NOT healthy: a relay can strip the head to disable auditing.
+// Detection only; ACTING on it needs an independent head + an alternate source
+// (Phase B cross-relay comparison), and rollback/strip resistance across restart
+// needs the Phase C durable signed directory.
+//   { hasHead, matches, countSufficient, expected, got }
+export async function auditOutbox (rows, head, owner) {
+  const auditOwner = owner || (head && (head.author || head.id || head._k))
+  const census = outboxCensus(rows, auditOwner)
   const got = census.length
-  if (!head || typeof head.count !== 'number') return { hasHead: false, complete: true, exact: false, expected: null, got, rootMatch: null }
+  if (!head || typeof head.count !== 'number') return { hasHead: false, matches: null, countSufficient: true, expected: null, got }
   const expected = head.count | 0
-  const rootMatch = head.root === await hashHex(censusString(census))
-  return { hasHead: true, complete: got >= expected, exact: rootMatch && got === expected, expected, got, rootMatch }
+  const matches = head.root === await hashHex(censusString(census))
+  return { hasHead: true, matches, countSufficient: got >= expected, expected, got }
 }
 
 // ---- incremental merge primitives (BridgeGossipSync delta path) -------------
@@ -329,12 +337,17 @@ class GossipSync {
 
 // ---- real PearBrowser gossip ------------------------------------------------
 class BridgeGossipSync {
-  constructor ({ pear, getMe, identity, storage, validate = makeValidator(), pollMs = 4000, writeHead = false }) {
+  constructor ({ pear, getMe, identity, storage, validate = makeValidator(), pollMs = 4000, writeHead = false, readOnly = false }) {
     this.mode = 'gossip-bridge'
     this.pear = pear
     this.getMe = getMe
     this.identity = identity
     this.storage = storage
+    // Fail-closed write gate: in read-only web mode NO outbox write (post, vote,
+    // community, mod, …) may reach the relay. Guarding here (the single append
+    // chokepoint) can't be bypassed by a UI handler that forgot an isReadOnly()
+    // check, and it also prevents a stray head! append.
+    this._readOnly = readOnly
     // When on, maintain a signed head!<me> record after each of my writes (the
     // outbox "merkle root": a census of my own records so a reader can detect a
     // relay withholding rows). Off by default so existing count-based tests are
@@ -346,6 +359,7 @@ class BridgeGossipSync {
     this._peerViews = new Map()   // pub -> admitted {key:value} view (verified rows only)
     this._peerSigs = new Map()    // pub -> Map(key -> changeToken) seen last refresh
     this._peerHeads = new Map()   // pub -> last-seen outbox version (from /api/sync/heads)
+    this._withholding = new Set()  // pubs whose replicated rows failed their signed-head audit (detection only)
     this._claimed = null          // sticky community owners (slug -> creator), persisted
     this._refreshing = null       // in-flight refresh promise (serialises concurrent merges)
     this._destroyed = false
@@ -581,6 +595,7 @@ class BridgeGossipSync {
   }
 
   async append (op) {
+    if (this._readOnly) throw new Error('This peerit is read-only.')
     if (!await this._ensureMyOutbox()) throw new Error('Peerit outbox is unavailable; check relay connectivity and try again.')
     const r = await this.pear.sync.append(this._myAppId(), { type: op.type, data: op.data, timestamp: new Date().toISOString() })
     const changed = await this._refresh()
@@ -594,7 +609,9 @@ class BridgeGossipSync {
         if (headChanged) for (const k of headChanged) if (!changed.includes(k)) changed.push(k)
       } catch (e) { console.warn('[gossip] head update failed:', e && e.message) }
     }
-    this._emit(changed)
+    // head! keys are inert to the UI; strip them so a write's change-set doesn't
+    // defeat the vote fast-paths (cacheClassForChangedKeys / patchVotesInPlace).
+    this._emit(changed.filter((k) => typeFromKey(k) !== TYPE.HEAD))
     return r
   }
 
@@ -603,12 +620,13 @@ class BridgeGossipSync {
   // 'head' type); signed with the same Ed25519 envelope as every record, so a
   // reader verifies it with the identical verifyRecord() path.
   async _maintainHead () {
+    if (this._destroyed) return null // torn down mid-write — don't append after destroy()
     const me = this.getMe()
     if (!HEX64.test(me || '')) return null // no real key -> no meaningful head
     const view = this._peerViews.get(me) || {}
     const rows = []
     for (const k in view) rows.push({ key: k, value: view[k] })
-    const census = outboxCensus(rows)
+    const census = outboxCensus(rows, me)
     const root = await hashHex(censusString(census))
     const prev = view[keys.head(me)]
     const data = {
@@ -693,6 +711,23 @@ class BridgeGossipSync {
       if (heads && heads[info.appId] !== undefined) this._peerHeads.set(pub, heads[info.appId]) // baseline for next round's gating
     }
 
+    // Withholding DETECTION (Phase A): audit each re-read peer's replicated rows
+    // against their own SIGNED head. The sound signal is a root mismatch (rows
+    // withheld/reordered/substituted). Detection only — we surface it on status()
+    // and warn once; FAILOVER to another source needs Phase B (cross-relay), and
+    // rollback/head-strip resistance needs Phase B + the Phase C durable directory
+    // (see auditOutbox). Bounded: runs only over toRead (the outboxes that moved).
+    const localWriter = this._writeHead && typeof this.getMe === 'function' ? this.getMe() : null
+    for (const pub of toRead) {
+      if (localWriter && pub === localWriter) continue // own head can lag briefly between append() and _maintainHead()
+      const view = this._peerViews.get(pub); if (!view) continue
+      const head = view[keys.head(pub)]; if (!head) continue
+      const rows = []; for (const k in view) rows.push({ key: k, value: view[k] })
+      let bad = false
+      try { const a = await auditOutbox(rows, head, pub); bad = a.hasHead && a.matches === false } catch {}
+      if (bad) { if (!this._withholding.has(pub)) console.warn('[gossip] outbox ' + pub.slice(0, 12) + '… failed its signed-head audit (rows withheld/tampered on this source)'); this._withholding.add(pub) } else this._withholding.delete(pub)
+    }
+
     if (this._cache && !anyRowChanged) return [] // nothing moved anywhere — keep cache (and its sorted-key cache)
     const boxes = []
     for (const [pub, view] of this._peerViews) boxes.push({ pub, view })
@@ -752,12 +787,15 @@ class BridgeGossipSync {
   }
   async status () {
     const v = await this._merged()
+    let viewLength = 0
+    for (const k in v) if (typeFromKey(k) !== TYPE.HEAD) viewLength++ // head! is an internal census, not a "record"
     return {
       appId: 'peerit',
       mode: this.mode,
       secure: isSecure(),
       peers: this._peers.size,
-      viewLength: Object.keys(v).length,
+      viewLength,
+      withholding: [...this._withholding], // outboxes failing their signed-head audit (detection only; failover is Phase B)
       inviteKey: this._myInvite,
       outboxAppId: this._myAppId(),
       outboxes: this._statusOutboxes()
@@ -833,8 +871,8 @@ function browserBus (name) {
   return { send: (m) => { bc.postMessage(m) }, onMessage: (fn) => { bc.onmessage = (e) => fn(e.data) } }
 }
 
-export function createGossip ({ storage, pear, getMe, identity, channelName, forceDev, bus, validate, pollMs, writeHead } = {}) {
-  if (pear && pear.sync && pear.swarm && !forceDev) return new BridgeGossipSync({ pear, getMe, identity, storage, validate, pollMs, writeHead })
+export function createGossip ({ storage, pear, getMe, identity, channelName, forceDev, bus, validate, pollMs, writeHead, readOnly } = {}) {
+  if (pear && pear.sync && pear.swarm && !forceDev) return new BridgeGossipSync({ pear, getMe, identity, storage, validate, pollMs, writeHead, readOnly })
   const theBus = bus || (typeof BroadcastChannel !== 'undefined' ? browserBus(channelName || 'peerit-gossip') : null)
   return new GossipSync({ storage, bus: theBus, getMe, validate })
 }

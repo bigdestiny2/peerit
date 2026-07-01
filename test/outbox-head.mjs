@@ -104,7 +104,7 @@ async function main () {
 
   const nonHead = rows.filter((r) => r.key !== headKey)
   ok(head.count === nonHead.length && head.count === 3, 'head.count equals the number of non-head records (community + 2 posts = 3)')
-  const expectedRoot = await hashHex(censusString(outboxCensus(rows)))
+  const expectedRoot = await hashHex(censusString(outboxCensus(rows, alice.pub)))
   ok(head.root === expectedRoot, 'head.root is the hash of the sorted key\\nsig census of the author\'s records')
 
   console.log('\n— the head verifies like any record, and rejects tampering —')
@@ -114,17 +114,21 @@ async function main () {
   ok((await verifyRecord(TYPE.HEAD, { ...head, _k: 'a'.repeat(64) })) === 'bad', 'a head whose signer _k != author is rejected ("bad") — no signing as someone else')
 
   console.log('\n— a WITHHOLDING source is detected; a complete source passes —')
-  const full = await auditOutbox(rows, head)
-  ok(full.complete && full.exact && full.rootMatch, 'auditing the FULL outbox against its head → complete + exact')
+  const full = await auditOutbox(rows, head, alice.pub)
+  ok(full.matches && full.countSufficient, 'auditing the FULL outbox against its head → root match + sufficient count')
   ok(full.expected === 3 && full.got === 3, 'audit reports expected=3, got=3 for the full set')
 
   const withheld = rows.filter((r) => r.key !== nonHead[0].key) // relay drops one signed record
-  const audit = await auditOutbox(withheld, head)
-  ok(!audit.complete, 'auditing an outbox MISSING one record → NOT complete (withholding detected)')
-  ok(audit.got === 2 && audit.expected === 3 && !audit.rootMatch, 'audit reports got=2 < expected=3 and a root mismatch')
+  const audit = await auditOutbox(withheld, head, alice.pub)
+  ok(!audit.matches, 'auditing an outbox MISSING one record → root mismatch (withholding detected)')
+  ok(audit.got === 2 && audit.expected === 3 && !audit.countSufficient, 'audit reports got=2 < expected=3 and insufficient count')
+
+  const padded = withheld.concat({ key: 'post!p2p!foreign', value: { _sig: 'foreign-signature', _k: 'b'.repeat(64) } })
+  const paddedAudit = await auditOutbox(padded, head, alice.pub)
+  ok(!paddedAudit.matches && !paddedAudit.countSufficient && paddedAudit.got === 2, 'foreign signed rows cannot pad an author-owned outbox audit')
 
   const noHead = await auditOutbox(rows, null)
-  ok(noHead.hasHead === false && noHead.complete === true, 'an author with no head yet is un-auditable (complete=true, hasHead=false) — backward compatible')
+  ok(noHead.hasHead === false && noHead.matches === null && noHead.countSufficient === true, 'an author with no head yet is un-auditable (matches=null, fail-open count) — backward compatible')
 
   console.log('\n— end to end: a second peer replicates the outbox and audits it —')
   const bob = await makeClient(world, 'tok-b', 'bob', { writeHead: false })
@@ -133,8 +137,15 @@ async function main () {
   const bobHead = await bob.sync.get(headKey)
   ok(!!bobHead && (await verifyRecord(TYPE.HEAD, bobHead)) === 'ok', 'bob replicated alice\'s head and it verifies on his side')
   const bobRowsOfAlice = (await bob.sync.list('', { limit: 1000 })).filter((r) => (r.value && r.value._k) === alice.pub)
-  const bobAudit = await auditOutbox(bobRowsOfAlice, bobHead)
-  ok(bobAudit.complete && bobAudit.exact, 'bob audits alice\'s replicated outbox against her head → complete + exact (no withholding on this path)')
+  const bobAudit = await auditOutbox(bobRowsOfAlice, bobHead, alice.pub)
+  ok(bobAudit.matches && bobAudit.countSufficient, 'bob audits alice\'s replicated outbox against her head → root match + sufficient count')
+
+  console.log('\n— the audit is WIRED into the live read path (not dead code) —')
+  const bobStatus = await bob.sync.status()
+  ok(Array.isArray(bobStatus.withholding), 'status() exposes a withholding[] verdict (auditOutbox runs in _doRefresh)')
+  ok(bobStatus.withholding.length === 0, 'the honest replication path reports NO withholding')
+  const bobHeadRows = await bob.sync.list(keys.headPrefix(), { limit: 10 })
+  ok(bobHeadRows.length >= 1 && bobStatus.viewLength === 3, 'viewLength (3 = community + 2 posts) excludes the head! record that IS present in the raw view')
 
   alice.sync.destroy && alice.sync.destroy(); bob.sync.destroy && bob.sync.destroy()
   console.log(`\n✅ all ${passed} outbox-head checks passed\n`)

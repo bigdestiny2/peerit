@@ -165,6 +165,24 @@ async function main () {
   ok(stored && stored.author === PUB, 'bridge append writes through /api sync, not localStorage')
   ok(host.calls.every(c => c.token === 'token-1' || c.path.startsWith('/api/swarm/events')), 'all HTTP bridge calls carry X-Pear-Token')
 
+  const appendCallsBeforeReadOnly = host.calls.filter(c => c.path.startsWith('/api/sync/append')).length
+  const readOnlySync = createSync({
+    apiToken: 'token-1',
+    apiBase: host.base,
+    fetch: host.fetch,
+    EventSource: FakeEventSource,
+    storage: mem(),
+    getMe: () => identity.me().pubkey,
+    identity,
+    readOnly: true
+  })
+  await readOnlySync.ready()
+  await assert.rejects(
+    () => readOnlySync.append({ type: 'profile', data: { id: PUB, author: PUB, updatedAt: Date.now() } }),
+    /read-only/
+  )
+  ok(host.calls.filter(c => c.path.startsWith('/api/sync/append')).length === appendCallsBeforeReadOnly, 'read-only bridge rejects appends before touching /api sync')
+
   console.log('\n— partial bridge fail-closed behavior —')
   const merged = resolvePear({ pear: { swarm: { v1: { join: async () => ({ peers: [], on: () => {} }) } } }, apiToken: 'token-1', apiBase: host.base, fetch: host.fetch, EventSource: FakeEventSource })
   ok(hasGossipPearSurface(merged), 'partial window.pear can be completed by token-gated /api fallback')

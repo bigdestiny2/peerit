@@ -97,7 +97,7 @@ async function boot () {
   // runs only; existing count-based tests don't set it.
   sync = pearOverride
     ? createSync({ getMe: () => identity.me().pubkey, identity, pear: pearOverride, writeHead: true })
-    : createSync({ getMe: () => identity.me().pubkey, identity, ...runtime.syncOpts, writeHead: true })
+    : createSync({ getMe: () => identity.me().pubkey, identity, ...runtime.syncOpts, writeHead: true, readOnly: runtime.readOnly })
   await sync.ready()
   data = createData(sync, identity)
   refreshPrefs()

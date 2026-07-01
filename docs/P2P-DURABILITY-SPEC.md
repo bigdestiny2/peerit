@@ -128,6 +128,26 @@ withholding is detectable.
 - **Honest scope:** does not stop the relay storing plaintext; it makes the store
   *non-authoritative* and *auditable*. Foundation for B/C/D.
 
+**DELIVERED 2026-07-01 (built + adversarially reviewed):** signed `head!<author>`
+(`{version, count, root}`, `\x00`/`\x01`-delimited census) produced after every
+write (`gossip.js` `_maintainHead`, gated `writeHead`, on in prod). `auditOutbox(rows,
+head, owner)` is **wired into the live read path** (`_doRefresh`) — the sound signal
+is `hasHead && !matches` (root mismatch = withheld/reordered/substituted); it surfaces
+on `status().withholding` + a `console.warn`. Owner-scoped census (foreign signed rows
+can't pad it). 21 tests. Also fixed in review: read-only writes now fail closed at the
+append chokepoint; `head!` stripped from the UI change-set (kept vote fast-paths);
+`head!` excluded from `viewLength`.
+**KNOWN LIMITS of the head ALONE (closed later, not in A):**
+  - **Rollback/replay** — a single relay can serve an *older, still-validly-signed* head
+    + its matching subset; a fresh reader has no baseline to know it's stale. `head.version`
+    is written but only becomes load-bearing once compared across sources. → **Phase B**
+    (cross-relay: take the highest `version`) + **Phase C** (durable monotonic floor).
+  - **Head-strip / downgrade** — drop `head!<author>` → `hasHead:false` → auditing fails
+    *open*. No durable "this author HAD a head" fact in A. → **Phase B** sticky watermark +
+    **Phase C** pinned directory.
+  - **Detection ≠ mitigation** — against ONE relay there is nowhere to fail over; the head
+    makes withholding *visible*, not *routable-around*, until Phase B.
+
 ### Phase B — Multi-relay write fan-out + cross-relay reconstruction proof · BUILDABLE NOW
 Make "the relay is swappable" true in practice, not just in principle.
 - **Client (`js/relay-roster.js` / `js/pear-api.js`):** `relay-roster.js` already verifies
@@ -190,6 +210,12 @@ that joins). Ship as opt-in "encrypted community," never claimed as default priv
 - Not zero-always-on-infra: cold-start needs a seeder/fleet; a closed tab seeds nothing.
 - Not origin-trust-free for web users: peerit.site ships the JS. Steer high-assurance
   users to PearBrowser (`hyper://` drive + SRI/`verify.html`).
+- **Rollback/freeze resistance across a relay restart is NOT provided until Phase C.**
+  The signed head makes withholding detectable against a *fresh, present* head from a
+  *single* source; a relay serving an internally-consistent *old* snapshot (or stripping
+  the head) is only caught once heads are compared across relays (B) and the latest
+  `(author → version/count)` is pinned in the durable signed directory (C). Until then,
+  the head is honestly "tamper-evident, not rollback-proof."
 
 ## 6. Recommended build order
 A → B (both buildable now, high value, fully testable, no risky bundle) establish the

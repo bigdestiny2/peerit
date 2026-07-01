@@ -58,14 +58,18 @@ export function typeFromKey (key) { return String(key).split('!')[0] }
 // (joined by \x01). The producer (sync layer) and the auditor (reader) MUST
 // compute it identically, so it lives here, next to canonical()/expectedKey().
 // Excluding the head itself keeps appending a new head from changing the root it
-// commits to; excluding unsigned rows means an injected junk row can't shift it.
-export function outboxCensus (rows) {
+// commits to. Pass `owner` (the outbox pubkey) so the auditor counts ONLY rows
+// signed by that owner (value._k === owner): a foreign but validly-signed row a
+// relay injects can't pad the count/root. The producer feeds its own me-scoped
+// admitted view, so owner is a no-op there but keeps producer/auditor symmetric.
+export function outboxCensus (rows, owner) {
   const c = []
   for (const r of (rows || [])) {
     const key = r && r.key
     const value = r && r.value
     if (!key || !value || !value._sig) continue
     if (typeFromKey(key) === TYPE.HEAD) continue
+    if (owner && value._k !== owner) continue
     c.push(key + '\x00' + value._sig)
   }
   c.sort()

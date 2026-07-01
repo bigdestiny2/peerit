@@ -39,7 +39,7 @@ const HEX128 = /^[0-9a-f]{128}$/i
 // only re-reads outboxes that actually changed.
 const CACHE_KEY = 'peerit:gossip-view'
 const MAX_CACHE_BYTES = 3 * 1024 * 1024 // skip persisting if the view is huge (graceful)
-const FLOOR_KEY = 'peerit:head-floor'   // Phase C durable monotonic head floor (author -> max version+root)
+const FLOOR_KEY = 'peerit:head-floor'   // Phase C durable monotonic head floor (author -> max signed head version)
 const MAX_FLOOR = 5000                  // cap tracked authors (drop lowest-version on overflow)
 const RECONCILE_EVERY = 30 // every N polls, ignore heads + re-verify everything (defends against a stale/lying relay or a tampered local cache)
 
@@ -363,8 +363,9 @@ class BridgeGossipSync {
     this._peerHeads = new Map()   // pub -> last-seen outbox version (from /api/sync/heads)
     this._withholding = new Set()  // pubs whose replicated rows failed their signed-head audit (detection only)
     this._readFrom = new Map()     // pub -> relay base to read that outbox from (set on recovery so it sticks; cleared at reconcile)
-    this._floor = new Map()        // pub -> {v:maxVersion, r:root} DURABLE monotonic head floor (Phase C: rollback across restart + all-relays-collude)
+    this._floor = new Map()        // pub -> {v:maxVersion, t:tick} DURABLE monotonic head floor (Phase C: rollback across restart + all-relays-collude)
     this._floorDirty = false
+    this._floorTick = 0            // monotonic recency stamp for floor eviction (LRU, not version)
     this._claimed = null          // sticky community owners (slug -> creator), persisted
     this._refreshing = null       // in-flight refresh promise (serialises concurrent merges)
     this._destroyed = false
@@ -479,20 +480,22 @@ class BridgeGossipSync {
       for (const pub in o) {
         if (PROTO_KEYS.has(pub) || !HEX64.test(pub)) continue
         const e = o[pub]; if (!e || typeof e.v !== 'number') continue
-        this._floor.set(pub, { v: e.v | 0, r: typeof e.r === 'string' ? e.r : '' })
+        const t = typeof e.t === 'number' ? e.t : 0
+        this._floor.set(pub, { v: e.v | 0, t })
+        if (t > this._floorTick) this._floorTick = t
       }
     } catch {}
   }
 
   _saveFloor () {
-    try {
-      let entries = [...this._floor.entries()]
-      if (entries.length > MAX_FLOOR) entries = entries.sort((a, b) => b[1].v - a[1].v).slice(0, MAX_FLOOR) // keep the highest-version authors
-      const o = {}
-      for (const [pub, e] of entries) o[pub] = { v: e.v, r: e.r }
-      this._setLocal(FLOOR_KEY, JSON.stringify(o))
-      this._floorDirty = false
-    } catch {}
+    let entries = [...this._floor.entries()]
+    // Evict by RECENCY (tick), not author-controlled version — a Sybil minting a
+    // high-version head must not be able to push a followed author out of the cap.
+    if (entries.length > MAX_FLOOR) { entries = entries.sort((a, b) => (b[1].t | 0) - (a[1].t | 0)).slice(0, MAX_FLOOR); this._floor = new Map(entries) }
+    const o = {}
+    for (const [pub, e] of entries) o[pub] = { v: e.v, t: e.t | 0 }
+    let blob; try { blob = JSON.stringify(o) } catch { return }
+    try { this._setLocal(FLOOR_KEY, blob); this._floorDirty = false } catch (e) { console.warn('[gossip] head-floor persist failed (rollback protection not durable this round):', e && e.message) }
   }
 
   async _openMyOutbox () {
@@ -759,26 +762,28 @@ class BridgeGossipSync {
     const crossHeadFn = multi && this.pear.sync.crossHead
     const recoverFn = multi && this.pear.sync.recoverRows
     for (const pub of toRead) {
-      if (localWriter && pub === localWriter) continue // own head can lag briefly between append() and _maintainHead()
       let view = this._peerViews.get(pub); if (!view) continue
       let head = view[keys.head(pub)]
       if (crossHeadFn) { try { const ch = await this.pear.sync.crossHead(pub); if (ch && ch.head && (!head || (ch.head.version | 0) > (head.version | 0))) head = ch.head } catch {} }
       // Phase C: durable monotonic head floor. `head` is the max VERIFIED head
       // across every reachable relay. If it REGRESSES below a version this client
-      // durably recorded (localStorage, survives restart), then ALL relays are
-      // serving older content than we know existed — an all-relays-collude /
-      // across-restart ROLLBACK or STRIP that Phase B can't see (nothing newer to
-      // fail over to). Flag it and don't accept the regression; otherwise ratchet
-      // the floor up. Floor is only ever set from a verified head (view/crossHead).
+      // durably recorded (localStorage, survives restart) — for a PEER or the
+      // author's OWN outbox — then all relays are serving older content than we
+      // know existed: an all-relays-collude / across-restart rollback Phase B
+      // can't see. Flag it; else ratchet the floor up and TOUCH it, so eviction
+      // is by recency, NOT version (a Sybil can't evict a followed author by
+      // minting a high-version head). Floor is only set from a verified head.
       const fl = this._floor.get(pub)
       const hv = head ? (head.version | 0) : -1
       if (fl && hv < fl.v) {
         if (!this._withholding.has(pub)) console.warn('[gossip] outbox ' + pub.slice(0, 12) + '… ROLLED BACK below the durable head floor (serving v' + (hv < 0 ? '∅' : hv) + ' < known v' + fl.v + ')')
         this._withholding.add(pub)
-        continue // no relay has the newer head — can't recover; keep the prior view, flag it
+        continue // no relay has the newer head — can't recover; flag it (detection, not content-recovery)
       }
+      if (head && (!fl || hv > fl.v)) { this._floor.set(pub, { v: hv, t: ++this._floorTick }); this._floorDirty = true }
+      else if (fl) { fl.t = ++this._floorTick } // recently-relevant → survives eviction
+      if (localWriter && pub === localWriter) continue // self: the floor above covers rollback of my own outbox; skip the online count/root audit (it lags append() -> _maintainHead)
       if (!head) continue
-      if (!fl || hv > fl.v) { this._floor.set(pub, { v: hv, r: head.root }); this._floorDirty = true }
       let rows = []; for (const k in view) rows.push({ key: k, value: view[k] })
       let a; try { a = await auditOutbox(rows, head, pub) } catch { continue }
       if (a.hasHead && a.matches === false && recoverFn) {
@@ -798,6 +803,7 @@ class BridgeGossipSync {
       if (bad) { if (!this._withholding.has(pub)) console.warn('[gossip] outbox ' + pub.slice(0, 12) + '… fails its signed-head audit on every reachable relay (rows withheld/tampered)'); this._withholding.add(pub) } else this._withholding.delete(pub)
     }
 
+    if (this._floorDirty) this._saveFloor() // persist BEFORE the early return: a crossHead-only ratchet leaves anyRowChanged false
     if (this._cache && !anyRowChanged) return [] // nothing moved anywhere — keep cache (and its sorted-key cache)
     const boxes = []
     for (const [pub, view] of this._peerViews) boxes.push({ pub, view })
@@ -807,7 +813,6 @@ class BridgeGossipSync {
     if (this._cache && changed.length === 0) { /* winning view identical — keep object identity */ }
     else { this._cache = merged; this._sortedFor = null }
     if (changed.length || (anyRowChanged && !reconcile)) this._saveCache() // persist the latest verified view for an instant reload
-    if (this._floorDirty) this._saveFloor() // persist the durable rollback floor when it ratcheted up
     return changed
   }
 

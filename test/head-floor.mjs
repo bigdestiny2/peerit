@@ -88,6 +88,9 @@ async function main () {
   g.rows = new Map(snapshotV1); g.version += 5 // serve the old v1 head + subset, and report a change so bob re-reads
   const flagged = await until(async () => (await bob.sync.status()).withholding.includes(alice.pub), { tries: 80 })
   ok(flagged, 'bob FLAGS the rollback: the relay serves v1 but bob durably knows v3 existed (all-relays-collude has nothing newer to hide behind)')
+  // F2: the AUTHOR detects a rollback of their OWN outbox too (self is floored).
+  const selfFlagged = await until(async () => (await alice.sync.status()).withholding.includes(alice.pub), { tries: 80 })
+  ok(selfFlagged, 'alice detects the rollback of HER OWN outbox (the relay served her back an older head than she durably knows she wrote)')
 
   console.log('\n— the floor SURVIVES a client restart (the whole point) —')
   bob.sync.destroy && bob.sync.destroy()

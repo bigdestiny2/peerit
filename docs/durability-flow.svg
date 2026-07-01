@@ -1,0 +1,54 @@
+<svg width="680" viewBox="0 0 680 392" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>how a peerit post travels — write once, verify everywhere</title>
+<desc>An author's browser signs every record plus a signed head, and fans the write out to a pool of untrusted relays that hold the data but cannot forge it. A reader's browser then does four things with the head: take the highest signed head version across relays (phase B), audit the rows it received against that head to catch withholding (phase A), recover by reading around a withholding relay (phase B), and reject any head version below the durable floor it has already seen (phase C). The result is a locally verified view plus a withholding or rollback flag.</desc>
+<style>
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.th{font-size:14px;font-weight:500;fill:#3a3a3a}
+.t{font-size:15px;font-weight:500;fill:#1a1a1a}
+.ts{font-size:12.5px;fill:#555}
+.c-blue rect{fill:#E6F1FB;stroke:#378ADD;stroke-width:1.5}.c-blue .t{fill:#0C447C}
+.c-teal rect{fill:#DAF2EE;stroke:#17A2A2;stroke-width:1.5}.c-teal .t{fill:#0C5353}.c-teal .ts{fill:#17706E}
+.c-green rect{fill:#EAF3DE;stroke:#639922;stroke-width:1.5}.c-green .t{fill:#27500A}
+</style>
+
+<text class="th" x="40" y="28">how a post travels — write once, verify everywhere</text>
+
+<g class="c-teal">
+  <rect x="40" y="46" width="176" height="98" rx="8"/>
+  <text class="t" x="57" y="76">author · browser</text>
+  <text class="ts" x="57" y="98">signs each record</text>
+  <text class="ts" x="57" y="116">+ a signed head</text>
+</g>
+
+<text class="ts" x="305" y="42" text-anchor="middle">relay pool · untrusted</text>
+<g class="c-blue"><rect x="250" y="52" width="110" height="26" rx="6"/><text class="t" x="305" y="69" text-anchor="middle">relay a</text></g>
+<g class="c-blue"><rect x="250" y="84" width="110" height="26" rx="6"/><text class="t" x="305" y="101" text-anchor="middle">relay b</text></g>
+<g class="c-blue"><rect x="250" y="116" width="110" height="26" rx="6"/><text class="t" x="305" y="133" text-anchor="middle">relay c</text></g>
+
+<g class="c-teal">
+  <rect x="464" y="46" width="176" height="98" rx="8"/>
+  <text class="t" x="481" y="76">reader · browser</text>
+  <text class="ts" x="481" y="98">re-verifies every</text>
+  <text class="ts" x="481" y="116">record locally</text>
+</g>
+
+<text class="ts" x="233" y="88" text-anchor="middle">write</text>
+<line x1="216" y1="95" x2="248" y2="95" stroke="#85B7EB" stroke-width="2"/>
+<text class="ts" x="412" y="88" text-anchor="middle">read</text>
+<line x1="362" y1="95" x2="462" y2="95" stroke="#85B7EB" stroke-width="2"/>
+
+<text class="th" x="40" y="182">what the reader does with the head</text>
+<text class="t" x="40" y="210">1 · take the highest signed head across relays</text>
+<text class="th" x="640" y="210" text-anchor="end">phase b</text>
+<text class="t" x="40" y="240">2 · audit rows against the head — catch withholding</text>
+<text class="th" x="640" y="240" text-anchor="end">phase a</text>
+<text class="t" x="40" y="270">3 · recover — read around a withholding relay</text>
+<text class="th" x="640" y="270" text-anchor="end">phase b</text>
+<text class="t" x="40" y="300">4 · reject a head below your durable floor</text>
+<text class="th" x="640" y="300" text-anchor="end">phase c</text>
+
+<g class="c-green">
+  <rect x="40" y="322" width="600" height="46" rx="8"/>
+  <text class="t" x="58" y="350">result · a verified view + a withholding / rollback flag</text>
+</g>
+</svg>

@@ -200,6 +200,23 @@ Move discovery durability off relay RAM.
 - **Tests:** directory round-trips signed rows; a fresh reader discovers offline authors
   from the directory alone; forged rows rejected.
 
+**DELIVERED 2026-07-01 (client-local floor — the shippable half; adversarially reviewed).**
+Rather than start with the shared HiveRelay directory (needs HiveRelay HTTP-catalog work),
+Phase C ships the **durable monotonic head floor** in `gossip.js`: `this._floor` (localStorage
+`peerit:head-floor`, `author -> max signed head version`) restored at boot — UNLIKE `_peerHeads`,
+by design. In the audit loop the max verified head across relays is compared to the floor; a
+regression (a relay/all-relays serving a version below one this client durably recorded) is
+flagged, for a peer OR the author's own outbox. A signed head's `version` is author-controlled
+and forge-proof, so this is a sound baseline no relay can talk you below. **Closes rollback
+across a client restart + all-relays-collude — for content already seen.** Detection, not
+content-recovery (if no relay serves the newer content you're flagged but shown the stale set).
+[head-floor.mjs](02-apps/peerit/test/head-floor.mjs) (8 checks, incl. survival across a client
+restart + author self-rollback). Review fixes: evict the floor by **recency, not
+author-controlled version** (F1 — a Sybil can't evict a followed author by minting a high
+version); audit **self** too (F2); persist before the early return (F3); dropped the dead `root`
+field (F4). **The shared HiveRelay-pinned signed directory (fresh-visitor-vs-all-collude, the
+open ceiling) becomes Phase D** alongside seeder pin-on-append.
+
 ### Phase D — Seeder auto-discovery + pin-on-append · NODE WORK (closes a real gap)
 Today `peerit-seeder/seeder.mjs` is **manual** (`seeds.json`/argv) — an operator whitelist,
 the analysis's sharpest "still centralized" finding.

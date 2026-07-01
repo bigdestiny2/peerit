@@ -1,0 +1,72 @@
+<svg width="680" viewBox="0 0 680 520" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>peerit web durability — defense in depth</title>
+<desc>Two runtimes: PearBrowser is fully peer-to-peer; a normal browser is bridged by untrusted relays. For the web path, four layers each defeat a specific attack — Ed25519 signatures defeat forgery; a signed head (phase A) makes withholding detectable; a multi-relay pool with cross-relay head comparison (phase B) defeats rollback and strip while online; a durable head floor in localStorage (phase C) defeats rollback across a client restart and all-relays collusion. The relay is a swappable, verifiable cache, never the source of truth. Open ceiling: plaintext on seeders, a fresh visitor versus all relays colluding, and the origin still shipping the JS.</desc>
+<style>
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.th{font-size:14px;font-weight:500;fill:#3a3a3a}
+.t{font-size:15px;font-weight:500;fill:#1a1a1a}
+.ts{font-size:12.5px;fill:#555}
+.c-blue rect,rect.c-blue{fill:#E6F1FB;stroke:#378ADD;stroke-width:1.5}
+.c-blue .t{fill:#0C447C}.c-blue .ts,.c-blue .th{fill:#185FA5}
+.c-teal rect,rect.c-teal{fill:#DAF2EE;stroke:#17A2A2;stroke-width:1.5}
+.c-teal .t{fill:#0C5353}.c-teal .ts{fill:#17706E}
+.c-amber rect,rect.c-amber{fill:#FAEEDA;stroke:#BA7517;stroke-width:1.5}
+.c-amber .t{fill:#633806}.c-amber .ts{fill:#854F0B}
+</style>
+
+<text class="th" x="40" y="28">how peerit keeps web posts durable + uncensorable</text>
+
+<g class="c-teal">
+  <rect x="40" y="44" width="290" height="52" rx="8"/>
+  <text class="t" x="58" y="70">PearBrowser · native</text>
+  <text class="ts" x="58" y="88">own hypercores — no relay</text>
+</g>
+<g class="c-blue">
+  <rect x="350" y="44" width="290" height="52" rx="8"/>
+  <text class="t" x="368" y="70">normal browser · web</text>
+  <text class="ts" x="368" y="88">bridged by untrusted relays</text>
+</g>
+
+<line x1="495" y1="96" x2="495" y2="118" stroke="#85B7EB" stroke-width="2"/>
+<text class="ts" x="640" y="112" text-anchor="end">a relay can withhold or stall — never forge</text>
+
+<g class="c-blue">
+  <rect x="40" y="126" width="600" height="50" rx="8"/>
+  <text class="t" x="58" y="150">every record Ed25519-signed</text>
+  <text class="ts" x="58" y="168">defeats forgery — always</text>
+  <text class="th" x="624" y="156" text-anchor="end">integrity</text>
+</g>
+<g class="c-blue">
+  <rect x="40" y="184" width="600" height="50" rx="8"/>
+  <text class="t" x="58" y="208">signed head = merkle-root census</text>
+  <text class="ts" x="58" y="226">makes withholding detectable</text>
+  <text class="th" x="624" y="214" text-anchor="end">phase a</text>
+</g>
+<g class="c-blue">
+  <rect x="40" y="242" width="600" height="50" rx="8"/>
+  <text class="t" x="58" y="266">multi-relay pool + cross-relay head</text>
+  <text class="ts" x="58" y="284">defeats rollback / strip — online</text>
+  <text class="th" x="624" y="272" text-anchor="end">phase b</text>
+</g>
+<g class="c-blue">
+  <rect x="40" y="300" width="600" height="50" rx="8"/>
+  <text class="t" x="58" y="324">durable head floor (localStorage)</text>
+  <text class="ts" x="58" y="342">beats rollback: restart + collusion</text>
+  <text class="th" x="624" y="330" text-anchor="end">phase c</text>
+</g>
+
+<text class="t" x="340" y="376" text-anchor="middle">the relay is a verifiable cache — never the source of truth</text>
+
+<g class="c-amber">
+  <rect x="40" y="390" width="600" height="54" rx="8"/>
+  <text class="t" x="58" y="414">still open — the honest ceiling</text>
+  <text class="ts" x="58" y="432">plaintext on seeders · fresh visitor vs all-collude · origin ships js</text>
+</g>
+
+<rect class="c-teal" x="40" y="466" width="12" height="12" rx="3"/>
+<text class="ts" x="58" y="476">native — already P2P</text>
+<rect class="c-blue" x="232" y="466" width="12" height="12" rx="3"/>
+<text class="ts" x="250" y="476">web durability — built (A/B/C)</text>
+<rect class="c-amber" x="474" y="466" width="12" height="12" rx="3"/>
+<text class="ts" x="492" y="476">open — next (phase d)</text>
+</svg>

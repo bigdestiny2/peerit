@@ -137,11 +137,28 @@ relay otherwise. Remaining is to build the bundle and validate on a live network
 
 ```sh
 cd 02-apps/peerit
-npm i @hyperswarm/dht-relay hyperswarm corestore hyperbee protomux b4a random-access-web compact-encoding
-npx esbuild js/dht-transport.js --bundle --format=esm --outfile=web/dht-bundle.js
+# CRITICAL version pin (2026-07-01): corestore ~6.x + hypercore ~10.x — the
+# random-access era. Unpinned `npm i corestore` grabs 7.x, whose hypercore-storage
+# is Node-file-oriented (fs/path/rocksdb) and will NOT browser-bundle. Also needs
+# sodium-javascript (the WASM crypto fallback for browsers).
+npm run dht:deps          # or: npm i --no-save corestore@6 hypercore@10 hyperbee@2 hyperswarm@4 protomux b4a compact-encoding sodium-javascript random-access-web @hyperswarm/dht-relay
+npm run dht:bundle        # esbuild → web/dht-bundle.js (browser platform, browser main-fields)
 node build-web.mjs --relay https://relay.peerit.com --readonly false \
   --dht-relay wss://dht-relay.peerit.com --drive-key <key>
 ```
+
+**Validation status (2026-07-01):**
+- ✅ **bundle builds clean** (~1.2 MB) with the pinned versions — no `fs`/`path`.
+- ✅ **wire VALIDATED on a local testnet DHT** — `npm run test:dht-live`
+  (`test/dht-live.mjs`) runs two real `BridgeGossipSync` peers over the real
+  corestore + hyperswarm + protomux + hypercore-replication stack on a
+  `@hyperswarm/testnet` DHT: descriptor gossip frames correctly with
+  `compact-encoding.raw`, outbox hypercores replicate over Noise, and they converge
+  bidirectionally. The codec fix + adapter are correct on the real wire.
+- ⬜ **still to validate on real hardware:** the browser runtime (IndexedDB via
+  random-access-web, an actual WebSocket to a public `wss://` dht-relay, in-browser
+  Hyperbee memory) + the public DHT. The testnet proved the protocol; the browser +
+  dht-relay + public-DHT deployment is the remaining step.
 
 Live-path caveats:
 - ✅ **fixed in code (2026-07-01):** the protomux descriptor codec is now

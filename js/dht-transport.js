@@ -30,16 +30,21 @@ export async function createDhtTransport ({ relayWsUrl, storage = 'peerit-dht', 
   if (!relayWsUrl) throw new Error('createDhtTransport requires relayWsUrl (wss://…)')
   // Dynamic imports: bundled by esbuild, absent in the plain site (so this file
   // is harmless to load there; the caller falls back to the /api relay on throw).
-  const [{ default: DHT }, { default: WSStream }, { default: Hyperswarm }, { default: Corestore }, { default: Hyperbee }, { default: Protomux }, { default: b4a }, cencMod] = await Promise.all([
+  const [{ default: DHT }, { default: WSStream }, { default: Hyperswarm }, { default: Corestore }, { default: Hyperbee }, { default: Protomux }, { default: b4a }, cencMod, { default: RAW }] = await Promise.all([
     import('@hyperswarm/dht-relay'), import('@hyperswarm/dht-relay/ws'),
-    import('hyperswarm'), import('corestore'), import('hyperbee'), import('protomux'), import('b4a'), import('compact-encoding')
+    import('hyperswarm'), import('corestore'), import('hyperbee'), import('protomux'), import('b4a'), import('compact-encoding'), import('random-access-web')
   ])
 
   const ws = new WebSocket(relayWsUrl)
   await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = () => reject(new Error('dht-relay websocket failed')) })
   const dht = new DHT(new WSStream(true, ws))
   const swarm = new Hyperswarm({ dht })
-  const store = new Corestore(storage) // random-access-web → IndexedDB in the browser
+  // Corestore over IndexedDB in the browser. MUST be a random-access-web FACTORY,
+  // not a path string (a string selects a file backend → needs fs). REQUIRES
+  // corestore ~6.x + hypercore ~10.x (the random-access era); corestore 7's
+  // hypercore-storage is Node-file-oriented and won't browser-bundle. See the
+  // pinned build recipe in docs/WEB-DEPLOYMENT.md.
+  const store = new Corestore(RAW(storage))
   await store.ready()
 
   const cenc = cencMod.default || cencMod

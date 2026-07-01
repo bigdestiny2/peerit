@@ -248,12 +248,16 @@ The "removes plaintext from the transport" tier. Ship best-effort with `/api` fa
 - Make `js/dht-bundle.js` real: esbuild `js/dht-transport.js` (deps: `@hyperswarm/dht-relay`,
   `hyperswarm`, `corestore`, `hyperbee`, `protomux`, `b4a`, `random-access-web`,
   `compact-encoding`) → ship in `publish.mjs` SITE_FILES. `app.js:66-73` already prefers it.
-- ✅ **DONE 2026-07-01 — the known live-wire bug is fixed.** The protomux codec is now
-  dependency-injected: `createHyperPearSurface({… codec})` (`dht-adapter.js`) defaults to the
-  pass-through for the fake but `dht-transport.js` injects `compact-encoding`'s `raw` for the
-  real wire. `test/dht-adapter.mjs` stays green. What remains is purely the LIVE steps below —
-  esbuild the bundle + validate the real Noise/DHT wire on hardware (recipe + caveats in
-  `docs/WEB-DEPLOYMENT.md`). No hand-patch needed anymore.
+- ✅ **DONE 2026-07-01 — codec fixed AND the wire VALIDATED on a local testnet DHT.** The
+  protomux codec is dependency-injected (`createHyperPearSurface({… codec})`; `dht-transport.js`
+  injects `compact-encoding`'s `raw`), the browser storage is a random-access-web factory, and
+  the bundle builds clean (~1.2 MB) — but ONLY with the pinned **corestore ~6.x + hypercore
+  ~10.x** (corestore 7's hypercore-storage is Node-file-oriented and won't browser-bundle; the
+  unpinned recipe was the real blocker). `npm run test:dht-live` (`test/dht-live.mjs`) then runs
+  two real `BridgeGossipSync` peers over the REAL corestore/hyperswarm/protomux/hypercore-
+  replication stack on a `@hyperswarm/testnet` DHT and they CONVERGE — the codec + adapter are
+  proven on the real wire, no fakes. **Remaining (real hardware only):** the browser runtime
+  (IndexedDB, WebSocket to a public dht-relay, in-browser Hyperbee memory) + the public DHT.
 - Browser owns the outbox core (keypair-derived, `inviteKey===core.key`); relay/seeder are
   read-only replicas. Transport is Noise ciphertext → the pipe operator can't read content.
 - **Honest scope:** blind *transport*, not blind *storage*; seeders still hold public

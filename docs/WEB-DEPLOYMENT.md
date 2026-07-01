@@ -36,7 +36,7 @@ working — the web is additive publishing.
 |---|---|---|
 | **code delivery** | static export to peerit.com + IPFS/ENS/Arweave; SRI + Service-Worker pin; `/verify` | tampering detectable; survives one gateway/DNS dying |
 | **data transport** | untrusted relay speaking peerit's `/api/*` (Phase 1) → in-browser DHT pipe (Phase 3) | relay withholds, never forges; seeders keep data available |
-| **identity / keys** | browser-local Ed25519 (`forceDev`), recovery-bundle backup | relay can never sign as a user; forgeries dropped at merge |
+| **identity / keys** | browser-local Ed25519 (`forceDev`); passphrase-encrypted identity export to move/back up the key | relay can never sign as a user; forgeries dropped at merge |
 
 ## Phase status
 
@@ -220,5 +220,11 @@ Live-path caveats:
   pressured (it can withhold, never forge). Mitigate with multiple relays + a
   signed roster; boot-time failover selects a reachable relay, while mid-session
   relay death still requires reconnect/reload.
-- **Key durability:** a cleared browser loses the key unless the recovery bundle
-  was backed up — made mandatory on first mint.
+- **Key durability:** in web mode the identity is a browser-local Ed25519 seed in
+  `localStorage`; clearing site data destroys it. The **recovery bundle does NOT
+  contain the signing key** (only public keys + outbox invite keys for
+  discovery), so it cannot restore the identity. To move or back up the key,
+  Settings → *Move this identity to another device* exports a passphrase-encrypted
+  file (PBKDF2 → AES-256-GCM) that imports as the same identity on another browser
+  or phone (file, paste, or QR). See
+  [`docs/identity-recovery-protocol.md`](identity-recovery-protocol.md#3-web-mode-identity-export).

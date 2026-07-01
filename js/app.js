@@ -15,6 +15,8 @@ import { renderMarkdown, excerpt } from './markdown.js'
 import { sortPosts, sortComments, POST_SORTS, COMMENT_SORTS, TIME_WINDOW_KEYS } from './ranking.js'
 import { buildCommentTree, sortCommentTree, annotateDescendants, countDescendants, MOD } from './model.js'
 import { COPY as RECOVERY_COPY, buildRecoveryBundle, cleanOutboxes, peeritSeederCommand, recoveryBundleFilename, recoveryBundleJson } from './recovery.js'
+import { exportIdentity, importIdentity, looksLikeIdentityExport, identityExportJson, identityExportFilename, passphraseStrength, MIN_PASSPHRASE } from './identity-export.js'
+import { encodeQR, qrToSvg, isScanSupported, scanQR } from './qr.js'
 import {
   escapeHtml as esc, timeAgo, fmtCount, parseRoute, buildRoute,
   colorFor, shortKey, debounce, normalizeSlug, safeUserUrl
@@ -272,6 +274,7 @@ function route () {
     case 'communities': return viewCommunities({ guard, token })
     case 'submit': return viewSubmit({ query, guard, token })
     case 'create': return viewCreateCommunity({ guard, token })
+    case 'bridge-proof': return viewBridgeProof({ session: path[1], query, guard, token })
     case 'search': return viewSearch({ query, guard, token })
     case 'settings': return viewSettings({ guard, token })
     case 'saved': return viewSaved({ guard, token })
@@ -282,6 +285,184 @@ function route () {
       return viewFeed({ scope: 'community', community: path[1], query, guard, token })
     default: return guard(notFound())
   }
+}
+
+// ---- local PearBrowser bridge proof ----------------------------------------
+function bridgeProofSession (raw) {
+  const s = normalizeSlug(raw || '')
+  return s || Date.now().toString(36)
+}
+function bridgeProofRole (raw) { return String(raw || '').toLowerCase() === 'b' ? 'b' : 'a' }
+function bridgeProofSlug (session) { return normalizeSlug('bridge_' + bridgeProofSession(session)).slice(0, 24) }
+function bridgeProofTitle (session, role) { return `Bridge proof ${role.toUpperCase()} ${bridgeProofSession(session)}` }
+function bridgeProofBody (session, role) { return `Local publish bridge proof ${role.toUpperCase()} for ${bridgeProofSession(session)}.` }
+
+function slimProofRecord (rec) {
+  if (!rec) return null
+  return {
+    cid: rec.cid || '',
+    slug: rec.slug || '',
+    title: rec.title || '',
+    author: rec.author || rec.creator || '',
+    creator: rec.creator || '',
+    createdAt: rec.createdAt || 0,
+    updatedAt: rec.updatedAt || 0
+  }
+}
+
+function sanitizeBridgeProofStatus (status) {
+  return {
+    mode: status && status.mode || '',
+    secure: !(status && status.secure === false),
+    peers: status && status.peers != null ? status.peers : null,
+    viewLength: status && status.viewLength != null ? status.viewLength : null,
+    relays: status && status.relays != null ? status.relays : null,
+    outboxAppId: status && status.outboxAppId || '',
+    withholding: Array.isArray(status && status.withholding) ? status.withholding.slice() : [],
+    outboxes: Array.isArray(status && status.outboxes)
+      ? status.outboxes.map(o => ({ appId: o.appId || '', current: !!o.current }))
+      : []
+  }
+}
+
+async function findBridgeProofPost (session, role) {
+  const slug = bridgeProofSlug(session)
+  const title = bridgeProofTitle(session, role)
+  const posts = await data.listPostsIn(slug).catch(() => [])
+  return posts.find(p => p && p.title === title) || null
+}
+
+async function ensureBridgeProofPost (session, role, onProgress) {
+  const existing = await findBridgeProofPost(session, role)
+  if (existing) return existing
+  return data.submitPost({
+    community: bridgeProofSlug(session),
+    kind: 'text',
+    title: bridgeProofTitle(session, role),
+    body: bridgeProofBody(session, role),
+    onProgress
+  })
+}
+
+async function buildBridgeProofSnapshot (session, role) {
+  session = bridgeProofSession(session)
+  role = bridgeProofRole(role)
+  const slug = bridgeProofSlug(session)
+  const me = identity.me()
+  const status = sanitizeBridgeProofStatus(await sync.status())
+  const community = await data.getCommunity(slug).catch(() => null)
+  const aPost = community ? await findBridgeProofPost(session, 'a') : null
+  const bPost = community ? await findBridgeProofPost(session, 'b') : null
+  const aAuthor = aPost && aPost.author
+  const bAuthor = bPost && bPost.author
+  const observations = {
+    bridgeMode: status.mode === 'gossip-bridge',
+    peersAtLeast2: Number(status.peers || 0) >= 2,
+    writerKey: (me.pubkey || '').slice(0, 6),
+    sawA: !!aPost,
+    sawB: !!bPost,
+    wroteOwnRole: role === 'a' ? !!(aPost && aPost.author === me.pubkey) : !!(bPost && bPost.author === me.pubkey),
+    sawPeerRole: role === 'a' ? !!(bPost && bPost.author !== me.pubkey) : !!(aPost && aPost.author !== me.pubkey),
+    writersDistinct: !!(aAuthor && bAuthor && aAuthor !== bAuthor),
+    crossDeviceConverged: !!(aAuthor && bAuthor && aAuthor !== bAuthor)
+  }
+  return {
+    type: 'peerit-local-bridge-proof',
+    version: 1,
+    session,
+    role,
+    generatedAt: new Date().toISOString(),
+    url: location.href,
+    userAgent: navigator.userAgent,
+    writer: me.pubkey,
+    writerKey: observations.writerKey,
+    status,
+    proof: {
+      communitySlug: slug,
+      expectedTitles: { a: bridgeProofTitle(session, 'a'), b: bridgeProofTitle(session, 'b') },
+      observations,
+      records: {
+        community: slimProofRecord(community),
+        aPost: slimProofRecord(aPost),
+        bPost: slimProofRecord(bPost)
+      }
+    }
+  }
+}
+
+async function waitForBridgeProofPost (session, role, timeoutMs = 12000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const found = await findBridgeProofPost(session, role)
+    if (found) return found
+    if (sync && sync._refresh) {
+      try { await sync._refresh() } catch {}
+    }
+    await new Promise(resolve => setTimeout(resolve, 700))
+  }
+  return null
+}
+
+async function runBridgeProofAction (session, role, onProgress) {
+  session = bridgeProofSession(session)
+  role = bridgeProofRole(role)
+  const status = await sync.status()
+  if (status.mode !== 'gossip-bridge') throw new Error('Bridge proof requires gossip-bridge mode.')
+  if (sync.announce) await sync.announce()
+  const slug = bridgeProofSlug(session)
+  if (role === 'a') {
+    let community = await data.getCommunity(slug)
+    if (!community) {
+      community = await data.createCommunity({
+        slug,
+        title: `Bridge Proof ${session}`,
+        description: `Local publish bridge proof ${session}`,
+        onProgress
+      })
+      prefs.subscribe(slug)
+    }
+    const post = await ensureBridgeProofPost(session, 'a', onProgress)
+    return { community, post }
+  }
+  const aPost = await waitForBridgeProofPost(session, 'a')
+  if (!aPost) throw new Error('Device A proof post is not visible here yet.')
+  const bPost = await ensureBridgeProofPost(session, 'b', onProgress)
+  return { aPost, post: bPost }
+}
+
+async function viewBridgeProof ({ session, query, guard, token }) {
+  session = bridgeProofSession(session)
+  const role = bridgeProofRole(query.role)
+  guard(skeleton('Bridge proof'))
+  const snapshot = await buildBridgeProofSnapshot(session, role)
+  if (token !== renderToken) return
+  const obs = snapshot.proof.observations
+  const status = snapshot.status
+  const roleLabel = role.toUpperCase()
+  const ownAction = role === 'a' ? 'Write Device A proof record' : 'Check A and write Device B proof record'
+  const peerLabel = role === 'a' ? 'Device B post visible' : 'Device A post visible'
+  guard(`<section class="panel">
+    <h1>Bridge proof ${esc(roleLabel)}</h1>
+    <p class="dim small settings-copy">Session <b class="mono">${esc(session)}</b> writes to r/${esc(snapshot.proof.communitySlug)} on this local Hyperdrive publish.</p>
+    <ul class="kv settings-kv">
+      <li><span>Mode</span><b>${esc(status.mode || 'unknown')}</b></li>
+      <li><span>Writer key</span><b class="mono">${esc(snapshot.writerKey)}...</b></li>
+      <li><span>Peers</span><b>${esc(status.peers == null ? '?' : String(status.peers))}</b></li>
+      <li><span>Records</span><b>${esc(status.viewLength == null ? '?' : String(status.viewLength))}</b></li>
+      <li><span>${esc(peerLabel)}</span><b>${obs.sawPeerRole ? 'yes' : 'not yet'}</b></li>
+      <li><span>Distinct A/B writers</span><b>${obs.writersDistinct ? 'yes' : 'not yet'}</b></li>
+    </ul>
+    <div class="form-actions wrap">
+      <button class="btn btn-primary" type="button" data-act="bridge-proof-write" data-session="${esc(session)}" data-role="${esc(role)}">${esc(ownAction)}</button>
+      <button class="btn btn-ghost" type="button" data-act="bridge-proof-copy" data-session="${esc(session)}" data-role="${esc(role)}">Copy proof JSON</button>
+      <button class="btn btn-ghost" type="button" data-act="bridge-proof-refresh" data-session="${esc(session)}" data-role="${esc(role)}">Refresh</button>
+      <a class="btn btn-ghost" href="#/r/${esc(snapshot.proof.communitySlug)}">Open r/${esc(snapshot.proof.communitySlug)}</a>
+    </div>
+    <label class="key-label">Current proof snapshot
+      <textarea class="keybox mono" rows="12" spellcheck="false" readonly>${esc(JSON.stringify(snapshot, null, 2))}</textarea>
+    </label>
+  </section>`)
+  renderSidebarHome()
 }
 
 // ---- shared building blocks -------------------------------------------------
@@ -917,18 +1098,34 @@ async function pearBackupStatus () {
 }
 
 function backupStatusHtml (backup) {
+  // Web/dev identities are browser-local keys, not a PearBrowser phrase — point at
+  // the export flow instead of PearBrowser backup instructions.
+  if (identity.isDev) {
+    return '<button class="btn btn-ghost sm" type="button" data-act="export-identity">Export to back up</button>'
+  }
   if (backup && backup.known && backup.backedUp) {
     return '<span class="status-pill good">PearBrowser phrase backed up</span>'
   }
-  const label = backup && backup.known ? 'Open PearBrowser backup instructions' : 'Open PearBrowser backup instructions'
-  return `<button class="btn btn-ghost sm" type="button" data-act="pear-backup-help">${label}</button>`
+  return '<button class="btn btn-ghost sm" type="button" data-act="pear-backup-help">Open PearBrowser backup instructions</button>'
 }
 
+// In web/dev mode the identity is a key held only in THIS browser — there is no
+// PearBrowser phrase — so the backup copy must talk about exporting, not a phrase.
+const WEB_IDENTITY_COPY = Object.freeze({
+  summary: 'This identity lives only in this browser. Export it to move it to another device or keep a backup — peerit has no server that can recover it for you.',
+  detail: "Your posting key is stored in this browser's local storage. If you clear site data or lose this device without exporting, the identity is gone for good. Export creates a passphrase-encrypted file you can import on another browser or your phone.",
+  ackLabel: 'I understand this identity is stored only in this browser and peerit cannot recover it for me.'
+})
+
+function identityBackupSummary () { return identity.isDev ? WEB_IDENTITY_COPY.summary : RECOVERY_COPY.backupSummary }
+function identityBackupDetail () { return identity.isDev ? WEB_IDENTITY_COPY.detail : RECOVERY_COPY.identityBackup }
+
 function firstPostBackupWarningHtml () {
+  const ack = identity.isDev ? WEB_IDENTITY_COPY.ackLabel : 'I understand that peerit cannot recover my PearBrowser recovery phrase.'
   return `<div class="notice warn identity-backup-warning">
-    <b>${esc(RECOVERY_COPY.backupSummary)}</b>
-    <p>${esc(RECOVERY_COPY.identityBackup)}</p>
-    <label class="checkline"><input type="checkbox" name="identity-backup-ack" required> I understand that peerit cannot recover my PearBrowser recovery phrase.</label>
+    <b>${esc(identityBackupSummary())}</b>
+    <p>${esc(identityBackupDetail())}</p>
+    <label class="checkline"><input type="checkbox" name="identity-backup-ack" required> ${esc(ack)}</label>
   </div>`
 }
 
@@ -965,14 +1162,33 @@ async function viewSettings ({ guard, token }) {
       <div class="form-actions"><button class="btn btn-primary" type="submit">Save profile</button></div>
     </form>
     <h2>Identity / Recovery</h2>
-    <p class="settings-copy"><b>${esc(RECOVERY_COPY.backupSummary)}</b></p>
-    <p class="dim small settings-copy">${esc(RECOVERY_COPY.identityBackup)}</p>
+    <p class="settings-copy"><b>${esc(identityBackupSummary())}</b></p>
+    <p class="dim small settings-copy">${esc(identityBackupDetail())}</p>
     <ul class="kv settings-kv">
       <li><span>App identity fingerprint</span><b class="mono small key-inline" title="${esc(me.pubkey)}">${esc(shortKey(me.pubkey, 12))}</b></li>
       <li><span>App drive key fingerprint</span><b class="mono small" title="${esc(me.driveKey)}">${esc(shortKey(me.driveKey, 12))}</b></li>
       <li><span>Backup status</span><b>${backupStatusHtml(backup)}</b></li>
       <li><span>Sync mode</span><b>${modeLabel}</b></li>
     </ul>
+    ${identity.isDev ? `<h2>Move this identity to another device</h2>
+      <p class="dim small settings-copy">Export your posting key as a <b>passphrase-encrypted</b> file, then import it in another browser or on your phone to post as the same u/${esc(shortKey(me.pubkey, 6))}. Anyone who gets both the file and the passphrase can post as you — treat it like a password.</p>
+      <div class="form-actions wrap">
+        <button class="btn btn-primary" type="button" data-act="export-identity">Export this identity</button>
+      </div>
+      <form data-form="import-identity" class="import-identity">
+        <h3>Import an identity here</h3>
+        <p class="dim small settings-copy">Adds the imported identity alongside any already in this browser and switches to it. Your current identities are kept.</p>
+        <label>Passphrase <input type="password" name="passphrase" autocomplete="off" placeholder="the passphrase used at export"></label>
+        <label>Identity export (paste, load a file, or scan a QR)
+          <textarea class="keybox mono" name="payload" rows="5" spellcheck="false" placeholder='{"type":"peerit-identity-export",...}'></textarea>
+        </label>
+        <input type="file" accept="application/json,.json" data-file="import-identity" hidden>
+        <div class="form-actions wrap">
+          <button class="btn btn-ghost" type="button" data-act="pick-identity-file">Load file…</button>
+          ${isScanSupported() ? '<button class="btn btn-ghost" type="button" data-act="scan-identity-qr">Scan QR</button>' : ''}
+          <button class="btn btn-primary" type="submit">Import identity</button>
+        </div>
+      </form>` : ''}
     <h2>Outbox seeding</h2>
     <div class="outbox-workflow">
       <p class="dim small settings-copy">Your posts, comments, votes, profile, communities, and mod actions are signed records in your outbox. Signatures prove authorship; seeding improves availability.</p>
@@ -1117,6 +1333,13 @@ async function onClick (e) {
       case 'copy-seeder-command': return void await copySeederCommand()
       case 'copy-recovery-bundle': return void await copyRecoveryBundle()
       case 'export-recovery-bundle': return void await exportRecoveryBundle()
+      case 'export-identity': return void openExportIdentityModal()
+      case 'download-identity-file': return void downloadIdentityExport()
+      case 'copy-identity-string': return void await copyIdentityExport()
+      case 'show-identity-qr': return void showIdentityQr()
+      case 'pick-identity-file': return void pickIdentityFile(t)
+      case 'scan-identity-qr': return void await openIdentityScanner(t)
+      case 'stop-identity-scan': return void stopIdentityScan()
       case 'pear-backup-help': return void showPearBackupInstructions()
       case 'close-modal': return void closeModal()
       case 'collapse': return toggleCollapse(t)
@@ -1126,6 +1349,9 @@ async function onClick (e) {
       case 'netstatus': return void updateNetStatus()
       case 'switch-user': { identity.switchUser(t.dataset.pub); data.invalidateViewCaches(); if (sync.announce) sync.announce(); refreshPrefs(); nameCache.clear(); renderUserMenu(); route(); toast('Switched user'); return }
       case 'start-community': return void await startCommunity(t.dataset.slug)
+      case 'bridge-proof-write': return void await onBridgeProofWrite(t)
+      case 'bridge-proof-copy': return void await onBridgeProofCopy(t)
+      case 'bridge-proof-refresh': { if (sync && sync._refresh) await sync._refresh(); route(); return }
       case 'dismiss-welcome': { prefs.markWelcomeSeen(); route(); return }
       case 'show-welcome': { prefs.markWelcomeUnseen(); location.hash = '#/'; route(); return }
       case 'wipe': return void wipe()
@@ -1161,6 +1387,24 @@ document.addEventListener('change', (e) => {
     location.hash = buildRoute(path, { ...query, t: e.target.value })
   }
   if (e.target.matches('select[name="community"]')) { /* no-op */ }
+  if (e.target.matches('input[type="file"][data-file="import-identity"]')) {
+    const file = e.target.files && e.target.files[0]
+    const form = e.target.closest('form')
+    const ta = form && form.querySelector('textarea[name="payload"]')
+    e.target.value = '' // allow re-picking the same file
+    if (!file || !ta) return
+    const reader = new FileReader()
+    reader.onload = () => { ta.value = String(reader.result || ''); toast('File loaded — enter your passphrase and Import.') }
+    reader.onerror = () => toast('Could not read that file', 'error')
+    reader.readAsText(file)
+  }
+})
+
+// Live passphrase-strength hint on the export modal.
+document.addEventListener('input', (e) => {
+  if (!e.target.matches('form[data-form="export-identity"] input[name="passphrase"]')) return
+  const hint = e.target.closest('form').querySelector('[data-role="pw-hint"]')
+  if (hint) { const v = e.target.value; hint.textContent = v ? 'Strength: ' + passphraseStrength(v).label : '' }
 })
 
 async function onVote (t) {
@@ -1310,8 +1554,10 @@ async function onSubmit (e) {
   e.preventDefault()
   const f = form.dataset.form
   const fd = new FormData(form)
-  // Read-only web mode: search still works; everything else is a write.
-  if (f !== 'search' && isReadOnly()) { toast('peerit is read-only here — open it in PearBrowser to post, comment, or vote.', 'error'); return }
+  // Read-only web mode: search + local identity management still work; everything
+  // else is a network write and stays blocked.
+  const localOnlyForms = new Set(['search', 'import-identity', 'export-identity'])
+  if (!localOnlyForms.has(f) && isReadOnly()) { toast('peerit is read-only here — open it in PearBrowser to post, comment, or vote.', 'error'); return }
   if (form.dataset.busy) return // block double-submit while the write is in flight
   const btn = form.querySelector('button[type="submit"]')
   if (f !== 'search') {
@@ -1375,6 +1621,15 @@ async function onSubmit (e) {
       route()
       return
     }
+    if (f === 'export-identity') {
+      await runIdentityExport(String(fd.get('passphrase') || ''), String(fd.get('confirm') || ''))
+      return
+    }
+    if (f === 'import-identity') {
+      await importIdentityFromForm(String(fd.get('payload') || ''), String(fd.get('passphrase') || ''))
+      form.reset()
+      return
+    }
     if (f === 'dev-user') {
       await createDevUser(String(fd.get('name') || '').trim())
       return
@@ -1423,6 +1678,31 @@ async function startCommunity (slug) {
   route()
 }
 
+async function onBridgeProofWrite (btn) {
+  if (isReadOnly()) throw new Error('Bridge proof cannot write in read-only mode.')
+  const role = bridgeProofRole(btn.dataset.role)
+  const session = bridgeProofSession(btn.dataset.session)
+  const onProgress = (nonce) => { btn.textContent = '... ' + nonce.toLocaleString() }
+  btn.disabled = true
+  const label = btn.textContent
+  try {
+    await runBridgeProofAction(session, role, onProgress)
+    toast(role === 'a' ? 'Device A proof record written.' : 'Device B proof record written.')
+    route()
+  } finally {
+    btn.disabled = false
+    btn.textContent = label
+  }
+}
+
+async function onBridgeProofCopy (btn) {
+  if (sync && sync._refresh) {
+    try { await sync._refresh() } catch {}
+  }
+  const snapshot = await buildBridgeProofSnapshot(btn.dataset.session, btn.dataset.role)
+  await copyText(JSON.stringify(snapshot), 'Bridge proof copied.')
+}
+
 function wipe () {
   if (!confirm('Wipe ALL local peerit data (communities, posts, prefs)? This cannot be undone.')) return
   try {
@@ -1446,6 +1726,130 @@ function showPearBackupInstructions () {
       <div class="form-actions"><button class="btn btn-primary" type="button" data-act="close-modal">Done</button></div>
     </div>
   </div>`
+}
+
+// ---- web identity export / import -------------------------------------------
+let _identityExport = null // { envelope, json, filename } for the open export modal
+let _identityScanStop = null
+
+function openExportIdentityModal () {
+  const root = $('#modal-root'); if (!root) { toast('Export needs the in-app modal', 'error'); return }
+  const me = identity.me()
+  _identityExport = null
+  root.innerHTML = `<div class="modal-backdrop">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="idexport-title">
+      <h2 id="idexport-title">Export identity</h2>
+      <p class="dim small">Encrypts u/${esc(shortKey(me.pubkey, 8))} under a passphrase. You'll need the SAME passphrase to import it on the other device — peerit can't reset it.</p>
+      <form data-form="export-identity">
+        <label>Passphrase <input type="password" name="passphrase" autocomplete="new-password" minlength="${MIN_PASSPHRASE}" required placeholder="at least ${MIN_PASSPHRASE} characters"></label>
+        <label>Confirm passphrase <input type="password" name="confirm" autocomplete="new-password" required></label>
+        <p class="dim small" data-role="pw-hint"></p>
+        <div class="form-actions wrap">
+          <button class="btn btn-primary" type="submit">Encrypt &amp; continue</button>
+          <button class="btn btn-ghost" type="button" data-act="close-modal">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>`
+}
+
+async function runIdentityExport (passphrase, confirm) {
+  if (passphrase !== confirm) throw new Error('The two passphrases do not match.')
+  const entry = identity.currentSeedEntry && identity.currentSeedEntry()
+  if (!entry) throw new Error('No exportable identity in this browser.')
+  const envelope = await exportIdentity(entry, passphrase)
+  const json = identityExportJson(envelope)
+  _identityExport = { envelope, json, filename: identityExportFilename(envelope.pubkey, envelope.createdAt) }
+  renderIdentityExportResult()
+}
+
+function renderIdentityExportResult () {
+  const root = $('#modal-root'); if (!root || !_identityExport) return
+  const me = identity.me()
+  root.innerHTML = `<div class="modal-backdrop">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="idexport-title">
+      <h2 id="idexport-title">Identity encrypted ✓</h2>
+      <p class="dim small">Encrypted export for u/${esc(shortKey(me.pubkey, 8))}. Move it to your other device, then use <b>Import an identity here</b> with the same passphrase.</p>
+      <div class="form-actions wrap">
+        <button class="btn btn-primary" type="button" data-act="download-identity-file">Download file</button>
+        <button class="btn btn-ghost" type="button" data-act="copy-identity-string">Copy text</button>
+        <button class="btn btn-ghost" type="button" data-act="show-identity-qr">Show QR</button>
+      </div>
+      <div class="qr-holder" data-role="qr-holder"></div>
+      <div class="form-actions"><button class="btn btn-ghost" type="button" data-act="close-modal">Done</button></div>
+    </div>
+  </div>`
+}
+
+function downloadIdentityExport () {
+  if (!_identityExport) return
+  downloadText(_identityExport.filename, _identityExport.json, 'application/json')
+  toast('Identity file downloaded — keep it and the passphrase safe.')
+}
+
+async function copyIdentityExport () {
+  if (!_identityExport) return
+  await copyText(_identityExport.json, 'Encrypted identity copied to clipboard.')
+}
+
+function showIdentityQr () {
+  const holder = document.querySelector('[data-role="qr-holder"]')
+  if (!holder || !_identityExport) return
+  try {
+    const qr = encodeQR(_identityExport.json)
+    holder.innerHTML = `<div class="qr-code">${qrToSvg(qr, { border: 4 })}</div><p class="dim small">Scan this from the Import screen on your other device.</p>`
+  } catch (err) {
+    holder.innerHTML = `<p class="dim small">${esc(err.message || 'Could not render a QR')} — use Download or Copy instead.</p>`
+  }
+}
+
+function pickIdentityFile (btn) {
+  const form = btn.closest('form')
+  const input = form && form.querySelector('input[type="file"][data-file="import-identity"]')
+  if (input) input.click()
+}
+
+async function openIdentityScanner (btn) {
+  const form = btn.closest('form')
+  const root = $('#modal-root'); if (!root) return
+  root.innerHTML = `<div class="modal-backdrop">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="idscan-title">
+      <h2 id="idscan-title">Scan identity QR</h2>
+      <p class="dim small">Point the camera at the QR shown on your other device.</p>
+      <video data-role="scan-video" playsinline muted class="scan-video"></video>
+      <div class="form-actions"><button class="btn btn-ghost" type="button" data-act="stop-identity-scan">Cancel</button></div>
+    </div>
+  </div>`
+  const video = root.querySelector('[data-role="scan-video"]')
+  try {
+    _identityScanStop = await scanQR(video, (text) => {
+      const isExport = looksLikeIdentityExport(text)
+      stopIdentityScan()
+      const ta = form && form.querySelector('textarea[name="payload"]')
+      if (ta && isExport) ta.value = text
+      toast(isExport ? 'QR scanned — enter your passphrase and Import.' : 'Scanned a QR, but it is not a peerit identity export.', isExport ? 'ok' : 'error')
+    })
+  } catch (err) {
+    stopIdentityScan()
+    toast(err.message || 'Camera unavailable', 'error')
+  }
+}
+
+function stopIdentityScan () {
+  if (_identityScanStop) { try { _identityScanStop() } catch {} _identityScanStop = null }
+  closeModal()
+}
+
+async function importIdentityFromForm (payload, passphrase) {
+  if (!looksLikeIdentityExport(payload)) throw new Error('That does not look like a peerit identity export — paste the exported JSON, load the file, or scan the QR.')
+  const entry = await importIdentity(payload, passphrase)
+  await identity.addUser(entry)
+  // Mirror the switch-user side effects so the whole UI reflects the new identity.
+  data.invalidateViewCaches()
+  if (sync.announce) await sync.announce()
+  refreshPrefs(); nameCache.clear()
+  await renderUserMenu(); route()
+  toast('Identity imported — now posting as u/' + shortKey(entry.pubkey, 6))
 }
 
 function closeModal () {
@@ -1542,7 +1946,15 @@ function toast (msg, kind = 'ok') {
 }
 
 // expose for debugging / tests
-if (typeof window !== 'undefined') window.__peerit = { get data () { return data }, get sync () { return sync }, route }
+if (typeof window !== 'undefined') {
+  window.__peerit = {
+    get data () { return data },
+    get sync () { return sync },
+    route,
+    bridgeProofSnapshot: buildBridgeProofSnapshot,
+    runBridgeProof: runBridgeProofAction
+  }
+}
 
 if (typeof document !== 'undefined') {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot)

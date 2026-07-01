@@ -159,6 +159,8 @@ peerit/
 │   ├── identity.js     # BridgeIdentity (window.pear.identity) | DevIdentity (multi-user)
 │   ├── prefs.js        # per-device local prefs
 │   ├── recovery.js     # app data recovery bundle + peerit-seeder command helpers
+│   ├── identity-export.js # web-mode: passphrase-encrypted signing-key export/import
+│   ├── qr.js           # QR encode (Nayuki port) + scan (BarcodeDetector) for exports
 │   ├── onboarding.js   # local starter feed + welcome community metadata
 │   ├── data.js         # domain API (CRUD + queries + vote tallies + karma + mod)
 │   └── app.js          # router + views + event delegation + live refresh
@@ -187,6 +189,10 @@ npm run proof:availability
 # with npm run dev already running in another terminal:
 npm run proof:availability -- --url http://127.0.0.1:8777
 
+# representative user-data availability proof:
+npm run proof:outbox-availability
+npm run proof:outbox-availability:report
+
 # optional browser UI gate; install Playwright only in the operator/dev checkout
 npm install --no-save playwright
 npx playwright install chromium
@@ -201,7 +207,12 @@ creates a community, creates a post, comments from two tabs/users, and verifies
 the cross-tab update path. Playwright is deliberately not a runtime dependency.
 `npm run proof:availability` verifies the published file list, static module
 imports, manifest drive key, sibling seeder/mirror tooling, optional HTTP asset
-fetches, and live publish durability reports when present.
+fetches, live publish durability reports when present, and the checked-in
+representative outbox availability report. `npm run proof:outbox-availability`
+builds a fresh-client user-data proof: a new reader with empty storage recovers
+a representative profile/community/post/comment/vote set only after seeder-style
+byte catch-up is confirmed. `npm run proof:outbox-availability:report` refreshes
+the checked-in JSON evidence under `reports/`.
 
 For the current local command surface, known gaps, and operator-run publish/runtime
 gates, see [`TEST-COMMAND-MATRIX-2026-07-01.md`](TEST-COMMAND-MATRIX-2026-07-01.md).
@@ -260,7 +271,11 @@ for how PearBrowser's mnemonic, per-app identity, and app outbox recovery fit
 together.
 Inside the app, Settings -> Identity / Recovery shows identity fingerprints,
 the current Group key, recovery bundle export/import, and a ready-to-copy
-`peerit-seeder` command for user data availability.
+`peerit-seeder` command for user data availability. In web/dev mode — where the
+identity is a browser-local key rather than a PearBrowser sub-key — it also offers
+a passphrase-encrypted **identity export/import** (file, copy, or QR) so you can
+move or back up the signing key itself; the recovery bundle only carries public
+discovery data, never the key.
 
 ---
 

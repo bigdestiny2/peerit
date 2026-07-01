@@ -13,7 +13,7 @@
   },
   "scripts": {
     "dev": "node dev-server.mjs",
-    "test": "node test/smoke.mjs && node test/gossip.mjs && node test/bridge.mjs && node test/bridge-convergence.mjs && node test/runtime.mjs && node test/relay-roster.mjs && node test/dht-adapter.mjs && node test/dht-build.mjs && node test/outbox-head.mjs && node test/relay-pool.mjs && node test/head-floor.mjs && node test/directory.mjs",
+    "test": "node test/smoke.mjs && node test/gossip.mjs && node test/bridge.mjs && node test/bridge-convergence.mjs && node test/runtime.mjs && node test/relay-roster.mjs && node test/dht-adapter.mjs && node test/dht-build.mjs && node test/outbox-head.mjs && node test/relay-pool.mjs && node test/head-floor.mjs && node test/directory.mjs && node test/identity-export.mjs",
     "test:browser": "node scripts/browser-smoke.mjs",
     "test:browser:mobile": "node scripts/browser-smoke.mjs --mobile-host",
     "test:dht-live": "node test/dht-live.mjs",

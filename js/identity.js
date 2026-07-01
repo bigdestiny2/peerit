@@ -15,6 +15,7 @@ import { genKeyPair, sign as edSign } from './crypto.js'
 import { hasAnyPearBridgeSurface, hasIdentityPearSurface, resolvePear } from './pear-api.js'
 
 const NS = 'peerit'
+const HEX64 = /^[0-9a-f]{64}$/i
 
 class DevIdentity {
   constructor (storage, session) {
@@ -73,6 +74,36 @@ class DevIdentity {
     this._active = u.pubkey
     if (this.session) this.session.setItem('peerit:dev:active', u.pubkey)
     return { pubkey: u.pubkey, driveKey: u.driveKey, label: u.label }
+  }
+
+  // The active user's full secret entry (INCLUDING the seed), for identity export
+  // only. me() never exposes the seed; callers must treat this as a bearer secret.
+  currentSeedEntry () {
+    const u = this._meEntry()
+    return u ? { seed: u.seed, pubkey: u.pubkey, driveKey: u.driveKey, label: u.label } : null
+  }
+
+  // Add an externally-provided identity (from importIdentity) to the roster and
+  // switch to it — the "add to roster + switch" import model. Dedupes by pubkey.
+  async addUser (entry) {
+    const seed = String(entry && entry.seed || '').toLowerCase()
+    const pubkey = String(entry && entry.pubkey || '').toLowerCase()
+    if (!HEX64.test(seed) || !HEX64.test(pubkey)) throw new Error('Cannot add identity: invalid seed or public key.')
+    const driveKey = String(entry && entry.driveKey || pubkey).toLowerCase()
+    const label = entry && entry.label ? String(entry.label) : 'imported'
+    const roster = this._roster()
+    const existing = roster.find(u => u.pubkey === pubkey)
+    if (existing) {
+      existing.seed = seed
+      existing.driveKey = driveKey
+      if (entry && entry.label) existing.label = label
+    } else {
+      roster.push({ pubkey, seed, driveKey, label })
+    }
+    this._saveRoster(roster)
+    this._active = pubkey
+    if (this.session) this.session.setItem('peerit:dev:active', pubkey)
+    return this.me()
   }
 }
 

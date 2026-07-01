@@ -1,15 +1,17 @@
 {
   "bootstrapRelays": [
+    "https://153-75-89-206.sslip.io",
     "https://peerit-relay.onrender.com"
   ],
   "readonly": false,
   "relayRoster": "relay-roster.json",
-  "pinnedRosterKey": "f7441ced416529c7b145736a9c493b913e22cf3eca1d4538e58cd287d7493c34",
+  "pinnedRosterKey": "4a7402d1a950dc3be8a434cb3ee664231ca0e58be8c745dabcaf2346ee0e0f7f",
   "dhtRelay": "",
   "roster": {
     "version": 1,
     "expires": "2026-12-31T00:00:00.000Z",
     "relays": [
+      "https://153-75-89-206.sslip.io",
       "https://peerit-relay.onrender.com"
     ]
   }

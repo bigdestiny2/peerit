@@ -1,0 +1,37 @@
+# peerit in-browser DHT relay — a wss:// WebSocket that browsers open a real
+# HyperDHT session through (see ../../docs/WEB-DEPLOYMENT.md, Phase 3). Caddy
+# terminates TLS (automatic Let's Encrypt) and proxies the WebSocket to the
+# dht-relay, which speaks plain ws on the private compose network only.
+#
+# Setup (see README.md):
+#   1. point DNS (A/AAAA) for $DHT_RELAY_DOMAIN at this host
+#   2. cp .env.example .env  &&  edit DHT_RELAY_DOMAIN + ACME_EMAIL
+#   3. docker compose up -d --build
+services:
+  dht-relay:
+    build: .
+    restart: unless-stopped
+    expose:
+      - "49443"          # private to the compose network — NOT published to the host
+    networks: [relaynet]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"          # ACME HTTP-01 challenge + HTTP→HTTPS redirect
+      - "443:443"        # wss:// terminates here
+    env_file: .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data       # persisted TLS certs — KEEP this volume across restarts
+      - caddy_config:/config
+    networks: [relaynet]
+    depends_on: [dht-relay]
+
+networks:
+  relaynet:
+
+volumes:
+  caddy_data:
+  caddy_config:

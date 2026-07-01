@@ -13,10 +13,10 @@
   },
   "scripts": {
     "dev": "node dev-server.mjs",
-    "test": "node test/smoke.mjs && node test/gossip.mjs && node test/bridge.mjs && node test/bridge-convergence.mjs && node test/runtime.mjs && node test/relay-roster.mjs && node test/dht-adapter.mjs && node test/outbox-head.mjs && node test/relay-pool.mjs && node test/head-floor.mjs && node test/directory.mjs",
+    "test": "node test/smoke.mjs && node test/gossip.mjs && node test/bridge.mjs && node test/bridge-convergence.mjs && node test/runtime.mjs && node test/relay-roster.mjs && node test/dht-adapter.mjs && node test/outbox-head.mjs && node test/relay-pool.mjs && node test/head-floor.mjs && node test/directory.mjs && node test/ra-idb.mjs",
     "test:browser": "node scripts/browser-smoke.mjs",
     "test:dht-live": "node test/dht-live.mjs",
-    "dht:deps": "npm i --no-save corestore@6 hypercore@10 hyperbee@2 hyperswarm@4 protomux b4a compact-encoding sodium-javascript random-access-web @hyperswarm/dht-relay @hyperswarm/testnet random-access-memory",
+    "dht:deps": "npm i --no-save corestore@6 hypercore@10 hyperbee@2 hyperswarm@4 protomux b4a compact-encoding sodium-javascript random-access-storage random-access-memory @hyperswarm/dht-relay @hyperswarm/testnet",
     "dht:bundle": "npx esbuild js/dht-transport.js --bundle --format=esm --platform=browser --main-fields=browser,module,main --define:global=globalThis --inject:node-shims.mjs --outfile=js/dht-bundle.js",
     "proof:availability": "node scripts/availability-proof.mjs",
     "proof:availability:live": "node scripts/availability-proof.mjs --require-live",

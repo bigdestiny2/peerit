@@ -1553,28 +1553,10 @@ var require_buffer = __commonJS({
 });
 
 // node-shims.mjs
-var import_buffer, Buffer2, process;
+var import_buffer;
 var init_node_shims = __esm({
   "node-shims.mjs"() {
     import_buffer = __toESM(require_buffer(), 1);
-    Buffer2 = import_buffer.Buffer;
-    process = {
-      nextTick: (fn, ...args) => queueMicrotask(() => fn(...args)),
-      env: {},
-      browser: true,
-      version: "v20.0.0",
-      platform: "browser",
-      argv: [],
-      cwd: () => "/",
-      on: () => {
-      },
-      once: () => {
-      },
-      off: () => {
-      },
-      removeListener: () => {
-      }
-    };
   }
 });
 
@@ -1944,6 +1926,289 @@ var require_events = __commonJS({
       } else {
         throw new TypeError('The "emitter" argument must be of type EventEmitter. Received type ' + typeof emitter);
       }
+    }
+  }
+});
+
+// node_modules/queue-tick/queue-microtask.js
+var require_queue_microtask = __commonJS({
+  "node_modules/queue-tick/queue-microtask.js"(exports, module) {
+    init_node_shims();
+    module.exports = typeof queueMicrotask === "function" ? queueMicrotask : (fn) => Promise.resolve().then(fn);
+  }
+});
+
+// node_modules/random-access-storage/index.js
+var require_random_access_storage = __commonJS({
+  "node_modules/random-access-storage/index.js"(exports, module) {
+    init_node_shims();
+    var EventEmitter = require_events();
+    var queueTick = require_queue_microtask();
+    var NOT_READABLE = defaultImpl(new Error("Not readable"));
+    var NOT_WRITABLE = defaultImpl(new Error("Not writable"));
+    var NOT_DELETABLE = defaultImpl(new Error("Not deletable"));
+    var NOT_STATABLE = defaultImpl(new Error("Not statable"));
+    var DEFAULT_OPEN = defaultImpl(null);
+    var DEFAULT_CLOSE = defaultImpl(null);
+    var DEFAULT_UNLINK = defaultImpl(null);
+    var READ_OP = 0;
+    var WRITE_OP = 1;
+    var DEL_OP = 2;
+    var TRUNCATE_OP = 3;
+    var STAT_OP = 4;
+    var OPEN_OP = 5;
+    var SUSPEND_OP = 6;
+    var CLOSE_OP = 7;
+    var UNLINK_OP = 8;
+    module.exports = class RandomAccessStorage2 extends EventEmitter {
+      constructor(opts) {
+        super();
+        this._queued = [];
+        this._pending = 0;
+        this._needsOpen = true;
+        this.opened = false;
+        this.suspended = false;
+        this.closed = false;
+        this.unlinked = false;
+        this.writing = false;
+        if (opts) {
+          if (opts.open) this._open = opts.open;
+          if (opts.read) this._read = opts.read;
+          if (opts.write) this._write = opts.write;
+          if (opts.del) this._del = opts.del;
+          if (opts.truncate) this._truncate = opts.truncate;
+          if (opts.stat) this._stat = opts.stat;
+          if (opts.suspend) this._suspend = opts.suspend;
+          if (opts.close) this._close = opts.close;
+          if (opts.unlink) this._unlink = opts.unlink;
+        }
+        this.readable = this._read !== RandomAccessStorage2.prototype._read;
+        this.writable = this._write !== RandomAccessStorage2.prototype._write;
+        this.deletable = this._del !== RandomAccessStorage2.prototype._del;
+        this.truncatable = this._truncate !== RandomAccessStorage2.prototype._truncate || this.deletable;
+        this.statable = this._stat !== RandomAccessStorage2.prototype._stat;
+      }
+      read(offset, size, cb) {
+        this.run(new Request(this, READ_OP, offset, size, null, cb), false);
+      }
+      _read(req) {
+        return NOT_READABLE(req);
+      }
+      write(offset, data, cb) {
+        if (!cb) cb = noop;
+        this.run(new Request(this, WRITE_OP, offset, data.length, data, cb), true);
+      }
+      _write(req) {
+        return NOT_WRITABLE(req);
+      }
+      del(offset, size, cb) {
+        if (!cb) cb = noop;
+        this.run(new Request(this, DEL_OP, offset, size, null, cb), true);
+      }
+      _del(req) {
+        return NOT_DELETABLE(req);
+      }
+      truncate(offset, cb) {
+        if (!cb) cb = noop;
+        this.run(new Request(this, TRUNCATE_OP, offset, 0, null, cb), true);
+      }
+      _truncate(req) {
+        req.size = Infinity;
+        this._del(req);
+      }
+      stat(cb) {
+        this.run(new Request(this, STAT_OP, 0, 0, null, cb), false);
+      }
+      _stat(req) {
+        return NOT_STATABLE(req);
+      }
+      open(cb) {
+        if (!cb) cb = noop;
+        if (this.opened && !this._needsOpen) return nextTickCallback(cb);
+        this._needsOpen = false;
+        queueAndRun(this, new Request(this, OPEN_OP, 0, 0, null, cb));
+      }
+      _open(req) {
+        return DEFAULT_OPEN(req);
+      }
+      suspend(cb) {
+        if (!cb) cb = noop;
+        if (this.closed || this.suspended) return nextTickCallback(cb);
+        this._needsOpen = true;
+        queueAndRun(this, new Request(this, SUSPEND_OP, 0, 0, null, cb));
+      }
+      _suspend(req) {
+        this._close(req);
+      }
+      close(cb) {
+        if (!cb) cb = noop;
+        if (this.closed) return nextTickCallback(cb);
+        queueAndRun(this, new Request(this, CLOSE_OP, 0, 0, null, cb));
+      }
+      _close(req) {
+        return DEFAULT_CLOSE(req);
+      }
+      unlink(cb) {
+        if (!cb) cb = noop;
+        if (!this.closed) this.close(noop);
+        queueAndRun(this, new Request(this, UNLINK_OP, 0, 0, null, cb));
+      }
+      _unlink(req) {
+        return DEFAULT_UNLINK(req);
+      }
+      run(req, writing) {
+        if (writing && !this.writing) {
+          this.writing = true;
+          this._needsOpen = true;
+        }
+        if (this._needsOpen) this.open(noop);
+        if (this._queued.length) this._queued.push(req);
+        else req._run();
+      }
+    };
+    var Request = class {
+      constructor(self, type, offset, size, data, cb) {
+        this.type = type;
+        this.offset = offset;
+        this.size = size;
+        this.data = data;
+        this.storage = self;
+        this._sync = false;
+        this._callback = cb;
+        this._openError = null;
+      }
+      _maybeOpenError(err) {
+        if (this.type !== OPEN_OP) return;
+        const queued = this.storage._queued;
+        for (let i = 1; i < queued.length; i++) {
+          const q = queued[i];
+          if (q.type === OPEN_OP) break;
+          q._openError = err;
+        }
+      }
+      _unqueue(err) {
+        const ra = this.storage;
+        const queued = ra._queued;
+        if (err) {
+          this._maybeOpenError(err);
+        } else if (this.type > 4) {
+          switch (this.type) {
+            case OPEN_OP:
+              if (ra.suspended) {
+                ra.suspended = false;
+                ra.emit("unsuspend");
+              }
+              if (!ra.opened) {
+                ra.opened = true;
+                ra.emit("open");
+              }
+              break;
+            case SUSPEND_OP:
+              if (!ra.suspended) {
+                ra.suspended = true;
+                ra.emit("suspend");
+              }
+              break;
+            case CLOSE_OP:
+              if (!ra.closed) {
+                ra.closed = true;
+                ra.emit("close");
+              }
+              break;
+            case UNLINK_OP:
+              if (!ra.unlinked) {
+                ra.unlinked = true;
+                ra.emit("unlink");
+              }
+              break;
+          }
+        }
+        if (queued.length && queued[0] === this) queued.shift();
+        if (!--ra._pending) drainQueue(ra);
+      }
+      callback(err, val) {
+        if (this._sync) return nextTick(this, err, val);
+        this._unqueue(err);
+        this._callback(err, val);
+      }
+      _openAndNotClosed() {
+        const ra = this.storage;
+        if (ra.opened && !ra.closed && !ra.suspended) return true;
+        if (!ra.opened || ra.suspended) nextTick(this, this._openError || new Error("Not opened"));
+        else if (ra.closed) nextTick(this, new Error("Closed"));
+        return false;
+      }
+      _open() {
+        const ra = this.storage;
+        if (ra.opened && !ra.suspended) return nextTick(this, null);
+        if (ra.closed) return nextTick(this, new Error("Closed"));
+        ra._open(this);
+      }
+      _run() {
+        const ra = this.storage;
+        ra._pending++;
+        this._sync = true;
+        switch (this.type) {
+          case READ_OP:
+            if (this._openAndNotClosed()) ra._read(this);
+            break;
+          case WRITE_OP:
+            if (this._openAndNotClosed()) ra._write(this);
+            break;
+          case DEL_OP:
+            if (this._openAndNotClosed()) ra._del(this);
+            break;
+          case TRUNCATE_OP:
+            if (this._openAndNotClosed()) ra._truncate(this);
+            break;
+          case STAT_OP:
+            if (this._openAndNotClosed()) ra._stat(this);
+            break;
+          case OPEN_OP:
+            this._open();
+            break;
+          case SUSPEND_OP:
+            if (ra.closed || !ra.opened || ra.suspended) nextTick(this, null);
+            else ra._suspend(this);
+            break;
+          case CLOSE_OP:
+            if (ra.closed || !ra.opened || ra.suspended) nextTick(this, null);
+            else ra._close(this);
+            break;
+          case UNLINK_OP:
+            if (ra.unlinked) nextTick(this, null);
+            else ra._unlink(this);
+            break;
+        }
+        this._sync = false;
+      }
+    };
+    function queueAndRun(self, req) {
+      self._queued.push(req);
+      if (!self._pending) req._run();
+    }
+    function drainQueue(self) {
+      const queued = self._queued;
+      while (queued.length > 0) {
+        const blocking = queued[0].type > 4;
+        if (!blocking || !self._pending) queued[0]._run();
+        if (blocking) return;
+        queued.shift();
+      }
+    }
+    function defaultImpl(err) {
+      return overridable;
+      function overridable(req) {
+        nextTick(req, err);
+      }
+    }
+    function nextTick(req, err, val) {
+      queueTick(() => req.callback(err, val));
+    }
+    function nextTickCallback(cb) {
+      queueTick(() => cb(null));
+    }
+    function noop() {
     }
   }
 });
@@ -2723,7 +2988,7 @@ var require_endian = __commonJS({
 var require_raw = __commonJS({
   "node_modules/compact-encoding/raw.js"(exports, module) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var { BE } = require_endian();
     exports = module.exports = {
       preencode(state, b) {
@@ -2802,25 +3067,25 @@ var require_raw = __commonJS({
       };
     }
     var uint8array = exports.uint8array = typedarray(Uint8Array);
-    exports.uint16array = typedarray(Uint16Array, b4a.swap16);
-    exports.uint32array = typedarray(Uint32Array, b4a.swap32);
+    exports.uint16array = typedarray(Uint16Array, b4a2.swap16);
+    exports.uint32array = typedarray(Uint32Array, b4a2.swap32);
     exports.int8array = typedarray(Int8Array);
-    exports.int16array = typedarray(Int16Array, b4a.swap16);
-    exports.int32array = typedarray(Int32Array, b4a.swap32);
-    exports.biguint64array = typedarray(BigUint64Array, b4a.swap64);
-    exports.bigint64array = typedarray(BigInt64Array, b4a.swap64);
-    exports.float32array = typedarray(Float32Array, b4a.swap32);
-    exports.float64array = typedarray(Float64Array, b4a.swap64);
+    exports.int16array = typedarray(Int16Array, b4a2.swap16);
+    exports.int32array = typedarray(Int32Array, b4a2.swap32);
+    exports.biguint64array = typedarray(BigUint64Array, b4a2.swap64);
+    exports.bigint64array = typedarray(BigInt64Array, b4a2.swap64);
+    exports.float32array = typedarray(Float32Array, b4a2.swap32);
+    exports.float64array = typedarray(Float64Array, b4a2.swap64);
     function string(encoding) {
       return {
         preencode(state, s) {
-          state.end += b4a.byteLength(s, encoding);
+          state.end += b4a2.byteLength(s, encoding);
         },
         encode(state, s) {
-          state.start += b4a.write(state.buffer, s, state.start, encoding);
+          state.start += b4a2.write(state.buffer, s, state.start, encoding);
         },
         decode(state) {
-          const s = b4a.toString(state.buffer, encoding, state.start);
+          const s = b4a2.toString(state.buffer, encoding, state.start);
           state.start = state.end;
           return s;
         }
@@ -2966,7 +3231,7 @@ var require_lexint = __commonJS({
 var require_compact_encoding = __commonJS({
   "node_modules/compact-encoding/index.js"(exports) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var { BE } = require_endian();
     exports.state = function(start = 0, end = 0, buffer2 = null) {
       return { start, end, buffer: buffer2 };
@@ -3359,32 +3624,32 @@ var require_compact_encoding = __commonJS({
       };
     }
     var uint8array = exports.uint8array = typedarray(Uint8Array);
-    exports.uint16array = typedarray(Uint16Array, b4a.swap16);
-    exports.uint32array = typedarray(Uint32Array, b4a.swap32);
+    exports.uint16array = typedarray(Uint16Array, b4a2.swap16);
+    exports.uint32array = typedarray(Uint32Array, b4a2.swap32);
     exports.int8array = typedarray(Int8Array);
-    exports.int16array = typedarray(Int16Array, b4a.swap16);
-    exports.int32array = typedarray(Int32Array, b4a.swap32);
-    exports.biguint64array = typedarray(BigUint64Array, b4a.swap64);
-    exports.bigint64array = typedarray(BigInt64Array, b4a.swap64);
-    exports.float32array = typedarray(Float32Array, b4a.swap32);
-    exports.float64array = typedarray(Float64Array, b4a.swap64);
+    exports.int16array = typedarray(Int16Array, b4a2.swap16);
+    exports.int32array = typedarray(Int32Array, b4a2.swap32);
+    exports.biguint64array = typedarray(BigUint64Array, b4a2.swap64);
+    exports.bigint64array = typedarray(BigInt64Array, b4a2.swap64);
+    exports.float32array = typedarray(Float32Array, b4a2.swap32);
+    exports.float64array = typedarray(Float64Array, b4a2.swap64);
     function string(encoding) {
       return {
         preencode(state, s) {
-          const len = b4a.byteLength(s, encoding);
+          const len = b4a2.byteLength(s, encoding);
           uint.preencode(state, len);
           state.end += len;
         },
         encode(state, s) {
-          const len = b4a.byteLength(s, encoding);
+          const len = b4a2.byteLength(s, encoding);
           uint.encode(state, len);
-          b4a.write(state.buffer, s, state.start, encoding);
+          b4a2.write(state.buffer, s, state.start, encoding);
           state.start += len;
         },
         decode(state) {
           const len = uint.decode(state);
           if (state.end - state.start < len) throw new Error("Out of bounds");
-          return b4a.toString(
+          return b4a2.toString(
             state.buffer,
             encoding,
             state.start,
@@ -3397,12 +3662,12 @@ var require_compact_encoding = __commonJS({
               state.end += n;
             },
             encode(state, s) {
-              b4a.write(state.buffer, s, state.start, n, encoding);
+              b4a2.write(state.buffer, s, state.start, n, encoding);
               state.start += n;
             },
             decode(state) {
               if (state.end - state.start < n) throw new Error("Out of bounds");
-              return b4a.toString(
+              return b4a2.toString(
                 state.buffer,
                 encoding,
                 state.start,
@@ -3769,7 +4034,7 @@ var require_compact_encoding = __commonJS({
       if (o === null || o === void 0) return 0;
       if (typeof o === "boolean") return 1;
       if (typeof o === "string") return 2;
-      if (b4a.isBuffer(o)) return 3;
+      if (b4a2.isBuffer(o)) return 3;
       if (typeof o === "number") {
         if (Number.isInteger(o)) return o >= 0 ? 4 : 5;
         return 6;
@@ -3847,7 +4112,7 @@ var require_compact_encoding = __commonJS({
     exports.encode = function encode(enc, m) {
       const state = exports.state();
       enc.preencode(state, m);
-      state.buffer = b4a.allocUnsafe(state.end);
+      state.buffer = b4a2.allocUnsafe(state.end);
       enc.encode(state, m);
       return state.buffer;
     };
@@ -3910,14 +4175,6 @@ var require_compact_encoding = __commonJS({
   }
 });
 
-// node_modules/queue-tick/queue-microtask.js
-var require_queue_microtask = __commonJS({
-  "node_modules/queue-tick/queue-microtask.js"(exports, module) {
-    init_node_shims();
-    module.exports = typeof queueMicrotask === "function" ? queueMicrotask : (fn) => Promise.resolve().then(fn);
-  }
-});
-
 // node_modules/safety-catch/index.js
 var require_safety_catch = __commonJS({
   "node_modules/safety-catch/index.js"(exports, module) {
@@ -3945,13 +4202,13 @@ var require_safety_catch = __commonJS({
 var require_unslab = __commonJS({
   "node_modules/unslab/index.js"(exports, module) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     unslab.all = all;
     unslab.is = is;
     module.exports = unslab;
     function unslab(buf) {
       if (buf === null || buf.buffer.byteLength === buf.byteLength) return buf;
-      const copy = b4a.allocUnsafeSlow(buf.byteLength);
+      const copy = b4a2.allocUnsafeSlow(buf.byteLength);
       copy.set(buf, 0);
       return copy;
     }
@@ -3964,7 +4221,7 @@ var require_unslab = __commonJS({
         const buf = list[i];
         size += buf === null || buf.buffer.byteLength === buf.byteLength ? 0 : buf.byteLength;
       }
-      const copy = b4a.allocUnsafeSlow(size);
+      const copy = b4a2.allocUnsafeSlow(size);
       const result = new Array(list.length);
       let offset = 0;
       for (let i = 0; i < list.length; i++) {
@@ -3984,7 +4241,7 @@ var require_unslab = __commonJS({
 var require_protomux = __commonJS({
   "node_modules/protomux/index.js"(exports, module) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var c = require_compact_encoding();
     var queueTick = require_queue_microtask();
     var safetyCatch = require_safety_catch();
@@ -4235,7 +4492,7 @@ var require_protomux = __commonJS({
         this.stream = stream;
         this.corked = 0;
         this.drained = true;
-        this._alloc = alloc || (typeof stream.alloc === "function" ? stream.alloc.bind(stream) : b4a.allocUnsafe);
+        this._alloc = alloc || (typeof stream.alloc === "function" ? stream.alloc.bind(stream) : b4a2.allocUnsafe);
         this._safeDestroyBound = this._safeDestroy.bind(this);
         this._uncorkBound = this.uncork.bind(this);
         this._remoteBacklog = 0;
@@ -4614,7 +4871,7 @@ var require_protomux = __commonJS({
     function noop() {
     }
     function toKey(protocol, id) {
-      return protocol + "##" + (id ? b4a.toString(id, "hex") : "");
+      return protocol + "##" + (id ? b4a2.toString(id, "hex") : "");
     }
     function byteSize(state) {
       return 512 + (state.end - state.start);
@@ -4643,7 +4900,7 @@ var require_endian2 = __commonJS({
 var require_raw2 = __commonJS({
   "node_modules/@hyperswarm/dht-relay/node_modules/compact-encoding/raw.js"(exports, module) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var { BE } = require_endian2();
     exports = module.exports = {
       preencode(state, b) {
@@ -4725,25 +4982,25 @@ var require_raw2 = __commonJS({
       };
     }
     var uint8array = exports.uint8array = typedarray(Uint8Array);
-    exports.uint16array = typedarray(Uint16Array, b4a.swap16);
-    exports.uint32array = typedarray(Uint32Array, b4a.swap32);
+    exports.uint16array = typedarray(Uint16Array, b4a2.swap16);
+    exports.uint32array = typedarray(Uint32Array, b4a2.swap32);
     exports.int8array = typedarray(Int8Array);
-    exports.int16array = typedarray(Int16Array, b4a.swap16);
-    exports.int32array = typedarray(Int32Array, b4a.swap32);
-    exports.biguint64array = typedarray(BigUint64Array, b4a.swap64);
-    exports.bigint64array = typedarray(BigInt64Array, b4a.swap64);
-    exports.float32array = typedarray(Float32Array, b4a.swap32);
-    exports.float64array = typedarray(Float64Array, b4a.swap64);
+    exports.int16array = typedarray(Int16Array, b4a2.swap16);
+    exports.int32array = typedarray(Int32Array, b4a2.swap32);
+    exports.biguint64array = typedarray(BigUint64Array, b4a2.swap64);
+    exports.bigint64array = typedarray(BigInt64Array, b4a2.swap64);
+    exports.float32array = typedarray(Float32Array, b4a2.swap32);
+    exports.float64array = typedarray(Float64Array, b4a2.swap64);
     function string(encoding) {
       return {
         preencode(state, s) {
-          state.end += b4a.byteLength(s, encoding);
+          state.end += b4a2.byteLength(s, encoding);
         },
         encode(state, s) {
-          state.start += b4a.write(state.buffer, s, state.start, encoding);
+          state.start += b4a2.write(state.buffer, s, state.start, encoding);
         },
         decode(state) {
-          const s = b4a.toString(state.buffer, encoding, state.start);
+          const s = b4a2.toString(state.buffer, encoding, state.start);
           state.start = state.end;
           return s;
         }
@@ -4889,7 +5146,7 @@ var require_lexint2 = __commonJS({
 var require_compact_encoding2 = __commonJS({
   "node_modules/@hyperswarm/dht-relay/node_modules/compact-encoding/index.js"(exports) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var { BE } = require_endian2();
     exports.state = function(start = 0, end = 0, buffer2 = null) {
       return { start, end, buffer: buffer2 };
@@ -5232,32 +5489,32 @@ var require_compact_encoding2 = __commonJS({
       };
     }
     var uint8array = exports.uint8array = typedarray(Uint8Array);
-    exports.uint16array = typedarray(Uint16Array, b4a.swap16);
-    exports.uint32array = typedarray(Uint32Array, b4a.swap32);
+    exports.uint16array = typedarray(Uint16Array, b4a2.swap16);
+    exports.uint32array = typedarray(Uint32Array, b4a2.swap32);
     exports.int8array = typedarray(Int8Array);
-    exports.int16array = typedarray(Int16Array, b4a.swap16);
-    exports.int32array = typedarray(Int32Array, b4a.swap32);
-    exports.biguint64array = typedarray(BigUint64Array, b4a.swap64);
-    exports.bigint64array = typedarray(BigInt64Array, b4a.swap64);
-    exports.float32array = typedarray(Float32Array, b4a.swap32);
-    exports.float64array = typedarray(Float64Array, b4a.swap64);
+    exports.int16array = typedarray(Int16Array, b4a2.swap16);
+    exports.int32array = typedarray(Int32Array, b4a2.swap32);
+    exports.biguint64array = typedarray(BigUint64Array, b4a2.swap64);
+    exports.bigint64array = typedarray(BigInt64Array, b4a2.swap64);
+    exports.float32array = typedarray(Float32Array, b4a2.swap32);
+    exports.float64array = typedarray(Float64Array, b4a2.swap64);
     function string(encoding) {
       return {
         preencode(state, s) {
-          const len = b4a.byteLength(s, encoding);
+          const len = b4a2.byteLength(s, encoding);
           uint.preencode(state, len);
           state.end += len;
         },
         encode(state, s) {
-          const len = b4a.byteLength(s, encoding);
+          const len = b4a2.byteLength(s, encoding);
           uint.encode(state, len);
-          b4a.write(state.buffer, s, state.start, encoding);
+          b4a2.write(state.buffer, s, state.start, encoding);
           state.start += len;
         },
         decode(state) {
           const len = uint.decode(state);
           if (state.end - state.start < len) throw new Error("Out of bounds");
-          return b4a.toString(
+          return b4a2.toString(
             state.buffer,
             encoding,
             state.start,
@@ -5270,12 +5527,12 @@ var require_compact_encoding2 = __commonJS({
               state.end += n;
             },
             encode(state, s) {
-              b4a.write(state.buffer, s, state.start, n, encoding);
+              b4a2.write(state.buffer, s, state.start, n, encoding);
               state.start += n;
             },
             decode(state) {
               if (state.end - state.start < n) throw new Error("Out of bounds");
-              return b4a.toString(
+              return b4a2.toString(
                 state.buffer,
                 encoding,
                 state.start,
@@ -5642,7 +5899,7 @@ var require_compact_encoding2 = __commonJS({
       if (o === null || o === void 0) return 0;
       if (typeof o === "boolean") return 1;
       if (typeof o === "string") return 2;
-      if (b4a.isBuffer(o)) return 3;
+      if (b4a2.isBuffer(o)) return 3;
       if (typeof o === "number") {
         if (Number.isInteger(o)) return o >= 0 ? 4 : 5;
         return 6;
@@ -5720,7 +5977,7 @@ var require_compact_encoding2 = __commonJS({
     exports.encode = function encode(enc, m) {
       const state = exports.state();
       enc.preencode(state, m);
-      state.buffer = b4a.allocUnsafe(state.end);
+      state.buffer = b4a2.allocUnsafe(state.end);
       enc.encode(state, m);
       return state.buffer;
     };
@@ -6915,7 +7172,7 @@ var require_sha512 = __commonJS({
   "node_modules/sha512-universal/sha512.js"(exports, module) {
     init_node_shims();
     var assert = require_nanoassert();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     module.exports = Sha512;
     var BLOCKSIZE = 128;
     var K = [
@@ -7146,7 +7403,7 @@ var require_sha512 = __commonJS({
       const resultBuf = new Uint8Array(64);
       for (let i = 0; i < 8; i++) ts64(resultBuf, 8 * i, this.hh[i], this.hl[i]);
       if (typeof enc === "string") {
-        return b4a.toString(resultBuf, enc);
+        return b4a2.toString(resultBuf, enc);
       }
       return resultBuf;
     };
@@ -7161,7 +7418,7 @@ var require_sha512 = __commonJS({
       x[i + 7] = l & 255;
     }
     function formatInput(input, enc) {
-      var result = b4a.from(input, enc);
+      var result = b4a2.from(input, enc);
       return [result, result.byteLength];
     }
     function compress(hh, hl, m, n) {
@@ -7462,10 +7719,10 @@ var require_sha512 = __commonJS({
     }
     function HMAC(key) {
       if (!(this instanceof HMAC)) return new HMAC(key);
-      this.pad = b4a.alloc(128);
+      this.pad = b4a2.alloc(128);
       this.inner = Sha512();
       this.outer = Sha512();
-      const keyhash = b4a.alloc(64);
+      const keyhash = b4a2.alloc(64);
       if (key.byteLength > 128) {
         Sha512().update(key).digest(keyhash);
         key = keyhash;
@@ -7537,7 +7794,7 @@ var require_sha512_wasm = __commonJS({
   "node_modules/sha512-wasm/index.js"(exports, module) {
     init_node_shims();
     var assert = require_nanoassert();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var wasm = typeof WebAssembly !== "undefined" && require_sha5122()({
       imports: {
         debug: {
@@ -7604,7 +7861,7 @@ var require_sha512_wasm = __commonJS({
         return resultBuf;
       }
       if (typeof enc === "string") {
-        return b4a.toString(resultBuf, enc);
+        return b4a2.toString(resultBuf, enc);
       }
       assert(enc instanceof Uint8Array, "output must be Uint8Array or Buffer");
       assert(
@@ -7627,10 +7884,10 @@ var require_sha512_wasm = __commonJS({
     Sha512.prototype.ready = Sha512.ready;
     function HMAC(key) {
       if (!(this instanceof HMAC)) return new HMAC(key);
-      this.pad = b4a.alloc(128);
+      this.pad = b4a2.alloc(128);
       this.inner = Sha512();
       this.outer = Sha512();
-      const keyhash = b4a.alloc(64);
+      const keyhash = b4a2.alloc(64);
       if (key.byteLength > 128) {
         Sha512().update(key).digest(keyhash);
         key = keyhash;
@@ -7660,7 +7917,7 @@ var require_sha512_wasm = __commonJS({
     function noop() {
     }
     function formatInput(input, enc) {
-      var result = b4a.from(input, enc);
+      var result = b4a2.from(input, enc);
       return [result, result.byteLength];
     }
     function roundUp(n, base) {
@@ -8387,7 +8644,7 @@ var require_blake2b_wasm = __commonJS({
   "node_modules/blake2b-wasm/index.js"(exports, module) {
     init_node_shims();
     var assert = require_nanoassert();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var wasm = null;
     var wasmPromise = typeof WebAssembly !== "undefined" && require_blake2b()().then((mod) => {
       wasm = mod;
@@ -8468,7 +8725,7 @@ var require_blake2b_wasm = __commonJS({
         return this._memory.slice(this.pointer + 128, this.pointer + 128 + this.digestLength);
       }
       if (typeof enc === "string") {
-        return b4a.toString(this._memory, enc, this.pointer + 128, this.pointer + 128 + this.digestLength);
+        return b4a2.toString(this._memory, enc, this.pointer + 128, this.pointer + 128 + this.digestLength);
       }
       assert(enc instanceof Uint8Array && enc.length >= this.digestLength, "input must be Uint8Array or Buffer");
       for (var i = 0; i < this.digestLength; i++) {
@@ -10117,7 +10374,7 @@ var require_sha256 = __commonJS({
   "node_modules/sha256-universal/sha256.js"(exports, module) {
     init_node_shims();
     var assert = require_nanoassert();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     module.exports = Sha256;
     var SHA256_BYTES = module.exports.SHA256_BYTES = 32;
     var BLOCKSIZE = 64;
@@ -10299,7 +10556,7 @@ var require_sha256 = __commonJS({
         return new Uint8Array(resultBuf);
       }
       if (typeof enc === "string") {
-        return b4a.toString(resultBuf, enc);
+        return b4a2.toString(resultBuf, enc);
       }
       assert(enc instanceof Uint8Array, "input must be Uint8Array or Buffer");
       assert(enc.byteLength >= this.digestLength + offset, "input not large enough for digest");
@@ -10310,10 +10567,10 @@ var require_sha256 = __commonJS({
     };
     function HMAC(key) {
       if (!(this instanceof HMAC)) return new HMAC(key);
-      this.pad = b4a.alloc(64);
+      this.pad = b4a2.alloc(64);
       this.inner = Sha256();
       this.outer = Sha256();
-      const keyhash = b4a.alloc(32);
+      const keyhash = b4a2.alloc(32);
       if (key.byteLength > 64) {
         Sha256().update(key).digest(keyhash);
         key = keyhash;
@@ -10341,7 +10598,7 @@ var require_sha256 = __commonJS({
     };
     Sha256.HMAC = HMAC;
     function formatInput(input, enc) {
-      var result = b4a.from(input, enc);
+      var result = b4a2.from(input, enc);
       return [result, result.byteLength];
     }
     function bswap(a) {
@@ -10394,7 +10651,7 @@ var require_sha256_wasm = __commonJS({
   "node_modules/sha256-wasm/index.js"(exports, module) {
     init_node_shims();
     var assert = require_nanoassert();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var wasm = typeof WebAssembly !== "undefined" && require_sha2562()({
       imports: {
         debug: {
@@ -10460,7 +10717,7 @@ var require_sha256_wasm = __commonJS({
         return resultBuf;
       }
       if (typeof enc === "string") {
-        return b4a.toString(resultBuf, enc);
+        return b4a2.toString(resultBuf, enc);
       }
       assert(enc instanceof Uint8Array, "output must be Uint8Array or Buffer");
       assert(
@@ -10483,10 +10740,10 @@ var require_sha256_wasm = __commonJS({
     Sha256.prototype.ready = Sha256.ready;
     function HMAC(key) {
       if (!(this instanceof HMAC)) return new HMAC(key);
-      this.pad = b4a.alloc(64);
+      this.pad = b4a2.alloc(64);
       this.inner = Sha256();
       this.outer = Sha256();
-      const keyhash = b4a.alloc(32);
+      const keyhash = b4a2.alloc(32);
       if (key.byteLength > 64) {
         Sha256().update(key).digest(keyhash);
         key = keyhash;
@@ -10516,7 +10773,7 @@ var require_sha256_wasm = __commonJS({
     function noop() {
     }
     function formatInput(input, enc) {
-      var result = b4a.from(input, enc);
+      var result = b4a2.from(input, enc);
       return [result, result.byteLength];
     }
     function roundUp(n, base) {
@@ -12243,35 +12500,35 @@ var require_sodium_secretstream = __commonJS({
   "node_modules/sodium-secretstream/index.js"(exports, module) {
     init_node_shims();
     var sodium = require_sodium_universal();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var ABYTES = sodium.crypto_secretstream_xchacha20poly1305_ABYTES;
     var TAG_MESSAGE = sodium.crypto_secretstream_xchacha20poly1305_TAG_MESSAGE;
     var TAG_FINAL = sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL;
     var STATEBYTES = sodium.crypto_secretstream_xchacha20poly1305_STATEBYTES;
     var HEADERBYTES = sodium.crypto_secretstream_xchacha20poly1305_HEADERBYTES;
     var KEYBYTES = sodium.crypto_secretstream_xchacha20poly1305_KEYBYTES;
-    var TAG_FINAL_BYTE = b4a.isBuffer(TAG_FINAL) ? TAG_FINAL[0] : TAG_FINAL;
-    var EMPTY = b4a.alloc(0);
-    var TAG = b4a.alloc(1);
+    var TAG_FINAL_BYTE = b4a2.isBuffer(TAG_FINAL) ? TAG_FINAL[0] : TAG_FINAL;
+    var EMPTY = b4a2.alloc(0);
+    var TAG = b4a2.alloc(1);
     var Push = class {
-      constructor(key, state = b4a.allocUnsafeSlow(STATEBYTES), header = b4a.allocUnsafeSlow(HEADERBYTES)) {
+      constructor(key, state = b4a2.allocUnsafeSlow(STATEBYTES), header = b4a2.allocUnsafeSlow(HEADERBYTES)) {
         if (!TAG_FINAL) throw new Error("JavaScript sodium version needs to support crypto_secretstream_xchacha20poly");
         this.key = key;
         this.state = state;
         this.header = header;
         sodium.crypto_secretstream_xchacha20poly1305_init_push(this.state, this.header, this.key);
       }
-      next(message, cipher = b4a.allocUnsafe(message.byteLength + ABYTES)) {
+      next(message, cipher = b4a2.allocUnsafe(message.byteLength + ABYTES)) {
         sodium.crypto_secretstream_xchacha20poly1305_push(this.state, cipher, message, null, TAG_MESSAGE);
         return cipher;
       }
-      final(message = EMPTY, cipher = b4a.allocUnsafe(ABYTES)) {
+      final(message = EMPTY, cipher = b4a2.allocUnsafe(ABYTES)) {
         sodium.crypto_secretstream_xchacha20poly1305_push(this.state, cipher, message, null, TAG_FINAL);
         return cipher;
       }
     };
     var Pull = class {
-      constructor(key, state = b4a.allocUnsafeSlow(STATEBYTES)) {
+      constructor(key, state = b4a2.allocUnsafeSlow(STATEBYTES)) {
         if (!TAG_FINAL) throw new Error("JavaScript sodium version needs to support crypto_secretstream_xchacha20poly");
         this.key = key;
         this.state = state;
@@ -12280,13 +12537,13 @@ var require_sodium_secretstream = __commonJS({
       init(header) {
         sodium.crypto_secretstream_xchacha20poly1305_init_pull(this.state, header, this.key);
       }
-      next(cipher, message = b4a.allocUnsafe(cipher.byteLength - ABYTES)) {
+      next(cipher, message = b4a2.allocUnsafe(cipher.byteLength - ABYTES)) {
         sodium.crypto_secretstream_xchacha20poly1305_pull(this.state, message, TAG, cipher, null);
         this.final = TAG[0] === TAG_FINAL_BYTE;
         return message;
       }
     };
-    function keygen(buf = b4a.alloc(KEYBYTES)) {
+    function keygen(buf = b4a2.alloc(KEYBYTES)) {
       sodium.crypto_secretstream_xchacha20poly1305_keygen(buf);
       return buf;
     }
@@ -12324,13 +12581,13 @@ var require_hypercore_crypto = __commonJS({
     init_node_shims();
     var sodium = require_sodium_universal3();
     var c = require_compact_encoding();
-    var b4a = require_browser();
-    var LEAF_TYPE = b4a.from([0]);
-    var PARENT_TYPE = b4a.from([1]);
-    var ROOT_TYPE = b4a.from([2]);
-    var HYPERCORE = b4a.from("hypercore");
+    var b4a2 = require_browser();
+    var LEAF_TYPE = b4a2.from([0]);
+    var PARENT_TYPE = b4a2.from([1]);
+    var ROOT_TYPE = b4a2.from([2]);
+    var HYPERCORE = b4a2.from("hypercore");
     exports.keyPair = function(seed) {
-      const slab = b4a.allocUnsafeSlow(
+      const slab = b4a2.allocUnsafeSlow(
         sodium.crypto_sign_PUBLICKEYBYTES + sodium.crypto_sign_SECRETKEYBYTES
       );
       const publicKey = slab.subarray(0, sodium.crypto_sign_PUBLICKEYBYTES);
@@ -12343,12 +12600,12 @@ var require_hypercore_crypto = __commonJS({
       };
     };
     exports.validateKeyPair = function(keyPair) {
-      const pk = b4a.allocUnsafe(sodium.crypto_sign_PUBLICKEYBYTES);
+      const pk = b4a2.allocUnsafe(sodium.crypto_sign_PUBLICKEYBYTES);
       sodium.crypto_sign_ed25519_sk_to_pk(pk, keyPair.secretKey);
-      return b4a.equals(pk, keyPair.publicKey);
+      return b4a2.equals(pk, keyPair.publicKey);
     };
     exports.sign = function(message, secretKey) {
-      const signature = b4a.allocUnsafeSlow(sodium.crypto_sign_BYTES);
+      const signature = b4a2.allocUnsafeSlow(sodium.crypto_sign_BYTES);
       sodium.crypto_sign_detached(signature, message, secretKey);
       return signature;
     };
@@ -12358,21 +12615,21 @@ var require_hypercore_crypto = __commonJS({
       return sodium.crypto_sign_verify_detached(signature, message, publicKey);
     };
     exports.encrypt = function(message, publicKey) {
-      const ciphertext = b4a.alloc(message.byteLength + sodium.crypto_box_SEALBYTES);
+      const ciphertext = b4a2.alloc(message.byteLength + sodium.crypto_box_SEALBYTES);
       sodium.crypto_box_seal(ciphertext, message, publicKey);
       return ciphertext;
     };
     exports.decrypt = function(ciphertext, keyPair) {
       if (ciphertext.byteLength < sodium.crypto_box_SEALBYTES) return null;
-      const plaintext = b4a.alloc(ciphertext.byteLength - sodium.crypto_box_SEALBYTES);
+      const plaintext = b4a2.alloc(ciphertext.byteLength - sodium.crypto_box_SEALBYTES);
       if (!sodium.crypto_box_seal_open(plaintext, ciphertext, keyPair.publicKey, keyPair.secretKey)) {
         return null;
       }
       return plaintext;
     };
     exports.encryptionKeyPair = function(seed) {
-      const publicKey = b4a.alloc(sodium.crypto_box_PUBLICKEYBYTES);
-      const secretKey = b4a.alloc(sodium.crypto_box_SECRETKEYBYTES);
+      const publicKey = b4a2.alloc(sodium.crypto_box_PUBLICKEYBYTES);
+      const secretKey = b4a2.alloc(sodium.crypto_box_SECRETKEYBYTES);
       if (seed) {
         sodium.crypto_box_seed_keypair(publicKey, secretKey, seed);
       } else {
@@ -12384,7 +12641,7 @@ var require_hypercore_crypto = __commonJS({
       };
     };
     exports.data = function(data) {
-      const out = b4a.allocUnsafe(32);
+      const out = b4a2.allocUnsafe(32);
       sodium.crypto_generichash_batch(out, [LEAF_TYPE, c.encode(c.uint64, data.byteLength), data]);
       return out;
     };
@@ -12394,7 +12651,7 @@ var require_hypercore_crypto = __commonJS({
         a = b;
         b = tmp;
       }
-      const out = b4a.allocUnsafe(32);
+      const out = b4a2.allocUnsafe(32);
       sodium.crypto_generichash_batch(out, [
         PARENT_TYPE,
         c.encode(c.uint64, a.size + b.size),
@@ -12413,24 +12670,24 @@ var require_hypercore_crypto = __commonJS({
         buffers[j++] = c.encode(c.uint64, r.index);
         buffers[j++] = c.encode(c.uint64, r.size);
       }
-      if (!out) out = b4a.allocUnsafe(32);
+      if (!out) out = b4a2.allocUnsafe(32);
       sodium.crypto_generichash_batch(out, buffers);
       return out;
     };
     exports.hash = function(data, out) {
-      if (!out) out = b4a.allocUnsafe(32);
+      if (!out) out = b4a2.allocUnsafe(32);
       if (!Array.isArray(data)) data = [data];
       sodium.crypto_generichash_batch(out, data);
       return out;
     };
     exports.randomBytes = function(n) {
-      const buf = b4a.allocUnsafe(n);
+      const buf = b4a2.allocUnsafe(n);
       sodium.randombytes_buf(buf);
       return buf;
     };
     exports.discoveryKey = function(key) {
       if (!key || key.byteLength !== 32) throw new Error("Must pass a 32 byte buffer");
-      const digest = b4a.allocUnsafeSlow(32);
+      const digest = b4a2.allocUnsafeSlow(32);
       sodium.crypto_generichash(digest, HYPERCORE, key);
       return digest;
     };
@@ -12444,10 +12701,10 @@ var require_hypercore_crypto = __commonJS({
     }
     exports.namespace = function(name, count) {
       const ids = typeof count === "number" ? range(count) : count;
-      const buf = b4a.allocUnsafeSlow(32 * ids.length);
+      const buf = b4a2.allocUnsafeSlow(32 * ids.length);
       const list = new Array(ids.length);
-      const ns = b4a.allocUnsafe(33);
-      sodium.crypto_generichash(ns.subarray(0, 32), typeof name === "string" ? b4a.from(name) : name);
+      const ns = b4a2.allocUnsafe(33);
+      sodium.crypto_generichash(ns.subarray(0, 32), typeof name === "string" ? b4a2.from(name) : name);
       for (let i = 0; i < list.length; i++) {
         list[i] = buf.subarray(32 * i, 32 * i + 32);
         ns[32] = ids[i];
@@ -12564,7 +12821,7 @@ var require_fast_fifo = __commonJS({
 var require_pass_through_decoder = __commonJS({
   "node_modules/text-decoder/lib/pass-through-decoder.js"(exports, module) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     module.exports = class PassThroughDecoder {
       constructor(encoding) {
         this.encoding = encoding;
@@ -12573,7 +12830,7 @@ var require_pass_through_decoder = __commonJS({
         return 0;
       }
       decode(data) {
-        return b4a.toString(data, this.encoding);
+        return b4a2.toString(data, this.encoding);
       }
       flush() {
         return "";
@@ -12586,7 +12843,7 @@ var require_pass_through_decoder = __commonJS({
 var require_utf8_decoder = __commonJS({
   "node_modules/text-decoder/lib/utf8-decoder.js"(exports, module) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     module.exports = class UTF8Decoder {
       constructor() {
         this._reset();
@@ -12598,7 +12855,7 @@ var require_utf8_decoder = __commonJS({
         if (data.byteLength === 0) return "";
         if (this.bytesNeeded === 0 && trailingIncomplete(data, 0) === 0) {
           this.bytesSeen = trailingBytesSeen(data);
-          return b4a.toString(data, "utf8");
+          return b4a2.toString(data, "utf8");
         }
         let result = "";
         let start = 0;
@@ -12625,7 +12882,7 @@ var require_utf8_decoder = __commonJS({
         }
         const trailing = trailingIncomplete(data, start);
         const end = data.byteLength - trailing;
-        if (end > start) result += b4a.toString(data, "utf8", start, end);
+        if (end > start) result += b4a2.toString(data, "utf8", start, end);
         for (let i = end; i < data.byteLength; i++) {
           const byte = data[i];
           if (this.bytesNeeded === 0) {
@@ -13908,12 +14165,12 @@ var require_browser2 = __commonJS({
         return new this(ms, fn, ctx, true);
       }
     };
-    function callTimeout(self2) {
-      self2.done = true;
-      self2.ontimeout.call(self2.context);
+    function callTimeout(self) {
+      self.done = true;
+      self.ontimeout.call(self.context);
     }
-    function callInterval(self2) {
-      self2.ontimeout.call(self2.context);
+    function callInterval(self) {
+      self.ontimeout.call(self.context);
     }
   }
 });
@@ -14001,7 +14258,7 @@ var require_noise_curve_ed = __commonJS({
     init_node_shims();
     var sodium = require_sodium_universal4();
     var assert = require_nanoassert();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var DHLEN = sodium.crypto_scalarmult_ed25519_BYTES;
     var PKLEN = sodium.crypto_scalarmult_ed25519_BYTES;
     var SCALARLEN = sodium.crypto_scalarmult_ed25519_BYTES;
@@ -14020,22 +14277,22 @@ var require_noise_curve_ed = __commonJS({
     function generateKeyPair(privKey) {
       if (privKey) return generateSeedKeyPair(privKey.subarray(0, 32));
       const keyPair = {};
-      keyPair.secretKey = b4a.alloc(SKLEN);
-      keyPair.publicKey = b4a.alloc(PKLEN);
+      keyPair.secretKey = b4a2.alloc(SKLEN);
+      keyPair.publicKey = b4a2.alloc(PKLEN);
       sodium.crypto_sign_keypair(keyPair.publicKey, keyPair.secretKey);
       return keyPair;
     }
     function generateSeedKeyPair(seed) {
       const keyPair = {};
-      keyPair.secretKey = b4a.alloc(SKLEN);
-      keyPair.publicKey = b4a.alloc(PKLEN);
+      keyPair.secretKey = b4a2.alloc(SKLEN);
+      keyPair.publicKey = b4a2.alloc(PKLEN);
       sodium.crypto_sign_seed_keypair(keyPair.publicKey, keyPair.secretKey, seed);
       return keyPair;
     }
     function dh(publicKey, { scalar, secretKey }) {
       if (!scalar) {
         assert(secretKey.byteLength === SKLEN);
-        const sk = b4a.alloc(64);
+        const sk = b4a2.alloc(64);
         sodium.crypto_hash_sha512(sk, secretKey.subarray(0, 32));
         sk[0] &= 248;
         sk[31] &= 127;
@@ -14044,7 +14301,7 @@ var require_noise_curve_ed = __commonJS({
       }
       assert(scalar.byteLength === SCALARLEN);
       assert(publicKey.byteLength === PKLEN);
-      const output = b4a.alloc(DHLEN);
+      const output = b4a2.alloc(DHLEN);
       sodium.crypto_scalarmult_ed25519_noclamp(
         output,
         scalar,
@@ -14060,7 +14317,7 @@ var require_cipher = __commonJS({
   "node_modules/@hyperswarm/secret-stream/node_modules/noise-handshake/cipher.js"(exports, module) {
     init_node_shims();
     var sodium = require_sodium_universal2();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     module.exports = class CipherState {
       constructor(key) {
         this.key = key || null;
@@ -14076,7 +14333,7 @@ var require_cipher = __commonJS({
       }
       encrypt(plaintext, ad) {
         if (!this.hasKey) return plaintext;
-        if (!ad) ad = b4a.alloc(0);
+        if (!ad) ad = b4a2.alloc(0);
         const ciphertext = encryptWithAD(this.key, this.nonce, ad, plaintext);
         if (ciphertext.length > 65535) throw new Error(`ciphertext length of ${ciphertext.length} exceeds maximum Noise message length of 65535`);
         this.nonce++;
@@ -14084,7 +14341,7 @@ var require_cipher = __commonJS({
       }
       decrypt(ciphertext, ad) {
         if (!this.hasKey) return ciphertext;
-        if (!ad) ad = b4a.alloc(0);
+        if (!ad) ad = b4a2.alloc(0);
         if (ciphertext.length > 65535) throw new Error(`ciphertext length of ${ciphertext.length} exceeds maximum Noise message length of 65535`);
         const plaintext = decryptWithAD(this.key, this.nonce, ad, ciphertext);
         this.nonce++;
@@ -14109,22 +14366,22 @@ var require_cipher = __commonJS({
       }
     };
     function encryptWithAD(key, counter, additionalData, plaintext) {
-      if (!b4a.isBuffer(additionalData)) additionalData = b4a.from(additionalData, "hex");
-      if (!b4a.isBuffer(plaintext)) plaintext = b4a.from(plaintext, "hex");
-      const nonce = b4a.alloc(sodium.crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
+      if (!b4a2.isBuffer(additionalData)) additionalData = b4a2.from(additionalData, "hex");
+      if (!b4a2.isBuffer(plaintext)) plaintext = b4a2.from(plaintext, "hex");
+      const nonce = b4a2.alloc(sodium.crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
       const view = new DataView(nonce.buffer, nonce.byteOffset, nonce.byteLength);
       view.setUint32(4, counter, true);
-      const ciphertext = b4a.alloc(plaintext.byteLength + sodium.crypto_aead_chacha20poly1305_ietf_ABYTES);
+      const ciphertext = b4a2.alloc(plaintext.byteLength + sodium.crypto_aead_chacha20poly1305_ietf_ABYTES);
       sodium.crypto_aead_chacha20poly1305_ietf_encrypt(ciphertext, plaintext, additionalData, null, nonce, key);
       return ciphertext;
     }
     function decryptWithAD(key, counter, additionalData, ciphertext) {
-      if (!b4a.isBuffer(additionalData)) additionalData = b4a.from(additionalData, "hex");
-      if (!b4a.isBuffer(ciphertext)) ciphertext = b4a.from(ciphertext, "hex");
-      const nonce = b4a.alloc(sodium.crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
+      if (!b4a2.isBuffer(additionalData)) additionalData = b4a2.from(additionalData, "hex");
+      if (!b4a2.isBuffer(ciphertext)) ciphertext = b4a2.from(ciphertext, "hex");
+      const nonce = b4a2.alloc(sodium.crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
       const view = new DataView(nonce.buffer, nonce.byteOffset, nonce.byteLength);
       view.setUint32(4, counter, true);
-      const plaintext = b4a.alloc(ciphertext.byteLength - sodium.crypto_aead_chacha20poly1305_ietf_ABYTES);
+      const plaintext = b4a2.alloc(ciphertext.byteLength - sodium.crypto_aead_chacha20poly1305_ietf_ABYTES);
       sodium.crypto_aead_chacha20poly1305_ietf_decrypt(plaintext, null, ciphertext, additionalData, nonce, key);
       return plaintext;
     }
@@ -14145,7 +14402,7 @@ var require_dh = __commonJS({
       crypto_scalarmult_base
     } = require_sodium_universal2();
     var assert = require_nanoassert();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var DHLEN = crypto_scalarmult_BYTES;
     var PKLEN = crypto_scalarmult_BYTES;
     var SKLEN = crypto_scalarmult_SCALARBYTES;
@@ -14163,8 +14420,8 @@ var require_dh = __commonJS({
     };
     function generateKeyPair(privKey) {
       const keyPair = {};
-      keyPair.secretKey = privKey || b4a.alloc(SKLEN);
-      keyPair.publicKey = b4a.alloc(PKLEN);
+      keyPair.secretKey = privKey || b4a2.alloc(SKLEN);
+      keyPair.publicKey = b4a2.alloc(PKLEN);
       if (privKey) {
         crypto_scalarmult_base(keyPair.publicKey, keyPair.secretKey);
       } else {
@@ -14175,15 +14432,15 @@ var require_dh = __commonJS({
     function generateSeedKeyPair(seed) {
       assert(seed.byteLength === SKLEN);
       const keyPair = {};
-      keyPair.secretKey = b4a.alloc(SKLEN);
-      keyPair.publicKey = b4a.alloc(PKLEN);
+      keyPair.secretKey = b4a2.alloc(SKLEN);
+      keyPair.publicKey = b4a2.alloc(PKLEN);
       crypto_kx_seed_keypair(keyPair.publicKey, keyPair.secretKey, seed);
       return keyPair;
     }
     function dh(publicKey, { secretKey }) {
       assert(secretKey.byteLength === SKLEN);
       assert(publicKey.byteLength === PKLEN);
-      const output = b4a.alloc(DHLEN);
+      const output = b4a2.alloc(DHLEN);
       crypto_scalarmult(
         output,
         secretKey,
@@ -14198,11 +14455,11 @@ var require_dh = __commonJS({
 var require_hmac = __commonJS({
   "node_modules/@hyperswarm/secret-stream/node_modules/noise-handshake/hmac.js"(exports, module) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var { sodium_memzero, crypto_generichash, crypto_generichash_batch } = require_sodium_universal2();
     var HASHLEN = 64;
     var BLOCKLEN = 128;
-    var scratch = b4a.alloc(BLOCKLEN * 3);
+    var scratch = b4a2.alloc(BLOCKLEN * 3);
     var HMACKey = scratch.subarray(BLOCKLEN * 0, BLOCKLEN * 1);
     var OuterKeyPad = scratch.subarray(BLOCKLEN * 1, BLOCKLEN * 2);
     var InnerKeyPad = scratch.subarray(BLOCKLEN * 2, BLOCKLEN * 3);
@@ -14234,7 +14491,7 @@ var require_hkdf = __commonJS({
   "node_modules/@hyperswarm/secret-stream/node_modules/noise-handshake/hkdf.js"(exports, module) {
     init_node_shims();
     var hmacBlake2b = require_hmac();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var HASHLEN = 64;
     module.exports = {
       hkdf,
@@ -14245,16 +14502,16 @@ var require_hkdf = __commonJS({
       return hkdfExpand(pseudoRandomKey, info, length);
     }
     function hkdfExtract(salt, inputKeyMaterial) {
-      const hmac = b4a.alloc(HASHLEN);
+      const hmac = b4a2.alloc(HASHLEN);
       return hmacDigest(hmac, salt, inputKeyMaterial);
     }
     function hkdfExpand(key, info, length) {
-      const buffer = b4a.allocUnsafeSlow(length);
-      const infoBuf = b4a.from(info);
+      const buffer = b4a2.allocUnsafeSlow(length);
+      const infoBuf = b4a2.from(info);
       let prev = infoBuf;
       const result = [];
       for (let i = 0; i < length; i += HASHLEN) {
-        const pos = b4a.from([i / HASHLEN + 1]);
+        const pos = b4a2.from([i / HASHLEN + 1]);
         const out = buffer.subarray(i, i + HASHLEN);
         result.push(out);
         prev = hmacDigest(out, key, [prev, infoBuf, pos]);
@@ -14274,7 +14531,7 @@ var require_symmetric_state = __commonJS({
     init_node_shims();
     var sodium = require_sodium_universal2();
     var assert = require_nanoassert();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var CipherState = require_cipher();
     var curve = require_dh();
     var { HASHLEN, hkdf } = require_hkdf();
@@ -14282,7 +14539,7 @@ var require_symmetric_state = __commonJS({
       constructor(opts = {}) {
         super();
         this.curve = opts.curve || curve;
-        this.digest = b4a.alloc(HASHLEN);
+        this.digest = b4a2.alloc(HASHLEN);
         this.chainingKey = null;
         this.offset = 0;
         this.DH_ALG = this.curve.ALG;
@@ -14318,13 +14575,13 @@ var require_symmetric_state = __commonJS({
         return plaintext;
       }
       getHandshakeHash(out) {
-        if (!out) return this.getHandshakeHash(b4a.alloc(HASHLEN));
+        if (!out) return this.getHandshakeHash(b4a2.alloc(HASHLEN));
         assert(out.byteLength === HASHLEN, `output must be ${HASHLEN} bytes`);
         out.set(this.digest);
         return out;
       }
       split() {
-        const res = hkdf(this.chainingKey, b4a.alloc(0));
+        const res = hkdf(this.chainingKey, b4a2.alloc(0));
         return res.map((k) => k.subarray(0, 32));
       }
       _clear() {
@@ -14341,7 +14598,7 @@ var require_symmetric_state = __commonJS({
       }
     };
     function accumulateDigest(digest, input) {
-      const toHash = b4a.concat([digest, input]);
+      const toHash = b4a2.concat([digest, input]);
       sodium.crypto_generichash(digest, toHash);
     }
   }
@@ -14352,7 +14609,7 @@ var require_noise = __commonJS({
   "node_modules/@hyperswarm/secret-stream/node_modules/noise-handshake/noise.js"(exports, module) {
     init_node_shims();
     var assert = require_nanoassert();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var SymmetricState = require_symmetric_state();
     var { HASHLEN } = require_hkdf();
     var PRESHARE_IS = /* @__PURE__ */ Symbol("initiator static key preshared");
@@ -14405,7 +14662,7 @@ var require_noise = __commonJS({
         this.buffers.push(b);
       }
       end() {
-        const all = b4a.alloc(this.size);
+        const all = b4a2.alloc(this.size);
         let offset = 0;
         for (const b of this.buffers) {
           all.set(b, offset);
@@ -14441,7 +14698,7 @@ var require_noise = __commonJS({
         this.pattern = pattern;
         this.handshake = HANDSHAKES[this.pattern].slice();
         this.isPskHandshake = !!this.psk && hasPskToken(this.handshake);
-        this.protocol = b4a.from([
+        this.protocol = b4a2.from([
           "Noise",
           this.pattern,
           this.DH_ALG,
@@ -14457,7 +14714,7 @@ var require_noise = __commonJS({
       initialise(prologue, remoteStatic) {
         if (this.protocol.byteLength <= HASHLEN) this.digest.set(this.protocol);
         else this.mixHash(this.protocol);
-        this.chainingKey = b4a.from(this.digest);
+        this.chainingKey = b4a2.from(this.digest);
         this.mixHash(prologue);
         while (!Array.isArray(this.handshake[0])) {
           const message = this.handshake.shift();
@@ -14515,7 +14772,7 @@ var require_noise = __commonJS({
         if (!this.handshake.length) this.final();
         return payload;
       }
-      send(payload = b4a.alloc(0)) {
+      send(payload = b4a2.alloc(0)) {
         const w = new Writer();
         for (const pattern of this.handshake.shift()) {
           switch (pattern) {
@@ -14596,8 +14853,8 @@ var require_handshake = __commonJS({
     var sodium = require_sodium_universal2();
     var curve = require_noise_curve_ed();
     var Noise = require_noise();
-    var b4a = require_browser();
-    var EMPTY = b4a.alloc(0);
+    var b4a2 = require_browser();
+    var EMPTY = b4a2.alloc(0);
     module.exports = class Handshake {
       constructor(isInitiator, keyPair, remotePublicKey, pattern) {
         this.isInitiator = isInitiator;
@@ -14607,8 +14864,8 @@ var require_handshake = __commonJS({
         this.destroyed = false;
       }
       static keyPair(seed) {
-        const publicKey = b4a.alloc(32);
-        const secretKey = b4a.alloc(64);
+        const publicKey = b4a2.alloc(32);
+        const secretKey = b4a2.alloc(64);
         if (seed) sodium.crypto_sign_seed_keypair(publicKey, secretKey, seed);
         else sodium.crypto_sign_keypair(publicKey, secretKey);
         return { publicKey, secretKey };
@@ -14628,7 +14885,7 @@ var require_handshake = __commonJS({
       send() {
         try {
           const data = this.noise.send();
-          const wrap = b4a.allocUnsafe(data.byteLength + 3);
+          const wrap = b4a2.allocUnsafe(data.byteLength + 3);
           writeUint24le(data.byteLength, wrap);
           wrap.set(data, 3);
           return this._return(wrap);
@@ -14642,10 +14899,10 @@ var require_handshake = __commonJS({
         this.destroyed = true;
       }
       _return(data) {
-        const tx = this.noise.complete ? b4a.toBuffer(this.noise.tx) : null;
-        const rx = this.noise.complete ? b4a.toBuffer(this.noise.rx) : null;
-        const hash = this.noise.complete ? b4a.toBuffer(this.noise.hash) : null;
-        const remotePublicKey = this.noise.complete ? b4a.toBuffer(this.noise.rs) : null;
+        const tx = this.noise.complete ? b4a2.toBuffer(this.noise.tx) : null;
+        const rx = this.noise.complete ? b4a2.toBuffer(this.noise.rx) : null;
+        const hash = this.noise.complete ? b4a2.toBuffer(this.noise.hash) : null;
+        const remotePublicKey = this.noise.complete ? b4a2.toBuffer(this.noise.rs) : null;
         return {
           data,
           remotePublicKey,
@@ -14671,7 +14928,7 @@ var require_secret_stream = __commonJS({
     var sodium = require_sodium_universal2();
     var crypto2 = require_hypercore_crypto();
     var { Duplex, Writable, getStreamError } = require_streamx();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var Timeout = require_browser2();
     var unslab = require_unslab();
     var Bridge = require_bridge();
@@ -14797,11 +15054,11 @@ var require_secret_stream = __commonJS({
         this._open(done);
       }
       _onkeypairpromise(p) {
-        const self2 = this;
+        const self = this;
         const cont = this._continueOpen.bind(this);
         p.then(onkeypair, cont);
         function onkeypair(kp) {
-          self2._onkeypair(kp);
+          self._onkeypair(kp);
           cont(null);
         }
       }
@@ -14863,9 +15120,9 @@ var require_secret_stream = __commonJS({
               }
               const unprocessed = data.byteLength - offset;
               if (this._message === null) {
-                this._message = b4a.allocUnsafe(this._len);
+                this._message = b4a2.allocUnsafe(this._len);
               }
-              b4a.copy(data, this._message, this._tmp, offset);
+              b4a2.copy(data, this._message, this._tmp, offset);
               this._tmp += unprocessed;
               if (end <= data.byteLength) {
                 offset += missing;
@@ -14909,7 +15166,7 @@ var require_secret_stream = __commonJS({
             const remoteId = message.subarray(0, 32);
             const expectedId = streamId(this.handshakeHash, !this.isInitiator);
             const header = message.subarray(32);
-            if (!b4a.equals(expectedId, remoteId)) {
+            if (!b4a2.equals(expectedId, remoteId)) {
               this.destroy(new Error("Invalid header received"));
               return;
             }
@@ -14951,7 +15208,7 @@ var require_secret_stream = __commonJS({
         done(null);
       }
       _setupSecretStream(tx, rx, handshakeHash, publicKey, remotePublicKey) {
-        const buf = b4a.allocUnsafeSlow(3 + IDHEADERBYTES);
+        const buf = b4a2.allocUnsafeSlow(3 + IDHEADERBYTES);
         writeUint24le(IDHEADERBYTES, buf);
         this._encrypt = new Push(unslab(tx.subarray(0, KEYBYTES)), void 0, buf.subarray(3 + 32));
         this._decrypt = new Pull(unslab(rx.subarray(0, KEYBYTES)));
@@ -14967,7 +15224,7 @@ var require_secret_stream = __commonJS({
         this._rawStream.write(buf);
       }
       _setupSecretSend(handshakeHash) {
-        this._sendState = b4a.allocUnsafeSlow(32 + 32 + 8 + 8);
+        this._sendState = b4a2.allocUnsafeSlow(32 + 32 + 8 + 8);
         const encrypt = this._sendState.subarray(0, 32);
         const decrypt = this._sendState.subarray(32, 64);
         const counter = this._sendState.subarray(64, 72);
@@ -15024,7 +15281,7 @@ var require_secret_stream = __commonJS({
       _write(data, cb) {
         let wrapped = this._outgoingWrapped;
         if (data !== this._outgoingPlain) {
-          wrapped = b4a.allocUnsafe(data.byteLength + 3 + ABYTES);
+          wrapped = b4a2.allocUnsafe(data.byteLength + 3 + ABYTES);
           wrapped.set(data, 4);
         } else {
           this._outgoingWrapped = this._outgoingPlain = null;
@@ -15084,15 +15341,15 @@ var require_secret_stream = __commonJS({
         const NB = sodium.crypto_secretbox_NONCEBYTES;
         const counter = this._sendState.subarray(64, 72);
         sodium.sodium_increment(counter);
-        if (b4a.equals(counter, this._sendState.subarray(72))) {
+        if (b4a2.equals(counter, this._sendState.subarray(72))) {
           this.destroy(new Error("udp send nonce exchausted"));
           return;
         }
         const secret = this._sendState.subarray(0, 32);
-        const envelope = b4a.allocUnsafe(8 + MB + buffer.byteLength);
+        const envelope = b4a2.allocUnsafe(8 + MB + buffer.byteLength);
         const nonce = envelope.subarray(0, NB);
         const ciphertext = envelope.subarray(8);
-        b4a.fill(nonce, 0);
+        b4a2.fill(nonce, 0);
         nonce.set(counter);
         sodium.crypto_secretbox_easy(ciphertext, buffer, nonce, secret);
         return envelope;
@@ -15114,8 +15371,8 @@ var require_secret_stream = __commonJS({
         const MB = sodium.crypto_secretbox_MACBYTES;
         const NB = sodium.crypto_secretbox_NONCEBYTES;
         if (buffer.byteLength < NB) return;
-        const nonce = b4a.allocUnsafe(NB);
-        b4a.fill(nonce, 0);
+        const nonce = b4a2.allocUnsafe(NB);
+        b4a2.fill(nonce, 0);
         nonce.set(buffer.subarray(0, 8));
         const secret = this._sendState.subarray(32, 64);
         const ciphertext = buffer.subarray(8);
@@ -15125,7 +15382,7 @@ var require_secret_stream = __commonJS({
         if (success) this.emit("message", plain);
       }
       alloc(len) {
-        const buf = b4a.allocUnsafe(len + 3 + ABYTES);
+        const buf = b4a2.allocUnsafe(len + 3 + ABYTES);
         this._outgoingWrapped = buf;
         this._outgoingPlain = buf.subarray(4, buf.byteLength - ABYTES + 1);
         return this._outgoingPlain;
@@ -15133,8 +15390,8 @@ var require_secret_stream = __commonJS({
       toJSON() {
         return {
           isInitiator: this.isInitiator,
-          publicKey: this.publicKey && b4a.toString(this.publicKey, "hex"),
-          remotePublicKey: this.remotePublicKey && b4a.toString(this.remotePublicKey, "hex"),
+          publicKey: this.publicKey && b4a2.toString(this.publicKey, "hex"),
+          remotePublicKey: this.remotePublicKey && b4a2.toString(this.remotePublicKey, "hex"),
           connected: this.connected,
           destroying: this.destroying,
           destroyed: this.destroyed,
@@ -15147,12 +15404,12 @@ var require_secret_stream = __commonJS({
       buf[1] = n >>> 8 & 255;
       buf[2] = n >>> 16 & 255;
     }
-    function streamId(handshakeHash, isInitiator, out = b4a.allocUnsafe(32)) {
+    function streamId(handshakeHash, isInitiator, out = b4a2.allocUnsafe(32)) {
       sodium.crypto_generichash(out, isInitiator ? NS_INITIATOR : NS_RESPONDER, handshakeHash);
       return out;
     }
     function toBuffer(data) {
-      return typeof data === "string" ? b4a.from(data) : data;
+      return typeof data === "string" ? b4a2.from(data) : data;
     }
     function destroyTimeout() {
       this.destroy(new Error("Stream timed out"));
@@ -15177,7 +15434,7 @@ var require_cipher2 = __commonJS({
   "node_modules/noise-handshake/cipher.js"(exports, module) {
     init_node_shims();
     var sodium = require_sodium_universal5();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     module.exports = class CipherState {
       constructor(key) {
         this.key = key || null;
@@ -15193,14 +15450,14 @@ var require_cipher2 = __commonJS({
       }
       encrypt(plaintext, ad) {
         if (!this.hasKey) return plaintext;
-        if (!ad) ad = b4a.alloc(0);
+        if (!ad) ad = b4a2.alloc(0);
         const ciphertext = encryptWithAD(this.key, this.nonce, ad, plaintext);
         this.nonce++;
         return ciphertext;
       }
       decrypt(ciphertext, ad) {
         if (!this.hasKey) return ciphertext;
-        if (!ad) ad = b4a.alloc(0);
+        if (!ad) ad = b4a2.alloc(0);
         const plaintext = decryptWithAD(this.key, this.nonce, ad, ciphertext);
         this.nonce++;
         return plaintext;
@@ -15224,22 +15481,22 @@ var require_cipher2 = __commonJS({
       }
     };
     function encryptWithAD(key, counter, additionalData, plaintext) {
-      if (!b4a.isBuffer(additionalData)) additionalData = b4a.from(additionalData, "hex");
-      if (!b4a.isBuffer(plaintext)) plaintext = b4a.from(plaintext, "hex");
-      const nonce = b4a.alloc(sodium.crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
+      if (!b4a2.isBuffer(additionalData)) additionalData = b4a2.from(additionalData, "hex");
+      if (!b4a2.isBuffer(plaintext)) plaintext = b4a2.from(plaintext, "hex");
+      const nonce = b4a2.alloc(sodium.crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
       const view = new DataView(nonce.buffer, nonce.byteOffset, nonce.byteLength);
       view.setUint32(4, counter, true);
-      const ciphertext = b4a.alloc(plaintext.byteLength + sodium.crypto_aead_chacha20poly1305_ietf_ABYTES);
+      const ciphertext = b4a2.alloc(plaintext.byteLength + sodium.crypto_aead_chacha20poly1305_ietf_ABYTES);
       sodium.crypto_aead_chacha20poly1305_ietf_encrypt(ciphertext, plaintext, additionalData, null, nonce, key);
       return ciphertext;
     }
     function decryptWithAD(key, counter, additionalData, ciphertext) {
-      if (!b4a.isBuffer(additionalData)) additionalData = b4a.from(additionalData, "hex");
-      if (!b4a.isBuffer(ciphertext)) ciphertext = b4a.from(ciphertext, "hex");
-      const nonce = b4a.alloc(sodium.crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
+      if (!b4a2.isBuffer(additionalData)) additionalData = b4a2.from(additionalData, "hex");
+      if (!b4a2.isBuffer(ciphertext)) ciphertext = b4a2.from(ciphertext, "hex");
+      const nonce = b4a2.alloc(sodium.crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
       const view = new DataView(nonce.buffer, nonce.byteOffset, nonce.byteLength);
       view.setUint32(4, counter, true);
-      const plaintext = b4a.alloc(ciphertext.byteLength - sodium.crypto_aead_chacha20poly1305_ietf_ABYTES);
+      const plaintext = b4a2.alloc(ciphertext.byteLength - sodium.crypto_aead_chacha20poly1305_ietf_ABYTES);
       sodium.crypto_aead_chacha20poly1305_ietf_decrypt(plaintext, null, ciphertext, additionalData, nonce, key);
       return plaintext;
     }
@@ -15260,7 +15517,7 @@ var require_dh2 = __commonJS({
       crypto_scalarmult_base
     } = require_sodium_universal5();
     var assert = require_nanoassert();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var DHLEN = crypto_scalarmult_BYTES;
     var PKLEN = crypto_scalarmult_BYTES;
     var SKLEN = crypto_scalarmult_SCALARBYTES;
@@ -15278,8 +15535,8 @@ var require_dh2 = __commonJS({
     };
     function generateKeyPair(privKey) {
       const keyPair = {};
-      keyPair.secretKey = privKey || b4a.alloc(SKLEN);
-      keyPair.publicKey = b4a.alloc(PKLEN);
+      keyPair.secretKey = privKey || b4a2.alloc(SKLEN);
+      keyPair.publicKey = b4a2.alloc(PKLEN);
       if (privKey) {
         crypto_scalarmult_base(keyPair.publicKey, keyPair.secretKey);
       } else {
@@ -15290,15 +15547,15 @@ var require_dh2 = __commonJS({
     function generateSeedKeyPair(seed) {
       assert(seed.byteLength === SKLEN);
       const keyPair = {};
-      keyPair.secretKey = b4a.alloc(SKLEN);
-      keyPair.publicKey = b4a.alloc(PKLEN);
+      keyPair.secretKey = b4a2.alloc(SKLEN);
+      keyPair.publicKey = b4a2.alloc(PKLEN);
       crypto_kx_seed_keypair(keyPair.publicKey, keyPair.secretKey, seed);
       return keyPair;
     }
     function dh(publicKey, { secretKey }) {
       assert(secretKey.byteLength === SKLEN);
       assert(publicKey.byteLength === PKLEN);
-      const output = b4a.alloc(DHLEN);
+      const output = b4a2.alloc(DHLEN);
       crypto_scalarmult(
         output,
         secretKey,
@@ -15313,11 +15570,11 @@ var require_dh2 = __commonJS({
 var require_hmac2 = __commonJS({
   "node_modules/noise-handshake/hmac.js"(exports, module) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var { sodium_memzero, crypto_generichash, crypto_generichash_batch } = require_sodium_universal5();
     var HASHLEN = 64;
     var BLOCKLEN = 128;
-    var scratch = b4a.alloc(BLOCKLEN * 3);
+    var scratch = b4a2.alloc(BLOCKLEN * 3);
     var HMACKey = scratch.subarray(BLOCKLEN * 0, BLOCKLEN * 1);
     var OuterKeyPad = scratch.subarray(BLOCKLEN * 1, BLOCKLEN * 2);
     var InnerKeyPad = scratch.subarray(BLOCKLEN * 2, BLOCKLEN * 3);
@@ -15350,7 +15607,7 @@ var require_hkdf2 = __commonJS({
     init_node_shims();
     var hmacBlake2b = require_hmac2();
     var assert = require_nanoassert();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var HASHLEN = 64;
     module.exports = {
       hkdf,
@@ -15370,20 +15627,20 @@ var require_hkdf2 = __commonJS({
         return hmacDigest(salt2, inputKeyMaterial2);
       }
       function hkdfExpand(key, info2, length2) {
-        const T = [b4a.from(info2)];
+        const T = [b4a2.from(info2)];
         const lengthRatio = length2 / HASHLEN;
         for (let i = 0; i < lengthRatio; i++) {
-          const infoBuf = b4a.from(info2);
-          const toHash = b4a.concat([T[i], infoBuf, b4a.from([i + 1])]);
+          const infoBuf = b4a2.from(info2);
+          const toHash = b4a2.concat([T[i], infoBuf, b4a2.from([i + 1])]);
           T[i + 1] = hmacDigest(key, toHash);
         }
-        const result2 = b4a.concat(T.slice(1));
+        const result2 = b4a2.concat(T.slice(1));
         assert(result2.byteLength === length2, "key expansion failed, length not as expected");
         return result2;
       }
     }
     function hmacDigest(key, input) {
-      const hmac = b4a.alloc(HASHLEN);
+      const hmac = b4a2.alloc(HASHLEN);
       hmacBlake2b(hmac, input, key);
       return hmac;
     }
@@ -15396,7 +15653,7 @@ var require_symmetric_state2 = __commonJS({
     init_node_shims();
     var sodium = require_sodium_universal5();
     var assert = require_nanoassert();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var CipherState = require_cipher2();
     var curve = require_dh2();
     var { HASHLEN, hkdf } = require_hkdf2();
@@ -15404,7 +15661,7 @@ var require_symmetric_state2 = __commonJS({
       constructor(opts = {}) {
         super();
         this.curve = opts.curve || curve;
-        this.digest = b4a.alloc(HASHLEN);
+        this.digest = b4a2.alloc(HASHLEN);
         this.chainingKey = null;
         this.offset = 0;
         this.DH_ALG = this.curve.ALG;
@@ -15440,13 +15697,13 @@ var require_symmetric_state2 = __commonJS({
         return plaintext;
       }
       getHandshakeHash(out) {
-        if (!out) return this.getHandshakeHash(b4a.alloc(HASHLEN));
+        if (!out) return this.getHandshakeHash(b4a2.alloc(HASHLEN));
         assert(out.byteLength === HASHLEN, `output must be ${HASHLEN} bytes`);
         out.set(this.digest);
         return out;
       }
       split() {
-        const res = hkdf(this.chainingKey, b4a.alloc(0));
+        const res = hkdf(this.chainingKey, b4a2.alloc(0));
         return res.map((k) => k.subarray(0, 32));
       }
       _clear() {
@@ -15463,7 +15720,7 @@ var require_symmetric_state2 = __commonJS({
       }
     };
     function accumulateDigest(digest, input) {
-      const toHash = b4a.concat([digest, input]);
+      const toHash = b4a2.concat([digest, input]);
       sodium.crypto_generichash(digest, toHash);
     }
   }
@@ -15474,7 +15731,7 @@ var require_noise2 = __commonJS({
   "node_modules/noise-handshake/noise.js"(exports, module) {
     init_node_shims();
     var assert = require_nanoassert();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var SymmetricState = require_symmetric_state2();
     var { HASHLEN } = require_hkdf2();
     var PRESHARE_IS = /* @__PURE__ */ Symbol("initiator static key preshared");
@@ -15521,7 +15778,7 @@ var require_noise2 = __commonJS({
         this.buffers.push(b);
       }
       end() {
-        const all = b4a.alloc(this.size);
+        const all = b4a2.alloc(this.size);
         let offset = 0;
         for (const b of this.buffers) {
           all.set(b, offset);
@@ -15557,7 +15814,7 @@ var require_noise2 = __commonJS({
         this.pattern = pattern;
         this.handshake = HANDSHAKES[this.pattern].slice();
         this.isPskHandshake = !!this.psk && hasPskToken(this.handshake);
-        this.protocol = b4a.from([
+        this.protocol = b4a2.from([
           "Noise",
           this.pattern,
           this.DH_ALG,
@@ -15573,7 +15830,7 @@ var require_noise2 = __commonJS({
       initialise(prologue, remoteStatic) {
         if (this.protocol.byteLength <= HASHLEN) this.digest.set(this.protocol);
         else this.mixHash(this.protocol);
-        this.chainingKey = b4a.from(this.digest);
+        this.chainingKey = b4a2.from(this.digest);
         this.mixHash(prologue);
         while (!Array.isArray(this.handshake[0])) {
           const message = this.handshake.shift();
@@ -15631,7 +15888,7 @@ var require_noise2 = __commonJS({
         if (!this.handshake.length) this.final();
         return payload;
       }
-      send(payload = b4a.alloc(0)) {
+      send(payload = b4a2.alloc(0)) {
         const w = new Writer();
         for (const pattern of this.handshake.shift()) {
           switch (pattern) {
@@ -17837,20 +18094,20 @@ var require_crypto3 = __commonJS({
   "node_modules/hyperdht/lib/crypto.js"(exports, module) {
     init_node_shims();
     var sodium = require_sodium_universal6();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     function hash(data) {
-      const out = b4a.allocUnsafe(32);
+      const out = b4a2.allocUnsafe(32);
       sodium.crypto_generichash(out, data);
       return out;
     }
     function unslabbedHash(data) {
-      const out = b4a.allocUnsafeSlow(32);
+      const out = b4a2.allocUnsafeSlow(32);
       sodium.crypto_generichash(out, data);
       return out;
     }
     function createKeyPair(seed) {
-      const publicKey = b4a.alloc(32);
-      const secretKey = b4a.alloc(64);
+      const publicKey = b4a2.alloc(32);
+      const secretKey = b4a2.alloc(64);
       if (seed) sodium.crypto_sign_seed_keypair(publicKey, secretKey, seed);
       else sodium.crypto_sign_keypair(publicKey, secretKey);
       return { publicKey, secretKey };
@@ -18037,7 +18294,7 @@ var require_peer_info = __commonJS({
   "node_modules/hyperswarm/lib/peer-info.js"(exports, module) {
     init_node_shims();
     var { EventEmitter } = require_events();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var unslab = require_unslab();
     var MIN_CONNECTION_TIME = 15e3;
     var VERY_LOW_PRIORITY = 0;
@@ -18110,7 +18367,7 @@ var require_peer_info = __commonJS({
         return true;
       }
       _topic(topic) {
-        const topicString = b4a.toString(topic, "hex");
+        const topicString = b4a2.toString(topic, "hex");
         if (this._seenTopics.has(topicString)) return;
         this._seenTopics.add(topicString);
         this.topics.push(topic);
@@ -18231,7 +18488,7 @@ var require_retry_timer = __commonJS({
 var require_connection_set = __commonJS({
   "node_modules/hyperswarm/lib/connection-set.js"(exports, module) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     module.exports = class ConnectionSet {
       constructor() {
         this._byPublicKey = /* @__PURE__ */ new Map();
@@ -18249,17 +18506,17 @@ var require_connection_set = __commonJS({
         return this._byPublicKey.get(toHex(publicKey));
       }
       add(connection) {
-        this._byPublicKey.set(b4a.toString(connection.remotePublicKey, "hex"), connection);
+        this._byPublicKey.set(b4a2.toString(connection.remotePublicKey, "hex"), connection);
       }
       delete(connection) {
-        const keyString = b4a.toString(connection.remotePublicKey, "hex");
+        const keyString = b4a2.toString(connection.remotePublicKey, "hex");
         const existing = this._byPublicKey.get(keyString);
         if (existing !== connection) return;
         this._byPublicKey.delete(keyString);
       }
     };
     function toHex(b) {
-      return typeof b === "string" ? b : b4a.toString(b, "hex");
+      return typeof b === "string" ? b : b4a2.toString(b, "hex");
     }
   }
 });
@@ -18269,7 +18526,7 @@ var require_peer_discovery = __commonJS({
   "node_modules/hyperswarm/lib/peer-discovery.js"(exports, module) {
     init_node_shims();
     var safetyCatch = require_safety_catch();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var REFRESH_INTERVAL = 1e3 * 60 * 10;
     var RANDOM_JITTER = 1e3 * 60 * 2;
     var DELAY_GRACE_PERIOD = 1e3 * 30;
@@ -18361,7 +18618,7 @@ var require_peer_discovery = __commonJS({
             if (!this.isClient || !this._isActive()) continue;
             for (const peer of data.peers) {
               if (limit < Infinity) {
-                const id = b4a.toString(peer.publicKey, "hex");
+                const id = b4a2.toString(peer.publicKey, "hex");
                 if (this._discovered.size < MAX_DISCOVERY_CACHE) {
                   this._discovered.add(id);
                 }
@@ -18433,7 +18690,7 @@ var require_peer_discovery = __commonJS({
         return this.destroying;
       }
       async _abort(log) {
-        const id = log === noop ? "" : b4a.toString(this.topic, "hex");
+        const id = log === noop ? "" : b4a2.toString(this.topic, "hex");
         log("Aborting discovery", id);
         if (this._wait) await this._wait;
         log("Aborting discovery (post wait)", id);
@@ -18537,7 +18794,7 @@ var require_peer_discovery = __commonJS({
     function hasNode(nodes, len, node) {
       for (let i = 0; i < len; i++) {
         const existing = nodes[i];
-        if (existing.id && b4a.equals(existing.id, node.id)) return true;
+        if (existing.id && b4a2.equals(existing.id, node.id)) return true;
       }
       return false;
     }
@@ -18554,7 +18811,7 @@ var require_hyperswarm = __commonJS({
     var { getStreamError } = require_streamx();
     var DHT = require_browser3();
     var spq = require_shuffled_priority_queue();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var unslab = require_unslab();
     var PeerInfo = require_peer_info();
     var RetryTimer = require_retry_timer();
@@ -18700,7 +18957,7 @@ var require_hyperswarm = __commonJS({
         if (this.suspended) return false;
         if (peerInfo.explicit) return true;
         for (const topic of peerInfo.topics) {
-          if (this._discovery.has(b4a.toString(topic, "hex")) && !this.destroyed) {
+          if (this._discovery.has(b4a2.toString(topic, "hex")) && !this.destroyed) {
             return true;
           }
         }
@@ -18789,8 +19046,8 @@ var require_hyperswarm = __commonJS({
         if (this.connecting === 0) this._flushAllMaybe();
       }
       _handleFirewall(remotePublicKey, payload) {
-        if (b4a.equals(remotePublicKey, this.keyPair.publicKey)) return true;
-        let peerInfo = this.peers.get(b4a.toString(remotePublicKey, "hex"));
+        if (b4a2.equals(remotePublicKey, this.keyPair.publicKey)) return true;
+        let peerInfo = this.peers.get(b4a2.toString(remotePublicKey, "hex"));
         if (peerInfo && peerInfo.banned) return true;
         const firewalled = this._firewall(remotePublicKey, payload);
         if (firewalled) {
@@ -18822,7 +19079,7 @@ var require_hyperswarm = __commonJS({
         const existing = this._allConnections.get(conn.remotePublicKey);
         if (existing) {
           const existingIsOutdated = existing.rawBytesRead > 0 && existing.rawBytesWritten > 0;
-          const expectedInitiator = b4a.compare(conn.publicKey, conn.remotePublicKey) > 0;
+          const expectedInitiator = b4a2.compare(conn.publicKey, conn.remotePublicKey) > 0;
           const keepNew = existingIsOutdated || expectedInitiator === conn.isInitiator;
           if (keepNew === false) {
             existing.sendKeepAlive();
@@ -18858,8 +19115,8 @@ var require_hyperswarm = __commonJS({
         this.emit("update");
       }
       _upsertPeer(publicKey, relayAddresses) {
-        if (b4a.equals(publicKey, this.keyPair.publicKey)) return null;
-        const keyString = b4a.toString(publicKey, "hex");
+        if (b4a2.equals(publicKey, this.keyPair.publicKey)) return null;
+        const keyString = b4a2.toString(publicKey, "hex");
         let peerInfo = this.peers.get(keyString);
         if (peerInfo) {
           peerInfo.relayAddresses = relayAddresses;
@@ -18879,7 +19136,7 @@ var require_hyperswarm = __commonJS({
         if (!peerInfo.shouldGC()) return;
         const hasActiveConn = this._allConnections.has(peerInfo.publicKey);
         if (hasActiveConn) return;
-        const keyString = b4a.toString(peerInfo.publicKey, "hex");
+        const keyString = b4a2.toString(peerInfo.publicKey, "hex");
         this.peers.delete(keyString);
       }
       /*
@@ -18920,7 +19177,7 @@ var require_hyperswarm = __commonJS({
         this.emit("ban", peerInfo, err);
       }
       status(key) {
-        return this._discovery.get(b4a.toString(key, "hex")) || null;
+        return this._discovery.get(b4a2.toString(key, "hex")) || null;
       }
       listen() {
         if (!this.listening) {
@@ -18935,7 +19192,7 @@ var require_hyperswarm = __commonJS({
         if (this.destroyed) throw new Error("Swarm destroyed");
         if (!topic) throw new Error(ERR_MISSING_TOPIC);
         topic = unslab(topic);
-        const topicString = b4a.toString(topic, "hex");
+        const topicString = b4a2.toString(topic, "hex");
         let discovery = this._discovery.get(topicString);
         if (discovery && !discovery.destroyed) {
           return discovery.session(opts);
@@ -18952,7 +19209,7 @@ var require_hyperswarm = __commonJS({
       // Returns a promise
       async leave(topic) {
         if (!topic) throw new Error(ERR_MISSING_TOPIC);
-        const topicString = b4a.toString(topic, "hex");
+        const topicString = b4a2.toString(topic, "hex");
         if (!this._discovery.has(topicString)) return Promise.resolve();
         const discovery = this._discovery.get(topicString);
         try {
@@ -18976,7 +19233,7 @@ var require_hyperswarm = __commonJS({
         }
       }
       leavePeer(publicKey) {
-        const keyString = b4a.toString(publicKey, "hex");
+        const keyString = b4a2.toString(publicKey, "hex");
         if (!this.peers.has(keyString)) return;
         const peerInfo = this.peers.get(keyString);
         peerInfo.explicit = false;
@@ -19089,9 +19346,9 @@ var require_browser4 = __commonJS({
 var require_is_options = __commonJS({
   "node_modules/is-options/index.js"(exports, module) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     module.exports = function isOptions(opts) {
-      return typeof opts === "object" && opts && !b4a.isBuffer(opts);
+      return typeof opts === "object" && opts && !b4a2.isBuffer(opts);
     };
   }
 });
@@ -19109,7 +19366,7 @@ var require_endian3 = __commonJS({
 var require_raw3 = __commonJS({
   "node_modules/hypercore/node_modules/compact-encoding/raw.js"(exports, module) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var { BE } = require_endian3();
     exports = module.exports = {
       preencode(state, b) {
@@ -19191,25 +19448,25 @@ var require_raw3 = __commonJS({
       };
     }
     var uint8array = exports.uint8array = typedarray(Uint8Array);
-    exports.uint16array = typedarray(Uint16Array, b4a.swap16);
-    exports.uint32array = typedarray(Uint32Array, b4a.swap32);
+    exports.uint16array = typedarray(Uint16Array, b4a2.swap16);
+    exports.uint32array = typedarray(Uint32Array, b4a2.swap32);
     exports.int8array = typedarray(Int8Array);
-    exports.int16array = typedarray(Int16Array, b4a.swap16);
-    exports.int32array = typedarray(Int32Array, b4a.swap32);
-    exports.biguint64array = typedarray(BigUint64Array, b4a.swap64);
-    exports.bigint64array = typedarray(BigInt64Array, b4a.swap64);
-    exports.float32array = typedarray(Float32Array, b4a.swap32);
-    exports.float64array = typedarray(Float64Array, b4a.swap64);
+    exports.int16array = typedarray(Int16Array, b4a2.swap16);
+    exports.int32array = typedarray(Int32Array, b4a2.swap32);
+    exports.biguint64array = typedarray(BigUint64Array, b4a2.swap64);
+    exports.bigint64array = typedarray(BigInt64Array, b4a2.swap64);
+    exports.float32array = typedarray(Float32Array, b4a2.swap32);
+    exports.float64array = typedarray(Float64Array, b4a2.swap64);
     function string(encoding) {
       return {
         preencode(state, s) {
-          state.end += b4a.byteLength(s, encoding);
+          state.end += b4a2.byteLength(s, encoding);
         },
         encode(state, s) {
-          state.start += b4a.write(state.buffer, s, state.start, encoding);
+          state.start += b4a2.write(state.buffer, s, state.start, encoding);
         },
         decode(state) {
-          const s = b4a.toString(state.buffer, encoding, state.start);
+          const s = b4a2.toString(state.buffer, encoding, state.start);
           state.start = state.end;
           return s;
         }
@@ -19355,7 +19612,7 @@ var require_lexint3 = __commonJS({
 var require_compact_encoding3 = __commonJS({
   "node_modules/hypercore/node_modules/compact-encoding/index.js"(exports) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var { BE } = require_endian3();
     exports.state = function(start = 0, end = 0, buffer2 = null) {
       return { start, end, buffer: buffer2 };
@@ -19698,32 +19955,32 @@ var require_compact_encoding3 = __commonJS({
       };
     }
     var uint8array = exports.uint8array = typedarray(Uint8Array);
-    exports.uint16array = typedarray(Uint16Array, b4a.swap16);
-    exports.uint32array = typedarray(Uint32Array, b4a.swap32);
+    exports.uint16array = typedarray(Uint16Array, b4a2.swap16);
+    exports.uint32array = typedarray(Uint32Array, b4a2.swap32);
     exports.int8array = typedarray(Int8Array);
-    exports.int16array = typedarray(Int16Array, b4a.swap16);
-    exports.int32array = typedarray(Int32Array, b4a.swap32);
-    exports.biguint64array = typedarray(BigUint64Array, b4a.swap64);
-    exports.bigint64array = typedarray(BigInt64Array, b4a.swap64);
-    exports.float32array = typedarray(Float32Array, b4a.swap32);
-    exports.float64array = typedarray(Float64Array, b4a.swap64);
+    exports.int16array = typedarray(Int16Array, b4a2.swap16);
+    exports.int32array = typedarray(Int32Array, b4a2.swap32);
+    exports.biguint64array = typedarray(BigUint64Array, b4a2.swap64);
+    exports.bigint64array = typedarray(BigInt64Array, b4a2.swap64);
+    exports.float32array = typedarray(Float32Array, b4a2.swap32);
+    exports.float64array = typedarray(Float64Array, b4a2.swap64);
     function string(encoding) {
       return {
         preencode(state, s) {
-          const len = b4a.byteLength(s, encoding);
+          const len = b4a2.byteLength(s, encoding);
           uint.preencode(state, len);
           state.end += len;
         },
         encode(state, s) {
-          const len = b4a.byteLength(s, encoding);
+          const len = b4a2.byteLength(s, encoding);
           uint.encode(state, len);
-          b4a.write(state.buffer, s, state.start, encoding);
+          b4a2.write(state.buffer, s, state.start, encoding);
           state.start += len;
         },
         decode(state) {
           const len = uint.decode(state);
           if (state.end - state.start < len) throw new Error("Out of bounds");
-          return b4a.toString(
+          return b4a2.toString(
             state.buffer,
             encoding,
             state.start,
@@ -19736,12 +19993,12 @@ var require_compact_encoding3 = __commonJS({
               state.end += n;
             },
             encode(state, s) {
-              b4a.write(state.buffer, s, state.start, n, encoding);
+              b4a2.write(state.buffer, s, state.start, n, encoding);
               state.start += n;
             },
             decode(state) {
               if (state.end - state.start < n) throw new Error("Out of bounds");
-              return b4a.toString(
+              return b4a2.toString(
                 state.buffer,
                 encoding,
                 state.start,
@@ -20108,7 +20365,7 @@ var require_compact_encoding3 = __commonJS({
       if (o === null || o === void 0) return 0;
       if (typeof o === "boolean") return 1;
       if (typeof o === "string") return 2;
-      if (b4a.isBuffer(o)) return 3;
+      if (b4a2.isBuffer(o)) return 3;
       if (typeof o === "number") {
         if (Number.isInteger(o)) return o >= 0 ? 4 : 5;
         return 6;
@@ -20186,7 +20443,7 @@ var require_compact_encoding3 = __commonJS({
     exports.encode = function encode(enc, m) {
       const state = exports.state();
       enc.preencode(state, m);
-      state.buffer = b4a.allocUnsafe(state.end);
+      state.buffer = b4a2.allocUnsafe(state.end);
       enc.encode(state, m);
       return state.buffer;
     };
@@ -20339,7 +20596,7 @@ var require_xache = __commonJS({
 var require_z32 = __commonJS({
   "node_modules/z32/index.js"(exports) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var ALPHABET = "ybndrfg8ejkmcpqxot1uwisza345h769";
     var MIN = 49;
     var MAX = 122;
@@ -20357,7 +20614,7 @@ var require_z32 = __commonJS({
       let ps = 0;
       const r = s.length & 7;
       const q = (s.length - r) / 8;
-      if (!out) out = b4a.allocUnsafe(Math.ceil(s.length * 5 / 8));
+      if (!out) out = b4a2.allocUnsafe(Math.ceil(s.length * 5 / 8));
       for (let i = 0; i < q; i++) {
         const a2 = quintet(s, ps++);
         const b2 = quintet(s, ps++);
@@ -20394,7 +20651,7 @@ var require_z32 = __commonJS({
       return out.subarray(0, pb);
     }
     function encode(buf) {
-      if (typeof buf === "string") buf = b4a.from(buf);
+      if (typeof buf === "string") buf = b4a2.from(buf);
       const max = buf.byteLength * 8;
       let s = "";
       for (let p = 0; p < max; p += 5) {
@@ -20433,7 +20690,7 @@ var require_hypercore_id_encoding = __commonJS({
   "node_modules/hypercore-id-encoding/index.js"(exports, module) {
     init_node_shims();
     var z32 = require_z32();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     module.exports = {
       encode,
       decode,
@@ -20441,12 +20698,12 @@ var require_hypercore_id_encoding = __commonJS({
       isValid
     };
     function encode(key) {
-      if (!b4a.isBuffer(key)) throw new Error("Key must be a Buffer");
+      if (!b4a2.isBuffer(key)) throw new Error("Key must be a Buffer");
       if (key.byteLength !== 32) throw new Error("Key must be 32-bytes long");
       return z32.encode(key);
     }
     function decode(id) {
-      if (b4a.isBuffer(id)) {
+      if (b4a2.isBuffer(id)) {
         if (id.byteLength !== 32) throw new Error("ID must be 32-bytes long");
         return id;
       }
@@ -20454,7 +20711,7 @@ var require_hypercore_id_encoding = __commonJS({
         if (id.startsWith("pear://")) id = id.slice(7).split("/")[0];
         if (id.length === 52) return z32.decode(id);
         if (id.length === 64) {
-          const buf = b4a.from(id, "hex");
+          const buf = b4a2.from(id, "hex");
           if (buf.byteLength === 32) return buf;
         }
       }
@@ -21051,7 +21308,7 @@ var require_scalar = __commonJS({
 var require_fallback2 = __commonJS({
   "node_modules/simdle-universal/fallback.js"(exports) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var scalar = require_scalar();
     function view(buf, n) {
       if (n === buf.BYTES_PER_ELEMENT) return buf;
@@ -21062,7 +21319,7 @@ var require_fallback2 = __commonJS({
       return new TypedArray(buf.buffer, buf.byteOffset, buf.byteLength / n);
     }
     function unary(u8, u16 = u8, u32 = u16) {
-      return function unary2(buf, result = b4a.allocUnsafe(buf.byteLength)) {
+      return function unary2(buf, result = b4a2.allocUnsafe(buf.byteLength)) {
         if (buf.byteLength % 16 !== 0) {
           throw new Error("Buffer length must be a multiple of 16");
         }
@@ -21077,7 +21334,7 @@ var require_fallback2 = __commonJS({
       };
     }
     function binary(u8, u16 = u8, u32 = u16) {
-      return function binary2(a, b, result = b4a.allocUnsafe(a.byteLength)) {
+      return function binary2(a, b, result = b4a2.allocUnsafe(a.byteLength)) {
         if (a.byteLength % 16 !== 0) {
           throw new Error("Buffer length must be a multiple of 16");
         }
@@ -21931,7 +22188,7 @@ var require_caps = __commonJS({
     init_node_shims();
     var crypto2 = require_hypercore_crypto();
     var sodium = require_sodium_universal5();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var c = require_compact_encoding3();
     var [
       TREE,
@@ -21945,12 +22202,12 @@ var require_caps = __commonJS({
     exports.DEFAULT_NAMESPACE = DEFAULT_NAMESPACE;
     exports.BLOCK_ENCRYPTION = BLOCK_ENCRYPTION;
     exports.replicate = function(isInitiator, key, handshakeHash) {
-      const out = b4a.allocUnsafe(32);
+      const out = b4a2.allocUnsafe(32);
       sodium.crypto_generichash_batch(out, [isInitiator ? REPLICATE_INITIATOR : REPLICATE_RESPONDER, key], handshakeHash);
       return out;
     };
     exports.treeSignable = function(manifestHash, treeHash, length, fork) {
-      const state = { start: 0, end: 112, buffer: b4a.allocUnsafe(112) };
+      const state = { start: 0, end: 112, buffer: b4a2.allocUnsafe(112) };
       c.fixed32.encode(state, TREE);
       c.fixed32.encode(state, manifestHash);
       c.fixed32.encode(state, treeHash);
@@ -21960,7 +22217,7 @@ var require_caps = __commonJS({
     };
     exports.treeSignableCompat = function(hash, length, fork, noHeader) {
       const end = noHeader ? 48 : 80;
-      const state = { start: 0, end, buffer: b4a.allocUnsafe(end) };
+      const state = { start: 0, end, buffer: b4a2.allocUnsafe(end) };
       if (!noHeader) c.fixed32.encode(state, TREE);
       c.fixed32.encode(state, hash);
       c.uint64.encode(state, length);
@@ -21975,11 +22232,11 @@ var require_messages3 = __commonJS({
   "node_modules/hypercore/lib/messages.js"(exports) {
     init_node_shims();
     var c = require_compact_encoding3();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var { DEFAULT_NAMESPACE } = require_caps();
     var { INVALID_OPLOG_VERSION } = require_hypercore_errors();
     var unslab = require_unslab();
-    var EMPTY = b4a.alloc(0);
+    var EMPTY = b4a2.alloc(0);
     var hashes = {
       preencode(state, m) {
         state.end++;
@@ -22963,7 +23220,7 @@ var require_messages3 = __commonJS({
 var require_replicator = __commonJS({
   "node_modules/hypercore/lib/replicator.js"(exports, module) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var safetyCatch = require_safety_catch();
     var RandomIterator = require_random_array_iterator();
     var flatTree = require_flat_tree();
@@ -23345,7 +23602,7 @@ var require_replicator = __commonJS({
       }
       onopen({ seeks, capability }) {
         const expected = caps.replicate(this.stream.isInitiator === false, this.replicator.key, this.stream.handshakeHash);
-        if (b4a.equals(capability, expected) !== true) {
+        if (b4a2.equals(capability, expected) !== true) {
           throw INVALID_CAPABILITY("Remote sent an invalid replication capability");
         }
         if (this.remoteOpened === true) return;
@@ -24049,10 +24306,10 @@ var require_replicator = __commonJS({
         this._peerSessions = 0;
         this._notDownloadingLinger = notDownloadingLinger;
         this._downloadingTimer = null;
-        const self2 = this;
+        const self = this;
         this._onstreamclose = onstreamclose;
         function onstreamclose() {
-          self2.detachFrom(this.userData);
+          self.detachFrom(this.userData);
         }
       }
       updateActivity(inc, session) {
@@ -24925,7 +25182,7 @@ var require_oplog = __commonJS({
   "node_modules/hypercore/lib/oplog.js"(exports, module) {
     init_node_shims();
     var cenc = require_compact_encoding3();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var { crc32 } = require_fallback4();
     var { OPLOG_CORRUPT, OPLOG_HEADER_OVERFLOW, WRITE_FAILED } = require_hypercore_errors();
     module.exports = class Oplog {
@@ -25029,7 +25286,7 @@ var require_oplog = __commonJS({
         return new Promise((resolve, reject) => {
           this.storage.open((err) => {
             if (err && err.code !== "ENOENT") return reject(err);
-            if (err) return resolve(b4a.alloc(0));
+            if (err) return resolve(b4a2.alloc(0));
             this.storage.stat((err2, stat) => {
               if (err2 && err2.code !== "ENOENT") return reject(err2);
               this.storage.read(0, stat.size, (err3, buf) => {
@@ -25046,7 +25303,7 @@ var require_oplog = __commonJS({
         const bit = this._headers[i] + 1 & 1;
         this.headerEncoding.preencode(state, header);
         if (state.end > this._pageSize) throw OPLOG_HEADER_OVERFLOW();
-        state.buffer = b4a.allocUnsafe(state.end);
+        state.buffer = b4a2.allocUnsafe(state.end);
         this.headerEncoding.encode(state, header);
         this._addHeader(state, state.end - 8, bit, 0);
         return this._writeHeaderAndTruncate(i, bit, state.buffer);
@@ -25073,7 +25330,7 @@ var require_oplog = __commonJS({
         for (let i = 0; i < batch.length; i++) {
           this.entryEncoding.preencode(state, batch[i]);
         }
-        state.buffer = b4a.allocUnsafe(state.end);
+        state.buffer = b4a2.allocUnsafe(state.end);
         for (let i = 0; i < batch.length; i++) {
           const start = state.start += 8;
           const partial = atomic && i < batch.length - 1 ? 2 : 0;
@@ -25204,12 +25461,12 @@ var require_merkle_tree = __commonJS({
     var crypto2 = require_hypercore_crypto();
     var c = require_compact_encoding3();
     var Xache = require_xache();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var unslab = require_unslab();
     var caps = require_caps();
     var { INVALID_PROOF, INVALID_CHECKSUM, INVALID_OPERATION, BAD_ARGUMENT, ASSERTION } = require_hypercore_errors();
-    var BLANK_HASH = b4a.alloc(32);
-    var OLD_TREE = b4a.from([5, 2, 87, 2, 0, 0, 40, 7, 66, 76, 65, 75, 69, 50, 98]);
+    var BLANK_HASH = b4a2.alloc(32);
+    var OLD_TREE = b4a2.from([5, 2, 87, 2, 0, 0, 40, 7, 66, 76, 65, 75, 69, 50, 98]);
     var TREE_CACHE = 128;
     var NodeQueue = class {
       constructor(nodes, extra = null) {
@@ -25437,7 +25694,7 @@ var require_merkle_tree = __commonJS({
         if (this.want === null) return true;
         const nodes = [];
         const root = verifyTree(proof, this.tree.crypto, nodes);
-        if (root === null || !b4a.equals(root.hash, this.diff.hash)) return false;
+        if (root === null || !b4a2.equals(root.hash, this.diff.hash)) return false;
         this.nodes.push(...nodes);
         return this._update(nodes);
       }
@@ -25451,7 +25708,7 @@ var require_merkle_tree = __commonJS({
           const left = n.get(ite.leftChild());
           if (!left) break;
           const existing = await this.tree.get(left.index, false);
-          if (!existing || !b4a.equals(existing.hash, left.hash)) {
+          if (!existing || !b4a2.equals(existing.hash, left.hash)) {
             diff = left;
           } else {
             diff = n.get(ite.sibling());
@@ -25543,7 +25800,7 @@ var require_merkle_tree = __commonJS({
         this.truncateTo = 0;
       }
       addNode(node) {
-        if (node.size === 0 && b4a.equals(node.hash, BLANK_HASH)) node = blankNode(node.index);
+        if (node.size === 0 && b4a2.equals(node.hash, BLANK_HASH)) node = blankNode(node.index);
         this.unflushed.set(node.index, node);
       }
       batch() {
@@ -25667,7 +25924,7 @@ var require_merkle_tree = __commonJS({
       }
       _flushNodes() {
         return new Promise((resolve, reject) => {
-          const slab = b4a.allocUnsafe(40 * this.flushing.size);
+          const slab = b4a2.allocUnsafe(40 * this.flushing.size);
           let error = null;
           let missing = this.flushing.size + 1;
           let offset = 0;
@@ -25742,7 +25999,7 @@ var require_merkle_tree = __commonJS({
         }
         for (const root of batch.roots) {
           const existing = await this.get(root.index, false);
-          if (existing && b4a.equals(existing.hash, root.hash)) continue;
+          if (existing && b4a2.equals(existing.hash, root.hash)) continue;
           batch._updateDiffRoot(root);
           break;
         }
@@ -25779,7 +26036,7 @@ var require_merkle_tree = __commonJS({
         }
         if (unverified) {
           const verified = await this.get(unverified.index);
-          if (!b4a.equals(verified.hash, unverified.hash)) {
+          if (!b4a2.equals(verified.hash, unverified.hash)) {
             throw INVALID_CHECKSUM("Invalid checksum at node " + unverified.index);
           }
         }
@@ -25822,7 +26079,7 @@ var require_merkle_tree = __commonJS({
         await new Promise((resolve, reject) => {
           storage.read(0, OLD_TREE.length, (err, buf) => {
             if (err) return resolve();
-            if (b4a.equals(buf, OLD_TREE)) return reject(new Error("Storage contains an incompatible merkle tree"));
+            if (b4a2.equals(buf, OLD_TREE)) return reject(new Error("Storage contains an incompatible merkle tree"));
             resolve();
           });
         });
@@ -25927,7 +26184,7 @@ var require_merkle_tree = __commonJS({
         batch.appendRoot(q.shift(ite.index), ite);
       }
       if (prologue && batch.length === prologue.length) {
-        if (!b4a.equals(prologue.hash, batch.hash())) {
+        if (!b4a2.equals(prologue.hash, batch.hash())) {
           throw INVALID_PROOF("Invalid hash");
         }
       }
@@ -26110,7 +26367,7 @@ var require_merkle_tree = __commonJS({
           }
           const hash = data.subarray(8);
           const size = c.decode(c.uint64, data);
-          if (size === 0 && b4a.compare(hash, BLANK_HASH) === 0) {
+          if (size === 0 && b4a2.compare(hash, BLANK_HASH) === 0) {
             if (error) reject(new Error("Could not load node: " + index));
             else resolve(null);
             return;
@@ -26264,7 +26521,7 @@ var require_merkle_tree = __commonJS({
 var require_block_store = __commonJS({
   "node_modules/hypercore/lib/block-store.js"(exports, module) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var { WRITE_FAILED } = require_hypercore_errors();
     module.exports = class BlockStore {
       constructor(storage, tree) {
@@ -26281,7 +26538,7 @@ var require_block_store = __commonJS({
       }
       putBatch(i, batch, offset) {
         if (batch.length === 0) return Promise.resolve();
-        return this.put(i, batch.length === 1 ? batch[0] : b4a.concat(batch), offset);
+        return this.put(i, batch.length === 1 ? batch[0] : b4a2.concat(batch), offset);
       }
       clear(offset = 0, length = -1) {
         return new Promise((resolve, reject) => {
@@ -26326,7 +26583,7 @@ var require_bitfield = __commonJS({
   "node_modules/hypercore/lib/bitfield.js"(exports, module) {
     init_node_shims();
     var BigSparseArray = require_big_sparse_array();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var quickbit = require_compat().quickbit;
     var BITS_PER_PAGE = 32768;
     var BYTES_PER_PAGE = BITS_PER_PAGE / 8;
@@ -26484,12 +26741,12 @@ var require_bitfield = __commonJS({
       }
       toBuffer(length) {
         const pages = Math.ceil(length / BITS_PER_PAGE);
-        const buffer = b4a.allocUnsafe(pages * BYTES_PER_PAGE);
+        const buffer = b4a2.allocUnsafe(pages * BYTES_PER_PAGE);
         for (let i = 0; i < pages; i++) {
           const page = this._pages.get(i);
           const offset = i * BYTES_PER_PAGE;
           if (page) {
-            const buf = b4a.from(
+            const buf = b4a2.from(
               page.bitfield.buffer,
               page.bitfield.byteOffset,
               page.bitfield.byteLength
@@ -26653,11 +26910,11 @@ var require_bitfield = __commonJS({
       flush() {
         return new Promise((resolve, reject) => {
           if (!this.unflushed.length) return resolve();
-          const self2 = this;
+          const self = this;
           let missing = this.unflushed.length;
           let error = null;
           for (const page of this.unflushed) {
-            const buf = b4a.from(
+            const buf = b4a2.from(
               page.bitfield.buffer,
               page.bitfield.byteOffset,
               page.bitfield.byteLength
@@ -26669,7 +26926,7 @@ var require_bitfield = __commonJS({
             if (err) error = err;
             if (--missing) return;
             if (error) return reject(error);
-            self2.unflushed = [];
+            self.unflushed = [];
             resolve();
           }
         });
@@ -26762,7 +27019,7 @@ var require_multisig = __commonJS({
   "node_modules/hypercore/lib/multisig.js"(exports, module) {
     init_node_shims();
     var c = require_compact_encoding3();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var flat = require_flat_tree();
     var { multiSignature, multiSignaturev0 } = require_messages3();
     module.exports = {
@@ -26833,7 +27090,7 @@ var require_multisig = __commonJS({
     function compareNode(a, b) {
       if (a.index !== b.index) return false;
       if (a.size !== b.size) return false;
-      return b4a.equals(a.hash, b.hash);
+      return b4a2.equals(a.hash, b.hash);
     }
     function compressProof(proof, nodes) {
       return {
@@ -26869,7 +27126,7 @@ var require_verifier = __commonJS({
   "node_modules/hypercore/lib/verifier.js"(exports, module) {
     init_node_shims();
     var defaultCrypto = require_hypercore_crypto();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var c = require_compact_encoding3();
     var flat = require_flat_tree();
     var { BAD_ARGUMENT } = require_hypercore_errors();
@@ -26913,7 +27170,7 @@ var require_verifier = __commonJS({
     };
     module.exports = class Verifier {
       constructor(manifestHash2, manifest, { compat = isCompat(manifestHash2, manifest), crypto: crypto2 = defaultCrypto, legacy = false } = {}) {
-        const self2 = this;
+        const self = this;
         this.manifestHash = manifestHash2;
         this.compat = compat || manifest === null;
         this.version = this.compat ? 0 : typeof manifest.version === "number" ? manifest.version : 1;
@@ -26923,7 +27180,7 @@ var require_verifier = __commonJS({
         this.signers = manifest.signers ? manifest.signers.map(createSigner) : [];
         this.prologue = this.compat ? null : manifest.prologue || null;
         function createSigner(signer, index) {
-          return self2.compat ? new CompatSigner(crypto2, index, signer, legacy) : new Signer(crypto2, manifestHash2, self2.version, index, signer);
+          return self.compat ? new CompatSigner(crypto2, index, signer, legacy) : new Signer(crypto2, manifestHash2, self.version, index, signer);
         }
       }
       _verifyCompat(batch, signature) {
@@ -26972,7 +27229,7 @@ var require_verifier = __commonJS({
           return this._verifyCompat(batch, signature);
         }
         if (this.prologue !== null && batch.length <= this.prologue.length) {
-          return batch.length === this.prologue.length && b4a.equals(batch.hash(), this.prologue.hash);
+          return batch.length === this.prologue.length && b4a2.equals(batch.hash(), this.prologue.hash);
         }
         return this._verifyMulti(batch, signature);
       }
@@ -26980,7 +27237,7 @@ var require_verifier = __commonJS({
       sign(batch, keyPair) {
         if (!keyPair || !keyPair.secretKey) throw BAD_ARGUMENT("No key pair was passed");
         for (const s of this.signers) {
-          if (b4a.equals(s.publicKey, keyPair.publicKey)) {
+          if (b4a2.equals(s.publicKey, keyPair.publicKey)) {
             const signature = s.sign(batch, keyPair);
             if (this.signers.length !== 1 || this.version === 0) return signature;
             return this.assemble([{ signer: 0, signature, patch: 0, nodes: null }]);
@@ -27024,7 +27281,7 @@ var require_verifier = __commonJS({
         };
         if (inp.hash && inp.hash !== "blake2b") throw BAD_ARGUMENT("Only Blake2b hashes are supported");
         if (inp.prologue) {
-          if (!(b4a.isBuffer(inp.prologue.hash) && inp.prologue.hash.byteLength === 32) || !(inp.prologue.length >= 0)) {
+          if (!(b4a2.isBuffer(inp.prologue.hash) && inp.prologue.hash.byteLength === 32) || !(inp.prologue.length >= 0)) {
             throw BAD_ARGUMENT("Invalid prologue");
           }
           manifest.prologue = inp.prologue;
@@ -27033,7 +27290,7 @@ var require_verifier = __commonJS({
         return manifest;
       }
       static isValidManifest(key, manifest) {
-        return b4a.equals(key, manifestHash(manifest));
+        return b4a2.equals(key, manifestHash(manifest));
       }
       static isCompat(key, manifest) {
         return isCompat(key, manifest);
@@ -27048,7 +27305,7 @@ var require_verifier = __commonJS({
       return m2;
     }
     function isCompat(key, manifest) {
-      return !!(manifest && manifest.signers.length === 1 && b4a.equals(key, manifest.signers[0].publicKey));
+      return !!(manifest && manifest.signers.length === 1 && b4a2.equals(key, manifest.signers[0].publicKey));
     }
     function defaultQuorum(man) {
       if (typeof man.quorum === "number") return man.quorum;
@@ -27094,7 +27351,7 @@ var require_verifier = __commonJS({
     function manifestHash(manifest) {
       const state = { start: 0, end: 32, buffer: null };
       m.manifest.preencode(state, manifest);
-      state.buffer = b4a.allocUnsafe(state.end);
+      state.buffer = b4a2.allocUnsafe(state.end);
       c.raw.encode(state, caps.MANIFEST);
       m.manifest.encode(state, manifest);
       return defaultCrypto.hash(state.buffer);
@@ -27116,8 +27373,8 @@ var require_audit = __commonJS({
     var hypercoreCrypto = require_hypercore_crypto();
     var flat = require_flat_tree();
     var c = require_compact_encoding3();
-    var b4a = require_browser();
-    var empty = b4a.alloc(32);
+    var b4a2 = require_browser();
+    var empty = b4a2.alloc(32);
     module.exports = async function auditCore(core) {
       const corrections = {
         tree: 0,
@@ -27142,7 +27399,7 @@ var require_audit = __commonJS({
         stack.push(leftNode, rightNode);
         if (valid[node.index]) {
           const hash = hypercoreCrypto.parent(leftNode, rightNode);
-          if (b4a.equals(hash, node.hash) && node.size === leftNode.size + rightNode.size) {
+          if (b4a2.equals(hash, node.hash) && node.size === leftNode.size + rightNode.size) {
             valid[leftNode.index] = 1;
             valid[rightNode.index] = 1;
             continue;
@@ -27179,7 +27436,7 @@ var require_audit = __commonJS({
         const blk = data.subarray(nextOffset, nextOffset + node.size);
         const hash = hypercoreCrypto.data(blk);
         nextOffset += blk.byteLength;
-        if (!b4a.equals(hash, node.hash)) {
+        if (!b4a2.equals(hash, node.hash)) {
           core._setBitfield(i, false);
           corrections.blocks++;
         }
@@ -27197,7 +27454,7 @@ var require_audit = __commonJS({
       function clearNode(node) {
         valid[node.index] = 0;
         if (node.size) {
-          b4a.fill(tree, 0, node.index * 40, node.index * 40 + 40);
+          b4a2.fill(tree, 0, node.index * 40, node.index * 40 + 40);
           core.tree.unflushed.set(node.index, core.tree.blankNode(node.index));
           corrections.tree++;
         }
@@ -27206,7 +27463,7 @@ var require_audit = __commonJS({
     function readFullStorage(storage) {
       return new Promise((resolve, reject) => {
         storage.stat((_, st) => {
-          if (!st) return resolve(b4a.alloc(0));
+          if (!st) return resolve(b4a2.alloc(0));
           storage.read(0, st.size, (err, data) => {
             if (err) reject(err);
             else resolve(data);
@@ -27222,7 +27479,7 @@ var require_core = __commonJS({
   "node_modules/hypercore/lib/core.js"(exports, module) {
     init_node_shims();
     var hypercoreCrypto = require_hypercore_crypto();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var unslab = require_unslab();
     var Oplog = require_oplog();
     var BigHeader = require_big_header();
@@ -27291,7 +27548,7 @@ var require_core = __commonJS({
         });
         let compat = opts.compat === true || opts.compat !== false && !opts.manifest;
         let { header, entries } = await oplog.open();
-        if (force && opts.key && header && !b4a.equals(header.key, opts.key)) {
+        if (force && opts.key && header && !b4a2.equals(header.key, opts.key)) {
           overwrite = true;
         }
         const bigHeader = new BigHeader(headerFile);
@@ -27300,12 +27557,12 @@ var require_core = __commonJS({
             throw STORAGE_EMPTY("No Hypercore is stored here");
           }
           if (compat) {
-            if (opts.key && opts.keyPair && !b4a.equals(opts.key, opts.keyPair.publicKey)) {
+            if (opts.key && opts.keyPair && !b4a2.equals(opts.key, opts.keyPair.publicKey)) {
               throw BAD_ARGUMENT("Key must match publicKey when in compat mode");
             }
           }
           const keyPair = opts.keyPair || (opts.key ? null : crypto2.keyPair());
-          const defaultManifest = !opts.manifest && (!!opts.compat || !opts.key || !!(keyPair && b4a.equals(opts.key, keyPair.publicKey)));
+          const defaultManifest = !opts.manifest && (!!opts.compat || !opts.key || !!(keyPair && b4a2.equals(opts.key, keyPair.publicKey)));
           const manifest = defaultManifest ? Verifier.defaultSignerManifest(opts.key || keyPair.publicKey) : Verifier.createManifest(opts.manifest);
           header = {
             external: null,
@@ -27341,7 +27598,7 @@ var require_core = __commonJS({
           }
           if (!header.manifest) header.manifest = opts.manifest;
         }
-        if (opts.key && !b4a.equals(header.key, opts.key)) {
+        if (opts.key && !b4a2.equals(header.key, opts.key)) {
           throw STORAGE_CONFLICT("Another Hypercore is stored here");
         }
         if (compat && header.manifest && !Verifier.isCompat(header.key, header.manifest)) {
@@ -27418,7 +27675,7 @@ var require_core = __commonJS({
         }
       }
       _setManifest(manifest, keyPair) {
-        if (!manifest && b4a.equals(keyPair.publicKey, this.header.key)) manifest = Verifier.defaultSignerManifest(this.header.key);
+        if (!manifest && b4a2.equals(keyPair.publicKey, this.header.key)) manifest = Verifier.defaultSignerManifest(this.header.key);
         if (!manifest) return;
         const verifier = new Verifier(this.header.key, manifest, { crypto: this.crypto, legacy: this._legacy });
         if (verifier.prologue) this.tree.setPrologue(verifier.prologue);
@@ -27455,7 +27712,7 @@ var require_core = __commonJS({
           const srcRoots = srcBatch.roots.slice(0);
           const srcByteLength = srcBatch.byteLength;
           for (const blk of additional) srcBatch.append(blk);
-          if (!b4a.equals(srcBatch.hash(), prologue.hash)) throw INVALID_OPERATION("Source tree is conflicting");
+          if (!b4a2.equals(srcBatch.hash(), prologue.hash)) throw INVALID_OPERATION("Source tree is conflicting");
           const entry = {
             userData: null,
             treeNodes: srcRoots,
@@ -27553,7 +27810,7 @@ var require_core = __commonJS({
           let empty = true;
           for (const u of this.header.userData) {
             if (u.key !== key) continue;
-            if (value && b4a.equals(u.value, value)) return;
+            if (value && b4a2.equals(u.value, value)) return;
             empty = false;
             break;
           }
@@ -27672,7 +27929,7 @@ var require_core = __commonJS({
             if (this.tree.length > batch.length) return null;
             for (const root of this.tree.roots) {
               const batchRoot = await batch.get(root.index);
-              if (batchRoot.size !== root.size || !b4a.equals(batchRoot.hash, root.hash)) {
+              if (batchRoot.size !== root.size || !b4a2.equals(batchRoot.hash, root.hash)) {
                 return null;
               }
             }
@@ -27866,7 +28123,7 @@ var require_core = __commonJS({
         }
         const remoteTreeHash = this.crypto.tree(proof.upgrade.nodes);
         const localTreeHash = this.crypto.tree(await this.tree.getRoots(proof.upgrade.length));
-        if (b4a.equals(localTreeHash, remoteTreeHash)) return false;
+        if (b4a2.equals(localTreeHash, remoteTreeHash)) return false;
         await this.onconflict(proof);
         return true;
       }
@@ -28066,12 +28323,12 @@ var require_block_encryption = __commonJS({
     init_node_shims();
     var sodium = require_sodium_universal5();
     var c = require_compact_encoding3();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var { BLOCK_ENCRYPTION } = require_caps();
-    var nonce = b4a.alloc(sodium.crypto_stream_NONCEBYTES);
+    var nonce = b4a2.alloc(sodium.crypto_stream_NONCEBYTES);
     module.exports = class BlockEncryption {
       constructor(encryptionKey, hypercoreKey, { isBlockKey = false, compat = true } = {}) {
-        const subKeys = b4a.alloc(2 * sodium.crypto_stream_KEYBYTES);
+        const subKeys = b4a2.alloc(2 * sodium.crypto_stream_KEYBYTES);
         this.key = encryptionKey;
         this.blockKey = isBlockKey ? encryptionKey : subKeys.subarray(0, sodium.crypto_stream_KEYBYTES);
         this.blindingKey = subKeys.subarray(sodium.crypto_stream_KEYBYTES);
@@ -28153,7 +28410,7 @@ var require_batch = __commonJS({
     var { BLOCK_NOT_AVAILABLE, SESSION_CLOSED } = require_hypercore_errors();
     var EventEmitter = require_events();
     var c = require_compact_encoding3();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var safetyCatch = require_safety_catch();
     module.exports = class HypercoreBatch extends EventEmitter {
       constructor(session, checkoutLength, autoClose, restore, clear) {
@@ -28385,23 +28642,23 @@ var require_batch = __commonJS({
       }
       _encode(enc, val) {
         const state = { start: 0, end: 0, buffer: null };
-        if (b4a.isBuffer(val)) {
+        if (b4a2.isBuffer(val)) {
           if (state.start === 0) return val;
           state.end += val.byteLength;
         } else if (enc) {
           enc.preencode(state, val);
         } else {
-          val = b4a.from(val);
+          val = b4a2.from(val);
           if (state.start === 0) return val;
           state.end += val.byteLength;
         }
-        state.buffer = b4a.allocUnsafe(state.end);
+        state.buffer = b4a2.allocUnsafe(state.end);
         if (enc) enc.encode(state, val);
         else state.buffer.set(val, state.start);
         return state.buffer;
       }
       _encrypt(index, buffer) {
-        const block = b4a.allocUnsafe(buffer.byteLength + 8);
+        const block = b4a2.allocUnsafe(buffer.byteLength + 8);
         block.set(buffer, 8);
         this.session.encryption.encrypt(index, block, this.fork);
         return block;
@@ -28590,7 +28847,7 @@ var require_hypercore = __commonJS({
     var isOptions = require_is_options();
     var hypercoreCrypto = require_hypercore_crypto();
     var c = require_compact_encoding3();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var Xache = require_xache();
     var NoiseSecretStream = require_secret_stream();
     var Protomux = require_protomux();
@@ -28691,7 +28948,7 @@ var require_hypercore = __commonJS({
       }
       static MAX_SUGGESTED_BLOCK_SIZE = MAX_SUGGESTED_BLOCK_SIZE;
       static key(manifest, { compat, version, namespace } = {}) {
-        if (b4a.isBuffer(manifest)) manifest = { version, signers: [{ publicKey: manifest, namespace }] };
+        if (b4a2.isBuffer(manifest)) manifest = { version, signers: [{ publicKey: manifest, namespace }] };
         return compat ? manifest.signers[0].publicKey : manifestHash(createManifest(manifest));
       }
       static discoveryKey(key) {
@@ -29223,7 +29480,7 @@ var require_hypercore = __commonJS({
         if (!block) return null;
         if (opts && opts.raw) return block;
         if (this.encryption && (!opts || opts.decrypt !== false)) {
-          block = b4a.from(block);
+          block = b4a2.from(block);
           this.encryption.decrypt(index, block);
         }
         return this._decode(encoding, block);
@@ -29388,17 +29645,17 @@ var require_hypercore = __commonJS({
       }
       _encode(enc, val) {
         const state = { start: this.padding, end: this.padding, buffer: null };
-        if (b4a.isBuffer(val)) {
+        if (b4a2.isBuffer(val)) {
           if (state.start === 0) return val;
           state.end += val.byteLength;
         } else if (enc) {
           enc.preencode(state, val);
         } else {
-          val = b4a.from(val);
+          val = b4a2.from(val);
           if (state.start === 0) return val;
           state.end += val.byteLength;
         }
-        state.buffer = b4a.allocUnsafe(state.end);
+        state.buffer = b4a2.allocUnsafe(state.end);
         if (enc) enc.encode(state, val);
         else state.buffer.set(val, state.start);
         return state.buffer;
@@ -29420,7 +29677,7 @@ var require_hypercore = __commonJS({
       return !!(typeof fn === "function" && fn.prototype && typeof fn.prototype.open === "function");
     }
     function toHex(buf) {
-      return buf && b4a.toString(buf, "hex");
+      return buf && b4a2.toString(buf, "hex");
     }
     function preappend(blocks) {
       const offset = this.core.tree.length;
@@ -29431,7 +29688,7 @@ var require_hypercore = __commonJS({
     }
     function ensureEncryption(core, opts) {
       if (!opts.encryptionKey) return;
-      if (core.encryption && b4a.equals(core.encryption.key, opts.encryptionKey) && core.encryption.compat === core.core.compat) return;
+      if (core.encryption && b4a2.equals(core.encryption.key, opts.encryptionKey) && core.encryption.compat === core.core.compat) return;
       core.encryption = new BlockEncryption(opts.encryptionKey, core.key, { compat: core.core ? core.core.compat : true, isBlockKey: opts.isBlockKey });
     }
     function createCache(cache) {
@@ -29471,25 +29728,25 @@ var require_ready_resource = __commonJS({
       async _close() {
       }
     };
-    async function open(self2) {
-      if (self2.closing !== null) return;
+    async function open(self) {
+      if (self.closing !== null) return;
       try {
-        await self2._open();
+        await self._open();
       } catch (err) {
-        self2.close();
+        self.close();
         throw err;
       }
-      self2.opened = true;
-      self2.emit("ready");
+      self.opened = true;
+      self.emit("ready");
     }
-    async function close(self2) {
+    async function close(self) {
       try {
-        if (self2.opened === false && self2.opening !== null) await self2.opening;
+        if (self.opened === false && self.opening !== null) await self.opening;
       } catch {
       }
-      if (self2.opened === true || self2.opening === null) await self2._close();
-      self2.closed = true;
-      self2.emit("close");
+      if (self.opened === true || self.opening === null) await self._close();
+      self.closed = true;
+      self.emit("close");
     }
   }
 });
@@ -29619,11 +29876,11 @@ var require_corestore = __commonJS({
     var Hypercore = require_hypercore();
     var hypercoreId = require_hypercore_id_encoding();
     var Xache = require_xache();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var ReadyResource = require_ready_resource();
     var RW = require_read_write_mutexify();
     var [NS] = crypto2.namespace("corestore", 1);
-    var DEFAULT_NAMESPACE = b4a.alloc(32);
+    var DEFAULT_NAMESPACE = b4a2.alloc(32);
     var CORES_DIR = "cores";
     var PRIMARY_KEY_FILE_NAME = "primary-key";
     var USERDATA_NAME_KEY = "corestore/name";
@@ -29758,7 +30015,7 @@ var require_corestore = __commonJS({
         if (this._bootstrap) await this._openNamespaceFromBootstrap();
       }
       async _exists(discoveryKey) {
-        const id = b4a.toString(discoveryKey, "hex");
+        const id = b4a2.toString(discoveryKey, "hex");
         const storageRoot = getStorageRoot(id);
         const st = this.storage(storageRoot + "/oplog");
         const exists = await new Promise((resolve) => st.stat((err, st2) => resolve(!err && st2.size > 0)));
@@ -29831,7 +30088,7 @@ var require_corestore = __commonJS({
         const name = this._getPrereadyUserData(core, USERDATA_NAME_KEY);
         if (!name) return;
         const namespace = this._getPrereadyUserData(core, USERDATA_NAMESPACE_KEY);
-        const keyPair = await this.createKeyPair(b4a.toString(name), namespace);
+        const keyPair = await this.createKeyPair(b4a2.toString(name), namespace);
         core.setKeyPair(keyPair);
       }
       _getLock(id) {
@@ -29856,7 +30113,7 @@ var require_corestore = __commonJS({
         const hasKeyPair = !!(keyPair && keyPair.secretKey);
         const userData = {};
         if (opts.name) {
-          userData[USERDATA_NAME_KEY] = b4a.from(opts.name);
+          userData[USERDATA_NAME_KEY] = b4a2.from(opts.name);
           userData[USERDATA_NAMESPACE_KEY] = this._namespace;
         }
         const storageRoot = getStorageRoot(id);
@@ -29914,8 +30171,8 @@ var require_corestore = __commonJS({
       async createKeyPair(name, namespace = this._namespace) {
         if (!this.opened) await this.ready();
         const keyPair = {
-          publicKey: b4a.allocUnsafeSlow(sodium.crypto_sign_PUBLICKEYBYTES),
-          secretKey: b4a.alloc(sodium.crypto_sign_SECRETKEYBYTES)
+          publicKey: b4a2.allocUnsafeSlow(sodium.crypto_sign_PUBLICKEYBYTES),
+          secretKey: b4a2.alloc(sodium.crypto_sign_SECRETKEYBYTES)
         };
         const seed = deriveSeed(this.primaryKey, namespace, name);
         sodium.crypto_sign_seed_keypair(keyPair.publicKey, keyPair.secretKey, seed);
@@ -29940,7 +30197,7 @@ var require_corestore = __commonJS({
             if (opts.preload) opts = { ...opts, ...await opts.preload() };
             if (!this.opened) await this.ready();
             const keys = await this._generateKeys(opts);
-            id = b4a.toString(keys.discoveryKey, "hex");
+            id = b4a2.toString(keys.discoveryKey, "hex");
             rw = opts.exclusive && opts.writable !== false ? this._getLock(id) : null;
             if (rw) await rw.write.lock();
             return await this._preload(id, keys, opts);
@@ -29966,7 +30223,7 @@ var require_corestore = __commonJS({
           ...opts,
           ondiscoverykey: async (discoveryKey) => {
             if (this.closing) return;
-            const id = b4a.toString(discoveryKey, "hex");
+            const id = b4a2.toString(discoveryKey, "hex");
             if (this._noCoreCache.get(id)) return;
             const core = this.get({ _discoveryKey: discoveryKey, active: false });
             try {
@@ -30048,7 +30305,7 @@ var require_corestore = __commonJS({
       }
     };
     function validateGetOptions(opts) {
-      const key = b4a.isBuffer(opts) || typeof opts === "string" ? hypercoreId.decode(opts) : null;
+      const key = b4a2.isBuffer(opts) || typeof opts === "string" ? hypercoreId.decode(opts) : null;
       if (key) return { key };
       if (opts.key) {
         opts.key = hypercoreId.decode(opts.key);
@@ -30059,20 +30316,20 @@ var require_corestore = __commonJS({
       }
       if (opts.name && typeof opts.name !== "string") throw new Error("name option must be a String");
       if (opts.name && opts.secretKey) throw new Error("Cannot provide both a name and a secret key");
-      if (opts.publicKey && !b4a.isBuffer(opts.publicKey)) throw new Error("publicKey option must be a Buffer or Uint8Array");
-      if (opts.secretKey && !b4a.isBuffer(opts.secretKey)) throw new Error("secretKey option must be a Buffer or Uint8Array");
+      if (opts.publicKey && !b4a2.isBuffer(opts.publicKey)) throw new Error("publicKey option must be a Buffer or Uint8Array");
+      if (opts.secretKey && !b4a2.isBuffer(opts.secretKey)) throw new Error("secretKey option must be a Buffer or Uint8Array");
       if (!opts._discoveryKey && (!opts.name && !opts.publicKey && !opts.manifest && !opts.key && !opts.preload)) throw new Error("Must provide either a name or a publicKey");
       return opts;
     }
     function generateNamespace(namespace, name) {
-      if (!b4a.isBuffer(name)) name = b4a.from(name);
-      const out = b4a.allocUnsafeSlow(32);
+      if (!b4a2.isBuffer(name)) name = b4a2.from(name);
+      const out = b4a2.allocUnsafeSlow(32);
       sodium.crypto_generichash_batch(out, [namespace, name]);
       return out;
     }
     function deriveSeed(primaryKey, namespace, name) {
-      if (!b4a.isBuffer(name)) name = b4a.from(name);
-      const out = b4a.alloc(32);
+      if (!b4a2.isBuffer(name)) name = b4a2.from(name);
+      const out = b4a2.alloc(32);
       sodium.crypto_generichash_batch(out, [NS, namespace, name], primaryKey);
       return out;
     }
@@ -30096,7 +30353,7 @@ var require_corestore = __commonJS({
 var require_codecs2 = __commonJS({
   "node_modules/codecs/index.js"(exports, module) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     module.exports = codecs;
     codecs.ascii = createString("ascii");
     codecs.utf8 = createString("utf-8");
@@ -30109,10 +30366,10 @@ var require_codecs2 = __commonJS({
     codecs.binary = {
       name: "binary",
       encode: function encodeBinary(obj) {
-        return typeof obj === "string" ? b4a.from(obj, "utf-8") : b4a.toBuffer(obj);
+        return typeof obj === "string" ? b4a2.from(obj, "utf-8") : b4a2.toBuffer(obj);
       },
       decode: function decodeBinary(buf) {
-        return b4a.toBuffer(buf);
+        return b4a2.toBuffer(buf);
       }
     };
     function isCompactEncoding(c) {
@@ -30124,7 +30381,7 @@ var require_codecs2 = __commonJS({
         encode: function encodeWithCompact(value) {
           const state = { start: 0, end: 0, buffer: null, cache: null };
           c.preencode(state, value);
-          state.buffer = b4a.allocUnsafe(state.end);
+          state.buffer = b4a2.allocUnsafe(state.end);
           c.encode(state, value);
           return state.buffer;
         },
@@ -30165,14 +30422,14 @@ var require_codecs2 = __commonJS({
         name: newline ? "ndjson" : "json",
         encode: newline ? encodeNDJSON : encodeJSON,
         decode: function decodeJSON(buf) {
-          return JSON.parse(b4a.toString(buf));
+          return JSON.parse(b4a2.toString(buf));
         }
       };
       function encodeJSON(val) {
-        return b4a.from(JSON.stringify(val));
+        return b4a2.from(JSON.stringify(val));
       }
       function encodeNDJSON(val) {
-        return b4a.from(JSON.stringify(val) + "\n");
+        return b4a2.from(JSON.stringify(val) + "\n");
       }
     }
     function createString(type) {
@@ -30180,10 +30437,10 @@ var require_codecs2 = __commonJS({
         name: type,
         encode: function encodeString(val) {
           if (typeof val !== "string") val = val.toString();
-          return b4a.from(val, type);
+          return b4a2.from(val, type);
         },
         decode: function decodeString(buf) {
-          return b4a.toString(buf, type);
+          return b4a2.toString(buf, type);
         }
       };
     }
@@ -30393,7 +30650,7 @@ var require_resolve_reject_promise = __commonJS({
 var require_range = __commonJS({
   "node_modules/hyperbee/iterators/range.js"(exports, module) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     module.exports = class RangeIterator {
       constructor(batch, encoding, opts = {}) {
         this.batch = batch;
@@ -30472,7 +30729,7 @@ var require_range = __commonJS({
           let c;
           while (s < e) {
             const mid = s + e >> 1;
-            c = b4a.compare(start, await node.getKey(mid));
+            c = b4a2.compare(start, await node.getKey(mid));
             if (c === 0) {
               if (incl) entry.i = mid * 2 + 1;
               else entry.i = mid * 2 + (this._reverse ? 0 : 2);
@@ -30509,7 +30766,7 @@ var require_range = __commonJS({
           const key = node.keys[i];
           const block = await this.batch.getBlock(key.seq);
           if (this._closed) return;
-          const c = end ? b4a.compare(block.key, end) : -1;
+          const c = end ? b4a2.compare(block.key, end) : -1;
           if (c >= 0 || max.nodes >= max.max || i >= node.children.length) return;
           max.nodes++;
           const next = await node.getChildNode(i);
@@ -30546,7 +30803,7 @@ var require_range = __commonJS({
           const key = top.node.keys[n];
           const block = await this.batch.getBlock(key.seq);
           if (end) {
-            const c = b4a.compare(block.key, end);
+            const c = b4a2.compare(block.key, end);
             if (c === 0 ? !incl : this._reverse ? c < 0 : c > 0) {
               this._limit = 0;
               break;
@@ -30628,7 +30885,7 @@ var require_history = __commonJS({
 var require_diff = __commonJS({
   "node_modules/hyperbee/iterators/diff.js"(exports, module) {
     init_node_shims();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var SubTree = class {
       constructor(node, parent) {
         this.node = node;
@@ -30804,7 +31061,7 @@ var require_diff = __commonJS({
     function cmp(a, b) {
       if (!a) return b ? 1 : 0;
       if (!b) return a ? -1 : 0;
-      return b4a.compare(a, b);
+      return b4a2.compare(a, b);
     }
   }
 });
@@ -30967,7 +31224,7 @@ var require_protocol_buffers_encodings = __commonJS({
     init_node_shims();
     var varint = require_varint();
     var svarint = require_signed_varint();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     exports.make = encoder;
     exports.name = function(enc) {
       var keys = Object.keys(exports);
@@ -31001,8 +31258,8 @@ var require_protocol_buffers_encodings = __commonJS({
         var len = bufferLength(val);
         varint.encode(len, buffer, offset);
         offset += varint.encode.bytes;
-        if (b4a.isBuffer(val)) b4a.copy(val, buffer, offset);
-        else b4a.write(buffer, val, offset, len);
+        if (b4a2.isBuffer(val)) b4a2.copy(val, buffer, offset);
+        else b4a2.write(buffer, val, offset, len);
         offset += len;
         encode.bytes = offset - oldOffset;
         return buffer;
@@ -31025,10 +31282,10 @@ var require_protocol_buffers_encodings = __commonJS({
       2,
       function encode(val, buffer, offset) {
         var oldOffset = offset;
-        var len = b4a.byteLength(val);
+        var len = b4a2.byteLength(val);
         varint.encode(len, buffer, offset, "utf-8");
         offset += varint.encode.bytes;
-        b4a.write(buffer, val, offset, len);
+        b4a2.write(buffer, val, offset, len);
         offset += len;
         encode.bytes = offset - oldOffset;
         return buffer;
@@ -31037,13 +31294,13 @@ var require_protocol_buffers_encodings = __commonJS({
         var oldOffset = offset;
         var len = varint.decode(buffer, offset);
         offset += varint.decode.bytes;
-        var val = b4a.toString(buffer, "utf-8", offset, offset + len);
+        var val = b4a2.toString(buffer, "utf-8", offset, offset + len);
         offset += len;
         decode.bytes = offset - oldOffset;
         return val;
       },
       function encodingLength(val) {
-        var len = b4a.byteLength(val);
+        var len = b4a2.byteLength(val);
         return varint.encodingLength(len) + len;
       }
     );
@@ -31105,8 +31362,8 @@ var require_protocol_buffers_encodings = __commonJS({
           var limit = 9;
           while (buffer[offset + limit - 1] === 255) limit--;
           limit = limit || 9;
-          var subset = b4a.allocUnsafe(limit);
-          b4a.copy(buffer, subset, 0, offset, offset + limit);
+          var subset = b4a2.allocUnsafe(limit);
+          b4a2.copy(buffer, subset, 0, offset, offset + limit);
           subset[limit - 1] = subset[limit - 1] & 127;
           val = -1 * varint.decode(subset, 0);
           decode.bytes = 10;
@@ -31134,7 +31391,7 @@ var require_protocol_buffers_encodings = __commonJS({
     exports.fixed64 = exports.sfixed64 = encoder(
       1,
       function encode(val, buffer, offset) {
-        b4a.copy(val, buffer, offset);
+        b4a2.copy(val, buffer, offset);
         encode.bytes = 8;
         return buffer;
       },
@@ -31150,12 +31407,12 @@ var require_protocol_buffers_encodings = __commonJS({
     exports.double = encoder(
       1,
       function encode(val, buffer, offset) {
-        b4a.writeDoubleLE(buffer, val, offset);
+        b4a2.writeDoubleLE(buffer, val, offset);
         encode.bytes = 8;
         return buffer;
       },
       function decode(buffer, offset) {
-        var val = b4a.readDoubleLE(buffer, offset);
+        var val = b4a2.readDoubleLE(buffer, offset);
         decode.bytes = 8;
         return val;
       },
@@ -31166,12 +31423,12 @@ var require_protocol_buffers_encodings = __commonJS({
     exports.fixed32 = encoder(
       5,
       function encode(val, buffer, offset) {
-        b4a.writeUInt32LE(buffer, val, offset);
+        b4a2.writeUInt32LE(buffer, val, offset);
         encode.bytes = 4;
         return buffer;
       },
       function decode(buffer, offset) {
-        var val = b4a.readUInt32LE(buffer, offset);
+        var val = b4a2.readUInt32LE(buffer, offset);
         decode.bytes = 4;
         return val;
       },
@@ -31182,12 +31439,12 @@ var require_protocol_buffers_encodings = __commonJS({
     exports.sfixed32 = encoder(
       5,
       function encode(val, buffer, offset) {
-        b4a.writeInt32LE(buffer, val, offset);
+        b4a2.writeInt32LE(buffer, val, offset);
         encode.bytes = 4;
         return buffer;
       },
       function decode(buffer, offset) {
-        var val = b4a.readInt32LE(buffer, offset);
+        var val = b4a2.readInt32LE(buffer, offset);
         decode.bytes = 4;
         return val;
       },
@@ -31198,12 +31455,12 @@ var require_protocol_buffers_encodings = __commonJS({
     exports.float = encoder(
       5,
       function encode(val, buffer, offset) {
-        b4a.writeFloatLE(buffer, val, offset);
+        b4a2.writeFloatLE(buffer, val, offset);
         encode.bytes = 4;
         return buffer;
       },
       function decode(buffer, offset) {
-        var val = b4a.readFloatLE(buffer, offset);
+        var val = b4a2.readFloatLE(buffer, offset);
         decode.bytes = 4;
         return val;
       },
@@ -31221,7 +31478,7 @@ var require_protocol_buffers_encodings = __commonJS({
       };
     }
     function bufferLength(val) {
-      return b4a.isBuffer(val) ? val.length : b4a.byteLength(val);
+      return b4a2.isBuffer(val) ? val.length : b4a2.byteLength(val);
     }
   }
 });
@@ -31231,7 +31488,7 @@ var require_messages4 = __commonJS({
   "node_modules/hyperbee/lib/messages.js"(exports) {
     init_node_shims();
     var encodings = require_protocol_buffers_encodings();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var varint = encodings.varint;
     var skip = encodings.skip;
     var YoloIndex = exports.YoloIndex = {
@@ -31302,7 +31559,7 @@ var require_messages4 = __commonJS({
         }
         function encode2(obj, buf, offset) {
           if (!offset) offset = 0;
-          if (!buf) buf = b4a.allocUnsafe(encodingLength2(obj));
+          if (!buf) buf = b4a2.allocUnsafe(encodingLength2(obj));
           var oldOffset = offset;
           if (defined(obj.keys)) {
             var packedLen = 0;
@@ -31400,7 +31657,7 @@ var require_messages4 = __commonJS({
       }
       function encode(obj, buf, offset) {
         if (!offset) offset = 0;
-        if (!buf) buf = b4a.allocUnsafe(encodingLength(obj));
+        if (!buf) buf = b4a2.allocUnsafe(encodingLength(obj));
         var oldOffset = offset;
         if (defined(obj.levels)) {
           for (var i = 0; i < obj.levels.length; i++) {
@@ -31470,7 +31727,7 @@ var require_messages4 = __commonJS({
         }
         function encode2(obj, buf, offset) {
           if (!offset) offset = 0;
-          if (!buf) buf = b4a.allocUnsafe(encodingLength2(obj));
+          if (!buf) buf = b4a2.allocUnsafe(encodingLength2(obj));
           var oldOffset = offset;
           if (defined(obj.contentFeed)) {
             buf[offset++] = 10;
@@ -31534,7 +31791,7 @@ var require_messages4 = __commonJS({
       }
       function encode(obj, buf, offset) {
         if (!offset) offset = 0;
-        if (!buf) buf = b4a.allocUnsafe(encodingLength(obj));
+        if (!buf) buf = b4a2.allocUnsafe(encodingLength(obj));
         var oldOffset = offset;
         if (!defined(obj.protocol)) throw new Error("protocol is required");
         buf[offset++] = 10;
@@ -31607,7 +31864,7 @@ var require_messages4 = __commonJS({
       }
       function encode(obj, buf, offset) {
         if (!offset) offset = 0;
-        if (!buf) buf = b4a.allocUnsafe(encodingLength(obj));
+        if (!buf) buf = b4a2.allocUnsafe(encodingLength(obj));
         var oldOffset = offset;
         if (!defined(obj.index)) throw new Error("index is required");
         buf[offset++] = 10;
@@ -31707,7 +31964,7 @@ var require_messages4 = __commonJS({
         }
         function encode2(obj, buf, offset) {
           if (!offset) offset = 0;
-          if (!buf) buf = b4a.allocUnsafe(encodingLength2(obj));
+          if (!buf) buf = b4a2.allocUnsafe(encodingLength2(obj));
           var oldOffset = offset;
           if (defined(obj.version)) {
             buf[offset++] = 8;
@@ -31803,7 +32060,7 @@ var require_messages4 = __commonJS({
         }
         function encode2(obj, buf, offset) {
           if (!offset) offset = 0;
-          if (!buf) buf = b4a.allocUnsafe(encodingLength2(obj));
+          if (!buf) buf = b4a2.allocUnsafe(encodingLength2(obj));
           var oldOffset = offset;
           if (defined(obj.version)) {
             buf[offset++] = 8;
@@ -31954,7 +32211,7 @@ var require_messages4 = __commonJS({
         }
         function encode2(obj, buf, offset) {
           if (!offset) offset = 0;
-          if (!buf) buf = b4a.allocUnsafe(encodingLength2(obj));
+          if (!buf) buf = b4a2.allocUnsafe(encodingLength2(obj));
           var oldOffset = offset;
           if (!defined(obj.start)) throw new Error("start is required");
           buf[offset++] = 8;
@@ -32055,7 +32312,7 @@ var require_messages4 = __commonJS({
       }
       function encode(obj, buf, offset) {
         if (!offset) offset = 0;
-        if (!buf) buf = b4a.allocUnsafe(encodingLength(obj));
+        if (!buf) buf = b4a2.allocUnsafe(encodingLength(obj));
         var oldOffset = offset;
         if (defined(obj.cache)) {
           buf[offset++] = 10;
@@ -32274,7 +32531,7 @@ var require_hyperbee = __commonJS({
     var codecs = require_codecs2();
     var { Readable } = require_streamx();
     var mutexify = require_promise();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var safetyCatch = require_safety_catch();
     var ReadyResource = require_ready_resource();
     var debounce = require_debounceify();
@@ -32291,8 +32548,8 @@ var require_hyperbee = __commonJS({
     var T = 5;
     var MIN_KEYS = T - 1;
     var MAX_CHILDREN = MIN_KEYS * 2 + 1;
-    var SEP = b4a.alloc(1);
-    var EMPTY = b4a.alloc(0);
+    var SEP = b4a2.alloc(1);
+    var EMPTY = b4a2.alloc(0);
     var Key = class {
       constructor(seq, value) {
         this.seq = seq;
@@ -32414,7 +32671,7 @@ var require_hyperbee = __commonJS({
         let c;
         while (s < e) {
           const mid = s + e >> 1;
-          c = b4a.compare(key.value, await this.getKey(mid));
+          c = b4a2.compare(key.value, await this.getKey(mid));
           if (c === 0) {
             if (cas) {
               const prev = await this.getKeyNode(mid);
@@ -32534,7 +32791,7 @@ var require_hyperbee = __commonJS({
         this.value = entry.value;
       }
       isTarget(key) {
-        return b4a.equals(this.key, key);
+        return b4a2.equals(this.key, key);
       }
       inflate() {
         if (this.index === null) {
@@ -32897,8 +33154,8 @@ var require_hyperbee = __commonJS({
       }
       sub(prefix, opts = {}) {
         let sep = opts.sep || this.sep;
-        if (!b4a.isBuffer(sep)) sep = b4a.from(sep);
-        prefix = b4a.concat([this.prefix || EMPTY, b4a.from(prefix), sep]);
+        if (!b4a2.isBuffer(sep)) sep = b4a2.from(sep);
+        prefix = b4a2.concat([this.prefix || EMPTY, b4a2.from(prefix), sep]);
         const valueEncoding = codecs(opts.valueEncoding || this.valueEncoding);
         const keyEncoding = codecs(opts.keyEncoding || this._unprefixedKeyEncoding);
         return new _Hyperbee(this.core, {
@@ -33121,7 +33378,7 @@ var require_hyperbee = __commonJS({
           let c;
           while (s < e) {
             const mid = s + e >> 1;
-            c = b4a.compare(key, await node.getKey(mid));
+            c = b4a2.compare(key, await node.getKey(mid));
             if (c === 0) {
               const block = await this.getBlock(node.keys[mid].seq);
               return finalize ? block.final(encoding) : block;
@@ -33146,7 +33403,7 @@ var require_hyperbee = __commonJS({
           while (s < e) {
             const mid = s + e >> 1;
             if (node.keys[mid].seq === seq) return true;
-            c = b4a.compare(key, await node.getKey(mid));
+            c = b4a2.compare(key, await node.getKey(mid));
             if (c === 0) return false;
             if (c < 0) e = mid;
             else s = mid + 1;
@@ -33191,7 +33448,7 @@ var require_hyperbee = __commonJS({
           let c;
           while (s < e) {
             const mid = s + e >> 1;
-            c = b4a.compare(target.value, await node.getKey(mid));
+            c = b4a2.compare(target.value, await node.getKey(mid));
             if (c === 0) {
               if (cas) {
                 const prev = await node.getKeyNode(mid);
@@ -33258,7 +33515,7 @@ var require_hyperbee = __commonJS({
           let c;
           while (s < e) {
             const mid = s + e >> 1;
-            c = b4a.compare(key, await node.getKey(mid));
+            c = b4a2.compare(key, await node.getKey(mid));
             if (c === 0) {
               if (cas) {
                 const prev = await node.getKeyNode(mid);
@@ -33703,13 +33960,13 @@ var require_hyperbee = __commonJS({
     function enc(e, v) {
       if (v === void 0 || v === null) return null;
       if (e !== null) return e.encode(v);
-      if (typeof v === "string") return b4a.from(v);
+      if (typeof v === "string") return b4a2.from(v);
       return v;
     }
     function prefixEncoding(prefix, keyEncoding) {
       return {
         encode(key) {
-          return b4a.concat([prefix, b4a.isBuffer(key) ? key : enc(keyEncoding, key)]);
+          return b4a2.concat([prefix, b4a2.isBuffer(key) ? key : enc(keyEncoding, key)]);
         },
         decode(key) {
           const sliced = key.slice(prefix.length, key.length);
@@ -33747,7 +34004,7 @@ var require_hyperbee = __commonJS({
       return null;
     }
     function sameValue(a, b) {
-      return a === b || a !== null && b !== null && b4a.equals(a, b);
+      return a === b || a !== null && b !== null && b4a2.equals(a, b);
     }
     function noop() {
     }
@@ -33780,2466 +34037,20 @@ var require_hyperbee = __commonJS({
   }
 });
 
-// node_modules/inherits/inherits_browser.js
-var require_inherits_browser = __commonJS({
-  "node_modules/inherits/inherits_browser.js"(exports, module) {
-    init_node_shims();
-    if (typeof Object.create === "function") {
-      module.exports = function inherits(ctor, superCtor) {
-        if (superCtor) {
-          ctor.super_ = superCtor;
-          ctor.prototype = Object.create(superCtor.prototype, {
-            constructor: {
-              value: ctor,
-              enumerable: false,
-              writable: true,
-              configurable: true
-            }
-          });
-        }
-      };
-    } else {
-      module.exports = function inherits(ctor, superCtor) {
-        if (superCtor) {
-          ctor.super_ = superCtor;
-          var TempCtor = function() {
-          };
-          TempCtor.prototype = superCtor.prototype;
-          ctor.prototype = new TempCtor();
-          ctor.prototype.constructor = ctor;
-        }
-      };
-    }
-  }
-});
-
-// node_modules/random-access-web/node_modules/random-access-storage/index.js
-var require_random_access_storage = __commonJS({
-  "node_modules/random-access-web/node_modules/random-access-storage/index.js"(exports, module) {
-    init_node_shims();
-    var events = require_events();
-    var inherits = require_inherits_browser();
-    var queueTick = require_queue_microtask();
-    var NOT_READABLE = defaultImpl(new Error("Not readable"));
-    var NOT_WRITABLE = defaultImpl(new Error("Not writable"));
-    var NOT_DELETABLE = defaultImpl(new Error("Not deletable"));
-    var NOT_STATABLE = defaultImpl(new Error("Not statable"));
-    var NO_OPEN_READABLE = defaultImpl(new Error("No readonly open"));
-    var READ_OP = 0;
-    var WRITE_OP = 1;
-    var DEL_OP = 2;
-    var STAT_OP = 3;
-    var OPEN_OP = 4;
-    var CLOSE_OP = 5;
-    var DESTROY_OP = 6;
-    module.exports = RandomAccess;
-    function RandomAccess(opts) {
-      if (!(this instanceof RandomAccess)) return new RandomAccess(opts);
-      events.EventEmitter.call(this);
-      this._queued = [];
-      this._pending = 0;
-      this._needsOpen = true;
-      this.opened = false;
-      this.closed = false;
-      this.destroyed = false;
-      if (opts) {
-        if (opts.openReadonly) this._openReadonly = opts.openReadonly;
-        if (opts.open) this._open = opts.open;
-        if (opts.read) this._read = opts.read;
-        if (opts.write) this._write = opts.write;
-        if (opts.del) this._del = opts.del;
-        if (opts.stat) this._stat = opts.stat;
-        if (opts.close) this._close = opts.close;
-        if (opts.destroy) this._destroy = opts.destroy;
-      }
-      this.preferReadonly = this._openReadonly !== NO_OPEN_READABLE;
-      this.readable = this._read !== NOT_READABLE;
-      this.writable = this._write !== NOT_WRITABLE;
-      this.deletable = this._del !== NOT_DELETABLE;
-      this.statable = this._stat !== NOT_STATABLE;
-    }
-    inherits(RandomAccess, events.EventEmitter);
-    RandomAccess.prototype.read = function(offset, size, cb) {
-      this.run(new Request(this, READ_OP, offset, size, null, cb));
-    };
-    RandomAccess.prototype._read = NOT_READABLE;
-    RandomAccess.prototype.write = function(offset, data, cb) {
-      if (!cb) cb = noop;
-      openWritable(this);
-      this.run(new Request(this, WRITE_OP, offset, data.length, data, cb));
-    };
-    RandomAccess.prototype._write = NOT_WRITABLE;
-    RandomAccess.prototype.del = function(offset, size, cb) {
-      if (!cb) cb = noop;
-      openWritable(this);
-      this.run(new Request(this, DEL_OP, offset, size, null, cb));
-    };
-    RandomAccess.prototype._del = NOT_DELETABLE;
-    RandomAccess.prototype.stat = function(cb) {
-      this.run(new Request(this, STAT_OP, 0, 0, null, cb));
-    };
-    RandomAccess.prototype._stat = NOT_STATABLE;
-    RandomAccess.prototype.open = function(cb) {
-      if (!cb) cb = noop;
-      if (this.opened && !this._needsOpen) return queueTick(() => cb(null));
-      queueAndRun(this, new Request(this, OPEN_OP, 0, 0, null, cb));
-    };
-    RandomAccess.prototype._open = defaultImpl(null);
-    RandomAccess.prototype._openReadonly = NO_OPEN_READABLE;
-    RandomAccess.prototype.close = function(cb) {
-      if (!cb) cb = noop;
-      if (this.closed) return queueTick(() => cb(null));
-      queueAndRun(this, new Request(this, CLOSE_OP, 0, 0, null, cb));
-    };
-    RandomAccess.prototype._close = defaultImpl(null);
-    RandomAccess.prototype.destroy = function(cb) {
-      if (!cb) cb = noop;
-      if (!this.closed) this.close(noop);
-      queueAndRun(this, new Request(this, DESTROY_OP, 0, 0, null, cb));
-    };
-    RandomAccess.prototype._destroy = defaultImpl(null);
-    RandomAccess.prototype.run = function(req) {
-      if (this._needsOpen) this.open(noop);
-      if (this._queued.length) this._queued.push(req);
-      else req._run();
-    };
-    function noop() {
-    }
-    function Request(self2, type, offset, size, data, cb) {
-      this.type = type;
-      this.offset = offset;
-      this.data = data;
-      this.size = size;
-      this.storage = self2;
-      this._sync = false;
-      this._callback = cb;
-      this._openError = null;
-    }
-    Request.prototype._maybeOpenError = function(err) {
-      if (this.type !== OPEN_OP) return;
-      var queued = this.storage._queued;
-      for (var i = 0; i < queued.length; i++) queued[i]._openError = err;
-    };
-    Request.prototype._unqueue = function(err) {
-      var ra = this.storage;
-      var queued = ra._queued;
-      if (!err) {
-        switch (this.type) {
-          case OPEN_OP:
-            if (!ra.opened) {
-              ra.opened = true;
-              ra.emit("open");
-            }
-            break;
-          case CLOSE_OP:
-            if (!ra.closed) {
-              ra.closed = true;
-              ra.emit("close");
-            }
-            break;
-          case DESTROY_OP:
-            if (!ra.destroyed) {
-              ra.destroyed = true;
-              ra.emit("destroy");
-            }
-            break;
-        }
-      } else {
-        this._maybeOpenError(err);
-      }
-      if (queued.length && queued[0] === this) queued.shift();
-      if (!--ra._pending) drainQueue(ra);
-    };
-    Request.prototype.callback = function(err, val) {
-      if (this._sync) return nextTick(this, err, val);
-      this._unqueue(err);
-      this._callback(err, val);
-    };
-    Request.prototype._openAndNotClosed = function() {
-      var ra = this.storage;
-      if (ra.opened && !ra.closed) return true;
-      if (!ra.opened) nextTick(this, this._openError || new Error("Not opened"));
-      else if (ra.closed) nextTick(this, new Error("Closed"));
-      return false;
-    };
-    Request.prototype._open = function() {
-      var ra = this.storage;
-      if (ra.opened && !ra._needsOpen) return nextTick(this, null);
-      if (ra.closed) return nextTick(this, new Error("Closed"));
-      ra._needsOpen = false;
-      if (ra.preferReadonly) ra._openReadonly(this);
-      else ra._open(this);
-    };
-    Request.prototype._run = function() {
-      var ra = this.storage;
-      ra._pending++;
-      this._sync = true;
-      switch (this.type) {
-        case READ_OP:
-          if (this._openAndNotClosed()) ra._read(this);
-          break;
-        case WRITE_OP:
-          if (this._openAndNotClosed()) ra._write(this);
-          break;
-        case DEL_OP:
-          if (this._openAndNotClosed()) ra._del(this);
-          break;
-        case STAT_OP:
-          if (this._openAndNotClosed()) ra._stat(this);
-          break;
-        case OPEN_OP:
-          this._open();
-          break;
-        case CLOSE_OP:
-          if (ra.closed || !ra.opened) nextTick(this, null);
-          else ra._close(this);
-          break;
-        case DESTROY_OP:
-          if (ra.destroyed) nextTick(this, null);
-          else ra._destroy(this);
-          break;
-      }
-      this._sync = false;
-    };
-    function queueAndRun(self2, req) {
-      self2._queued.push(req);
-      if (!self2._pending) req._run();
-    }
-    function drainQueue(self2) {
-      var queued = self2._queued;
-      while (queued.length > 0) {
-        var blocking = queued[0].type > 3;
-        if (!blocking || !self2._pending) queued[0]._run();
-        if (blocking) return;
-        queued.shift();
-      }
-    }
-    function openWritable(self2) {
-      if (self2.preferReadonly) {
-        self2._needsOpen = true;
-        self2.preferReadonly = false;
-      }
-    }
-    function defaultImpl(err) {
-      return overridable;
-      function overridable(req) {
-        nextTick(req, err);
-      }
-    }
-    function nextTick(req, err, val) {
-      queueTick(() => req.callback(err, val));
-    }
-  }
-});
-
-// node_modules/random-access-web/node_modules/random-access-memory/index.js
+// node_modules/random-access-memory/index.js
 var require_random_access_memory = __commonJS({
-  "node_modules/random-access-web/node_modules/random-access-memory/index.js"(exports, module) {
+  "node_modules/random-access-memory/index.js"(exports, module) {
     init_node_shims();
     var RandomAccess = require_random_access_storage();
     var isOptions = require_is_options();
-    var inherits = require_inherits_browser();
-    var DEFAULT_PAGE_SIZE = 1024 * 1024;
-    module.exports = RAM;
-    function RAM(opts) {
-      if (!(this instanceof RAM)) return new RAM(opts);
-      if (typeof opts === "number") opts = { length: opts };
-      if (!opts) opts = {};
-      RandomAccess.call(this);
-      if (Buffer2.isBuffer(opts)) {
-        opts = { length: opts.length, buffer: opts };
-      }
-      if (!isOptions(opts)) opts = {};
-      this.length = opts.length || 0;
-      this.pageSize = opts.length || opts.pageSize || DEFAULT_PAGE_SIZE;
-      this.buffers = [];
-      if (opts.buffer) this.buffers.push(opts.buffer);
-    }
-    inherits(RAM, RandomAccess);
-    RAM.prototype._stat = function(req) {
-      req.callback(null, { size: this.length });
-    };
-    RAM.prototype._write = function(req) {
-      var i = Math.floor(req.offset / this.pageSize);
-      var rel = req.offset - i * this.pageSize;
-      var start = 0;
-      const len = req.offset + req.size;
-      if (len > this.length) this.length = len;
-      while (start < req.size) {
-        const page = this._page(i++, true);
-        const free = this.pageSize - rel;
-        const end = free < req.size - start ? start + free : req.size;
-        req.data.copy(page, rel, start, end);
-        start = end;
-        rel = 0;
-      }
-      req.callback(null, null);
-    };
-    RAM.prototype._read = function(req) {
-      var i = Math.floor(req.offset / this.pageSize);
-      var rel = req.offset - i * this.pageSize;
-      var start = 0;
-      if (req.offset + req.size > this.length) {
-        return req.callback(new Error("Could not satisfy length"), null);
-      }
-      const data = Buffer2.alloc(req.size);
-      while (start < req.size) {
-        const page = this._page(i++, false);
-        const avail = this.pageSize - rel;
-        const wanted = req.size - start;
-        const len = avail < wanted ? avail : wanted;
-        if (page) page.copy(data, start, rel, rel + len);
-        start += len;
-        rel = 0;
-      }
-      req.callback(null, data);
-    };
-    RAM.prototype._del = function(req) {
-      var i = Math.floor(req.offset / this.pageSize);
-      var rel = req.offset - i * this.pageSize;
-      var start = 0;
-      if (rel && req.offset + req.size >= this.length) {
-        var buf = this.buffers[i];
-        if (buf) buf.fill(0, rel);
-      }
-      if (req.offset + req.size > this.length) {
-        req.size = Math.max(0, this.length - req.offset);
-      }
-      while (start < req.size) {
-        if (rel === 0 && req.size - start >= this.pageSize) {
-          this.buffers[i++] = void 0;
-        }
-        rel = 0;
-        start += this.pageSize - rel;
-      }
-      if (req.offset + req.size >= this.length) {
-        this.length = req.offset;
-      }
-      req.callback(null, null);
-    };
-    RAM.prototype._destroy = function(req) {
-      this._buffers = [];
-      this.length = 0;
-      req.callback(null, null);
-    };
-    RAM.prototype._page = function(i, upsert) {
-      var page = this.buffers[i];
-      if (page || !upsert) return page;
-      page = this.buffers[i] = Buffer2.alloc(this.pageSize);
-      return page;
-    };
-    RAM.prototype.toBuffer = function() {
-      const buf = Buffer2.alloc(this.length);
-      for (var i = 0; i < this.buffers.length; i++) {
-        if (this.buffers[i]) this.buffers[i].copy(buf, i * this.pageSize);
-      }
-      return buf;
-    };
-  }
-});
-
-// node_modules/random-access-chrome-file/node_modules/random-access-storage/index.js
-var require_random_access_storage2 = __commonJS({
-  "node_modules/random-access-chrome-file/node_modules/random-access-storage/index.js"(exports, module) {
-    init_node_shims();
-    var events = require_events();
-    var inherits = require_inherits_browser();
-    var queueTick = require_queue_microtask();
-    var NOT_READABLE = defaultImpl(new Error("Not readable"));
-    var NOT_WRITABLE = defaultImpl(new Error("Not writable"));
-    var NOT_DELETABLE = defaultImpl(new Error("Not deletable"));
-    var NOT_STATABLE = defaultImpl(new Error("Not statable"));
-    var NO_OPEN_READABLE = defaultImpl(new Error("No readonly open"));
-    var READ_OP = 0;
-    var WRITE_OP = 1;
-    var DEL_OP = 2;
-    var STAT_OP = 3;
-    var OPEN_OP = 4;
-    var CLOSE_OP = 5;
-    var DESTROY_OP = 6;
-    module.exports = RandomAccess;
-    function RandomAccess(opts) {
-      if (!(this instanceof RandomAccess)) return new RandomAccess(opts);
-      events.EventEmitter.call(this);
-      this._queued = [];
-      this._pending = 0;
-      this._needsOpen = true;
-      this.opened = false;
-      this.closed = false;
-      this.destroyed = false;
-      if (opts) {
-        if (opts.openReadonly) this._openReadonly = opts.openReadonly;
-        if (opts.open) this._open = opts.open;
-        if (opts.read) this._read = opts.read;
-        if (opts.write) this._write = opts.write;
-        if (opts.del) this._del = opts.del;
-        if (opts.stat) this._stat = opts.stat;
-        if (opts.close) this._close = opts.close;
-        if (opts.destroy) this._destroy = opts.destroy;
-      }
-      this.preferReadonly = this._openReadonly !== NO_OPEN_READABLE;
-      this.readable = this._read !== NOT_READABLE;
-      this.writable = this._write !== NOT_WRITABLE;
-      this.deletable = this._del !== NOT_DELETABLE;
-      this.statable = this._stat !== NOT_STATABLE;
-    }
-    inherits(RandomAccess, events.EventEmitter);
-    RandomAccess.prototype.read = function(offset, size, cb) {
-      this.run(new Request(this, READ_OP, offset, size, null, cb));
-    };
-    RandomAccess.prototype._read = NOT_READABLE;
-    RandomAccess.prototype.write = function(offset, data, cb) {
-      if (!cb) cb = noop;
-      openWritable(this);
-      this.run(new Request(this, WRITE_OP, offset, data.length, data, cb));
-    };
-    RandomAccess.prototype._write = NOT_WRITABLE;
-    RandomAccess.prototype.del = function(offset, size, cb) {
-      if (!cb) cb = noop;
-      openWritable(this);
-      this.run(new Request(this, DEL_OP, offset, size, null, cb));
-    };
-    RandomAccess.prototype._del = NOT_DELETABLE;
-    RandomAccess.prototype.stat = function(cb) {
-      this.run(new Request(this, STAT_OP, 0, 0, null, cb));
-    };
-    RandomAccess.prototype._stat = NOT_STATABLE;
-    RandomAccess.prototype.open = function(cb) {
-      if (!cb) cb = noop;
-      if (this.opened && !this._needsOpen) return queueTick(() => cb(null));
-      queueAndRun(this, new Request(this, OPEN_OP, 0, 0, null, cb));
-    };
-    RandomAccess.prototype._open = defaultImpl(null);
-    RandomAccess.prototype._openReadonly = NO_OPEN_READABLE;
-    RandomAccess.prototype.close = function(cb) {
-      if (!cb) cb = noop;
-      if (this.closed) return queueTick(() => cb(null));
-      queueAndRun(this, new Request(this, CLOSE_OP, 0, 0, null, cb));
-    };
-    RandomAccess.prototype._close = defaultImpl(null);
-    RandomAccess.prototype.destroy = function(cb) {
-      if (!cb) cb = noop;
-      if (!this.closed) this.close(noop);
-      queueAndRun(this, new Request(this, DESTROY_OP, 0, 0, null, cb));
-    };
-    RandomAccess.prototype._destroy = defaultImpl(null);
-    RandomAccess.prototype.run = function(req) {
-      if (this._needsOpen) this.open(noop);
-      if (this._queued.length) this._queued.push(req);
-      else req._run();
-    };
-    function noop() {
-    }
-    function Request(self2, type, offset, size, data, cb) {
-      this.type = type;
-      this.offset = offset;
-      this.data = data;
-      this.size = size;
-      this.storage = self2;
-      this._sync = false;
-      this._callback = cb;
-      this._openError = null;
-    }
-    Request.prototype._maybeOpenError = function(err) {
-      if (this.type !== OPEN_OP) return;
-      var queued = this.storage._queued;
-      for (var i = 0; i < queued.length; i++) queued[i]._openError = err;
-    };
-    Request.prototype._unqueue = function(err) {
-      var ra = this.storage;
-      var queued = ra._queued;
-      if (!err) {
-        switch (this.type) {
-          case OPEN_OP:
-            if (!ra.opened) {
-              ra.opened = true;
-              ra.emit("open");
-            }
-            break;
-          case CLOSE_OP:
-            if (!ra.closed) {
-              ra.closed = true;
-              ra.emit("close");
-            }
-            break;
-          case DESTROY_OP:
-            if (!ra.destroyed) {
-              ra.destroyed = true;
-              ra.emit("destroy");
-            }
-            break;
-        }
-      } else {
-        this._maybeOpenError(err);
-      }
-      if (queued.length && queued[0] === this) queued.shift();
-      if (!--ra._pending) drainQueue(ra);
-    };
-    Request.prototype.callback = function(err, val) {
-      if (this._sync) return nextTick(this, err, val);
-      this._unqueue(err);
-      this._callback(err, val);
-    };
-    Request.prototype._openAndNotClosed = function() {
-      var ra = this.storage;
-      if (ra.opened && !ra.closed) return true;
-      if (!ra.opened) nextTick(this, this._openError || new Error("Not opened"));
-      else if (ra.closed) nextTick(this, new Error("Closed"));
-      return false;
-    };
-    Request.prototype._open = function() {
-      var ra = this.storage;
-      if (ra.opened && !ra._needsOpen) return nextTick(this, null);
-      if (ra.closed) return nextTick(this, new Error("Closed"));
-      ra._needsOpen = false;
-      if (ra.preferReadonly) ra._openReadonly(this);
-      else ra._open(this);
-    };
-    Request.prototype._run = function() {
-      var ra = this.storage;
-      ra._pending++;
-      this._sync = true;
-      switch (this.type) {
-        case READ_OP:
-          if (this._openAndNotClosed()) ra._read(this);
-          break;
-        case WRITE_OP:
-          if (this._openAndNotClosed()) ra._write(this);
-          break;
-        case DEL_OP:
-          if (this._openAndNotClosed()) ra._del(this);
-          break;
-        case STAT_OP:
-          if (this._openAndNotClosed()) ra._stat(this);
-          break;
-        case OPEN_OP:
-          this._open();
-          break;
-        case CLOSE_OP:
-          if (ra.closed || !ra.opened) nextTick(this, null);
-          else ra._close(this);
-          break;
-        case DESTROY_OP:
-          if (ra.destroyed) nextTick(this, null);
-          else ra._destroy(this);
-          break;
-      }
-      this._sync = false;
-    };
-    function queueAndRun(self2, req) {
-      self2._queued.push(req);
-      if (!self2._pending) req._run();
-    }
-    function drainQueue(self2) {
-      var queued = self2._queued;
-      while (queued.length > 0) {
-        var blocking = queued[0].type > 3;
-        if (!blocking || !self2._pending) queued[0]._run();
-        if (blocking) return;
-        queued.shift();
-      }
-    }
-    function openWritable(self2) {
-      if (self2.preferReadonly) {
-        self2._needsOpen = true;
-        self2.preferReadonly = false;
-      }
-    }
-    function defaultImpl(err) {
-      return overridable;
-      function overridable(req) {
-        nextTick(req, err);
-      }
-    }
-    function nextTick(req, err, val) {
-      queueTick(() => req.callback(err, val));
-    }
-  }
-});
-
-// node_modules/random-access-chrome-file/index.js
-var require_random_access_chrome_file = __commonJS({
-  "node_modules/random-access-chrome-file/index.js"(exports, module) {
-    init_node_shims();
-    var ras = require_random_access_storage2();
-    var TYPE = { type: "octet/stream" };
-    var requestFileSystem = window.requestFileSystem || window.webkitRequestFileSystem;
-    var persistentStorage = navigator.persistentStorage || navigator.webkitPersistentStorage;
-    var FileReader = window.FileReader;
-    var Blob = window.Blob;
-    createFile.DEFAULT_MAX_SIZE = Number.MAX_SAFE_INTEGER;
-    createFile.requestQuota = requestQuota;
-    module.exports = createFile;
-    function requestQuota(n, force, cb) {
-      if (typeof force === "function") return requestQuota(n, true, force);
-      persistentStorage.queryUsageAndQuota(function(used, quota) {
-        if (quota && !force) return cb(null, quota);
-        persistentStorage.requestQuota(n, function(quota2) {
-          cb(null, quota2);
-        }, cb);
-      }, cb);
-    }
-    function createFile(name, opts) {
-      if (!opts) opts = {};
-      const maxSize = opts.maxSize || createFile.DEFAULT_MAX_SIZE;
-      const mutex = new Mutex();
-      let fs = null;
-      let entry = null;
-      let toDestroy = null;
-      let readers = [];
-      let writers = [];
-      let deleters = [];
-      return ras({ read, write, del, open, stat, close, destroy });
-      function read(req) {
-        const r = readers.pop() || new ReadRequest(readers, entry, mutex);
-        r.run(req);
-      }
-      function write(req) {
-        const w = writers.pop() || new WriteRequest(writers, entry, mutex);
-        w.run(req);
-      }
-      function del(req) {
-        const d = deleters.pop() || new DeleteRequest(deleters, entry, mutex);
-        d.run(req);
-      }
-      function close(req) {
-        readers = writers = deleters = entry = fs = null;
-        req.callback(null);
-      }
-      function stat(req) {
-        entry.file((file) => {
-          req.callback(null, file);
-        }, (err) => req.callback(err));
-      }
-      function destroy(req) {
-        toDestroy.remove(ondone, onerror);
-        function ondone() {
-          toDestroy = null;
-          req.callback(null, null);
-        }
-        function onerror(err) {
-          toDestroy = null;
-          req.callback(err, null);
-        }
-      }
-      function open(req) {
-        requestQuota(maxSize, false, function(err, granted) {
-          if (err) return onerror(err);
-          requestFileSystem(window.PERSISTENT, granted, function(res) {
-            fs = res;
-            mkdirp(parentFolder(name), function() {
-              fs.root.getFile(name, { create: true }, function(e) {
-                entry = toDestroy = e;
-                req.callback(null);
-              }, onerror);
-            });
-          }, onerror);
-        });
-        function mkdirp(name2, ondone) {
-          if (!name2) return ondone();
-          fs.root.getDirectory(name2, { create: true }, ondone, function() {
-            mkdirp(parentFolder(name2), function() {
-              fs.root.getDirectory(name2, { create: true }, ondone, ondone);
-            });
-          });
-        }
-        function onerror(err) {
-          fs = entry = null;
-          req.callback(err);
-        }
-      }
-    }
-    function parentFolder(path) {
-      const i = path.lastIndexOf("/");
-      const j = path.lastIndexOf("\\");
-      const p = path.slice(0, Math.max(0, i, j));
-      return /^\w:$/.test(p) ? "" : p;
-    }
-    function WriteRequest(pool, entry, mutex) {
-      this.pool = pool;
-      this.entry = entry;
-      this.mutex = mutex;
-      this.writer = null;
-      this.req = null;
-      this.locked = false;
-      this.truncating = false;
-    }
-    WriteRequest.prototype.makeWriter = function() {
-      const self2 = this;
-      this.entry.createWriter(function(writer) {
-        self2.writer = writer;
-        writer.onwriteend = function() {
-          self2.onwrite(null);
-        };
-        writer.onerror = function(err) {
-          self2.onwrite(err);
-        };
-        self2.run(self2.req);
-      });
-    };
-    WriteRequest.prototype.onwrite = function(err) {
-      const req = this.req;
-      this.req = null;
-      if (this.locked) {
-        this.locked = false;
-        this.mutex.release();
-      }
-      if (this.truncating) {
-        this.truncating = false;
-        if (!err) return this.run(req);
-      }
-      this.pool.push(this);
-      req.callback(err, null);
-    };
-    WriteRequest.prototype.truncate = function() {
-      this.truncating = true;
-      this.writer.truncate(this.req.offset);
-    };
-    WriteRequest.prototype.lock = function() {
-      if (this.locked) return true;
-      this.locked = this.mutex.lock(this);
-      return this.locked;
-    };
-    WriteRequest.prototype.run = function(req) {
-      this.entry.file((file) => {
-        this.req = req;
-        if (!this.writer || this.writer.length !== file.size) return this.makeWriter();
-        if (req.offset + req.size > file.size && !this.lock()) return;
-        if (req.offset > this.writer.length) {
-          if (req.offset > file.size) return this.truncate();
-          return this.makeWriter();
-        }
-        this.writer.seek(req.offset);
-        this.writer.write(new Blob([req.data], TYPE));
-      }, (err) => req.callback(err));
-    };
-    function Mutex() {
-      this.queued = null;
-    }
-    Mutex.prototype.release = function() {
-      const queued = this.queued;
-      this.queued = null;
-      for (let i = 0; i < queued.length; i++) {
-        queued[i].run(queued[i].req);
-      }
-    };
-    Mutex.prototype.lock = function(req) {
-      if (this.queued) {
-        this.queued.push(req);
-        return false;
-      }
-      this.queued = [];
-      return true;
-    };
-    function ReadRequest(pool, entry, mutex) {
-      this.pool = pool;
-      this.entry = entry;
-      this.mutex = mutex;
-      this.reader = new FileReader();
-      this.req = null;
-      this.retry = true;
-      this.locked = false;
-      const self2 = this;
-      this.reader.onerror = function() {
-        self2.onread(this.error, null);
-      };
-      this.reader.onload = function() {
-        const buf = Buffer2.from(this.result);
-        self2.onread(null, buf);
-      };
-    }
-    ReadRequest.prototype.lock = function() {
-      if (this.locked) return true;
-      this.locked = this.mutex.lock(this);
-      return this.locked;
-    };
-    ReadRequest.prototype.onread = function(err, buf) {
-      const req = this.req;
-      if (err && this.retry) {
-        this.retry = false;
-        if (this.lock(this)) this.run(req);
-        return;
-      }
-      this.req = null;
-      this.pool.push(this);
-      this.retry = true;
-      if (this.locked) {
-        this.locked = false;
-        this.mutex.release();
-      }
-      req.callback(err, buf);
-    };
-    ReadRequest.prototype.run = function(req) {
-      this.entry.file((file) => {
-        const end = req.offset + req.size;
-        this.req = req;
-        if (end > file.size) return this.onread(new Error("Could not satisfy length"), null);
-        this.reader.readAsArrayBuffer(file.slice(req.offset, end));
-      }, (err) => req.callback(err));
-    };
-    function DeleteRequest(pool, entry, mutex) {
-      this.pool = pool;
-      this.entry = entry;
-      this.mutex = mutex;
-      this.writer = null;
-      this.req = null;
-      this.locked = false;
-    }
-    DeleteRequest.prototype.makeWriter = function() {
-      const self2 = this;
-      this.entry.createWriter(function(writer) {
-        self2.writer = writer;
-        writer.onwriteend = function() {
-          self2.onwrite(null);
-        };
-        writer.onerror = function(err) {
-          self2.onwrite(err);
-        };
-        self2.run(self2.req);
-      });
-    };
-    DeleteRequest.prototype.onwrite = function(err) {
-      const req = this.req;
-      this.req = null;
-      if (this.locked) {
-        this.locked = false;
-        this.mutex.release();
-      }
-      this.pool.push(this);
-      req.callback(err, null);
-    };
-    DeleteRequest.prototype.lock = function() {
-      if (this.locked) return true;
-      this.locked = this.mutex.lock(this);
-      return this.locked;
-    };
-    DeleteRequest.prototype.run = function(req) {
-      this.entry.file((file) => {
-        this.req = req;
-        if (req.offset + req.size < file.size) return req.callback(null);
-        if (!this.writer) return this.makeWriter();
-        if (!this.lock()) return;
-        this.writer.truncate(req.offset);
-      }, (err) => req.callback(err));
-    };
-  }
-});
-
-// node_modules/random-access-idb-mutable-file/node_modules/random-access-storage/index.js
-var require_random_access_storage3 = __commonJS({
-  "node_modules/random-access-idb-mutable-file/node_modules/random-access-storage/index.js"(exports, module) {
-    init_node_shims();
-    var events = require_events();
-    var inherits = require_inherits_browser();
-    var NOT_READABLE = defaultImpl(new Error("Not readable"));
-    var NOT_WRITABLE = defaultImpl(new Error("Not writable"));
-    var NOT_DELETABLE = defaultImpl(new Error("Not deletable"));
-    var NOT_STATABLE = defaultImpl(new Error("Not statable"));
-    var NO_OPEN_READABLE = defaultImpl(new Error("No readonly open"));
-    module.exports = RandomAccess;
-    function RandomAccess(opts) {
-      if (!(this instanceof RandomAccess)) return new RandomAccess(opts);
-      events.EventEmitter.call(this);
-      this._queued = [];
-      this._pending = 0;
-      this._needsOpen = true;
-      this.opened = false;
-      this.closed = false;
-      this.destroyed = false;
-      if (opts) {
-        if (opts.openReadonly) this._openReadonly = opts.openReadonly;
-        if (opts.open) this._open = opts.open;
-        if (opts.read) this._read = opts.read;
-        if (opts.write) this._write = opts.write;
-        if (opts.del) this._del = opts.del;
-        if (opts.stat) this._stat = opts.stat;
-        if (opts.close) this._close = opts.close;
-        if (opts.destroy) this._destroy = opts.destroy;
-      }
-      this.preferReadonly = this._openReadonly !== NO_OPEN_READABLE;
-      this.readable = this._read !== NOT_READABLE;
-      this.writable = this._write !== NOT_WRITABLE;
-      this.deletable = this._del !== NOT_DELETABLE;
-      this.statable = this._stat !== NOT_STATABLE;
-    }
-    inherits(RandomAccess, events.EventEmitter);
-    RandomAccess.prototype.open = function(cb) {
-      if (!cb) cb = noop;
-      if (this.opened && !this._needsOpen) return process.nextTick(cb, null);
-      queueAndRun(this, new Request(this, 0, 0, 0, null, cb));
-    };
-    RandomAccess.prototype._open = defaultImpl(null);
-    RandomAccess.prototype._openReadonly = NO_OPEN_READABLE;
-    RandomAccess.prototype.read = function(offset, size, cb) {
-      this.run(new Request(this, 1, offset, size, null, cb));
-    };
-    RandomAccess.prototype._read = NOT_READABLE;
-    RandomAccess.prototype.write = function(offset, data, cb) {
-      if (!cb) cb = noop;
-      openWritable(this);
-      this.run(new Request(this, 2, offset, data.length, data, cb));
-    };
-    RandomAccess.prototype._write = NOT_WRITABLE;
-    RandomAccess.prototype.del = function(offset, size, cb) {
-      if (!cb) cb = noop;
-      openWritable(this);
-      this.run(new Request(this, 3, offset, size, null, cb));
-    };
-    RandomAccess.prototype._del = NOT_DELETABLE;
-    RandomAccess.prototype.stat = function(cb) {
-      this.run(new Request(this, 4, 0, 0, null, cb));
-    };
-    RandomAccess.prototype._stat = NOT_STATABLE;
-    RandomAccess.prototype.close = function(cb) {
-      if (!cb) cb = noop;
-      if (this.closed) return process.nextTick(cb, null);
-      queueAndRun(this, new Request(this, 5, 0, 0, null, cb));
-    };
-    RandomAccess.prototype._close = defaultImpl(null);
-    RandomAccess.prototype.destroy = function(cb) {
-      if (!cb) cb = noop;
-      if (!this.closed) this.close(noop);
-      queueAndRun(this, new Request(this, 6, 0, 0, null, cb));
-    };
-    RandomAccess.prototype._destroy = defaultImpl(null);
-    RandomAccess.prototype.run = function(req) {
-      if (this._needsOpen) this.open(noop);
-      if (this._queued.length) this._queued.push(req);
-      else req._run();
-    };
-    function noop() {
-    }
-    function Request(self2, type, offset, size, data, cb) {
-      this.type = type;
-      this.offset = offset;
-      this.data = data;
-      this.size = size;
-      this.storage = self2;
-      this._sync = false;
-      this._callback = cb;
-      this._openError = null;
-    }
-    Request.prototype._maybeOpenError = function(err) {
-      if (this.type !== 0) return;
-      var queued = this.storage._queued;
-      for (var i = 0; i < queued.length; i++) queued[i]._openError = err;
-    };
-    Request.prototype._unqueue = function(err) {
-      var ra = this.storage;
-      var queued = ra._queued;
-      if (!err) {
-        switch (this.type) {
-          case 0:
-            if (!ra.opened) {
-              ra.opened = true;
-              ra.emit("open");
-            }
-            break;
-          case 5:
-            if (!ra.closed) {
-              ra.closed = true;
-              ra.emit("close");
-            }
-            break;
-          case 6:
-            if (!ra.destroyed) {
-              ra.destroyed = true;
-              ra.emit("destroy");
-            }
-            break;
-        }
-      } else {
-        this._maybeOpenError(err);
-      }
-      if (queued.length && queued[0] === this) queued.shift();
-      if (!--ra._pending && queued.length) queued[0]._run();
-    };
-    Request.prototype.callback = function(err, val) {
-      if (this._sync) return nextTick(this, err, val);
-      this._unqueue(err);
-      this._callback(err, val);
-    };
-    Request.prototype._openAndNotClosed = function() {
-      var ra = this.storage;
-      if (ra.opened && !ra.closed) return true;
-      if (!ra.opened) nextTick(this, this._openError || new Error("Not opened"));
-      else if (ra.closed) nextTick(this, new Error("Closed"));
-      return false;
-    };
-    Request.prototype._open = function() {
-      var ra = this.storage;
-      if (ra.opened && !ra._needsOpen) return nextTick(this, null);
-      if (ra.closed) return nextTick(this, new Error("Closed"));
-      ra._needsOpen = false;
-      if (ra.preferReadonly) ra._openReadonly(this);
-      else ra._open(this);
-    };
-    Request.prototype._run = function() {
-      var ra = this.storage;
-      ra._pending++;
-      this._sync = true;
-      switch (this.type) {
-        case 0:
-          this._open();
-          break;
-        case 1:
-          if (this._openAndNotClosed()) ra._read(this);
-          break;
-        case 2:
-          if (this._openAndNotClosed()) ra._write(this);
-          break;
-        case 3:
-          if (this._openAndNotClosed()) ra._del(this);
-          break;
-        case 4:
-          if (this._openAndNotClosed()) ra._stat(this);
-          break;
-        case 5:
-          if (ra.closed || !ra.opened) nextTick(this, null);
-          else ra._close(this);
-          break;
-        case 6:
-          if (ra.destroyed) nextTick(this, null);
-          else ra._destroy(this);
-          break;
-      }
-      this._sync = false;
-    };
-    function queueAndRun(self2, req) {
-      self2._queued.push(req);
-      if (!self2._pending) req._run();
-    }
-    function openWritable(self2) {
-      if (self2.preferReadonly) {
-        self2._needsOpen = true;
-        self2.preferReadonly = false;
-      }
-    }
-    function defaultImpl(err) {
-      return overridable;
-      function overridable(req) {
-        nextTick(req, err);
-      }
-    }
-    function nextTick(req, err, val) {
-      process.nextTick(nextTickCallback, req, err, val);
-    }
-    function nextTickCallback(req, err, val) {
-      req.callback(err, val);
-    }
-  }
-});
-
-// node_modules/random-access-idb-mutable-file/lib/IndexedDB.js
-var require_IndexedDB = __commonJS({
-  "node_modules/random-access-idb-mutable-file/lib/IndexedDB.js"(exports) {
-    "use strict";
-    init_node_shims();
-    Object.defineProperty(exports, "__esModule", {
-      value: true
-    });
-    var indexedDB = exports.indexedDB = window.indexedDB;
-  }
-});
-
-// node_modules/random-access-idb-mutable-file/lib/random-access-idb-mutable-file.js
-var require_random_access_idb_mutable_file = __commonJS({
-  "node_modules/random-access-idb-mutable-file/lib/random-access-idb-mutable-file.js"(exports, module) {
-    "use strict";
-    init_node_shims();
-    Object.defineProperty(exports, "__esModule", {
-      value: true
-    });
-    var _randomAccessStorage = require_random_access_storage3();
-    var _randomAccessStorage2 = _interopRequireDefault(_randomAccessStorage);
-    var _IndexedDB = require_IndexedDB();
-    var _buffer = require_buffer();
-    function _interopRequireDefault(obj) {
-      return obj && obj.__esModule ? obj : { default: obj };
-    }
-    var promise = (request) => new Promise((resolve, reject) => {
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    var RandomAccessIDBFileVolume = class {
-      constructor(db, name, version, storeName, options) {
-        this.db = db;
-        this.name = name;
-        this.version = version;
-        this.storeName = storeName;
-        this.options = options;
-      }
-      store() {
-        const { db, storeName } = this;
-        const transaction = db.transaction([storeName], "readwrite");
-        return transaction.objectStore(storeName);
-      }
-      async delete(url) {
-        return await promise(this.store().delete(url));
-      }
-      async save(url, file) {
-        return await promise(this.store().put(file, url));
-      }
-      async open(url, mode) {
-        const file = await promise(this.store().get(url));
-        if (file) {
-          return file;
-        } else if (mode === "readwrite") {
-          const file2 = await promise(this.db.createMutableFile(url, "binary/random"));
-          await this.save(url, file2);
-          return file2;
-        } else {
-          throw new RangeError(`File ${url} does not exist`);
-        }
-      }
-      mount(file, options) {
-        return new RandomAccessProvider(this, `/${file}`, options);
-      }
-    };
-    var RandomAccessProvider = class _RandomAccessProvider extends _randomAccessStorage2.default {
-      static async mount(options = {}) {
-        if (!self.IDBMutableFile) {
-          throw Error(`Runtime does not supports IDBMutableFile https://developer.mozilla.org/en-US/docs/Web/API/IDBMutableFile`);
-        } else {
-          const name = options.name || `RandomAccess`;
-          const version = options.version || 1;
-          const storeName = options.storeName || `IDBMutableFile`;
-          const request = _IndexedDB.indexedDB.open(name, version);
-          request.onupgradeneeded = () => {
-            const db2 = request.result;
-            if (!db2.objectStoreNames.contains(storeName)) {
-              db2.createObjectStore(storeName);
-            }
-          };
-          const db = await promise(request);
-          const volume = new RandomAccessIDBFileVolume(db, name, version, storeName, options);
-          return (path, options2) => volume.mount(path, options2);
-        }
-      }
-      static async open(self2, request) {
-        const { options } = self2;
-        const mode = request.preferReadonly ? "readonly" : "readwrite";
-        self2.debug && console.log(`>> open ${self2.url} ${mode}`);
-        if (!self2.file || self2.mode !== mode && mode === "readwrite") {
-          self2.mode = mode;
-          self2.file = await self2.volume.open(self2.url, mode);
-        }
-        if (!(mode === "readonly" || !options.truncate)) {
-          const file = self2.activate();
-          await promise(file.truncate(options.size || 0));
-        }
-        self2.debug && console.log(`<< open ${self2.url} ${mode}`);
-      }
-      static async read(self2, { data, offset, size }) {
-        self2.debug && console.log(`>> read ${self2.url} <${offset}, ${size}>`);
-        const buffer = data || _buffer.Buffer.allocUnsafe(size);
-        if (size === 0) {
-          return buffer;
-        }
-        const file = self2.activate();
-        file.location = offset;
-        const chunk = await promise(file.readAsArrayBuffer(size));
-        if (chunk.byteLength !== size) {
-          throw new Error("Could not satisfy length");
-        }
-        _buffer.Buffer.from(chunk).copy(buffer);
-        self2.debug && console.log(`<< read ${self2.url} <${offset}, ${size}>`, buffer);
-        return buffer;
-      }
-      static async write(self2, { data, offset, size }) {
-        self2.debug && console.log(`>> write ${self2.url} <${offset}, ${size}>`, data);
-        const { byteLength, byteOffset } = data;
-        const chunk = byteLength === size ? data : data.slice(0, size);
-        const file = self2.activate();
-        file.location = offset;
-        const wrote = await promise(file.write(chunk));
-        self2.debug && console.log(`<< write ${self2.url} <${offset}, ${size}>`);
-        return wrote;
-      }
-      static async delete(self2, { offset, size }) {
-        self2.debug && console.log(`>> delete ${self2.url} <${offset}, ${size}>`);
-        const stat = await this.stat(self2);
-        if (offset + size >= stat.size) {
-          const file = self2.activate();
-          await promise(file.truncate(offset));
-        }
-        self2.debug && console.log(`<< delete ${self2.url} <${offset}, ${size}>`);
-      }
-      static async stat(self2) {
-        self2.debug && console.log(`>> stat ${self2.url}`);
-        const file = self2.activate();
-        const stat = await promise(file.getMetadata());
-        self2.debug && console.log(`<< stat {size:${stat.size}} ${self2.url} `);
-        return stat;
-      }
-      static async close(self2) {
-        self2.debug && console.log(`>> close ${self2.url}`);
-        const { lockedFile } = self2;
-        if (lockedFile && lockedFile.active) {
-          await promise(lockedFile.flush());
-        }
-        self2.lockedFile = null;
-        self2.file = null;
-        self2.debug && console.log(`<< close ${self2.url}`);
-      }
-      static async destroy(self2) {
-        self2.debug && console.log(`>> destroy ${self2.url}`);
-        await self2.volume.delete(self2.url);
-        self2.debug && console.log(`<< destroy ${self2.url}`);
-      }
-      static async awake(self2) {
-        const { workQueue } = self2;
-        self2.isIdle = false;
-        let index = 0;
-        while (index < workQueue.length) {
-          const request = workQueue[index++];
-          await this.perform(self2, request);
-        }
-        workQueue.length = 0;
-        self2.isIdle = true;
-      }
-      static schedule(self2, request) {
-        self2.workQueue.push(request);
-        if (self2.isIdle) {
-          this.awake(self2);
-        }
-      }
-      static async perform(self2, request) {
-        try {
-          switch (request.type) {
-            case RequestType.open: {
-              return request.callback(null, await this.open(self2, request));
-            }
-            case RequestType.read: {
-              return request.callback(null, await this.read(self2, request));
-            }
-            case RequestType.write: {
-              return request.callback(null, await this.write(self2, request));
-            }
-            case RequestType.delete: {
-              return request.callback(null, await this.delete(self2, request));
-            }
-            case RequestType.stat: {
-              return request.callback(null, await this.stat(self2));
-            }
-            case RequestType.close: {
-              return request.callback(null, await this.close(self2));
-            }
-            case RequestType.destroy: {
-              return request.callback(null, await this.destroy(self2));
-            }
-          }
-        } catch (error) {
-          request.callback(error);
-        }
-      }
-      _open(request) {
-        _RandomAccessProvider.schedule(this, request);
-      }
-      _openReadonly(request) {
-        _RandomAccessProvider.schedule(this, request);
-      }
-      _write(request) {
-        _RandomAccessProvider.schedule(this, request);
-      }
-      _read(request) {
-        _RandomAccessProvider.schedule(this, request);
-      }
-      _del(request) {
-        _RandomAccessProvider.schedule(this, request);
-      }
-      _stat(request) {
-        _RandomAccessProvider.perform(this, request);
-      }
-      _close(request) {
-        _RandomAccessProvider.schedule(this, request);
-      }
-      _destroy(request) {
-        _RandomAccessProvider.schedule(this, request);
-      }
-      constructor(volume, url, options = {}) {
-        super();
-        this.volume = volume;
-        this.url = url;
-        this.options = options;
-        this.mode = "readonly";
-        this.file = null;
-        this.lockedFile = null;
-        this.workQueue = [];
-        this.isIdle = true;
-        this.debug = !!volume.options.debug;
-      }
-      activate() {
-        const { lockedFile, file, mode } = this;
-        if (lockedFile && lockedFile.active) {
-          return lockedFile;
-        } else if (file) {
-          const lockedFile2 = file.open(mode);
-          this.lockedFile = lockedFile2;
-          return lockedFile2;
-        } else {
-          throw new RangeError(`Unable to activate file, likely provider was destroyed`);
-        }
-      }
-    };
-    var RequestType = {
-      open: 0,
-      read: 1,
-      write: 2,
-      delete: 3,
-      stat: 4,
-      close: 5,
-      destroy: 6
-    };
-    exports.default = RandomAccessProvider;
-    module.exports = exports["default"];
-  }
-});
-
-// node_modules/random-access-web/mutable-file-wrapper.js
-var require_mutable_file_wrapper = __commonJS({
-  "node_modules/random-access-web/mutable-file-wrapper.js"(exports, module) {
-    init_node_shims();
-    module.exports = function mutableStorage(options) {
-      const randomAccess = require_random_access_storage();
-      const mutableAccess = require_random_access_idb_mutable_file();
-      let mounted = null;
-      let loading = null;
-      function doMount() {
-        return mutableAccess.mount(options).then((requestFile) => {
-          mounted = requestFile;
-          loading = null;
-        });
-      }
-      return (name) => {
-        let file = null;
-        return randomAccess({
-          open: function(req) {
-            if (!mounted && !loading) {
-              loading = doMount();
-            }
-            if (loading) {
-              loading.then(() => {
-                this._open(req);
-              }, (err) => {
-                req.callback(err);
-              });
-              return;
-            }
-            file = mounted(name);
-            req.callback();
-          },
-          write: function(req) {
-            file.write(req.offset, req.data, function(err, data) {
-              req.callback(err, data);
-            });
-          },
-          read: function(req) {
-            file.read(req.offset, req.size, function(err, data) {
-              req.callback(err, data);
-            });
-          },
-          del: function(req) {
-            file.del(req.offset, req.size, function(err, data) {
-              req.callback(err, data);
-            });
-          },
-          stat: function(req) {
-            file.stat(function(err, data) {
-              req.callback(err, data);
-            });
-          },
-          close: function(req) {
-            file.close(function(err, data) {
-              req.callback(err, data);
-            });
-          },
-          destroy: function(req) {
-            file.destroy(function(err, data) {
-              req.callback(err, data);
-            });
-          }
-        });
-      };
-    };
-  }
-});
-
-// node_modules/random-access-idb/node_modules/random-access-storage/index.js
-var require_random_access_storage4 = __commonJS({
-  "node_modules/random-access-idb/node_modules/random-access-storage/index.js"(exports, module) {
-    init_node_shims();
-    var events = require_events();
-    var inherits = require_inherits_browser();
-    var queueTick = require_queue_microtask();
-    var NOT_READABLE = defaultImpl(new Error("Not readable"));
-    var NOT_WRITABLE = defaultImpl(new Error("Not writable"));
-    var NOT_DELETABLE = defaultImpl(new Error("Not deletable"));
-    var NOT_STATABLE = defaultImpl(new Error("Not statable"));
-    var NO_OPEN_READABLE = defaultImpl(new Error("No readonly open"));
-    var READ_OP = 0;
-    var WRITE_OP = 1;
-    var DEL_OP = 2;
-    var STAT_OP = 3;
-    var OPEN_OP = 4;
-    var CLOSE_OP = 5;
-    var DESTROY_OP = 6;
-    module.exports = RandomAccess;
-    function RandomAccess(opts) {
-      if (!(this instanceof RandomAccess)) return new RandomAccess(opts);
-      events.EventEmitter.call(this);
-      this._queued = [];
-      this._pending = 0;
-      this._needsOpen = true;
-      this.opened = false;
-      this.closed = false;
-      this.destroyed = false;
-      if (opts) {
-        if (opts.openReadonly) this._openReadonly = opts.openReadonly;
-        if (opts.open) this._open = opts.open;
-        if (opts.read) this._read = opts.read;
-        if (opts.write) this._write = opts.write;
-        if (opts.del) this._del = opts.del;
-        if (opts.stat) this._stat = opts.stat;
-        if (opts.close) this._close = opts.close;
-        if (opts.destroy) this._destroy = opts.destroy;
-      }
-      this.preferReadonly = this._openReadonly !== NO_OPEN_READABLE;
-      this.readable = this._read !== NOT_READABLE;
-      this.writable = this._write !== NOT_WRITABLE;
-      this.deletable = this._del !== NOT_DELETABLE;
-      this.statable = this._stat !== NOT_STATABLE;
-    }
-    inherits(RandomAccess, events.EventEmitter);
-    RandomAccess.prototype.read = function(offset, size, cb) {
-      this.run(new Request(this, READ_OP, offset, size, null, cb));
-    };
-    RandomAccess.prototype._read = NOT_READABLE;
-    RandomAccess.prototype.write = function(offset, data, cb) {
-      if (!cb) cb = noop;
-      openWritable(this);
-      this.run(new Request(this, WRITE_OP, offset, data.length, data, cb));
-    };
-    RandomAccess.prototype._write = NOT_WRITABLE;
-    RandomAccess.prototype.del = function(offset, size, cb) {
-      if (!cb) cb = noop;
-      openWritable(this);
-      this.run(new Request(this, DEL_OP, offset, size, null, cb));
-    };
-    RandomAccess.prototype._del = NOT_DELETABLE;
-    RandomAccess.prototype.stat = function(cb) {
-      this.run(new Request(this, STAT_OP, 0, 0, null, cb));
-    };
-    RandomAccess.prototype._stat = NOT_STATABLE;
-    RandomAccess.prototype.open = function(cb) {
-      if (!cb) cb = noop;
-      if (this.opened && !this._needsOpen) return queueTick(() => cb(null));
-      queueAndRun(this, new Request(this, OPEN_OP, 0, 0, null, cb));
-    };
-    RandomAccess.prototype._open = defaultImpl(null);
-    RandomAccess.prototype._openReadonly = NO_OPEN_READABLE;
-    RandomAccess.prototype.close = function(cb) {
-      if (!cb) cb = noop;
-      if (this.closed) return queueTick(() => cb(null));
-      queueAndRun(this, new Request(this, CLOSE_OP, 0, 0, null, cb));
-    };
-    RandomAccess.prototype._close = defaultImpl(null);
-    RandomAccess.prototype.destroy = function(cb) {
-      if (!cb) cb = noop;
-      if (!this.closed) this.close(noop);
-      queueAndRun(this, new Request(this, DESTROY_OP, 0, 0, null, cb));
-    };
-    RandomAccess.prototype._destroy = defaultImpl(null);
-    RandomAccess.prototype.run = function(req) {
-      if (this._needsOpen) this.open(noop);
-      if (this._queued.length) this._queued.push(req);
-      else req._run();
-    };
-    function noop() {
-    }
-    function Request(self2, type, offset, size, data, cb) {
-      this.type = type;
-      this.offset = offset;
-      this.data = data;
-      this.size = size;
-      this.storage = self2;
-      this._sync = false;
-      this._callback = cb;
-      this._openError = null;
-    }
-    Request.prototype._maybeOpenError = function(err) {
-      if (this.type !== OPEN_OP) return;
-      var queued = this.storage._queued;
-      for (var i = 0; i < queued.length; i++) queued[i]._openError = err;
-    };
-    Request.prototype._unqueue = function(err) {
-      var ra = this.storage;
-      var queued = ra._queued;
-      if (!err) {
-        switch (this.type) {
-          case OPEN_OP:
-            if (!ra.opened) {
-              ra.opened = true;
-              ra.emit("open");
-            }
-            break;
-          case CLOSE_OP:
-            if (!ra.closed) {
-              ra.closed = true;
-              ra.emit("close");
-            }
-            break;
-          case DESTROY_OP:
-            if (!ra.destroyed) {
-              ra.destroyed = true;
-              ra.emit("destroy");
-            }
-            break;
-        }
-      } else {
-        this._maybeOpenError(err);
-      }
-      if (queued.length && queued[0] === this) queued.shift();
-      if (!--ra._pending) drainQueue(ra);
-    };
-    Request.prototype.callback = function(err, val) {
-      if (this._sync) return nextTick(this, err, val);
-      this._unqueue(err);
-      this._callback(err, val);
-    };
-    Request.prototype._openAndNotClosed = function() {
-      var ra = this.storage;
-      if (ra.opened && !ra.closed) return true;
-      if (!ra.opened) nextTick(this, this._openError || new Error("Not opened"));
-      else if (ra.closed) nextTick(this, new Error("Closed"));
-      return false;
-    };
-    Request.prototype._open = function() {
-      var ra = this.storage;
-      if (ra.opened && !ra._needsOpen) return nextTick(this, null);
-      if (ra.closed) return nextTick(this, new Error("Closed"));
-      ra._needsOpen = false;
-      if (ra.preferReadonly) ra._openReadonly(this);
-      else ra._open(this);
-    };
-    Request.prototype._run = function() {
-      var ra = this.storage;
-      ra._pending++;
-      this._sync = true;
-      switch (this.type) {
-        case READ_OP:
-          if (this._openAndNotClosed()) ra._read(this);
-          break;
-        case WRITE_OP:
-          if (this._openAndNotClosed()) ra._write(this);
-          break;
-        case DEL_OP:
-          if (this._openAndNotClosed()) ra._del(this);
-          break;
-        case STAT_OP:
-          if (this._openAndNotClosed()) ra._stat(this);
-          break;
-        case OPEN_OP:
-          this._open();
-          break;
-        case CLOSE_OP:
-          if (ra.closed || !ra.opened) nextTick(this, null);
-          else ra._close(this);
-          break;
-        case DESTROY_OP:
-          if (ra.destroyed) nextTick(this, null);
-          else ra._destroy(this);
-          break;
-      }
-      this._sync = false;
-    };
-    function queueAndRun(self2, req) {
-      self2._queued.push(req);
-      if (!self2._pending) req._run();
-    }
-    function drainQueue(self2) {
-      var queued = self2._queued;
-      while (queued.length > 0) {
-        var blocking = queued[0].type > 3;
-        if (!blocking || !self2._pending) queued[0]._run();
-        if (blocking) return;
-        queued.shift();
-      }
-    }
-    function openWritable(self2) {
-      if (self2.preferReadonly) {
-        self2._needsOpen = true;
-        self2.preferReadonly = false;
-      }
-    }
-    function defaultImpl(err) {
-      return overridable;
-      function overridable(req) {
-        nextTick(req, err);
-      }
-    }
-    function nextTick(req, err, val) {
-      queueTick(() => req.callback(err, val));
-    }
-  }
-});
-
-// node_modules/next-tick/index.js
-var require_next_tick = __commonJS({
-  "node_modules/next-tick/index.js"(exports, module) {
-    "use strict";
-    init_node_shims();
-    var ensureCallable = function(fn) {
-      if (typeof fn !== "function") throw new TypeError(fn + " is not a function");
-      return fn;
-    };
-    var byObserver = function(Observer) {
-      var node = document.createTextNode(""), queue, currentQueue, i = 0;
-      new Observer(function() {
-        var callback;
-        if (!queue) {
-          if (!currentQueue) return;
-          queue = currentQueue;
-        } else if (currentQueue) {
-          queue = currentQueue.concat(queue);
-        }
-        currentQueue = queue;
-        queue = null;
-        if (typeof currentQueue === "function") {
-          callback = currentQueue;
-          currentQueue = null;
-          callback();
-          return;
-        }
-        node.data = i = ++i % 2;
-        while (currentQueue) {
-          callback = currentQueue.shift();
-          if (!currentQueue.length) currentQueue = null;
-          callback();
-        }
-      }).observe(node, { characterData: true });
-      return function(fn) {
-        ensureCallable(fn);
-        if (queue) {
-          if (typeof queue === "function") queue = [queue, fn];
-          else queue.push(fn);
-          return;
-        }
-        queue = fn;
-        node.data = i = ++i % 2;
-      };
-    };
-    module.exports = (function() {
-      if (typeof process === "object" && process && typeof process.nextTick === "function") {
-        return process.nextTick;
-      }
-      if (typeof queueMicrotask === "function") {
-        return function(cb) {
-          queueMicrotask(ensureCallable(cb));
-        };
-      }
-      if (typeof document === "object" && document) {
-        if (typeof MutationObserver === "function") return byObserver(MutationObserver);
-        if (typeof WebKitMutationObserver === "function") return byObserver(WebKitMutationObserver);
-      }
-      if (typeof setImmediate === "function") {
-        return function(cb) {
-          setImmediate(ensureCallable(cb));
-        };
-      }
-      if (typeof setTimeout === "function" || typeof setTimeout === "object") {
-        return function(cb) {
-          setTimeout(ensureCallable(cb), 0);
-        };
-      }
-      return null;
-    })();
-  }
-});
-
-// node_modules/wrappy/wrappy.js
-var require_wrappy = __commonJS({
-  "node_modules/wrappy/wrappy.js"(exports, module) {
-    init_node_shims();
-    module.exports = wrappy;
-    function wrappy(fn, cb) {
-      if (fn && cb) return wrappy(fn)(cb);
-      if (typeof fn !== "function")
-        throw new TypeError("need wrapper function");
-      Object.keys(fn).forEach(function(k) {
-        wrapper[k] = fn[k];
-      });
-      return wrapper;
-      function wrapper() {
-        var args = new Array(arguments.length);
-        for (var i = 0; i < args.length; i++) {
-          args[i] = arguments[i];
-        }
-        var ret = fn.apply(this, args);
-        var cb2 = args[args.length - 1];
-        if (typeof ret === "function" && ret !== cb2) {
-          Object.keys(cb2).forEach(function(k) {
-            ret[k] = cb2[k];
-          });
-        }
-        return ret;
-      }
-    }
-  }
-});
-
-// node_modules/once/once.js
-var require_once = __commonJS({
-  "node_modules/once/once.js"(exports, module) {
-    init_node_shims();
-    var wrappy = require_wrappy();
-    module.exports = wrappy(once);
-    module.exports.strict = wrappy(onceStrict);
-    once.proto = once(function() {
-      Object.defineProperty(Function.prototype, "once", {
-        value: function() {
-          return once(this);
-        },
-        configurable: true
-      });
-      Object.defineProperty(Function.prototype, "onceStrict", {
-        value: function() {
-          return onceStrict(this);
-        },
-        configurable: true
-      });
-    });
-    function once(fn) {
-      var f = function() {
-        if (f.called) return f.value;
-        f.called = true;
-        return f.value = fn.apply(this, arguments);
-      };
-      f.called = false;
-      return f;
-    }
-    function onceStrict(fn) {
-      var f = function() {
-        if (f.called)
-          throw new Error(f.onceError);
-        f.called = true;
-        return f.value = fn.apply(this, arguments);
-      };
-      var name = fn.name || "Function wrapped with `once`";
-      f.onceError = name + " shouldn't be called more than once";
-      f.called = false;
-      return f;
-    }
-  }
-});
-
-// node_modules/random-access-idb/lib/blocks.js
-var require_blocks = __commonJS({
-  "node_modules/random-access-idb/lib/blocks.js"(exports, module) {
-    init_node_shims();
-    module.exports = function(size, start, end) {
-      var result = [];
-      for (var n = Math.floor(start / size) * size; n < end; n += size) {
-        result.push({
-          block: Math.floor(n / size),
-          start: Math.max(n, start) % size,
-          end: Math.min(n + size, end) % size || size
-        });
-      }
-      return result;
-    };
-  }
-});
-
-// node_modules/buffer-from/index.js
-var require_buffer_from = __commonJS({
-  "node_modules/buffer-from/index.js"(exports, module) {
-    init_node_shims();
-    var toString = Object.prototype.toString;
-    var isModern = typeof Buffer2.alloc === "function" && typeof Buffer2.allocUnsafe === "function" && typeof Buffer2.from === "function";
-    function isArrayBuffer(input) {
-      return toString.call(input).slice(8, -1) === "ArrayBuffer";
-    }
-    function fromArrayBuffer(obj, byteOffset, length) {
-      byteOffset >>>= 0;
-      var maxLength = obj.byteLength - byteOffset;
-      if (maxLength < 0) {
-        throw new RangeError("'offset' is out of bounds");
-      }
-      if (length === void 0) {
-        length = maxLength;
-      } else {
-        length >>>= 0;
-        if (length > maxLength) {
-          throw new RangeError("'length' is out of bounds");
-        }
-      }
-      return isModern ? Buffer2.from(obj.slice(byteOffset, byteOffset + length)) : new Buffer2(new Uint8Array(obj.slice(byteOffset, byteOffset + length)));
-    }
-    function fromString(string, encoding) {
-      if (typeof encoding !== "string" || encoding === "") {
-        encoding = "utf8";
-      }
-      if (!Buffer2.isEncoding(encoding)) {
-        throw new TypeError('"encoding" must be a valid string encoding');
-      }
-      return isModern ? Buffer2.from(string, encoding) : new Buffer2(string, encoding);
-    }
-    function bufferFrom(value, encodingOrOffset, length) {
-      if (typeof value === "number") {
-        throw new TypeError('"value" argument must not be a number');
-      }
-      if (isArrayBuffer(value)) {
-        return fromArrayBuffer(value, encodingOrOffset, length);
-      }
-      if (typeof value === "string") {
-        return fromString(value, encodingOrOffset);
-      }
-      return isModern ? Buffer2.from(value) : new Buffer2(value);
-    }
-    module.exports = bufferFrom;
-  }
-});
-
-// node_modules/buffer-fill/index.js
-var require_buffer_fill = __commonJS({
-  "node_modules/buffer-fill/index.js"(exports, module) {
-    init_node_shims();
-    var hasFullSupport = (function() {
-      try {
-        if (!Buffer2.isEncoding("latin1")) {
-          return false;
-        }
-        var buf = Buffer2.alloc ? Buffer2.alloc(4) : new Buffer2(4);
-        buf.fill("ab", "ucs2");
-        return buf.toString("hex") === "61006200";
-      } catch (_) {
-        return false;
-      }
-    })();
-    function isSingleByte(val) {
-      return val.length === 1 && val.charCodeAt(0) < 256;
-    }
-    function fillWithNumber(buffer, val, start, end) {
-      if (start < 0 || end > buffer.length) {
-        throw new RangeError("Out of range index");
-      }
-      start = start >>> 0;
-      end = end === void 0 ? buffer.length : end >>> 0;
-      if (end > start) {
-        buffer.fill(val, start, end);
-      }
-      return buffer;
-    }
-    function fillWithBuffer(buffer, val, start, end) {
-      if (start < 0 || end > buffer.length) {
-        throw new RangeError("Out of range index");
-      }
-      if (end <= start) {
-        return buffer;
-      }
-      start = start >>> 0;
-      end = end === void 0 ? buffer.length : end >>> 0;
-      var pos = start;
-      var len = val.length;
-      while (pos <= end - len) {
-        val.copy(buffer, pos);
-        pos += len;
-      }
-      if (pos !== end) {
-        val.copy(buffer, pos, 0, end - pos);
-      }
-      return buffer;
-    }
-    function fill(buffer, val, start, end, encoding) {
-      if (hasFullSupport) {
-        return buffer.fill(val, start, end, encoding);
-      }
-      if (typeof val === "number") {
-        return fillWithNumber(buffer, val, start, end);
-      }
-      if (typeof val === "string") {
-        if (typeof start === "string") {
-          encoding = start;
-          start = 0;
-          end = buffer.length;
-        } else if (typeof end === "string") {
-          encoding = end;
-          end = buffer.length;
-        }
-        if (encoding !== void 0 && typeof encoding !== "string") {
-          throw new TypeError("encoding must be a string");
-        }
-        if (encoding === "latin1") {
-          encoding = "binary";
-        }
-        if (typeof encoding === "string" && !Buffer2.isEncoding(encoding)) {
-          throw new TypeError("Unknown encoding: " + encoding);
-        }
-        if (val === "") {
-          return fillWithNumber(buffer, 0, start, end);
-        }
-        if (isSingleByte(val)) {
-          return fillWithNumber(buffer, val.charCodeAt(0), start, end);
-        }
-        val = new Buffer2(val, encoding);
-      }
-      if (Buffer2.isBuffer(val)) {
-        return fillWithBuffer(buffer, val, start, end);
-      }
-      return fillWithNumber(buffer, 0, start, end);
-    }
-    module.exports = fill;
-  }
-});
-
-// node_modules/buffer-alloc-unsafe/index.js
-var require_buffer_alloc_unsafe = __commonJS({
-  "node_modules/buffer-alloc-unsafe/index.js"(exports, module) {
-    init_node_shims();
-    function allocUnsafe(size) {
-      if (typeof size !== "number") {
-        throw new TypeError('"size" argument must be a number');
-      }
-      if (size < 0) {
-        throw new RangeError('"size" argument must not be negative');
-      }
-      if (Buffer2.allocUnsafe) {
-        return Buffer2.allocUnsafe(size);
-      } else {
-        return new Buffer2(size);
-      }
-    }
-    module.exports = allocUnsafe;
-  }
-});
-
-// node_modules/buffer-alloc/index.js
-var require_buffer_alloc = __commonJS({
-  "node_modules/buffer-alloc/index.js"(exports, module) {
-    init_node_shims();
-    var bufferFill = require_buffer_fill();
-    var allocUnsafe = require_buffer_alloc_unsafe();
-    module.exports = function alloc(size, fill, encoding) {
-      if (typeof size !== "number") {
-        throw new TypeError('"size" argument must be a number');
-      }
-      if (size < 0) {
-        throw new RangeError('"size" argument must not be negative');
-      }
-      if (Buffer2.alloc) {
-        return Buffer2.alloc(size, fill, encoding);
-      }
-      var buffer = allocUnsafe(size);
-      if (size === 0) {
-        return buffer;
-      }
-      if (fill === void 0) {
-        return bufferFill(buffer, 0);
-      }
-      if (typeof encoding !== "string") {
-        encoding = void 0;
-      }
-      return bufferFill(buffer, fill, encoding);
-    };
-  }
-});
-
-// node_modules/random-access-idb/index.js
-var require_random_access_idb = __commonJS({
-  "node_modules/random-access-idb/index.js"(exports, module) {
-    init_node_shims();
-    var RandomAccess = require_random_access_storage4();
-    var inherits = require_inherits_browser();
-    var nextTick = require_next_tick();
-    var once = require_once();
-    var blocks = require_blocks();
-    var bufferFrom = require_buffer_from();
-    var bufferAlloc = require_buffer_alloc();
-    var DELIM = "\0";
-    var win = typeof window !== "undefined" ? window : typeof self !== "undefined" ? self : {};
-    module.exports = function(dbname, xopts) {
-      if (!xopts) xopts = {};
-      var idb = xopts.idb || (typeof win !== "undefined" ? win.indexedDB || win.mozIndexedDB || win.webkitIndexedDB || win.msIndexedDB : null);
-      if (!idb) throw new Error("indexedDB not present and not given");
-      var db = null, dbqueue = [];
-      if (typeof idb.open === "function") {
-        var req = idb.open(dbname);
-        req.addEventListener("upgradeneeded", function() {
-          db = req.result;
-          db.createObjectStore("data");
-        });
-        req.addEventListener("success", function() {
-          db = req.result;
-          dbqueue.forEach(function(cb) {
-            cb(db);
-          });
-          dbqueue = null;
-        });
-      } else {
-        db = idb;
-      }
-      return function(name, opts) {
-        if (typeof name === "object") {
-          opts = name;
-          name = opts.name;
-        }
-        if (!opts) opts = {};
-        opts.name = name;
-        return new Store(Object.assign({ db: getdb }, xopts, opts));
-      };
-      function getdb(cb) {
-        if (db) nextTick(function() {
-          cb(db);
-        });
-        else dbqueue.push(cb);
-      }
-    };
-    function Store(opts) {
-      if (!(this instanceof Store)) return new Store(opts);
-      RandomAccess.call(this);
-      if (!opts) opts = {};
-      if (typeof opts === "string") opts = { name: opts };
-      this.size = opts.size || 4096;
-      this.name = opts.name;
-      this.length = opts.length || 0;
-      this._getdb = opts.db;
-    }
-    inherits(Store, RandomAccess);
-    Store.prototype._blocks = function(i, j) {
-      return blocks(this.size, i, j);
-    };
-    Store.prototype._read = function(req) {
-      var self2 = this;
-      var buffers = [];
-      self2._store("readonly", function(err, store) {
-        if ((self2.length || 0) < req.offset + req.size) {
-          return req.callback(new Error("Could not satisfy length"));
-        }
-        if (err) return req.callback(err);
-        var offsets = self2._blocks(req.offset, req.offset + req.size);
-        var pending = offsets.length + 1;
-        var firstBlock = offsets.length > 0 ? offsets[0].block : 0;
-        var j = 0;
-        for (var i = 0; i < offsets.length; i++) (function(o) {
-          var key = self2.name + DELIM + o.block;
-          backify(store.get(key), function(err2, ev) {
-            if (err2) return req.callback(err2);
-            buffers[o.block - firstBlock] = ev.target.result ? bufferFrom(ev.target.result.subarray(o.start, o.end)) : bufferAlloc(o.end - o.start);
-            if (--pending === 0) req.callback(null, Buffer2.concat(buffers));
-          });
-        })(offsets[i]);
-        if (--pending === 0) req.callback(null, Buffer2.concat(buffers));
-      });
-    };
-    Store.prototype._write = function(req) {
-      var self2 = this;
-      self2._store("readwrite", function(err, store) {
-        if (err) return req.callback(err);
-        var offsets = self2._blocks(req.offset, req.offset + req.data.length);
-        var pending = 1;
-        var buffers = {};
-        for (var i = 0; i < offsets.length; i++) (function(o, i2) {
-          if (o.end - o.start === self2.size) return;
-          pending++;
-          var key = self2.name + DELIM + o.block;
-          backify(store.get(key), function(err2, ev) {
-            if (err2) return req.callback(err2);
-            buffers[i2] = bufferFrom(ev.target.result || bufferAlloc(self2.size));
-            if (--pending === 0) write(store, offsets, buffers);
-          });
-        })(offsets[i], i);
-        if (--pending === 0) write(store, offsets, buffers);
-      });
-      function write(store, offsets, buffers) {
-        var block;
-        for (var i = 0, j = 0; i < offsets.length; i++) {
-          var o = offsets[i];
-          var len = o.end - o.start;
-          if (len === self2.size) {
-            block = bufferFrom(req.data.slice(j, j + len));
-          } else {
-            block = buffers[i];
-            req.data.copy(block, o.start, j, j + len);
-          }
-          store.put(block, self2.name + DELIM + o.block);
-          j += len;
-        }
-        var length = Math.max(self2.length || 0, req.offset + req.data.length);
-        store.put(length, self2.name + DELIM + "length");
-        store.transaction.addEventListener("complete", function() {
-          self2.length = length;
-          req.callback(null);
-        });
-        store.transaction.addEventListener("error", function(err) {
-          req.callback(err);
-        });
-      }
-    };
-    Store.prototype._store = function(mode, cb) {
-      cb = once(cb);
-      var self2 = this;
-      self2._getdb(function(db) {
-        var tx = db.transaction(["data"], mode);
-        var store = tx.objectStore("data");
-        tx.addEventListener("error", cb);
-        cb(null, store);
-      });
-    };
-    Store.prototype._open = function(req) {
-      var self2 = this;
-      this._getdb(function(db) {
-        self2._store("readonly", function(err, store) {
-          backify(store.get(self2.name + DELIM + "length"), function(err2, ev) {
-            self2.length = ev.target.result || 0;
-            req.callback(null);
-          });
-        });
-      });
-    };
-    Store.prototype._close = function(req) {
-      this._getdb(function(db) {
-        req.callback();
-      });
-    };
-    Store.prototype._stat = function(req) {
-      var self2 = this;
-      nextTick(function() {
-        req.callback(null, { size: self2.length });
-      });
-    };
-    function backify(r, cb) {
-      r.addEventListener("success", function(ev) {
-        cb(null, ev);
-      });
-      r.addEventListener("error", cb);
-    }
-  }
-});
-
-// node_modules/random-access-web/index.js
-var require_random_access_web = __commonJS({
-  "node_modules/random-access-web/index.js"(exports, module) {
-    init_node_shims();
-    var global2 = typeof window !== "undefined" ? window : self;
-    var requestFileSystem = global2.requestFileSystem || global2.webkitRequestFileSystem;
-    var mutableFile = global2.IDBMutableFile;
-    var idb = global2.indexedDB;
-    var DEFAULT_DB_NAME = "random-access-web";
-    var storage = () => require_random_access_memory();
-    if (requestFileSystem) {
-      storage = (options) => {
-        const RACF = require_random_access_chrome_file();
-        if (typeof options === "object" && options.maxSize) {
-          RACF.DEFAULT_MAX_SIZE = options.maxSize;
-        }
-        return RACF;
-      };
-    } else if (mutableFile) {
-      storage = (options = {}) => {
-        if (typeof options === "string") options = { name: options };
-        return require_mutable_file_wrapper()(options);
-      };
-    } else if (idb) {
-      storage = (options = {}) => {
-        if (typeof options === "string") options = { name: options };
-        const name = options.name || DEFAULT_DB_NAME;
-        return require_random_access_idb()(name, options);
-      };
-    }
-    module.exports = storage;
-  }
-});
-
-// node_modules/random-access-storage/index.js
-var require_random_access_storage5 = __commonJS({
-  "node_modules/random-access-storage/index.js"(exports, module) {
-    init_node_shims();
-    var EventEmitter = require_events();
-    var queueTick = require_queue_microtask();
-    var NOT_READABLE = defaultImpl(new Error("Not readable"));
-    var NOT_WRITABLE = defaultImpl(new Error("Not writable"));
-    var NOT_DELETABLE = defaultImpl(new Error("Not deletable"));
-    var NOT_STATABLE = defaultImpl(new Error("Not statable"));
-    var DEFAULT_OPEN = defaultImpl(null);
-    var DEFAULT_CLOSE = defaultImpl(null);
-    var DEFAULT_UNLINK = defaultImpl(null);
-    var READ_OP = 0;
-    var WRITE_OP = 1;
-    var DEL_OP = 2;
-    var TRUNCATE_OP = 3;
-    var STAT_OP = 4;
-    var OPEN_OP = 5;
-    var SUSPEND_OP = 6;
-    var CLOSE_OP = 7;
-    var UNLINK_OP = 8;
-    module.exports = class RandomAccessStorage extends EventEmitter {
-      constructor(opts) {
-        super();
-        this._queued = [];
-        this._pending = 0;
-        this._needsOpen = true;
-        this.opened = false;
-        this.suspended = false;
-        this.closed = false;
-        this.unlinked = false;
-        this.writing = false;
-        if (opts) {
-          if (opts.open) this._open = opts.open;
-          if (opts.read) this._read = opts.read;
-          if (opts.write) this._write = opts.write;
-          if (opts.del) this._del = opts.del;
-          if (opts.truncate) this._truncate = opts.truncate;
-          if (opts.stat) this._stat = opts.stat;
-          if (opts.suspend) this._suspend = opts.suspend;
-          if (opts.close) this._close = opts.close;
-          if (opts.unlink) this._unlink = opts.unlink;
-        }
-        this.readable = this._read !== RandomAccessStorage.prototype._read;
-        this.writable = this._write !== RandomAccessStorage.prototype._write;
-        this.deletable = this._del !== RandomAccessStorage.prototype._del;
-        this.truncatable = this._truncate !== RandomAccessStorage.prototype._truncate || this.deletable;
-        this.statable = this._stat !== RandomAccessStorage.prototype._stat;
-      }
-      read(offset, size, cb) {
-        this.run(new Request(this, READ_OP, offset, size, null, cb), false);
-      }
-      _read(req) {
-        return NOT_READABLE(req);
-      }
-      write(offset, data, cb) {
-        if (!cb) cb = noop;
-        this.run(new Request(this, WRITE_OP, offset, data.length, data, cb), true);
-      }
-      _write(req) {
-        return NOT_WRITABLE(req);
-      }
-      del(offset, size, cb) {
-        if (!cb) cb = noop;
-        this.run(new Request(this, DEL_OP, offset, size, null, cb), true);
-      }
-      _del(req) {
-        return NOT_DELETABLE(req);
-      }
-      truncate(offset, cb) {
-        if (!cb) cb = noop;
-        this.run(new Request(this, TRUNCATE_OP, offset, 0, null, cb), true);
-      }
-      _truncate(req) {
-        req.size = Infinity;
-        this._del(req);
-      }
-      stat(cb) {
-        this.run(new Request(this, STAT_OP, 0, 0, null, cb), false);
-      }
-      _stat(req) {
-        return NOT_STATABLE(req);
-      }
-      open(cb) {
-        if (!cb) cb = noop;
-        if (this.opened && !this._needsOpen) return nextTickCallback(cb);
-        this._needsOpen = false;
-        queueAndRun(this, new Request(this, OPEN_OP, 0, 0, null, cb));
-      }
-      _open(req) {
-        return DEFAULT_OPEN(req);
-      }
-      suspend(cb) {
-        if (!cb) cb = noop;
-        if (this.closed || this.suspended) return nextTickCallback(cb);
-        this._needsOpen = true;
-        queueAndRun(this, new Request(this, SUSPEND_OP, 0, 0, null, cb));
-      }
-      _suspend(req) {
-        this._close(req);
-      }
-      close(cb) {
-        if (!cb) cb = noop;
-        if (this.closed) return nextTickCallback(cb);
-        queueAndRun(this, new Request(this, CLOSE_OP, 0, 0, null, cb));
-      }
-      _close(req) {
-        return DEFAULT_CLOSE(req);
-      }
-      unlink(cb) {
-        if (!cb) cb = noop;
-        if (!this.closed) this.close(noop);
-        queueAndRun(this, new Request(this, UNLINK_OP, 0, 0, null, cb));
-      }
-      _unlink(req) {
-        return DEFAULT_UNLINK(req);
-      }
-      run(req, writing) {
-        if (writing && !this.writing) {
-          this.writing = true;
-          this._needsOpen = true;
-        }
-        if (this._needsOpen) this.open(noop);
-        if (this._queued.length) this._queued.push(req);
-        else req._run();
-      }
-    };
-    var Request = class {
-      constructor(self2, type, offset, size, data, cb) {
-        this.type = type;
-        this.offset = offset;
-        this.size = size;
-        this.data = data;
-        this.storage = self2;
-        this._sync = false;
-        this._callback = cb;
-        this._openError = null;
-      }
-      _maybeOpenError(err) {
-        if (this.type !== OPEN_OP) return;
-        const queued = this.storage._queued;
-        for (let i = 1; i < queued.length; i++) {
-          const q = queued[i];
-          if (q.type === OPEN_OP) break;
-          q._openError = err;
-        }
-      }
-      _unqueue(err) {
-        const ra = this.storage;
-        const queued = ra._queued;
-        if (err) {
-          this._maybeOpenError(err);
-        } else if (this.type > 4) {
-          switch (this.type) {
-            case OPEN_OP:
-              if (ra.suspended) {
-                ra.suspended = false;
-                ra.emit("unsuspend");
-              }
-              if (!ra.opened) {
-                ra.opened = true;
-                ra.emit("open");
-              }
-              break;
-            case SUSPEND_OP:
-              if (!ra.suspended) {
-                ra.suspended = true;
-                ra.emit("suspend");
-              }
-              break;
-            case CLOSE_OP:
-              if (!ra.closed) {
-                ra.closed = true;
-                ra.emit("close");
-              }
-              break;
-            case UNLINK_OP:
-              if (!ra.unlinked) {
-                ra.unlinked = true;
-                ra.emit("unlink");
-              }
-              break;
-          }
-        }
-        if (queued.length && queued[0] === this) queued.shift();
-        if (!--ra._pending) drainQueue(ra);
-      }
-      callback(err, val) {
-        if (this._sync) return nextTick(this, err, val);
-        this._unqueue(err);
-        this._callback(err, val);
-      }
-      _openAndNotClosed() {
-        const ra = this.storage;
-        if (ra.opened && !ra.closed && !ra.suspended) return true;
-        if (!ra.opened || ra.suspended) nextTick(this, this._openError || new Error("Not opened"));
-        else if (ra.closed) nextTick(this, new Error("Closed"));
-        return false;
-      }
-      _open() {
-        const ra = this.storage;
-        if (ra.opened && !ra.suspended) return nextTick(this, null);
-        if (ra.closed) return nextTick(this, new Error("Closed"));
-        ra._open(this);
-      }
-      _run() {
-        const ra = this.storage;
-        ra._pending++;
-        this._sync = true;
-        switch (this.type) {
-          case READ_OP:
-            if (this._openAndNotClosed()) ra._read(this);
-            break;
-          case WRITE_OP:
-            if (this._openAndNotClosed()) ra._write(this);
-            break;
-          case DEL_OP:
-            if (this._openAndNotClosed()) ra._del(this);
-            break;
-          case TRUNCATE_OP:
-            if (this._openAndNotClosed()) ra._truncate(this);
-            break;
-          case STAT_OP:
-            if (this._openAndNotClosed()) ra._stat(this);
-            break;
-          case OPEN_OP:
-            this._open();
-            break;
-          case SUSPEND_OP:
-            if (ra.closed || !ra.opened || ra.suspended) nextTick(this, null);
-            else ra._suspend(this);
-            break;
-          case CLOSE_OP:
-            if (ra.closed || !ra.opened || ra.suspended) nextTick(this, null);
-            else ra._close(this);
-            break;
-          case UNLINK_OP:
-            if (ra.unlinked) nextTick(this, null);
-            else ra._unlink(this);
-            break;
-        }
-        this._sync = false;
-      }
-    };
-    function queueAndRun(self2, req) {
-      self2._queued.push(req);
-      if (!self2._pending) req._run();
-    }
-    function drainQueue(self2) {
-      const queued = self2._queued;
-      while (queued.length > 0) {
-        const blocking = queued[0].type > 4;
-        if (!blocking || !self2._pending) queued[0]._run();
-        if (blocking) return;
-        queued.shift();
-      }
-    }
-    function defaultImpl(err) {
-      return overridable;
-      function overridable(req) {
-        nextTick(req, err);
-      }
-    }
-    function nextTick(req, err, val) {
-      queueTick(() => req.callback(err, val));
-    }
-    function nextTickCallback(cb) {
-      queueTick(() => cb(null));
-    }
-    function noop() {
-    }
-  }
-});
-
-// node_modules/random-access-memory/index.js
-var require_random_access_memory2 = __commonJS({
-  "node_modules/random-access-memory/index.js"(exports, module) {
-    init_node_shims();
-    var RandomAccess = require_random_access_storage5();
-    var isOptions = require_is_options();
-    var b4a = require_browser();
+    var b4a2 = require_browser();
     var DEFAULT_PAGE_SIZE = 1024 * 1024;
     module.exports = class RAM extends RandomAccess {
       constructor(opts) {
         super();
         if (typeof opts === "number") opts = { length: opts };
         if (!opts) opts = {};
-        if (b4a.isBuffer(opts)) {
+        if (b4a2.isBuffer(opts)) {
           opts = { length: opts.length, buffer: opts };
         }
         if (!isOptions(opts)) opts = {};
@@ -36284,7 +34095,7 @@ var require_random_access_memory2 = __commonJS({
           const page = this._page(i++, true);
           const free = this.pageSize - rel;
           const end = free < req.size - start ? start + free : req.size;
-          b4a.copy(req.data, page, rel, start, end);
+          b4a2.copy(req.data, page, rel, start, end);
           start = end;
           rel = 0;
         }
@@ -36297,13 +34108,13 @@ var require_random_access_memory2 = __commonJS({
         if (req.offset + req.size > this.length) {
           return req.callback(new Error("Could not satisfy length"), null);
         }
-        const data = b4a.alloc(req.size);
+        const data = b4a2.alloc(req.size);
         while (start < req.size) {
           const page = this._page(i++, false);
           const avail = this.pageSize - rel;
           const wanted = req.size - start;
           const len = avail < wanted ? avail : wanted;
-          if (page) b4a.copy(page, data, start, rel, rel + len);
+          if (page) b4a2.copy(page, data, start, rel, rel + len);
           start += len;
           rel = 0;
         }
@@ -36341,13 +34152,13 @@ var require_random_access_memory2 = __commonJS({
       _page(i, upsert) {
         let page = this.buffers[i];
         if (page || !upsert) return page;
-        page = this.buffers[i] = b4a.alloc(this.pageSize);
+        page = this.buffers[i] = b4a2.alloc(this.pageSize);
         return page;
       }
       toBuffer() {
-        const buf = b4a.alloc(this.length);
+        const buf = b4a2.alloc(this.length);
         for (let i = 0; i < this.buffers.length; i++) {
-          if (this.buffers[i]) b4a.copy(this.buffers[i], buf, i * this.pageSize);
+          if (this.buffers[i]) b4a2.copy(this.buffers[i], buf, i * this.pageSize);
         }
         return buf;
       }
@@ -36355,7 +34166,7 @@ var require_random_access_memory2 = __commonJS({
         const ram = new RAM();
         ram.length = this.length;
         ram.pageSize = this.pageSize;
-        ram.buffers = this.buffers.map((buffer) => b4a.from(buffer));
+        ram.buffers = this.buffers.map((buffer) => b4a2.from(buffer));
         return ram;
       }
     };
@@ -36368,10 +34179,10 @@ init_node_shims();
 // js/dht-adapter.js
 init_node_shims();
 var DESC_PROTOCOL = "peerit/desc/v1";
-function createHyperPearSurface({ store, swarm, Hyperbee, Protomux, b4a, sha256: sha2562, identity, codec }) {
+function createHyperPearSurface({ store, swarm, Hyperbee, Protomux, b4a: b4a2, sha256: sha2562, identity, codec }) {
   codec = codec || { encode: (b) => b, decode: (b) => b };
   const bees = /* @__PURE__ */ new Map();
-  const keyHex = (core) => b4a.toString(core.key, "hex");
+  const keyHex = (core) => b4a2.toString(core.key, "hex");
   async function openWritable(appId) {
     let e = bees.get(appId);
     if (e) return e;
@@ -36386,7 +34197,7 @@ function createHyperPearSurface({ store, swarm, Hyperbee, Protomux, b4a, sha256:
   async function openByKey(appId, inviteKey) {
     let e = bees.get(appId);
     if (e) return e;
-    const core = store.get({ key: b4a.from(inviteKey, "hex") });
+    const core = store.get({ key: b4a2.from(inviteKey, "hex") });
     const bee = new Hyperbee(core, { keyEncoding: "utf-8", valueEncoding: "json" });
     await bee.ready();
     swarm.join(core.discoveryKey, { server: false, client: true });
@@ -36469,7 +34280,7 @@ function createHyperPearSurface({ store, swarm, Hyperbee, Protomux, b4a, sha256:
           store.replicate(conn);
         } catch {
         }
-        const id = b4a.toString(conn.remotePublicKey || b4a.from("peer"), "hex");
+        const id = b4a2.toString(conn.remotePublicKey || b4a2.from("peer"), "hex");
         const mux = Protomux.from(conn);
         const channel = mux.createChannel({ protocol: DESC_PROTOCOL });
         if (!channel) return;
@@ -36483,7 +34294,7 @@ function createHyperPearSurface({ store, swarm, Hyperbee, Protomux, b4a, sha256:
           }),
           send(bytes) {
             try {
-              this._msg.send(b4a.from(bytes));
+              this._msg.send(b4a2.from(bytes));
             } catch (e) {
               emit("error", e);
             }
@@ -36551,6 +34362,304 @@ function createHyperPearSurface({ store, swarm, Hyperbee, Protomux, b4a, sha256:
   return surface;
 }
 
+// js/ra-idb.js
+init_node_shims();
+var import_random_access_storage = __toESM(require_random_access_storage(), 1);
+var import_b4a = __toESM(require_browser(), 1);
+var DELIM = "\0";
+var DEFAULT_PAGE = 4096;
+function createIdbStorage(dbname, xopts = {}) {
+  const idb = xopts.idb || (typeof indexedDB !== "undefined" ? indexedDB : null);
+  if (!idb) throw new Error("indexedDB not present and not provided");
+  const pageSize = xopts.size || DEFAULT_PAGE;
+  let db = null;
+  let openErr = null;
+  const waiters = [];
+  const open = idb.open(dbname);
+  open.addEventListener("upgradeneeded", () => {
+    open.result.createObjectStore("data");
+  });
+  open.addEventListener("success", () => {
+    db = open.result;
+    flush();
+  });
+  open.addEventListener("error", () => {
+    openErr = open.error || new Error("indexedDB open failed");
+    flush();
+  });
+  function flush() {
+    while (waiters.length) waiters.shift()(openErr, db);
+  }
+  function getdb(cb) {
+    if (db || openErr) queueMicrotask(() => cb(openErr, db));
+    else waiters.push(cb);
+  }
+  return function(name, opts = {}) {
+    if (typeof name === "object") {
+      opts = name;
+      name = opts.name;
+    }
+    return new IdbFile(name, getdb, pageSize);
+  };
+}
+var IdbFile = class extends import_random_access_storage.default {
+  constructor(name, getdb, pageSize) {
+    super();
+    this.name = name;
+    this.pageSize = pageSize;
+    this.length = 0;
+    this._getdb = getdb;
+  }
+  _tx(mode, cb) {
+    this._getdb((err, db) => {
+      if (err) return cb(err);
+      let tx;
+      try {
+        tx = db.transaction(["data"], mode);
+      } catch (e) {
+        return cb(e);
+      }
+      cb(null, tx.objectStore("data"), tx);
+    });
+  }
+  _pageKey(page) {
+    return this.name + DELIM + page;
+  }
+  get _lenKey() {
+    return this.name + DELIM + "length";
+  }
+  _open(req) {
+    this._tx("readonly", (err, store) => {
+      if (err) return req.callback(err);
+      const g = store.get(this._lenKey);
+      g.addEventListener("success", () => {
+        this.length = g.result || 0;
+        req.callback(null);
+      });
+      g.addEventListener("error", () => req.callback(g.error));
+    });
+  }
+  // The shared db stays open — corestore closes individual files, not the database.
+  _close(req) {
+    req.callback(null);
+  }
+  _stat(req) {
+    req.callback(null, { size: this.length });
+  }
+  _read(req) {
+    if (req.offset + req.size > this.length) return req.callback(new Error("Could not satisfy length"));
+    if (req.size === 0) return req.callback(null, import_b4a.default.alloc(0));
+    this._tx("readonly", (err, store) => {
+      if (err) return req.callback(err);
+      const data = import_b4a.default.alloc(req.size);
+      let i = Math.floor(req.offset / this.pageSize);
+      let rel = req.offset % this.pageSize;
+      let start = 0;
+      let pending = 0;
+      let done = false;
+      const fail = (e) => {
+        if (!done) {
+          done = true;
+          req.callback(e);
+        }
+      };
+      const finish = () => {
+        if (!done && pending === 0) {
+          done = true;
+          req.callback(null, data);
+        }
+      };
+      while (start < req.size) {
+        const avail = this.pageSize - rel;
+        const want = req.size - start;
+        const len = avail < want ? avail : want;
+        const s = start, r = rel;
+        pending++;
+        const g = store.get(this._pageKey(i));
+        g.addEventListener("success", () => {
+          const page = g.result;
+          if (page) {
+            const u = page instanceof Uint8Array ? page : new Uint8Array(page);
+            import_b4a.default.copy(u, data, s, r, r + len);
+          }
+          pending--;
+          finish();
+        });
+        g.addEventListener("error", () => fail(g.error));
+        start += len;
+        rel = 0;
+        i++;
+      }
+      finish();
+    });
+  }
+  _write(req) {
+    this._tx("readwrite", (err, store, tx) => {
+      if (err) return req.callback(err);
+      const endByte = req.offset + req.size;
+      let i = Math.floor(req.offset / this.pageSize);
+      let rel = req.offset % this.pageSize;
+      let start = 0;
+      let pending = 0;
+      let failed = false;
+      const pages = [];
+      const fail = (e) => {
+        if (!failed) {
+          failed = true;
+          try {
+            tx.abort();
+          } catch {
+          }
+          req.callback(e);
+        }
+      };
+      const maybeCommit = () => {
+        if (failed || pending > 0) return;
+        for (const p of pages) store.put(p.buf, this._pageKey(p.page));
+        const newLen = Math.max(this.length, endByte);
+        store.put(newLen, this._lenKey);
+        tx.addEventListener("complete", () => {
+          this.length = newLen;
+          req.callback(null);
+        });
+        tx.addEventListener("error", () => fail(tx.error || new Error("idb write error")));
+        tx.addEventListener("abort", () => {
+          if (!failed) fail(tx.error || new Error("idb write aborted"));
+        });
+      };
+      while (start < req.size) {
+        const free = this.pageSize - rel;
+        const len = free < req.size - start ? free : req.size - start;
+        const page = i, r = rel, s = start;
+        if (len === this.pageSize) {
+          const buf = import_b4a.default.alloc(this.pageSize);
+          import_b4a.default.copy(req.data, buf, 0, s, s + len);
+          pages.push({ page, buf });
+        } else {
+          pending++;
+          const g = store.get(this._pageKey(page));
+          g.addEventListener("success", () => {
+            const existing = g.result ? g.result instanceof Uint8Array ? g.result : new Uint8Array(g.result) : null;
+            const buf = import_b4a.default.alloc(this.pageSize);
+            if (existing) import_b4a.default.copy(existing, buf, 0, 0, Math.min(existing.length, this.pageSize));
+            import_b4a.default.copy(req.data, buf, r, s, s + len);
+            pages.push({ page, buf });
+            pending--;
+            maybeCommit();
+          });
+          g.addEventListener("error", () => fail(g.error));
+        }
+        start += len;
+        rel = 0;
+        i++;
+      }
+      maybeCommit();
+    });
+  }
+  _truncate(req) {
+    const newLen = req.offset;
+    if (newLen >= this.length) {
+      this._tx("readwrite", (err, store, tx) => {
+        if (err) return req.callback(err);
+        store.put(newLen, this._lenKey);
+        tx.addEventListener("complete", () => {
+          this.length = newLen;
+          req.callback(null);
+        });
+        tx.addEventListener("error", () => req.callback(tx.error || new Error("idb truncate error")));
+      });
+      return;
+    }
+    const oldLast = this.length > 0 ? Math.floor((this.length - 1) / this.pageSize) : -1;
+    const firstDelete = Math.ceil(newLen / this.pageSize);
+    const boundaryPage = newLen > 0 ? Math.floor((newLen - 1) / this.pageSize) : -1;
+    const boundaryFill = newLen % this.pageSize;
+    this._tx("readwrite", (err, store, tx) => {
+      if (err) return req.callback(err);
+      const commit = () => {
+        for (let p = firstDelete; p <= oldLast; p++) store.delete(this._pageKey(p));
+        store.put(newLen, this._lenKey);
+        tx.addEventListener("complete", () => {
+          this.length = newLen;
+          req.callback(null);
+        });
+        tx.addEventListener("error", () => req.callback(tx.error || new Error("idb truncate error")));
+        tx.addEventListener("abort", () => req.callback(tx.error || new Error("idb truncate aborted")));
+      };
+      if (boundaryFill > 0 && boundaryPage >= 0 && boundaryPage < firstDelete) {
+        const g = store.get(this._pageKey(boundaryPage));
+        g.addEventListener("success", () => {
+          if (g.result) {
+            const u = g.result instanceof Uint8Array ? g.result : new Uint8Array(g.result);
+            const buf = import_b4a.default.alloc(this.pageSize);
+            import_b4a.default.copy(u, buf, 0, 0, Math.min(u.length, this.pageSize));
+            buf.fill(0, boundaryFill);
+            store.put(buf, this._pageKey(boundaryPage));
+          }
+          commit();
+        });
+        g.addEventListener("error", () => req.callback(g.error));
+      } else {
+        commit();
+      }
+    });
+  }
+  _del(req) {
+    if (req.size === Infinity || req.offset + req.size >= this.length) {
+      req.offset = Math.min(req.offset, this.length);
+      return this._truncate(req);
+    }
+    this._tx("readwrite", (err, store, tx) => {
+      if (err) return req.callback(err);
+      let i = Math.floor(req.offset / this.pageSize);
+      let rel = req.offset % this.pageSize;
+      let start = 0;
+      let pending = 0;
+      let failed = false;
+      const edits = [];
+      const fail = (e) => {
+        if (!failed) {
+          failed = true;
+          try {
+            tx.abort();
+          } catch {
+          }
+          req.callback(e);
+        }
+      };
+      const commit = () => {
+        if (failed || pending > 0) return;
+        for (const e of edits) store.put(e.buf, this._pageKey(e.page));
+        tx.addEventListener("complete", () => req.callback(null));
+        tx.addEventListener("error", () => fail(tx.error || new Error("idb del error")));
+      };
+      while (start < req.size) {
+        const free = this.pageSize - rel;
+        const len = free < req.size - start ? free : req.size - start;
+        const page = i, r = rel;
+        pending++;
+        const g = store.get(this._pageKey(page));
+        g.addEventListener("success", () => {
+          if (g.result) {
+            const u = g.result instanceof Uint8Array ? g.result : new Uint8Array(g.result);
+            const buf = import_b4a.default.alloc(this.pageSize);
+            import_b4a.default.copy(u, buf, 0, 0, Math.min(u.length, this.pageSize));
+            buf.fill(0, r, r + len);
+            edits.push({ page, buf });
+          }
+          pending--;
+          commit();
+        });
+        g.addEventListener("error", () => fail(g.error));
+        start += len;
+        rel = 0;
+        i++;
+      }
+      commit();
+    });
+  }
+};
+
 // js/dht-transport.js
 async function sha256(str) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
@@ -36558,7 +34667,7 @@ async function sha256(str) {
 }
 async function createDhtTransport({ relayWsUrl, storage = "peerit-dht", identity } = {}) {
   if (!relayWsUrl) throw new Error("createDhtTransport requires relayWsUrl (wss://\u2026)");
-  const [{ default: DHT }, { default: WSStream }, { default: Hyperswarm }, { default: Corestore }, { default: Hyperbee }, { default: Protomux }, { default: b4a }, cencMod, { default: RAW }, { default: RAM }] = await Promise.all([
+  const [{ default: DHT }, { default: WSStream }, { default: Hyperswarm }, { default: Corestore }, { default: Hyperbee }, { default: Protomux }, { default: b4a2 }, cencMod, { default: RAM }] = await Promise.all([
     Promise.resolve().then(() => __toESM(require_dht_relay(), 1)),
     Promise.resolve().then(() => __toESM(require_ws2(), 1)),
     Promise.resolve().then(() => __toESM(require_hyperswarm(), 1)),
@@ -36567,8 +34676,7 @@ async function createDhtTransport({ relayWsUrl, storage = "peerit-dht", identity
     Promise.resolve().then(() => __toESM(require_protomux(), 1)),
     Promise.resolve().then(() => __toESM(require_browser(), 1)),
     Promise.resolve().then(() => __toESM(require_compact_encoding(), 1)),
-    Promise.resolve().then(() => __toESM(require_random_access_web(), 1)),
-    Promise.resolve().then(() => __toESM(require_random_access_memory2(), 1))
+    Promise.resolve().then(() => __toESM(require_random_access_memory(), 1))
   ]);
   const ws = new WebSocket(relayWsUrl);
   await new Promise((resolve, reject) => {
@@ -36577,27 +34685,17 @@ async function createDhtTransport({ relayWsUrl, storage = "peerit-dht", identity
   });
   const dht = new DHT(new WSStream(true, ws));
   const swarm = new Hyperswarm({ dht });
-  const idbFactory = RAW(storage);
-  let backend = idbFactory;
+  let backend;
   try {
-    const probe = idbFactory("___truncate_probe___");
-    if (typeof probe.truncate !== "function") {
-      console.warn("[peerit] in-browser DHT: IndexedDB backend lacks truncate (random-access-web is RAS@1); using in-memory store \u2014 data will not persist across reloads");
-      backend = RAM;
-    }
-    try {
-      if (probe && probe.close) probe.close(() => {
-      });
-    } catch {
-    }
+    backend = createIdbStorage(String(storage || "peerit-dht"));
   } catch (e) {
-    console.warn("[peerit] in-browser DHT: could not probe IndexedDB backend (" + (e && e.message) + "); using in-memory store");
+    console.warn("[peerit] in-browser DHT: IndexedDB unavailable (" + (e && e.message) + "); using in-memory store \u2014 data will not persist across reloads");
     backend = RAM;
   }
   const store = new Corestore(backend);
   await store.ready();
   const cenc = cencMod.default || cencMod;
-  return createHyperPearSurface({ store, swarm, Hyperbee, Protomux, b4a, sha256, identity, codec: cenc.raw });
+  return createHyperPearSurface({ store, swarm, Hyperbee, Protomux, b4a: b4a2, sha256, identity, codec: cenc.raw });
 }
 export {
   createDhtTransport

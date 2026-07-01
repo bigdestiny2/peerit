@@ -5,14 +5,15 @@
 // Exposes the same window.pear-shaped { sync, swarm:{v1} } surface, so
 // js/gossip.js (BridgeGossipSync) runs UNCHANGED on top of it.
 //
-// ⚠ STATUS: not shipped in the no-build site (excluded from publish.mjs
-// SITE_FILES) and not exercised by CI. The dep imports are dynamic so this module
-// LOADS without them; they resolve only when esbuilt into dht-bundle.js (recipe
-// in docs/WEB-DEPLOYMENT.md). The deps are heavy + experimental
-// (@hyperswarm/dht-relay is marked do-not-use-in-production; in-browser Hyperbee
-// can be memory-hungry). The peerit-specific adapter LOGIC is unit-tested
-// (test/dht-adapter.mjs); the real DHT/Noise/protomux wire behavior must be
-// validated on a live network before enabling.
+// ⚠ STATUS: this SOURCE module is not shipped directly and is not run by `npm
+// test` — but esbuild bundles it into js/dht-bundle.js, which IS listed in
+// publish.mjs SITE_FILES and ships (git-tracked, ~1.2 MB) with a `--dht-relay`
+// build (recipe in docs/WEB-DEPLOYMENT.md). The dep imports are dynamic so this
+// module LOADS without them; they resolve only in the bundle. The deps are heavy +
+// experimental (@hyperswarm/dht-relay@0.4.3 is marked do-not-use-in-production).
+// The wire is validated on a testnet DHT (test/dht-live.mjs) and in a real browser;
+// durable in-browser storage is js/ra-idb.js (test/ra-idb.mjs). Kept best-effort
+// with automatic /api fallback (js/app.js boot).
 //
 // Integration: when a <meta name="peerit-dht-relay" content="wss://…"> is present
 // in web mode, boot dynamically imports the built bundle, calls createDhtTransport(),
@@ -20,6 +21,7 @@
 // the /api relay if the bundle or DHT is unavailable.
 
 import { createHyperPearSurface } from './dht-adapter.js'
+import createIdbStorage from './ra-idb.js'
 
 async function sha256 (str) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str))
@@ -30,9 +32,9 @@ export async function createDhtTransport ({ relayWsUrl, storage = 'peerit-dht', 
   if (!relayWsUrl) throw new Error('createDhtTransport requires relayWsUrl (wss://…)')
   // Dynamic imports: bundled by esbuild, absent in the plain site (so this file
   // is harmless to load there; the caller falls back to the /api relay on throw).
-  const [{ default: DHT }, { default: WSStream }, { default: Hyperswarm }, { default: Corestore }, { default: Hyperbee }, { default: Protomux }, { default: b4a }, cencMod, { default: RAW }, { default: RAM }] = await Promise.all([
+  const [{ default: DHT }, { default: WSStream }, { default: Hyperswarm }, { default: Corestore }, { default: Hyperbee }, { default: Protomux }, { default: b4a }, cencMod, { default: RAM }] = await Promise.all([
     import('@hyperswarm/dht-relay'), import('@hyperswarm/dht-relay/ws'),
-    import('hyperswarm'), import('corestore'), import('hyperbee'), import('protomux'), import('b4a'), import('compact-encoding'), import('random-access-web'), import('random-access-memory')
+    import('hyperswarm'), import('corestore'), import('hyperbee'), import('protomux'), import('b4a'), import('compact-encoding'), import('random-access-memory')
   ])
 
   const ws = new WebSocket(relayWsUrl)
@@ -44,23 +46,16 @@ export async function createDhtTransport ({ relayWsUrl, storage = 'peerit-dht', 
   // hypercore ~10.x (the random-access era); corestore 7's hypercore-storage is
   // Node-file-oriented and won't browser-bundle. See docs/WEB-DEPLOYMENT.md.
   //
-  // Durable path is IndexedDB via random-access-web. BUT random-access-web@2.0.3
-  // ships the RAS@1 API, which has no truncate() — and hypercore@10 calls
-  // storage.truncate on write. So probe the chosen backend: use IndexedDB only if
-  // it exposes truncate, otherwise fall back to in-memory (the DHT wire still runs
-  // — WASM crypto, Noise over the WS dht-relay, hypercore replication — it just
-  // doesn't persist across reloads until a truncate-capable IDB backend is wired).
-  const idbFactory = RAW(storage)
-  let backend = idbFactory
+  // Durable storage is IndexedDB via js/ra-idb.js — a truncate-capable backend on
+  // the RAS@3 base hypercore@10 needs (random-access-web@2.0.3 is RAS@1, no
+  // truncate → the write path throws). Fall back to in-memory ONLY if IndexedDB is
+  // entirely unavailable (locked-down private mode); the DHT wire still runs, it
+  // just won't persist across reloads.
+  let backend
   try {
-    const probe = idbFactory('___truncate_probe___')
-    if (typeof probe.truncate !== 'function') {
-      console.warn('[peerit] in-browser DHT: IndexedDB backend lacks truncate (random-access-web is RAS@1); using in-memory store — data will not persist across reloads')
-      backend = RAM
-    }
-    try { if (probe && probe.close) probe.close(() => {}) } catch {}
+    backend = createIdbStorage(String(storage || 'peerit-dht'))
   } catch (e) {
-    console.warn('[peerit] in-browser DHT: could not probe IndexedDB backend (' + (e && e.message) + '); using in-memory store')
+    console.warn('[peerit] in-browser DHT: IndexedDB unavailable (' + (e && e.message) + '); using in-memory store — data will not persist across reloads')
     backend = RAM
   }
   const store = new Corestore(backend)

@@ -1,0 +1,11 @@
+{
+	# Let's Encrypt uses this for expiry notices.
+	email {$ACME_EMAIL}
+}
+
+{$DHT_RELAY_DOMAIN} {
+	# Caddy auto-provisions + renews a TLS cert for this domain and transparently
+	# upgrades the WebSocket (Connection: Upgrade) to the dht-relay. Nothing else to
+	# configure — reverse_proxy handles wss:// passthrough.
+	reverse_proxy dht-relay:49443
+}

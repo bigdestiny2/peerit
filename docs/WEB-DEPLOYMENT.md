@@ -45,7 +45,7 @@ working — the web is additive publishing.
 | **0 — read-only verified mirror** | runtime dispatch, read-only UI + banner, static export | ✅ built, browser-verified |
 | **1 — relay + local keys (full app)** | `02-apps/peerit-relay` (token, CORS, rate-limit, swarm hub, memory + hypercore cores), client token acquisition + write path | ✅ built; Node e2e over real HTTP + browser `gossip-bridge` verified |
 | **2 — hardened delivery** | `build-web.mjs` (SRI, Service Worker `sw.js`, `asset-manifest.json`, `verify.html`), signed relay roster, boot-time multi-relay failover | ✅ built; signed roster + failover covered by Node e2e/unit tests, browser smoke still recommended per deploy |
-| **3 — in-browser DHT pipe** | `js/dht-adapter.js` (maps hypercore stack → pear surface, **adapter logic unit-tested** via `test/dht-adapter.mjs`), `js/dht-transport.js` (wires the real deps), boot wiring + `build-web --dht-relay` | ✅ wire validated on a testnet DHT (`test:dht-live`) AND in a real browser (Brave) against a local dht-relay — WASM crypto, `global`/`Buffer`/`process` shims, WS pipe, in-browser outbox all confirmed. ⬜ remaining: public `wss://` dht-relay + durable IndexedDB (truncate-capable backend) |
+| **3 — in-browser DHT pipe** | `js/dht-adapter.js` (maps hypercore stack → pear surface, **adapter logic unit-tested** via `test/dht-adapter.mjs`), `js/dht-transport.js` (wires the real deps), `js/ra-idb.js` (durable IndexedDB, `test/ra-idb.mjs`), boot wiring + `build-web --dht-relay` | ✅ wire validated on a testnet DHT (`test:dht-live`) AND in a real browser (Brave) against a local dht-relay — WASM crypto, `global`/`Buffer`/`process` shims, WS pipe, and durable IndexedDB outbox (persists across reload) all confirmed. ⬜ remaining: public `wss://` dht-relay end-to-end between two browsers |
 
 ## Build & serve the web bundle
 
@@ -155,11 +155,18 @@ node build-web.mjs --relay https://relay.peerit.com --readonly false \
 # build keep the strict CSP untouched.
 ```
 
+**Hosting the `wss://` dht-relay:** [`deploy/dht-relay/`](../deploy/dht-relay/) is a
+self-contained bundle (Docker Compose: the `@hyperswarm/dht-relay` binary behind
+Caddy for automatic Let's Encrypt `wss://` + WebSocket passthrough). Point a
+subdomain at a VPS, set `.env`, `docker compose up -d --build`, then pass the
+resulting `wss://` URL to `build-web.mjs --dht-relay`. The relay is a blind byte
+pipe — it never sees content or keys. Runbook in [`deploy/dht-relay/README.md`](../deploy/dht-relay/README.md).
+
 **Four browser-only gaps a Node/testnet test can't catch (all fixed, browser-validated 2026-07-01):**
 1. **CSP** — strict `script-src 'self'` throws `WebAssembly.Module() violates 'unsafe-eval'`; `connect-src` needs explicit `ws:`/`wss:` (http/https don't cover them). Fixed by `build-web.mjs` `relaxCspForDht`, gated on `--dht-relay`.
 2. **`global` undefined** — HyperDHT reads `global.Pear?.config` eagerly at load. Fixed by esbuild `--define:global=globalThis`.
 3. **`Buffer`/`process`** — unguarded global uses (`process.nextTick` in hypercore's close path). Fixed by esbuild `--inject:node-shims.mjs`.
-4. **`random-access-web@2.0.3` has no `truncate`** (RAS@1 API; hypercore@10 requires it). `dht-transport.js` probes the IndexedDB backend and falls back to `random-access-memory` when truncate is absent — the DHT wire runs, but **is not durable across reloads** until a truncate-capable IndexedDB RAS backend is wired. This is the one remaining item for durable in-browser persistence.
+4. **`random-access-web@2.0.3` has no `truncate`** (RAS@1 API; hypercore@10 requires it). **Fixed** by `js/ra-idb.js` — a self-contained durable IndexedDB backend on `random-access-storage@3` (the base hypercore@10 + `random-access-memory@6` use), classic block model, real `_truncate`. `dht-transport.js` uses it (RAM only if `indexedDB` is entirely unavailable). Unit-tested by `test/ra-idb.mjs` (16 checks incl. reopen-persistence) and browser-verified (outbox persists across reload, no truncate error).
 
 **Validation status (2026-07-01):**
 - ✅ **bundle builds clean** (~1.2 MB) with the pinned versions — no `fs`/`path`.
@@ -173,13 +180,13 @@ node build-web.mjs --relay https://relay.peerit.com --readonly false \
   against a LOCAL `@hyperswarm/dht-relay` (`ws://127.0.0.1`). The browser took the
   DHT path (`[peerit] using in-browser DHT transport`), instantiated the WASM crypto
   (CSP fix), resolved `global`/`Buffer`/`process` (esbuild fixes), created the local
-  identity + outbox hypercore in-browser, and held an ESTABLISHED WebSocket to the
+  identity + outbox hypercore in-browser on DURABLE IndexedDB (`js/ra-idb.js`, no
+  truncate error, no in-memory fallback), and held an ESTABLISHED WebSocket to the
   dht-relay (confirmed host-side via `lsof`). The app UI rendered and ran on the DHT
-  transport. Storage fell back to in-memory (random-access-web truncate gap, above).
+  transport; a reload reopened the same identity + outbox cleanly from IndexedDB.
 - ⬜ **still to validate:** a PUBLIC `wss://` dht-relay (TLS) + the public HyperDHT
-  end-to-end between two independent browsers, and a truncate-capable IndexedDB
-  backend for durable persistence. The protocol, the browser runtime, and the WS
-  pipe are proven; public hosting + durable storage are the remaining steps.
+  end-to-end between two independent browsers. The protocol, the browser runtime,
+  durable storage, and the WS pipe are proven; public hosting is the remaining step.
 
 Live-path caveats:
 - ✅ **fixed in code (2026-07-01):** the protomux descriptor codec is now

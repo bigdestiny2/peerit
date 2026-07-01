@@ -17,7 +17,7 @@
     "test:browser": "node scripts/browser-smoke.mjs",
     "test:dht-live": "node test/dht-live.mjs",
     "dht:deps": "npm i --no-save corestore@6 hypercore@10 hyperbee@2 hyperswarm@4 protomux b4a compact-encoding sodium-javascript random-access-web @hyperswarm/dht-relay @hyperswarm/testnet random-access-memory",
-    "dht:bundle": "npx esbuild js/dht-transport.js --bundle --format=esm --platform=browser --main-fields=browser,module,main --outfile=web/dht-bundle.js",
+    "dht:bundle": "npx esbuild js/dht-transport.js --bundle --format=esm --platform=browser --main-fields=browser,module,main --define:global=globalThis --inject:node-shims.mjs --outfile=js/dht-bundle.js",
     "proof:availability": "node scripts/availability-proof.mjs",
     "proof:availability:live": "node scripts/availability-proof.mjs --require-live",
     "launch:readiness": "node scripts/launch-readiness.mjs",

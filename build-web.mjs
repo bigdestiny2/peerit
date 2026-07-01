@@ -38,6 +38,31 @@ const sri = (buf) => 'sha384-' + createHash('sha384').update(buf).digest('base64
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex')
 const attr = (s) => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
 
+// The in-browser DHT bundle (js/dht-bundle.js) needs two things the strict
+// PearBrowser CSP forbids: WASM crypto instantiation (blake2b/sha256 WASM in the
+// hypercore stack) and a WebSocket to the dht-relay. Relax the web build's CSP
+// for EXACTLY those two, and ONLY when a --dht-relay is shipped — the /api-only
+// web build and the PearBrowser index.html keep the strict policy. 'wasm-unsafe-eval'
+// permits WebAssembly compilation WITHOUT allowing JS eval() (that's 'unsafe-eval').
+function relaxCspForDht (html) {
+  return html.replace(/(<meta http-equiv="Content-Security-Policy" content=")([^"]*)(">)/i, (_m, pre, csp, post) => {
+    const out = csp.split(';').map((d) => {
+      const t = d.trim()
+      if (!t) return d
+      const lead = d.startsWith(' ') ? ' ' : ''
+      if (t.startsWith('script-src') && !/'wasm-unsafe-eval'/.test(t)) return lead + t + " 'wasm-unsafe-eval'"
+      if (t.startsWith('connect-src')) {
+        let c = t
+        if (!/(^|\s)ws:/.test(c)) c += ' ws:'
+        if (!/(^|\s)wss:/.test(c)) c += ' wss:'
+        return lead + c
+      }
+      return d
+    }).join(';')
+    return pre + out + post
+  })
+}
+
 // 1. read + hash every served file
 const files = {}
 const manifest = {}
@@ -71,6 +96,7 @@ const head = [
 html = html.replace('</head>', '  ' + head + '\n</head>')
 html = html.replace('<link rel="stylesheet" href="styles.css">', `<link rel="stylesheet" href="styles.css" integrity="${sriMap['styles.css']}" crossorigin="anonymous">`)
 html = html.replace('<script type="module" src="js/app.js"></script>', `<script type="module" src="js/app.js" integrity="${sriMap['js/app.js']}" crossorigin="anonymous"></script>`)
+if (DHT_RELAY) html = relaxCspForDht(html) // WASM crypto + WebSocket to the dht-relay (web+DHT build only)
 files['index.html'] = Buffer.from(html)
 manifest['index.html'] = sha256(files['index.html'])
 

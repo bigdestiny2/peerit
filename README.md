@@ -335,7 +335,14 @@ on `status()`.
 
 Tests: [`outbox-head.mjs`](test/outbox-head.mjs) (A) · [`relay-pool.mjs`](test/relay-pool.mjs) (B) ·
 [`head-floor.mjs`](test/head-floor.mjs) (C, incl. detection surviving a client restart).
-The pool degrades to one relay (detection-only) today; the durable floor is active now.
+
+**Live since 2026-07-01:** the signed roster carries **two independent relays** (a
+self-hosted VPS + a managed host), so the cross-relay defenses (B) are now **active,
+not just detection-only** — a single relay that rolls back or strips a head is caught
+and read around, and no single origin is a chokepoint. The durable floor is active too.
+Grow the pool by self-hosting another relay with one `docker compose up`
+([`deploy/peerit-relay/`](deploy/peerit-relay/)); the optional blind in-browser DHT
+transport has its own bundle ([`deploy/dht-relay/`](deploy/dht-relay/)).
 
 ### Honest limitations
 - **Public content is plaintext on whoever seeds it.** No app-side encryption; a
@@ -349,7 +356,10 @@ The pool degrades to one relay (detection-only) today; the durable floor is acti
   **independent** anchor (a HiveRelay-pinned directory the browser reads out-of-band), the
   remaining Phase D work. Detection isn't content-recovery: if no relay serves the newer content
   you're flagged but shown the stale set. A closed tab can't seed, so cold-start needs an
-  always-on provider.
+  always-on provider. **Roadmap:** this data plane is being generalized into **OutboxLog**, a
+  first-class *blind* HiveRelay service any P2P web app can use (append-log + live gossip, run by
+  many independent operators) — see [`docs/HIVERELAY-OUTBOXLOG-PLAN.md`](docs/HIVERELAY-OUTBOXLOG-PLAN.md)
+  + the [handover spec](docs/OUTBOXLOG-HANDOVER-SPEC.md).
 - **Sybil / vote weight.** Identities are free to mint, so each can cast one valid
   vote — raw scores are *advisory*, not Sybil-resistant. Real resistance needs an
   identity-cost or web-of-trust layer (out of scope).

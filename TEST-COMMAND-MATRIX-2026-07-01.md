@@ -30,7 +30,8 @@ Green in this loop:
 
 Expected local limitation:
 
-- `npm run test:browser` exits with setup guidance until Playwright is installed
+- `npm run test:browser` and `npm run test:browser:mobile` exit with setup
+  guidance until Playwright is installed
   in the operator checkout. Playwright is not a runtime dependency.
 
 Not run in this loop:
@@ -45,6 +46,7 @@ Not run in this loop:
 | --- | --- | --- |
 | `npm test` | Headless product/gossip/bridge/runtime/relay checks | Green: 211 checks passed. |
 | `npm run test:browser` | Optional Playwright dev-browser smoke | Checked in; requires `npm install --no-save playwright` and `npx playwright install chromium`. |
+| `npm run test:browser:mobile` | Optional Playwright PearBrowser mobile `/api` token smoke | Checked in; injects `pear-api-token`, proves writable `gossip-bridge`, and fails on read-only/dev fallback. Requires Playwright. |
 | `npm run proof:availability` | Static app/file/manifest/seeder/mirror evidence | Ready: 11 pass, 0 warn, 1 info. |
 | `npm run proof:availability -- --url http://127.0.0.1:8777` | Same proof plus HTTP fetch of every published asset | Green against `npm run dev` on 2026-07-01. |
 | `npm run proof:availability:live` | Strict live evidence mode | Ready: live publish report proves durable metadata + blob bytes. |
@@ -171,6 +173,18 @@ The checked-in command for this is:
 npm run test:browser
 ```
 
+The mobile host-token variant is:
+
+```sh
+npm run test:browser:mobile
+```
+
+It serves the real app, injects `<meta name="pear-api-token">` plus a default
+read-only web relay meta, mocks the same-origin `/api` host with real Ed25519
+signatures, writes a community/post/comment through the UI, and fails if the
+page shows `web`/read-only, creates dev localStorage state, or misses tokened
+`/api` writes.
+
 Direct execution in this checkout currently exits with clear setup guidance
 because Playwright is not installed:
 
@@ -178,6 +192,7 @@ because Playwright is not installed:
 npm install --no-save playwright
 npx playwright install chromium
 npm run test:browser
+npm run test:browser:mobile
 ```
 
 ## Runtime And Release Gates

@@ -13,18 +13,38 @@
   },
   "scripts": {
     "dev": "node dev-server.mjs",
-    "test": "node test/smoke.mjs && node test/gossip.mjs && node test/bridge.mjs && node test/bridge-convergence.mjs && node test/runtime.mjs && node test/relay-roster.mjs && node test/dht-adapter.mjs && node test/outbox-head.mjs && node test/relay-pool.mjs && node test/head-floor.mjs && node test/directory.mjs",
+    "test": "node test/smoke.mjs && node test/gossip.mjs && node test/bridge.mjs && node test/bridge-convergence.mjs && node test/runtime.mjs && node test/relay-roster.mjs && node test/dht-adapter.mjs && node test/dht-build.mjs && node test/outbox-head.mjs && node test/relay-pool.mjs && node test/head-floor.mjs && node test/directory.mjs",
     "test:browser": "node scripts/browser-smoke.mjs",
+    "test:browser:mobile": "node scripts/browser-smoke.mjs --mobile-host",
     "test:dht-live": "node test/dht-live.mjs",
-    "dht:deps": "npm i --no-save corestore@6 hypercore@10 hyperbee@2 hyperswarm@4 protomux b4a compact-encoding sodium-javascript random-access-web @hyperswarm/dht-relay @hyperswarm/testnet random-access-memory",
-    "dht:bundle": "npx esbuild js/dht-transport.js --bundle --format=esm --platform=browser --main-fields=browser,module,main --outfile=web/dht-bundle.js",
+    "dht:deps": "npm install --include=dev",
+    "dht:bundle": "node scripts/build-dht-bundle.mjs --out web/js/dht-bundle.js",
     "proof:availability": "node scripts/availability-proof.mjs",
     "proof:availability:live": "node scripts/availability-proof.mjs --require-live",
+    "build-web": "node build-web.mjs",
+    "web:release": "node scripts/web-release.mjs",
     "launch:readiness": "node scripts/launch-readiness.mjs",
     "launch:seed-plan": "node scripts/launch-seed-plan.mjs",
     "ship:check": "node ship.mjs",
     "ship:live": "node ship.mjs --publish",
     "publish:local": "node publish.mjs --local",
-    "publish": "node publish.mjs"
+    "publish:raw": "node publish.mjs",
+    "publish": "node ship.mjs --publish"
+  },
+  "devDependencies": {
+    "@hyperswarm/dht-relay": "0.4.3",
+    "@hyperswarm/testnet": "3.1.4",
+    "b4a": "1.8.1",
+    "buffer": "5.1.0",
+    "compact-encoding": "3.3.0",
+    "corestore": "6.18.4",
+    "esbuild": "0.24.2",
+    "hyperbee": "2.27.3",
+    "hypercore": "10.38.2",
+    "hyperswarm": "4.17.0",
+    "protomux": "3.11.0",
+    "random-access-memory": "6.2.1",
+    "random-access-web": "2.0.3",
+    "sodium-javascript": "0.8.0"
   }
 }

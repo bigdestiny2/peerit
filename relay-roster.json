@@ -1,0 +1,14 @@
+{
+  "payload": {
+    "version": 1,
+    "expires": "2026-12-31T00:00:00.000Z",
+    "relays": [
+      "https://peerit-relay.onrender.com"
+    ]
+  },
+  "signature": {
+    "alg": "Ed25519",
+    "key": "f7441ced416529c7b145736a9c493b913e22cf3eca1d4538e58cd287d7493c34",
+    "sig": "ba7b6b23d3c71c680e0c4b6617973998aa19b73ae8b13bce6c6937d91ab99b0d4d10f35e0d7dc681bee0f38f6e73561640b1cf116b43dc49b943dcfbd121f201"
+  }
+}

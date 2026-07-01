@@ -20,16 +20,21 @@ localStorage fallback that looks identical in the UI. There are two layers:
 
 ```sh
 npm test
+npm run test:browser:mobile   # optional Playwright UI gate for the mobile /api token path
 ```
 
-Runs four suites (130 checks):
+`npm test` runs the dependency-installed headless suites. The browser-mobile
+gate is separate because Playwright is an operator/dev dependency, not an app
+runtime dependency.
 
-| Suite | Proves |
+| Gate | Proves |
 | --- | --- |
 | `test/smoke.mjs` | domain model, ranking, threading, markdown safety |
 | `test/gossip.mjs` | signed-record merge, forgery rejection, dev-mode multi-peer convergence, bridge restart + recovery import |
 | `test/bridge.mjs` | the `/api/*` contract; partial-bridge **fail-closed** (never silently downgrades to dev) |
 | `test/bridge-convergence.mjs` | **two distinct writers** discovering each other via signed swarm descriptors over the `/api` transport, merging both outboxes, in `gossip-bridge` mode |
+| `test/runtime.mjs` | PearBrowser desktop/mobile runtime dispatch ignores web relay config and never forces dev/read-only on host paths |
+| `npm run test:browser:mobile` | Browser-shaped PearBrowser mobile boot: injects `pear-api-token` plus a default read-only web relay meta, requires `gossip-bridge`/`p2p`, performs UI writes, verifies `/api` append rows and signed head, and fails if dev localStorage or read-only UI appears |
 
 `bridge-convergence.mjs` is the closest automated stand-in for the on-device
 test: it wires a shared in-memory bridge world (shared `/api/sync` outboxes + a
@@ -112,7 +117,8 @@ identity; the two devices must show **different** writer keys.
 ## Quick reference
 
 ```sh
-npm test                 # automated: 130 checks incl. two-writer /api convergence
+npm test                 # automated headless bridge/runtime coverage
+npm run test:browser:mobile
 node publish.mjs --local # host the drive locally, prints the hyper:// URL
 ```
 

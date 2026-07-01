@@ -1,7 +1,7 @@
-// build-web.mjs — produce the peerit.com STATIC web bundle (Phase 0/2).
+// build-web.mjs — produce the peerit.com STATIC web bundle.
 //
-// peerit has no build step; this just copies the served files into web/ and adds
-// the web-only delivery hardening:
+// The default build mostly copies the served files into web/ and adds the
+// web-only delivery hardening:
 //   - <meta name="peerit-relay"> so a normal browser enters web mode (ignored by
 //     PearBrowser, which uses window.pear — so this never affects the P2P build).
 //   - SRI (sha384) on the entry module + stylesheet.
@@ -11,54 +11,134 @@
 //     SW manifest is the comprehensive integrity pin.)
 //   - asset-manifest.json + verify.html so anyone can recompute the hashes and
 //     cross-check against the published hyper:// drive key.
+//   - when --dht-relay is set, a real esbuilt browser DHT transport replaces the
+//     checked-in fail-closed js/dht-bundle.js stub in web/.
 //
 // Usage:
+//   node build-web.mjs
 //   node build-web.mjs --relay https://relay.peerit.com --readonly false \
 //     --relay-roster relay-roster.json --relay-roster-key <pubkey> --drive-key <hyperkey>
-//   PEERIT_RELAY=... PEERIT_RELAY_ROSTER=... PEERIT_RELAY_ROSTER_KEY=... node build-web.mjs
+//   node build-web.mjs --relay same-origin --no-relay-roster
+//   PEERIT_WEB_RELEASE_CONFIG=deploy/web-release.json node build-web.mjs
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SITE_FILES } from './publish.mjs'
+import { buildDhtBundle } from './scripts/build-dht-bundle.mjs'
+import { normalizeRelayRosterPayload, verifyRelayRoster } from './js/relay-roster.js'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const OUT = join(__dir, 'web')
 const arg = (name) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : null }
+const hasArg = (name) => process.argv.includes(name)
 
-const RELAY = process.env.PEERIT_RELAY || arg('--relay') || ''
-const READONLY = String(process.env.PEERIT_RELAY_READONLY || arg('--readonly') || 'true')
-const DRIVE_KEY = process.env.PEERIT_DRIVE_KEY || arg('--drive-key') || ''
-const DHT_RELAY = process.env.PEERIT_DHT_RELAY || arg('--dht-relay') || '' // Phase 3 (optional)
-const RELAY_ROSTER = process.env.PEERIT_RELAY_ROSTER || arg('--relay-roster') || ''
-const RELAY_ROSTER_KEY = process.env.PEERIT_RELAY_ROSTER_KEY || arg('--relay-roster-key') || ''
+const CONFIG_PATH = process.env.PEERIT_WEB_RELEASE_CONFIG || arg('--config') || join('deploy', 'web-release.json')
+const releaseConfig = readConfig(CONFIG_PATH)
+const RELAY = process.env.PEERIT_RELAY || arg('--relay') || configRelay(releaseConfig) || ''
+const READONLY = String(process.env.PEERIT_RELAY_READONLY || arg('--readonly') || configReadonly(releaseConfig))
+const DRIVE_KEY = process.env.PEERIT_DRIVE_KEY || arg('--drive-key') || configDriveKey(releaseConfig) || ''
+const DHT_RELAY = process.env.PEERIT_DHT_RELAY || arg('--dht-relay') || releaseConfig.dhtRelay || '' // Phase 3 (optional)
+const NO_RELAY_ROSTER = hasArg('--no-relay-roster') || process.env.PEERIT_NO_RELAY_ROSTER === '1'
+const RELAY_ROSTER = NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER || arg('--relay-roster') || releaseConfig.relayRoster || '')
+let RELAY_ROSTER_KEY = NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER_KEY || arg('--relay-roster-key') || releaseConfig.pinnedRosterKey || '')
+if (DHT_RELAY) assertDhtRelay(DHT_RELAY)
 
 const sri = (buf) => 'sha384-' + createHash('sha384').update(buf).digest('base64')
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex')
 const attr = (s) => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+
+let dhtBundle = null
+if (DHT_RELAY) dhtBundle = await buildDhtBundle()
+
+function readConfig (file) {
+  const abs = resolve(__dir, file || '')
+  if (!existsSync(abs)) return {}
+  try {
+    return JSON.parse(readFileSync(abs, 'utf8'))
+  } catch (err) {
+    throw new Error(`could not parse ${file}: ${err.message}`)
+  }
+}
+
+function configRelay (cfg) {
+  if (cfg.relay) return String(cfg.relay)
+  if (Array.isArray(cfg.bootstrapRelays)) return cfg.bootstrapRelays.map(String).join(',')
+  return ''
+}
+
+function configReadonly (cfg) {
+  if (cfg.readonly !== undefined) return cfg.readonly === false ? 'false' : 'true'
+  if (cfg.readOnly !== undefined) return cfg.readOnly === false ? 'false' : 'true'
+  return 'true'
+}
+
+function configDriveKey (cfg) {
+  if (cfg.driveKey) return String(cfg.driveKey)
+  try {
+    const manifest = JSON.parse(readFileSync(join(__dir, 'manifest.json'), 'utf8'))
+    return String(manifest.driveKey || '')
+  } catch {
+    return ''
+  }
+}
+
+function samePayload (a, b) {
+  return JSON.stringify(normalizeRelayRosterPayload(a)) === JSON.stringify(normalizeRelayRosterPayload(b))
+}
+
+async function prepareRoster () {
+  if (!RELAY_ROSTER) {
+    if (RELAY_ROSTER_KEY) throw new Error('--relay-roster-key was set without --relay-roster')
+    return { meta: '', sha256: '' }
+  }
+
+  const rosterFile = resolve(__dir, RELAY_ROSTER)
+  if (/^https?:\/\//i.test(RELAY_ROSTER) || !existsSync(rosterFile)) {
+    if (!RELAY_ROSTER_KEY) throw new Error('--relay-roster requires --relay-roster-key for remote or missing roster files')
+    return { meta: RELAY_ROSTER, sha256: '' }
+  }
+
+  const buf = readFileSync(rosterFile)
+  let roster
+  try {
+    roster = JSON.parse(buf.toString('utf8'))
+  } catch (err) {
+    throw new Error(`relay roster is not valid JSON: ${err.message}`)
+  }
+
+  const rosterKey = String(roster.signature && roster.signature.key || '').toLowerCase()
+  if (!RELAY_ROSTER_KEY) RELAY_ROSTER_KEY = rosterKey
+  RELAY_ROSTER_KEY = String(RELAY_ROSTER_KEY).toLowerCase()
+  if (rosterKey !== RELAY_ROSTER_KEY) throw new Error('relay roster signer does not match the pinned roster key')
+  if (releaseConfig.pinnedRosterKey && RELAY_ROSTER_KEY !== String(releaseConfig.pinnedRosterKey).toLowerCase()) {
+    throw new Error('relay roster key does not match deploy/web-release.json')
+  }
+  if (releaseConfig.roster && !samePayload(roster.payload, releaseConfig.roster)) {
+    throw new Error('relay roster payload does not match deploy/web-release.json')
+  }
+
+  await verifyRelayRoster(roster, { expectedKey: RELAY_ROSTER_KEY })
+  files['relay-roster.json'] = buf
+  manifest['relay-roster.json'] = sha256(buf)
+  return { meta: 'relay-roster.json', sha256: manifest['relay-roster.json'] }
+}
 
 // 1. read + hash every served file
 const files = {}
 const manifest = {}
 const sriMap = {}
 for (const p of SITE_FILES) {
-  const buf = readFileSync(join(__dir, p))
+  const buf = p === 'js/dht-bundle.js' && dhtBundle ? dhtBundle : readFileSync(join(__dir, p))
   files[p] = buf
   manifest[p] = sha256(buf)
   sriMap[p] = sri(buf)
 }
 
 // 2. transform index.html: relay meta + SW registration (external, CSP-safe) + SRI
-let relayRosterMeta = RELAY_ROSTER
-if (RELAY_ROSTER) {
-  const rosterFile = resolve(__dir, RELAY_ROSTER)
-  if (!/^https?:\/\//i.test(RELAY_ROSTER) && existsSync(rosterFile)) {
-    files['relay-roster.json'] = readFileSync(rosterFile)
-    manifest['relay-roster.json'] = sha256(files['relay-roster.json'])
-    relayRosterMeta = 'relay-roster.json'
-  }
-}
+const rosterRelease = await prepareRoster()
+const relayRosterMeta = rosterRelease.meta
 let html = files['index.html'].toString('utf8')
 const head = [
   RELAY ? `<meta name="peerit-relay" content="${attr(RELAY)}">` : '',
@@ -69,6 +149,7 @@ const head = [
   '<script src="sw-register.js"></script>'
 ].filter(Boolean).join('\n  ')
 html = html.replace('</head>', '  ' + head + '\n</head>')
+if (DHT_RELAY) html = relaxCspForDht(html, DHT_RELAY)
 html = html.replace('<link rel="stylesheet" href="styles.css">', `<link rel="stylesheet" href="styles.css" integrity="${sriMap['styles.css']}" crossorigin="anonymous">`)
 html = html.replace('<script type="module" src="js/app.js"></script>', `<script type="module" src="js/app.js" integrity="${sriMap['js/app.js']}" crossorigin="anonymous"></script>`)
 files['index.html'] = Buffer.from(html)
@@ -104,6 +185,13 @@ manifest['sw-register.js'] = sha256(Buffer.from(swRegister))
 writeFileSync(join(OUT, 'asset-manifest.json'), JSON.stringify({
   files: manifest,
   driveKey: DRIVE_KEY,
+  webRelease: {
+    relay: RELAY,
+    readonly: READONLY,
+    relayRoster: relayRosterMeta,
+    relayRosterKey: RELAY_ROSTER_KEY,
+    relayRosterSha256: rosterRelease.sha256
+  },
   note: 'SHA-256 of every served file. Cross-check driveKey against the published hyper:// drive in PearBrowser.'
 }, null, 2))
 
@@ -113,6 +201,7 @@ writeFileSync(join(OUT, 'verify.html'), verifyPage(DRIVE_KEY))
 console.log(`[build-web] wrote ${SITE_FILES.length + 4 + (files['relay-roster.json'] ? 1 : 0)} files to web/`)
 console.log(`           relay=${RELAY || '(none — local-only)'} readonly=${READONLY} driveKey=${DRIVE_KEY || '(unset)'}`)
 console.log(`           relayRoster=${relayRosterMeta || '(none)'} rosterKey=${RELAY_ROSTER_KEY ? RELAY_ROSTER_KEY.slice(0, 12) + '...' : '(unset)'}`)
+if (DHT_RELAY) console.log(`           dhtRelay=${DHT_RELAY} dhtBundle=${files['js/dht-bundle.js'].length} bytes`)
 if (!RELAY) console.log('           NOTE: no --relay → the bundle loads but stays local-only (gossip-dev) until a relay is configured.')
 if (RELAY_ROSTER && !RELAY_ROSTER_KEY) console.log('           NOTE: --relay-roster without --relay-roster-key is ignored by clients (no pinned verification key).')
 
@@ -177,4 +266,54 @@ function verifyPage (driveKey) {
   } catch (e) { document.getElementById('out').textContent = 'verify failed: ' + (e && e.message); }
 })();
 </script></body></html>`
+}
+
+function relaxCspForDht (html, relay) {
+  return html.replace(/(<meta http-equiv="Content-Security-Policy" content=")([^"]*)(")/, (m, before, policy, after) => {
+    return before + patchCsp(policy, relay) + after
+  })
+}
+
+function patchCsp (policy, relay) {
+  const dhtSource = cspSourceForWebSocket(relay)
+  const out = []
+  let sawScript = false
+  let sawConnect = false
+  for (const raw of policy.split(';')) {
+    const part = raw.trim()
+    if (!part) continue
+    const [name, ...sources] = part.split(/\s+/)
+    if (name === 'script-src') {
+      sawScript = true
+      addSource(sources, "'wasm-unsafe-eval'")
+    } else if (name === 'connect-src') {
+      sawConnect = true
+      addSource(sources, dhtSource)
+    }
+    out.push([name, ...sources].join(' '))
+  }
+  if (!sawScript) out.push("script-src 'self' 'wasm-unsafe-eval'")
+  if (!sawConnect) out.push("connect-src 'self' " + dhtSource)
+  return out.join('; ')
+}
+
+function addSource (sources, source) {
+  if (source && !sources.includes(source)) sources.push(source)
+}
+
+function cspSourceForWebSocket (relay) {
+  const url = new URL(relay)
+  return `${url.protocol}//${url.host}`
+}
+
+function assertDhtRelay (relay) {
+  let url
+  try {
+    url = new URL(relay)
+  } catch {
+    throw new Error('--dht-relay must be a ws:// or wss:// URL')
+  }
+  if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
+    throw new Error('--dht-relay must be a ws:// or wss:// URL')
+  }
 }

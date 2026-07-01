@@ -76,7 +76,7 @@ HIVERELAY_ROOT=../p2p-hiverelay npm run publish:local
 For a real public publish:
 
 ```bash
-HIVERELAY_ROOT=../p2p-hiverelay STRICT_ANCHOR=1 KEEP=1 npm run publish
+HIVERELAY_ROOT=../p2p-hiverelay npm run ship:live
 ```
 
 ### Data model — riding the bridge's generic reducer
@@ -213,25 +213,41 @@ gates, see [`TEST-COMMAND-MATRIX-2026-07-01.md`](TEST-COMMAND-MATRIX-2026-07-01.
 registers it in the PearBrowser catalog so it appears in the app's store. It now
 waits for relay byte-replication evidence after seed acceptance; use
 `STRICT_ANCHOR=1` for release publishes that should fail instead of warning when
-the drive is not durably reachable yet.
+the drive is not durably reachable yet. The public web release is tied to the
+same command: `ship:live` rebuilds `web/` from `deploy/web-release.json`,
+validates `relay-roster.json` against the pinned roster key, and embeds the
+freshly published drive key in `asset-manifest.json` and `verify.html`.
 
 ```bash
 npm run ship:check        # tests + manifest/file/git served-file preflight
-npm run ship:live         # preflight, then strict publish with a 240s anchor wait
+npm run ship:live         # preflight, strict publish, then signed web release build
+npm run web:release       # validate/sign relay-roster.json and rebuild web/ only
 npm run proof:availability  # local static + availability evidence summary
 npm run publish:local       # local PearBrowser test, not cataloged or seeded
-npm run publish             # publish + seed, then exit
-KEEP=1 npm run publish      # stay online so relays fully anchor the drive
+npm run publish             # alias for the guarded ship:live flow
+npm run publish:raw         # raw publisher, for debugging only
+KEEP=1 npm run publish:raw  # manual long-running seed hold; bypasses ship guards
 STRICT_ANCHOR=1 npm run publish
 ```
 
 `ship:live` sets `STRICT_ANCHOR=1`, `DURABILITY=archive`, and a longer
 `ANCHOR_TIMEOUT_MS=240000` by default. It writes ignored operator evidence to
-`.deploy/last-ship.json` and `.deploy/last-publish.json`. If strict anchoring
-fails after `manifest.json` was updated, `publish.mjs` restores the previous
-manifest so a partial relay anchor does not masquerade as the current release.
-By default the ship check blocks when served app files are dirty in git; use
-`node ship.mjs --allow-dirty` only for an intentional uncommitted test publish.
+`.deploy/last-ship.json`, `.deploy/last-publish.json`, and
+`.deploy/last-web-release.json`. If strict anchoring fails after `manifest.json`
+was updated, `publish.mjs` restores the previous manifest so a partial relay
+anchor does not masquerade as the current release. By default the ship check
+blocks when release files are dirty in git; use `node ship.mjs --allow-dirty`
+only for an intentional uncommitted test publish.
+`KEEP=1` is deliberately ignored by `ship:live`, because the ship process must
+regain control after `publish.mjs` writes the new drive key so it can rebuild and
+verify the web bundle.
+
+The web release source of truth is [`deploy/web-release.json`](deploy/web-release.json).
+When rotating the relay fleet, edit that file and run
+`PEERIT_ROSTER_SEED=<offline seed> npm run web:release`; without the seed, the
+same command verifies the committed signed roster and fails on any mismatch. A
+roster signing-key rotation is explicit: update `pinnedRosterKey` and the signed
+roster together.
 
 The publisher loads `p2p-hiverelay-client` from an installed package, an explicit
 HiveRelay env path, or a discoverable sibling/workspace checkout. This puts

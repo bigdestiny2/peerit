@@ -1,0 +1,16 @@
+{
+  "bootstrapRelays": [
+    "https://peerit-relay.onrender.com"
+  ],
+  "readonly": false,
+  "relayRoster": "relay-roster.json",
+  "pinnedRosterKey": "f7441ced416529c7b145736a9c493b913e22cf3eca1d4538e58cd287d7493c34",
+  "dhtRelay": "",
+  "roster": {
+    "version": 1,
+    "expires": "2026-12-31T00:00:00.000Z",
+    "relays": [
+      "https://peerit-relay.onrender.com"
+    ]
+  }
+}

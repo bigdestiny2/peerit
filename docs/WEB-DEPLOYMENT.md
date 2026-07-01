@@ -45,26 +45,32 @@ working — the web is additive publishing.
 | **0 — read-only verified mirror** | runtime dispatch, read-only UI + banner, static export | ✅ built, browser-verified |
 | **1 — relay + local keys (full app)** | `02-apps/peerit-relay` (token, CORS, rate-limit, swarm hub, memory + hypercore cores), client token acquisition + write path | ✅ built; Node e2e over real HTTP + browser `gossip-bridge` verified |
 | **2 — hardened delivery** | `build-web.mjs` (SRI, Service Worker `sw.js`, `asset-manifest.json`, `verify.html`), signed relay roster, boot-time multi-relay failover | ✅ built; signed roster + failover covered by Node e2e/unit tests, browser smoke still recommended per deploy |
-| **3 — in-browser DHT pipe** | `js/dht-adapter.js` (maps hypercore stack → pear surface, **adapter logic unit-tested** via `test/dht-adapter.mjs`), `js/dht-transport.js` (wires the real deps), boot wiring + `build-web --dht-relay` | ⚠ adapter tested + wired; the real DHT/Noise/protomux wire + esbuild bundle need live validation |
+| **3 — in-browser DHT pipe** | `js/dht-adapter.js` (maps hypercore stack → pear surface), `js/dht-transport.js` (wires the real deps), `build-web --dht-relay` (esbuilds the browser transport into `web/js/dht-bundle.js`) | ✅ build path smoke-tested; adapter tested; local testnet DHT wire test available; public browser+dht-relay deployment still needs operator validation |
 
 ## Build & serve the web bundle
 
 ```sh
-# produce web/ — relay can be an absolute URL, a comma-separated failover list,
-# or "same-origin" (relay proxied under peerit.com/api/*, no CORS)
-node build-web.mjs --relay https://relay.peerit.com --readonly false \
-  --relay-roster relay-roster.json --relay-roster-key <roster signing pubkey> \
-  --drive-key <the published hyper:// key>
+# release path: validate/sign relay-roster.json, build web/, then prove that
+# the bundle, pinned roster key, manifest drive key, and docs agree.
+npm run web:release
+
+# when rotating the relay fleet, edit deploy/web-release.json, then sign + build
+# from the offline roster seed. The private seed is never committed.
+PEERIT_ROSTER_SEED=<32-byte-hex-seed> npm run web:release
 
 # local end-to-end (what the browser test does):
 #   1) relay:  cd ../peerit-relay && PEERIT_RELAY_ORIGINS=http://127.0.0.1:8780 node relay.mjs
-#   2) bundle: node build-web.mjs --relay same-origin --readonly true --drive-key <key>
+#   2) bundle: npm run build-web -- --relay same-origin --readonly true --no-relay-roster --drive-key <key>
 #   3) serve:  node web-serve.mjs           # proxies /api/* → the relay, serves web/ on :8780
 ```
 
 The exported `index.html` gets the relay `<meta>`, SRI on the entry module +
 stylesheet, and a Service Worker that pins the audited bundle by SHA-256
 (so the app survives the origin going down and global JS swaps are detectable).
+`build-web.mjs` reads [`deploy/web-release.json`](../deploy/web-release.json) by
+default, validates the local signed roster against the pinned public key, copies
+`relay-roster.json` into `web/`, and records the roster hash/key in
+`asset-manifest.json`.
 
 ## Signed relay roster
 
@@ -87,32 +93,43 @@ without trusting DNS, the relay, or the roster host:
 }
 ```
 
-Generate it offline from the relay package:
+The release source of truth is [`deploy/web-release.json`](../deploy/web-release.json):
+it contains the bootstrap fallback relay list, the canonical roster payload, and
+the public roster key pinned into `index.html`. The committed
+[`relay-roster.json`](../relay-roster.json) must have the same canonical payload
+and must be signed by that pinned key.
+
+Generate or rotate it with the web release command:
 
 ```sh
-cd 02-apps/peerit-relay
-npm run roster:sign -- --generate-key
-PEERIT_ROSTER_SEED=<seed from offline key storage> npm run roster:sign -- \
-  --relay https://relay-a.peerit.com --relay https://relay-b.peerit.com \
-  --expires 2026-12-31T00:00:00.000Z --out ../peerit/relay-roster.json
+PEERIT_ROSTER_SEED=<seed from offline key storage> npm run web:release
 ```
 
-Build with `--relay-roster relay-roster.json --relay-roster-key <public key>`.
-At boot, a normal browser verifies the roster key + expiry, tries the signed
-relays in order, obtains a first-visit token from the first reachable relay, and
-falls back to the baked `peerit-relay` list if the roster is unavailable or bad.
+Without `PEERIT_ROSTER_SEED`, `npm run web:release` verifies the existing
+`relay-roster.json` and fails if its signer, payload, expiry, or generated web
+bundle does not match the config. At boot, a normal browser verifies the roster
+key + expiry, tries the signed relays in order, obtains a first-visit token from
+the first reachable relay, and falls back to the baked `peerit-relay` list if the
+roster is unavailable or bad.
+
+If the roster signing key itself must rotate, change `pinnedRosterKey` and sign
+the new `relay-roster.json` in the same release. The guard treats any signer/key
+drift outside that explicit config change as a publish blocker.
 
 ## Deploy checklist (operator — these are your steps, not the code's)
 
 1. **Relay:** deploy `02-apps/peerit-relay` (see its README) behind TLS at
    `relay.peerit.com`, or proxy it same-origin at `peerit.com/api/*`. Run more
-   than one; put the fleet in `relay-roster.json`, and keep `--relay` as a
-   conservative bootstrap fallback.
+   than one; put the fleet in `deploy/web-release.json`, and keep
+   `bootstrapRelays` as a conservative fallback.
 2. **Seeders:** run `02-apps/peerit-seeder` so outboxes stay available offline.
-3. **Code:** host `web/` on peerit.com; also pin to IPFS (DNSLink), Arweave, and
-   set ENS `peerit.eth` contenthash → CID so the app survives DNS/registrar seizure.
-4. **Verify path:** publish the `hyper://` drive (`KEEP=1 node publish.mjs`) and put
-   its key in `--drive-key`; `peerit.com/verify.html` lets anyone cross-check.
+3. **Code:** run `npm run ship:live`. It publishes the `hyper://` drive, writes
+   the new key to `manifest.json`, then runs `npm run web:release` with that key
+   so `web/asset-manifest.json` and `web/verify.html` cannot lag behind.
+4. **Host/mirror:** host `web/` on peerit.com; also pin to IPFS (DNSLink),
+   Arweave, and set ENS `peerit.eth` contenthash → CID so the app survives
+   DNS/registrar seizure. `peerit.com/verify.html` lets anyone cross-check the
+   web bundle against the published drive key.
 
 ## Manual validation still required
 
@@ -128,27 +145,42 @@ falls back to the baked `peerit-relay` list if the roster is unavailable or bad.
   relay; real multi-region liveness still depends on the deployed DHT/seeder
   topology.
 
-## Phase 3 build recipe (when ready to validate on a network)
+## Phase 3 DHT build path
 
-The adapter (`js/dht-adapter.js`) is unit-tested and the boot wiring is already in
-place — boot dynamically imports `./dht-bundle.js` and prefers the DHT transport
-when a `<meta name="peerit-dht-relay">` is present, falling back to the `/api`
-relay otherwise. Remaining is to build the bundle and validate on a live network:
+The checked-in `js/dht-bundle.js` is a fail-closed stub for non-DHT builds. When
+`--dht-relay` is set, `build-web.mjs` now esbuilds `js/dht-transport.js` with the
+pinned browser DHT dependency set, swaps that generated artifact into
+`web/js/dht-bundle.js`, relaxes CSP for WASM crypto plus the exact relay
+WebSocket origin, and hashes the generated bundle into `asset-manifest.json`.
+Boot dynamically imports `./dht-bundle.js` and prefers the DHT transport when a
+`<meta name="peerit-dht-relay">` is present, falling back to the `/api` relay
+otherwise.
 
 ```sh
 cd 02-apps/peerit
-# CRITICAL version pin (2026-07-01): corestore ~6.x + hypercore ~10.x — the
-# random-access era. Unpinned `npm i corestore` grabs 7.x, whose hypercore-storage
-# is Node-file-oriented (fs/path/rocksdb) and will NOT browser-bundle. Also needs
-# sodium-javascript (the WASM crypto fallback for browsers).
-npm run dht:deps          # or: npm i --no-save corestore@6 hypercore@10 hyperbee@2 hyperswarm@4 protomux b4a compact-encoding sodium-javascript random-access-web @hyperswarm/dht-relay
-npm run dht:bundle        # esbuild → web/dht-bundle.js (browser platform, browser main-fields)
+npm install               # installs the exact devDependency pins below
+npm run dht:bundle        # optional direct bundle smoke helper
 node build-web.mjs --relay https://relay.peerit.com --readonly false \
   --dht-relay wss://dht-relay.peerit.com --drive-key <key>
 ```
 
+Exact pins used by the browser DHT bundle:
+`@hyperswarm/dht-relay@0.4.3`, `corestore@6.18.4`, `hypercore@10.38.2`,
+`hyperbee@2.27.3`, `hyperswarm@4.17.0`, `protomux@3.11.0`, `b4a@1.8.1`,
+`compact-encoding@3.3.0`, `random-access-web@2.0.3`,
+`random-access-memory@6.2.1`, `sodium-javascript@0.8.0`, `buffer@5.1.0`, and
+`esbuild@0.24.2`.
+
+Critical pin note (2026-07-01): keep `corestore` on 6.x and `hypercore` on 10.x,
+the random-access-storage era. Unpinned `npm install corestore` can select newer
+file-storage-oriented releases that pull Node `fs`/`path`/RocksDB code and will
+not browser-bundle.
+
 **Validation status (2026-07-01):**
-- ✅ **bundle builds clean** (~1.2 MB) with the pinned versions — no `fs`/`path`.
+- ✅ **DHT web build smoke:** `node test/dht-build.mjs` runs
+  `build-web --dht-relay`, verifies the generated non-stub bundle is importable,
+  checks DHT meta/CSP, and confirms `asset-manifest.json` pins the generated
+  bundle hash.
 - ✅ **wire VALIDATED on a local testnet DHT** — `npm run test:dht-live`
   (`test/dht-live.mjs`) runs two real `BridgeGossipSync` peers over the real
   corestore + hyperswarm + protomux + hypercore-replication stack on a

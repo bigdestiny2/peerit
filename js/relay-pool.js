@@ -52,11 +52,27 @@ export function createRelayPool ({ relays = [], fetch, EventSource, document } =
   }
 
   // Read a full outbox from a specific relay base (the failover read when the
-  // primary is caught withholding). Unknown/empty base -> the primary.
+  // primary is caught withholding). Unknown/empty base -> the primary. Paginated:
+  // the head commits to the WHOLE outbox, so a single 1000-row page would make a
+  // large outbox's census a strict subset that never matches the root.
+  const MAX_ROWS = 50000
+  async function readAll (api, appId) {
+    const rows = []
+    let gt = ''
+    while (rows.length < MAX_ROWS) {
+      const batch = await api.sync.range(appId, { gt, limit: Math.min(1000, MAX_ROWS - rows.length) })
+      if (!Array.isArray(batch) || !batch.length) break
+      rows.push(...batch)
+      const last = batch[batch.length - 1] && batch[batch.length - 1].key
+      if (!last || last === gt || batch.length < 1000) break
+      gt = last
+    }
+    return rows
+  }
   async function crossRows (appId, base) {
     let api = primary
     if (base) { const i = bases.indexOf(base); if (i >= 0) api = apis[i] }
-    return api.sync.range(appId, { limit: 1000 })
+    return readAll(api, appId)
   }
 
   // Route AROUND a withholding relay: read the outbox from each pool relay and
@@ -67,7 +83,7 @@ export function createRelayPool ({ relays = [], fetch, EventSource, document } =
     if (!head || typeof head.root !== 'string') return null
     for (let i = 0; i < apis.length; i++) {
       try {
-        const rows = await apis[i].sync.range(appId, { limit: 1000 })
+        const rows = await readAll(apis[i], appId)
         if (head.root === await hashHex(censusString(outboxCensus(rows, appId)))) return { rows, base: bases[i] }
       } catch {}
     }

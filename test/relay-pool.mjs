@@ -116,6 +116,10 @@ async function main () {
   const st = await bob.sync.status()
   ok(Array.isArray(st.withholding) && st.withholding.length === 0, 'after recovery bob reports NO unresolved withholding (a relay serving the committed set was found)')
   ok((await bob.data.getCommunity('p2p'))?.title === 'P2P', 'bob resolves r/p2p (community record recovered too)')
+  // F7: recovery must STICK — reads are pinned to B, so the withholding primary A
+  // can't re-strip the recovered rows on subsequent polls (would flap 2<->1 if not).
+  await delay(1600)
+  ok((await bob.data.listPostsIn('p2p')).length >= 2, 'recovery STICKS across ~6 polls (reads pinned to the good relay, not re-stripped by A)')
 
   console.log('\n— when NO relay serves the committed set, withholding is flagged —')
   // Break BOTH relays for a NEW author so recovery has nowhere to route.

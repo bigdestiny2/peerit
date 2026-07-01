@@ -177,6 +177,17 @@ one configured relay — the guarantees switch on as the roster grows. 9 tests i
 flag-when-nowhere). **Closes the Phase A rollback + head-strip gaps WHILE ONLINE**; the
 across-restart floor remains Phase C.
 
+**Adversarial review (2026-07-01) — fixed:** re-admit during recovery now gates on
+`_k === pub` so a relay can't smuggle foreign-signed rows through a root-matching set
+(F2); `recoverRows`/`crossRows` paginate, so recovery works for outboxes > 1000 rows
+(F3); recovery **sticks** — a recovered outbox's future reads are pinned to the serving
+relay (`_readFrom`, cleared at reconcile) instead of being re-stripped by the withholding
+primary each round (F7). **Tracked hardening (review-flagged, not yet built):** a write
+still only *awaits* the primary, so it can land on one relay and audit green — needs a
+confirm-fleet-copy / "replicated N/M" proof (F1); writer/primary failover when the
+primary is down (F4); a self-durability surface (F5); a recovery cooldown to bound churn
+under an adversarial version-bumping primary (F6).
+
 ### Phase C — Durable signed directory (Hyperbee) + relay demoted to cache · NEEDS HIVERELAY
 Move discovery durability off relay RAM.
 - Replace `swarm-hub.mjs` descriptor `Map` + `core-memory` snapshot with a **signed,

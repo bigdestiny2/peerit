@@ -360,6 +360,7 @@ class BridgeGossipSync {
     this._peerSigs = new Map()    // pub -> Map(key -> changeToken) seen last refresh
     this._peerHeads = new Map()   // pub -> last-seen outbox version (from /api/sync/heads)
     this._withholding = new Set()  // pubs whose replicated rows failed their signed-head audit (detection only)
+    this._readFrom = new Map()     // pub -> relay base to read that outbox from (set on recovery so it sticks; cleared at reconcile)
     this._claimed = null          // sticky community owners (slug -> creator), persisted
     this._refreshing = null       // in-flight refresh promise (serialises concurrent merges)
     this._destroyed = false
@@ -673,6 +674,7 @@ class BridgeGossipSync {
     let toRead
     if (reconcile) {
       this._peerSigs.clear()                 // periodic full RE-VERIFY (relay is untrusted)
+      this._readFrom.clear()                 // re-evaluate recovery routing (a withholding primary may have healed)
       toRead = [...this._peers.keys()]
     } else if (heads) {
       toRead = []                            // cheap path: only outboxes whose version moved
@@ -735,8 +737,9 @@ class BridgeGossipSync {
           const rec = await this.pear.sync.recoverRows(pub, head)
           if (rec && rec.rows) {
             const view2 = Object.create(null); const newSig = new Map()
-            for (const r of rec.rows) { if (PROTO_KEYS.has(r.key)) continue; if (await admit(typeFromKey(r.key), r.value, r.key, pub, secure, this.validate)) { view2[r.key] = r.value; newSig.set(r.key, changeToken(r.value)) } }
+            for (const r of rec.rows) { if (PROTO_KEYS.has(r.key)) continue; if (!(r.value && r.value._k === pub)) continue; if (await admit(typeFromKey(r.key), r.value, r.key, pub, secure, this.validate)) { view2[r.key] = r.value; newSig.set(r.key, changeToken(r.value)) } } // re-admit ONLY pub's own rows (a relay can't smuggle foreign-signed rows through recovery)
             this._peerViews.set(pub, view2); this._peerSigs.set(pub, newSig); view = view2; anyRowChanged = true
+            if (rec.base) this._readFrom.set(pub, rec.base) // pin future reads of this outbox to the relay that serves it, so the recovery STICKS (re-evaluated at reconcile)
             rows = []; for (const k in view2) rows.push({ key: k, value: view2[k] })
             a = await auditOutbox(rows, head, pub)
           }
@@ -765,6 +768,11 @@ class BridgeGossipSync {
   }
 
   async _rowsForPeer (info) {
+    // If a prior cross-relay audit recovered this outbox from a specific relay,
+    // keep reading it from THERE (paginated) so the recovery sticks instead of
+    // being re-stripped by the withholding primary each round.
+    const from = this._readFrom.get(info.appId)
+    if (from && this.pear.sync.crossRows) { try { return await this.pear.sync.crossRows(info.appId, from) } catch {} }
     if (this.pear.sync.range) {
       const rows = []
       let gt = ''

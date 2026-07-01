@@ -1,0 +1,61 @@
+# peerit-relay on your VPS as the PRIMARY untrusted relay (Phase 1 of
+# docs/HIVERELAY-OUTBOXLOG-PLAN.md). Caddy terminates TLS (auto Let's Encrypt for
+# the sslip.io host that resolves to this box) and reverse-proxies to peerit-relay.
+#
+# The relay is UNTRUSTED by construction: it stores author-signed records and
+# re-serves them, but holds NO signing key (POST /api/identity → 410) and every
+# record is re-verified client-side. For a PUBLIC forum it stores plaintext (that
+# is the accepted tradeoff — see the OUTBOXLOG plan §2). Running it as relay #1 in
+# the signed roster turns peerit's dormant cross-relay defenses ON.
+#
+# Setup (see README.md):
+#   1. git clone <your peerit-relay repo> ./peerit-relay      (zero npm deps)
+#   2. cp .env.example .env  &&  fill PEERIT_RELAY_SECRET + PEERIT_RELAY_ORIGINS
+#   3. docker compose up -d
+services:
+  peerit-relay:
+    image: node:20-alpine
+    restart: unless-stopped
+    working_dir: /app
+    command: node relay.mjs
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8787
+      - NODE_ENV=production
+      # memory core + disk snapshot = durable across restarts, ZERO npm deps.
+      # (Upgrade to PEERIT_RELAY_CORE=hypercore for DHT replication later — needs `npm i`.)
+      - PEERIT_RELAY_CORE=memory
+      - PEERIT_RELAY_PERSIST=/data/relay-snapshot
+      - PEERIT_RELAY_PERSIST_MS=5000
+      # behind Caddy, trust its X-Forwarded-For so per-IP rate limiting is correct
+      - PEERIT_RELAY_TRUST_PROXY=1
+      - PEERIT_RELAY_ORIGINS=${PEERIT_RELAY_ORIGINS}
+      - PEERIT_RELAY_SECRET=${PEERIT_RELAY_SECRET}
+    volumes:
+      - ./peerit-relay:/app:ro     # the cloned zero-dep relay source
+      - relay_data:/data           # persisted snapshot — KEEP this volume
+    expose:
+      - "8787"                     # private to the compose network; Caddy owns TLS
+    networks: [relaynet]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file: .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [relaynet]
+    depends_on: [peerit-relay]
+
+networks:
+  relaynet:
+
+volumes:
+  relay_data:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,11 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# Auto Let's Encrypt cert for the host that resolves to this VPS, and reverse-proxy
+# the whole /api/* surface to peerit-relay. sslip.io gives you a real TLS hostname
+# with no domain purchase: 153-75-89-206.sslip.io → 153.75.89.206. Swap in your own
+# domain later by changing RELAY_DOMAIN in .env and re-signing the roster.
+{$RELAY_DOMAIN} {
+	reverse_proxy peerit-relay:8787
+}

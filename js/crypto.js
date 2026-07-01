@@ -117,3 +117,19 @@ export async function hashHex (message) {
   for (let i = 0; i < bytes.length; i++) { h ^= bytes[i]; h = Math.imul(h, 0x01000193) >>> 0 }
   return ('0000000' + h.toString(16)).slice(-8).repeat(8)
 }
+
+// SHA-256 of raw BYTES (Uint8Array/ArrayBuffer) -> hex. hashHex above is UTF-8
+// string-only; content-addressing (blobId, contentKey, shardId) needs to hash
+// arbitrary binary without a lossy string round-trip. Same backend chain as
+// hashHex: SubtleCrypto.digest, then node:crypto, then the dev-only FNV fold
+// (which is NOT collision-resistant — only reached when isSecure() is false).
+export async function hashBytes (bytes) {
+  await ready()
+  const u = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  const subtle = globalThis.crypto && globalThis.crypto.subtle
+  if (subtle) { try { return toHex(new Uint8Array(await subtle.digest('SHA-256', u))) } catch {} }
+  if (nodeCrypto) { return nodeCrypto.createHash('sha256').update(Buffer.from(u)).digest('hex') }
+  let h = 0x811c9dc5 >>> 0 // FNV-1a (insecure) — dev-only, isSecure() is false here
+  for (let i = 0; i < u.length; i++) { h ^= u[i]; h = Math.imul(h, 0x01000193) >>> 0 }
+  return ('0000000' + h.toString(16)).slice(-8).repeat(8)
+}

@@ -123,6 +123,20 @@ async function submitFirst (page, selector) {
   await page.locator(selector).first().click()
 }
 
+function isExpectedConsoleError (text) {
+  return text.includes("Content Security Policy directive 'frame-ancestors' is ignored when delivered via a <meta> element.")
+}
+
+function recordBrowserErrors (page, errors) {
+  page.on('pageerror', err => errors.push(`pageerror: ${err.message}`))
+  page.on('console', msg => {
+    if (msg.type() !== 'error') return
+    const text = msg.text()
+    if (isExpectedConsoleError(text)) return
+    errors.push(`console: ${text}`)
+  })
+}
+
 async function runSmoke ({ browser, url }) {
   const stamp = Date.now().toString(36)
   const community = `codex${stamp.slice(-6)}`
@@ -134,12 +148,7 @@ async function runSmoke ({ browser, url }) {
   const context = await browser.newContext()
   const pageA = await context.newPage()
   const errors = []
-  for (const page of [pageA]) {
-    page.on('pageerror', err => errors.push(`pageerror: ${err.message}`))
-    page.on('console', msg => {
-      if (msg.type() === 'error') errors.push(`console: ${msg.text()}`)
-    })
-  }
+  recordBrowserErrors(pageA, errors)
 
   await pageA.goto(routeUrl(url, '#/create'), { waitUntil: 'domcontentloaded' })
   await pageA.locator('#app').waitFor({ state: 'visible', timeout: DEFAULT_TIMEOUT_MS })
@@ -164,10 +173,7 @@ async function runSmoke ({ browser, url }) {
   await expectText(pageA, firstComment)
 
   const pageB = await context.newPage()
-  pageB.on('pageerror', err => errors.push(`pageerror: ${err.message}`))
-  pageB.on('console', msg => {
-    if (msg.type() === 'error') errors.push(`console: ${msg.text()}`)
-  })
+  recordBrowserErrors(pageB, errors)
   await pageB.goto(pageA.url(), { waitUntil: 'domcontentloaded' })
   await expectText(pageB, firstComment)
 

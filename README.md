@@ -273,7 +273,43 @@ dropped at ingest too, so they can't evict real records. Community names are
 never replace it. This model was hardened against a multi-agent adversarial audit
 (forgery, tamper, key-collision, eviction, convergence). See [`test/gossip.mjs`](test/gossip.mjs).
 
+### Durability & censorship-resistance (implemented)
+
+Authenticity was never the problem — a relay can't forge. The problem is a relay
+that **withholds** or serves **stale** data. Full design + honest ceiling:
+[`docs/P2P-DURABILITY-SPEC.md`](docs/P2P-DURABILITY-SPEC.md).
+
+- **Signed outbox head** (the "merkle root", [`js/canon.js`](js/canon.js) ·
+  [`js/gossip.js`](js/gossip.js)). After each write, an author commits a signed
+  `head!<author>` record — `{version, count, root}` over the census of *their own*
+  records. A relay can only *drop* signed rows (never forge them), so a reader
+  comparing what it received to the signed root **detects withholding**
+  (`auditOutbox`), surfaced on `status().withholding`. See [`test/outbox-head.mjs`](test/outbox-head.mjs).
+- **Multi-relay pool** ([`js/relay-pool.js`](js/relay-pool.js)). Web writes **fan out**
+  to up to 3 untrusted relays, so every record + head lives on independent providers.
+  The audit baseline is the **highest-version verified head across relays**
+  (`crossHead`) — so a relay serving a *stale* head (rollback) loses to one serving
+  the newer head, and a relay *dropping* it (strip) is overridden by any relay that
+  has it. On a shortfall the reader **routes the read around** the bad relay
+  (`recoverRows`) and re-verifies; only when *no* relay serves the committed set is
+  the outbox flagged. Degrades to a pool of one (detection-only) with one relay.
+  See [`test/relay-pool.mjs`](test/relay-pool.mjs).
+- **The relay is never the source of truth.** It holds no key, `/api/identity`→410,
+  and every record + head is re-verified client-side. Seizing one relay loses
+  nothing; censorship is detectable and routed around.
+
+PearBrowser users are already fully P2P (own Hypercore outboxes over Hyperswarm) and
+never touch this relay — the above brings *normal-browser* users as close to that as
+browsers allow.
+
 ### Honest limitations
+- **Public content is plaintext on whoever seeds it.** No app-side encryption; a
+  relay/seeder can't forge or (across the pool) silently withhold, but it *can* read
+  post bodies and see IPs — a liveness/privacy cost, not an integrity one.
+- **Rollback resistance is "while online", not across a relay restart, and not against
+  an all-relays-collude rollback.** The pool beats a *single* relay serving a stale head;
+  a durable monotonic floor (a signed directory pinned by HiveRelay) is the planned next
+  phase (spec Phase C). A closed tab can't seed, so cold-start needs an always-on provider.
 - **Sybil / vote weight.** Identities are free to mint, so each can cast one valid
   vote — raw scores are *advisory*, not Sybil-resistant. Real resistance needs an
   identity-cost or web-of-trust layer (out of scope).

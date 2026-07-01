@@ -6,7 +6,8 @@
 import { createSync } from './sync.js'
 import { createIdentity } from './identity.js'
 import { resolveRuntime } from './runtime.js'
-import { resolveRelayCandidates, selectRelay } from './relay-roster.js'
+import { resolveRelayCandidates, selectRelays } from './relay-roster.js'
+import { createRelayPool } from './relay-pool.js'
 import { cacheClassForChangedKeys, createData } from './data.js'
 import { Prefs } from './prefs.js'
 import { STARTER_COMMUNITIES, STARTER_POSTS, WELCOME_COMMUNITY, starterCommunity } from './onboarding.js'
@@ -63,6 +64,7 @@ async function boot () {
   //      a first-visit token from the first reachable /api relay.
   //   3) on any failure: local-only (no token → no bridge surface → dev fallback).
   let pearOverride = null
+  let relayPool = null
   if (runtime.mode === 'web') {
     if (runtime.dhtRelay) {
       try {
@@ -78,14 +80,17 @@ async function boot () {
         fetch: globalThis.fetch && globalThis.fetch.bind(globalThis),
         onWarning: (e) => console.warn('[peerit] relay roster unavailable:', e && e.message)
       })
-      const selected = await selectRelay(candidates.relays, {
+      // Phase B: select UP TO 3 working relays and drive them as a pool — writes
+      // fan out and each author's signed head is cross-checked (highest version
+      // wins), which defeats a single relay serving a stale/absent head. Degrades
+      // to a pool of one (single-relay behaviour) when only one is configured.
+      const selected = await selectRelays(candidates.relays, {
         apiToken: runtime.syncOpts.apiToken,
         fetch: globalThis.fetch && globalThis.fetch.bind(globalThis)
       })
-      if (selected) {
-        runtime.syncOpts.apiBase = selected.apiBase
-        runtime.syncOpts.apiToken = selected.apiToken
-        if (candidates.rosterVerified) console.log('[peerit] verified signed relay roster; using', selected.apiBase || 'same-origin relay')
+      if (selected.length) {
+        relayPool = createRelayPool({ relays: selected, fetch: runtime.syncOpts.fetch, EventSource: runtime.syncOpts.EventSource })
+        if (candidates.rosterVerified) console.log('[peerit] verified signed relay roster; pool of ' + selected.length + ' relay(s)')
       } else {
         runtime.syncOpts.apiToken = ''
         console.warn('[peerit] no relay reachable — falling back to local-only mode')
@@ -95,8 +100,9 @@ async function boot () {
   // writeHead: maintain a signed head!<me> census after each write (the outbox
   // "merkle root" — lets any reader detect a relay withholding records). Real
   // runs only; existing count-based tests don't set it.
-  sync = pearOverride
-    ? createSync({ getMe: () => identity.me().pubkey, identity, pear: pearOverride, writeHead: true })
+  const pearForSync = pearOverride || relayPool
+  sync = pearForSync
+    ? createSync({ getMe: () => identity.me().pubkey, identity, pear: pearForSync, writeHead: true, readOnly: runtime.readOnly })
     : createSync({ getMe: () => identity.me().pubkey, identity, ...runtime.syncOpts, writeHead: true, readOnly: runtime.readOnly })
   await sync.ready()
   data = createData(sync, identity)

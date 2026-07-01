@@ -711,21 +711,39 @@ class BridgeGossipSync {
       if (heads && heads[info.appId] !== undefined) this._peerHeads.set(pub, heads[info.appId]) // baseline for next round's gating
     }
 
-    // Withholding DETECTION (Phase A): audit each re-read peer's replicated rows
-    // against their own SIGNED head. The sound signal is a root mismatch (rows
-    // withheld/reordered/substituted). Detection only — we surface it on status()
-    // and warn once; FAILOVER to another source needs Phase B (cross-relay), and
-    // rollback/head-strip resistance needs Phase B + the Phase C durable directory
-    // (see auditOutbox). Bounded: runs only over toRead (the outboxes that moved).
+    // Withholding / ROLLBACK / STRIP detection + FAILOVER (Phase B). For each
+    // re-read peer, take the highest-version SIGNED head across ALL pool relays
+    // (crossHead) — a relay serving a stale head (rollback) or none (strip) loses
+    // to a relay that has the newer one. Audit the rows we got against that head;
+    // on a shortfall, route the READ around the withholding relay (recoverRows
+    // finds a relay serving the head-matching set) and re-admit. Degrades to the
+    // primary's own head + detection-only surfacing on a single-relay transport.
     const localWriter = this._writeHead && typeof this.getMe === 'function' ? this.getMe() : null
+    const multi = this.pear.sync && (this.pear._relayCount || 1) > 1
+    const crossHeadFn = multi && this.pear.sync.crossHead
+    const recoverFn = multi && this.pear.sync.recoverRows
     for (const pub of toRead) {
       if (localWriter && pub === localWriter) continue // own head can lag briefly between append() and _maintainHead()
-      const view = this._peerViews.get(pub); if (!view) continue
-      const head = view[keys.head(pub)]; if (!head) continue
-      const rows = []; for (const k in view) rows.push({ key: k, value: view[k] })
-      let bad = false
-      try { const a = await auditOutbox(rows, head, pub); bad = a.hasHead && a.matches === false } catch {}
-      if (bad) { if (!this._withholding.has(pub)) console.warn('[gossip] outbox ' + pub.slice(0, 12) + '… failed its signed-head audit (rows withheld/tampered on this source)'); this._withholding.add(pub) } else this._withholding.delete(pub)
+      let view = this._peerViews.get(pub); if (!view) continue
+      let head = view[keys.head(pub)]
+      if (crossHeadFn) { try { const ch = await this.pear.sync.crossHead(pub); if (ch && ch.head && (!head || (ch.head.version | 0) > (head.version | 0))) head = ch.head } catch {} }
+      if (!head) continue
+      let rows = []; for (const k in view) rows.push({ key: k, value: view[k] })
+      let a; try { a = await auditOutbox(rows, head, pub) } catch { continue }
+      if (a.hasHead && a.matches === false && recoverFn) {
+        try {
+          const rec = await this.pear.sync.recoverRows(pub, head)
+          if (rec && rec.rows) {
+            const view2 = Object.create(null); const newSig = new Map()
+            for (const r of rec.rows) { if (PROTO_KEYS.has(r.key)) continue; if (await admit(typeFromKey(r.key), r.value, r.key, pub, secure, this.validate)) { view2[r.key] = r.value; newSig.set(r.key, changeToken(r.value)) } }
+            this._peerViews.set(pub, view2); this._peerSigs.set(pub, newSig); view = view2; anyRowChanged = true
+            rows = []; for (const k in view2) rows.push({ key: k, value: view2[k] })
+            a = await auditOutbox(rows, head, pub)
+          }
+        } catch {}
+      }
+      const bad = a.hasHead && a.matches === false
+      if (bad) { if (!this._withholding.has(pub)) console.warn('[gossip] outbox ' + pub.slice(0, 12) + '… fails its signed-head audit on every reachable relay (rows withheld/tampered)'); this._withholding.add(pub) } else this._withholding.delete(pub)
     }
 
     if (this._cache && !anyRowChanged) return [] // nothing moved anywhere — keep cache (and its sorted-key cache)
@@ -795,7 +813,8 @@ class BridgeGossipSync {
       secure: isSecure(),
       peers: this._peers.size,
       viewLength,
-      withholding: [...this._withholding], // outboxes failing their signed-head audit (detection only; failover is Phase B)
+      relays: (this.pear && this.pear._relayCount) || 1, // Phase B: how many relays writes fan out across + heads are cross-checked on
+      withholding: [...this._withholding], // outboxes still failing their signed-head audit after cross-relay recovery
       inviteKey: this._myInvite,
       outboxAppId: this._myAppId(),
       outboxes: this._statusOutboxes()

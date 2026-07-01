@@ -190,3 +190,22 @@ export async function selectRelay (relays, { apiToken = '', fetch: fetchFn = def
   }
   return null
 }
+
+// Like selectRelay but returns UP TO `max` working relays (each with a token),
+// primary first — the Phase B pool that writes fan out across and whose signed
+// heads are cross-checked. With one configured relay this returns a pool of one
+// (single-relay behaviour); the cross-relay guarantees switch on as the roster
+// grows.
+export async function selectRelays (relays, { apiToken = '', fetch: fetchFn = defaultFetch(), max = 3 } = {}) {
+  const out = []
+  for (const apiBase of dedupeRelayList(relays)) {
+    if (out.length >= max) break
+    if (apiToken) {
+      if (await relayAcceptsToken(apiBase, apiToken, { fetch: fetchFn })) out.push({ apiBase, apiToken })
+      continue
+    }
+    const token = await acquireRelayToken(apiBase, { fetch: fetchFn })
+    if (token) out.push({ apiBase, apiToken: token })
+  }
+  return out
+}

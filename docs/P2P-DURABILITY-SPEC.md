@@ -161,6 +161,22 @@ Make "the relay is swappable" true in practice, not just in principle.
 - **Honest scope:** liveness/censorship becomes *detectable and routable-around*; seizing
   one relay loses nothing. Still plaintext on each relay (public content).
 
+**DELIVERED 2026-07-01 (built + tested; adversarial review pending):** `js/relay-pool.js`
+drives up to 3 relays as a pool behind the same `window.pear`-shaped surface (plugged in
+via `resolvePear`, so `gossip.js` is unchanged). **Write fan-out** (`fanoutAppend`: primary
+authoritative + best-effort mirror) puts every record + head on independent relays.
+**Cross-relay head** (`crossHead`: highest-version *verified* head across relays) is the
+audit baseline — so a relay serving a **stale head (rollback)** loses to one serving the
+newer head, and a relay **dropping the head (strip)** is overridden by any relay that has
+it. On a shortfall the reader **routes the read around** the bad relay (`recoverRows` finds
+a relay serving the head-matching set) and re-admits; only when *no* relay serves the
+committed set is the outbox flagged on `status().withholding`. `selectRelays` resolves the
+pool; `status().relays` reports the count. Degrades to a pool of one (detection-only) with
+one configured relay — the guarantees switch on as the roster grows. 9 tests in
+[relay-pool.mjs](02-apps/peerit/test/relay-pool.mjs) (fan-out, rollback+strip recovery,
+flag-when-nowhere). **Closes the Phase A rollback + head-strip gaps WHILE ONLINE**; the
+across-restart floor remains Phase C.
+
 ### Phase C — Durable signed directory (Hyperbee) + relay demoted to cache · NEEDS HIVERELAY
 Move discovery durability off relay RAM.
 - Replace `swarm-hub.mjs` descriptor `Map` + `core-memory` snapshot with a **signed,

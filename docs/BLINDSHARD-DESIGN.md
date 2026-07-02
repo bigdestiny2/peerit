@@ -149,18 +149,36 @@ Achieved **only in Phase 3** and **only on the new blob surface**. K-of-N Reed-S
 
 Each phase is independently shippable and independently valuable. **Ship the honest, modest win first; treat dispersal as the phase that needs new relay infra.**
 
+### 5.0 Revised sequencing (2026-07-02, after a multi-model review)
+
+A strategic review (Opus + a Fable panel: strategist / red-team / dmc-revisit) reached one blunt conclusion: **boxing bodies (Phase 2) has ~zero standalone liability value** — the same relay co-holds the key, so a court sees "possession + ability to control," and the size gate is *anti-correlated* with risk (short-form defamation/threats/links/comments stay plaintext while long essays get boxed). Phase 2 is correct **engineering scaffolding for Phase 3**, not a G1/G2 win, and must not be marketed as one. The highest-leverage moves are cheaper and mostly unblocked, so the post-Phase-2 order is:
+
+| # | Move | Why it beats more crypto | Status |
+|---|---|---|---|
+| **2a** | **Relay-side DO-NOT-SERVE / takedown** ([`RELAY-TAKEDOWN-SPEC.md`](RELAY-TAKEDOWN-SPEC.md)) | Safe harbor is *conditioned* on responding to notice; today the relay holds everything but can remove nothing (append-only, author-only tombstones). Serve-time suppression + notice channel + agent + ToS is the single biggest G1 lever. Unblocked (own relay). Composes with the withholding audit (a takedown *is* visible withholding — route to another relay). | SPEC — needs greenlight to touch the live relay |
+| **2b** | **Signed-release trust chain** (dmc-adapt) — `js/release-verify.js`, `scripts/sign-release.mjs`, `pinnedReleaseKey`, verify.html signature check | Ed25519-sign `asset-manifest.json` with an OFFLINE key so mirrors/auditors/verify.html confirm a bundle is authentic **without trusting the origin**. Adapts dmc's real intent (verify code against a pinned key). Honest ceiling: web self-verification is circular (origin serves the verifier); the durable win is EXTERNAL verification + trustworthy self-host/mirror. | **BUILT (2026-07-02)** |
+| **2c** | **Recruit ONE arms-length independent relay operator** ([`RELAY-OPERATOR-RECRUITMENT.md`](RELAY-OPERATOR-RECRUITMENT.md)) | Both roster relays are one legal person → every collusion-threshold / `<K`-per-relay / paid-fleet claim is **vacuous** ("one subpoena covers both"). Social, not code; has lead time → start now. Phase 3 dispersal needs ≥3 (ideally ≥6, per K=6/N=9) independent operators. | TODO (social) |
+| **2d** | **Box coverage**: lower floor + box comments; name titles+graph as permanent plaintext | Moves the content classes that actually carry risk into ciphertext-at-rest — but still **scaffolding, not a standalone win** (relay co-holds the key until Phase 3). | Deferred (cheap follow-up) |
+| **2e** | **Entry-point hardening**: verify the IPFS/ENS static-JS mirror is actually live; multi-home the roster URL | Cheapest G4 win; today these are checklist claims, not facts. | TODO |
+
+**Reframes:** Phase 3 dispersal stays HELD and is now explicitly **gated on ≥3 independent relays** (dispersal before independence is theater). Phase 5's "north star" is **reframed, not built**: `hyper://` in PearBrowser already serves nothing (content-addressed, zero origin) — push it as the recommended trust tier rather than sinking effort into the do-not-use-in-prod `dht-relay-ws`. **dmc's `data:` URL is DROPPED as a product** (its intent is absorbed by 2b); the scope doc remains the decision record.
+
+**Do NOT:** market Phase 2 as blindness; claim "the operator can't read your posts" (forbidden — inducement trap); promise graph privacy (titles + `type!id` + author pubkeys are cleartext by construction — hiding them is a ground-up key-scheme redesign, out of scope); or count two same-owner relays as a fleet.
+
 ### Phase 0 — Populate the roster (prerequisite, no crypto)
 The censorship-resistance machinery already exists but is **dormant**: `relay-roster.js` verifies an untrusted roster against a pinned Ed25519 key, and `relay-pool.js` does cross-relay reconciliation — but the roster lists **one** relay today, so every cross-relay defense (and any dispersal) is inert. **Populate a real 2–3 relay roster** (VPS primary + opted-in HiveRelay #2/#3), inline the signed roster+pin into `index.html` at build time. *No dispersal is possible without ≥N independent relays.* (`HIVERELAY-OUTBOXLOG-PLAN.md:52-53`.)
 
 ### Phase 1 — Deploy OutboxLog write-time verification
 Land OutboxLog (`outbox-log.js`, already ported + tested) on the fleet so the relay verifies the **signed envelope** on write (`verifyOutboxRecordSignature:88`) — it verifies envelope fields, **never the (encrypted) body**, preserving the opaque-payload property. Gate: golden-transcript conformance test (unmodified peerit reader converges through OutboxLog).
 
-### Phase 2 — SMALLEST FIRST STEP: box-before-store (relay stops holding plaintext)
+### Phase 2 — SMALLEST FIRST STEP: box-before-store (relay stops holding plaintext) — **BUILT (2026-07-02)**
 Ship **`js/box.js`** (pure SubtleCrypto, no new dep, no erasure, no new relay surface) and wire **one** record type (long post bodies over ~2 KB):
 - **Write:** if `body > threshold`, replace inline `body` with the opaque ciphertext `C` stored as `blob!<blobId>` via the **existing** `fanoutAppend`, and put `{blobId, contentKey, iv, digest}` in the **signed** manifest field (spanned by `canon.js stable()` — no new signing path). Add `hashBytes()` and the manifest `expectedKey`/`ownerOf` cases.
 - **Read:** fetch `blob!<blobId>`, assert `SHA-256(C)==blobId`, AES-GCM-decrypt, assert `SHA-256(P)==contentKey`.
 - **Value delivered:** the relay's keyspace no longer contains grep-able plaintext bodies; dedup for free; end-to-end proof of the box→append→fetch→unbox loop through the real relay. **Honestly scoped:** "ciphertext-at-rest, not casually readable" — **NOT** dispersal, **NOT** operator-blind (single relay still co-holds manifest+key+blob).
 - **Gate:** golden-transcript roundtrip test; bench encrypt/decrypt latency on representative bodies.
+- **AS BUILT:** `js/blob-store.js` (glue + `verifyBlobRecord`), boxing in `data.js` submit/edit/delete, transparent hydration in `getPost`/`listPostsIn`, `blob` type in `model.js`/`canon.js`, band `[2048, 34000]` bytes (base64 stays under the ~64 KiB value cap), `canBox()` degrades to inline plaintext without SubtleCrypto. Blobs are **first-class signed records** (own PoW tier `blob:12`) admitted through the real merge — with a **self-certification gate in `gossip.js admit()`** (`SHA-256(ct)==blobId`) so a foreign record cannot win the LWW collision at the content-addressed key and suppress a body. Tests: `test/blob-integration.mjs`.
+- **KNOWN LIMIT (orphan blobs, LOW):** the append-only log has no delete and blob rows are content-addressed + convergent, so a deleted/shrunk post's `blob!<blobId>` row persists and stays counted in the signed-head census; `head.count` grows monotonically. This is **amplification-only** — counted symmetrically by the producer (`_maintainHead`) and auditor (`auditOutbox`), so it can never cause a false or masked withholding flag. A future GC pass (or a `deleted`-blob carve-out in the ct gate) could reclaim orphaned bodies; deferred.
 
 ### Phase 3 — Dispersal (the net-new relay surface + erasure)
 1. Add the **blind blob surface** to HiveRelay: content-addressed `shard:<hash>` PUT/GET over WSS, **decoupled from `data._k===appId`**, with the `FORBIDDEN_KEYS` reject on any op carrying `contentKey`/plaintext. *Prefer wiring into the existing native-swarm custody pipeline (`custody-signing.js`) over a parallel store.*
@@ -172,7 +190,7 @@ Ship **`js/box.js`** (pure SubtleCrypto, no new dep, no erasure, no new relay su
 - **`repair()`** pass: client-driven re-encode-and-re-place of missing shards on ciphertext (never decrypt).
 - **Signed custody-receipt quorum** (reuse `custody-intent/custody-receipt`): author treats a body durable only once a threshold of independent, roster-verified receipts is collected — turns fire-and-forget (`relay-pool.js:120`) into acknowledged placement.
 - **Optional custody-proof** (challenge-response PoR) to detect a lying relay, extending peerit's signed-head withholding detection to shards.
-- **Incentives:** opted-in HiveRelay operators are volunteers; the receipt/PoR layer is what lets a "durable" claim be honest and lets the roster prune non-serving relays.
+- **Incentives:** opted-in HiveRelay operators are volunteers; the receipt/PoR layer is what lets a "durable" claim be honest and lets the roster prune non-serving relays. **The moment operators are *paid*, the payout model itself becomes load-bearing for their liability** — content-neutral metering, drop-by-opaque-id takedown, and the `< K`-per-relay cap as a legal invariant. See [`OPERATOR-LIABILITY.md`](OPERATOR-LIABILITY.md).
 
 ### Phase 5 — NORTH STAR: your box serves nothing (pure-pipe + reader-side aggregation)
 The end state that answers *"am I still aggregating and serving content?"* with **no**. The interim phases keep an `/api` relay that aggregates every outbox and answers feed queries — BlindShard blinds the *bodies* but that relay is still a content-serving index. Two moves dissolve that role entirely:

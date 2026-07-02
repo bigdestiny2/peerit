@@ -118,13 +118,25 @@ async function boot () {
   // it always does a full render. Changes accumulate across the debounce window.
   let pendingKeys = null   // Set of changed storage keys since the last flush
   let pendingFull = false  // a change we can't patch → must full-render
+  let deferredFlushArmed = false
+  const armDeferredFlush = () => {
+    if (deferredFlushArmed) return
+    deferredFlushArmed = true
+    const retry = () => {
+      deferredFlushArmed = false
+      document.removeEventListener('focusout', retry, true)
+      document.removeEventListener('visibilitychange', retry)
+      soft()
+    }
+    document.addEventListener('focusout', retry, true)
+    document.addEventListener('visibilitychange', retry)
+  }
   const flush = async () => {
     const a = document.activeElement
-    // Don't rip focus from anything the user is interacting with: a form field,
-    // a select, or any focused control inside the content area. The live update
-    // lands as soon as focus moves on. (Local actions re-render explicitly.)
-    if (a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable)) return
-    if (a && a !== document.body && app() && app().contains(a)) return
+    // Don't rip focus from text/form editing. Buttons and menus must not starve
+    // structural P2P updates in background tabs.
+    const focusIsActive = typeof document.hasFocus !== 'function' || document.hasFocus()
+    if (focusIsActive && a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable)) { armDeferredFlush(); return }
     const full = pendingFull, keys = pendingKeys
     pendingFull = false; pendingKeys = null
     if (!full && keys && await patchVotesInPlace(keys)) return // repainted in place; no re-render
@@ -240,6 +252,7 @@ async function renderUserMenu () {
       <a role="menuitem" href="#/communities">Communities</a>
       <div class="dd-sep"></div>
       <a role="menuitem" href="#/u/${esc(me.pubkey)}">My profile</a>
+      <a role="menuitem" href="#/following">Following</a>
       <a role="menuitem" href="#/saved">Saved</a>
       <a role="menuitem" href="#/settings">Settings</a>
       ${identity.isDev ? '<div class="dd-sep"></div>' + devUserSwitcher() : ''}
@@ -278,6 +291,7 @@ function route () {
     case 'search': return viewSearch({ query, guard, token })
     case 'settings': return viewSettings({ guard, token })
     case 'saved': return viewSaved({ guard, token })
+    case 'following': return viewFeed({ scope: 'following', query, guard, token })
     case 'u': return viewProfile({ pub: path[1], guard, token })
     case 'r':
       if (path[2] === 'comments' && path[3]) return viewPost({ community: path[1], cid: path[3], query, guard, token })
@@ -592,7 +606,7 @@ function onResourceError (e) {
 async function viewFeed ({ scope, community, query, guard, token }) {
   const sort = postSort(query.sort || prefs.sort)
   const tw = query.t || 'all'
-  guard(skeleton(scope === 'community' ? 'r/' + esc(community) : (scope === 'home' ? 'Home' : 'Popular')))
+  guard(skeleton(scope === 'community' ? 'r/' + esc(community) : (scope === 'home' ? 'Home' : scope === 'following' ? 'Following' : 'Popular')))
 
   let communityMeta = null, ov = null, mods = null
   let followedSlugs = []
@@ -614,6 +628,10 @@ async function viewFeed ({ scope, community, query, guard, token }) {
     } else {
       posts = await data.listAllPosts(followedSlugs)
     }
+  } else if (scope === 'following') {
+    // Posts by the authors you follow (local follow list; also the notify feed-head watch set).
+    const follows = new Set(prefs.follows())
+    posts = follows.size ? (await data.listAllPosts()).filter(p => follows.has(p.author)) : []
   } else {
     posts = await data.listAllPosts()
   }
@@ -638,9 +656,10 @@ async function viewFeed ({ scope, community, query, guard, token }) {
   const title = scope === 'community'
     ? communityCard(communityMeta, mods)
     : (scope === 'home' ? `<div class="feed-head"><h1>Home</h1><span class="dim">${followedSlugs.length ? 'posts from communities you follow' : 'all communities until you join some'}</span></div>`
+      : scope === 'following' ? `<div class="feed-head"><h1>Following</h1><span class="dim">${prefs.follows().length ? 'posts by people you follow' : 'follow people from their profile to see them here'}</span></div>`
                         : `<div class="feed-head"><h1>Popular</h1><span class="dim">across all of peerit</span></div>`)
 
-  const base = scope === 'community' ? ['r', community] : (scope === 'home' ? [] : ['all'])
+  const base = scope === 'community' ? ['r', community] : (scope === 'home' ? [] : scope === 'following' ? ['following'] : ['all'])
   const showWelcome = scope === 'home' && !prefs.seenWelcome
   let body
   if (!ranked.length) {
@@ -992,7 +1011,7 @@ async function viewProfile ({ pub, guard, token }) {
         <h1>${esc(nameOf(pub))}</h1>
         <div class="dim mono">${esc(shortKey(pub, 10))}</div>
         ${profile && profile.bio ? `<p class="bio">${esc(profile.bio)}</p>` : ''}
-        ${mine ? '<button class="btn btn-ghost sm" data-act="edit-profile">Edit profile</button>' : ''}
+        ${mine ? '<button class="btn btn-ghost sm" data-act="edit-profile">Edit profile</button>' : `<button class="btn ${prefs.isFollowing(pub) ? 'btn-ghost' : 'btn-primary'} sm" data-act="follow" data-pub="${esc(pub)}">${prefs.isFollowing(pub) ? '✓ Following' : '+ Follow'}</button>`}
       </div>
     </div>
     <div class="karma-row">
@@ -1322,6 +1341,15 @@ async function onClick (e) {
       case 'vote': return void await onVote(t)
       case 'save': { prefs.toggleSaved(t.dataset.ref); t.textContent = prefs.isSaved(t.dataset.ref) ? '★ saved' : '☆ save'; return }
       case 'hide': { prefs.toggleHidden(t.dataset.ref); route(); return }
+      case 'follow': {
+        const pub = t.dataset.pub
+        const now = prefs.toggleFollow(pub)
+        t.textContent = now ? '✓ Following' : '+ Follow'
+        t.classList.toggle('btn-primary', !now)
+        t.classList.toggle('btn-ghost', now)
+        toast(now ? 'Following ' + nameOf(pub) : 'Unfollowed ' + nameOf(pub))
+        return
+      }
       case 'sub': {
         const slug = normalizeSlug(t.dataset.slug)
         const now = prefs.toggleSub(slug)

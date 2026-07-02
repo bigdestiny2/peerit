@@ -227,6 +227,13 @@ async function main () {
   pf.markWelcomeSeen(); ok(pf.seenWelcome, 'prefs: welcome can be dismissed')
   pf.markWelcomeUnseen(); ok(!pf.seenWelcome, 'prefs: welcome can be shown again')
   pf.acknowledgeIdentityBackup(); ok(pf.identityBackupAcked, 'prefs: identity backup acknowledgement persists')
+  const PUBA = 'a'.repeat(64), PUBB = 'b'.repeat(64)
+  pf.follow(PUBA); ok(pf.isFollowing(PUBA) && !pf.isFollowing(PUBB), 'prefs: follow an author')
+  pf.follow(PUBA.toUpperCase()); ok(pf.follows().filter(p => p === PUBA).length === 1, 'prefs: follows normalize case + dedupe pubkeys')
+  pf.follow('not-a-pubkey'); ok(!pf.follows().includes('not-a-pubkey') && pf.follows().length === 1, 'prefs: non-hex64 follows are ignored')
+  ok(pf.toggleFollow(PUBB) === true && pf.isFollowing(PUBB), 'prefs: toggleFollow on')
+  ok(pf.toggleFollow(PUBB) === false && !pf.isFollowing(PUBB), 'prefs: toggleFollow off')
+  const pf2 = new Prefs(pf.storage, 'tester'); ok(pf2.isFollowing(PUBA), 'prefs: follows persist across reload')
   const messyStore = mem()
   messyStore.setItem('peerit:prefs:messy', JSON.stringify({
     subs: ['P2P', 'p2p', 'a', 'Help'],

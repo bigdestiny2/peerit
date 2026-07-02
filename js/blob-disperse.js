@@ -1,0 +1,107 @@
+// blob-disperse.js — BlindShard Phase 3 glue: box a body, erasure-code the
+// ciphertext into K-of-N shards, and DISPERSE them across relays so no single
+// relay holds a readable OR complete item. The reverse gathers any K shards,
+// verifies each by its content address, reconstructs, and decrypts.
+//
+// DEPENDENCY-INJECTED against the shard blob surface HiveRelay is landing
+// (docs/BLINDSHARD-BLOB-SURFACE-HANDOVER.md §4): the caller passes a `backend`
+//   { putShard(relayPub, shardId, bytes) -> receipt,
+//     getShard(relayPub, shardId) -> bytes|null }
+// so this module rides the real `shard:<hash>` PUT/GET (over the Noise-tunneled
+// dht-relay-ws) by its INTERFACE, exactly as dht-adapter.js was built+tested
+// against fakes before the live wire. NOT wired into data.js and NOT in
+// SITE_FILES yet — Phase 3 is HELD on (a) the live blind blob surface and (b) >=3
+// INDEPENDENT relays (dispersal across same-owner relays is theater). This is the
+// client logic, unit-tested against a fake backend; it is NOT a claim of live
+// dispersal.
+//
+// HONEST CEILING (design §6.1/§6.2): public content stays reconstructable by any
+// reader (contentKey ships in the public manifest); dispersal removes "one relay
+// holds a readable/complete copy," not "the content is secret." Blindness holds
+// against INDEPENDENT relays; a fully colluding roster (or one relay mis-assigned
+// >=K shards + the manifest) reconstructs everything.
+
+import { box, unbox } from './box.js'
+import { encode, decode, place, shardId, shouldErasure } from './shard.js'
+import { hashBytes } from './crypto.js'
+
+export const DEFAULT_K = 6
+export const DEFAULT_N = 9
+
+const te = new TextEncoder()
+const td = new TextDecoder()
+const toHex = (u8) => { let s = ''; for (let i = 0; i < u8.length; i++) s += u8[i].toString(16).padStart(2, '0'); return s }
+const fromHex = (h) => { const a = new Uint8Array(h.length / 2); for (let i = 0; i < a.length; i++) a[i] = parseInt(h.substr(i * 2, 2), 16); return a }
+
+// Whether a body is large enough to erasure-disperse (vs Phase-2 single-blob).
+export function shouldDisperse (bodyStr) { return shouldErasure(te.encode(String(bodyStr == null ? '' : bodyStr)).length) }
+
+// disperseBody(bodyStr, { backend, roster, k, n, replicas }) ->
+//   { manifest, receipts, assignment }
+//   manifest = { v, blobId, contentKey, iv, k, n, replicas, shardIds }  (shardIds[i] = shard index i)
+// Writes each shard's bytes to every relay place() assigns it to; a shard is
+// content-addressed (shardId = SHA-256(bytes)), so the relay self-verifies on PUT
+// and can neither substitute nor mis-address it. `receipts` are the placement
+// acknowledgements (custody receipts) for a Phase-4 durability quorum.
+export async function disperseBody (bodyStr, { backend, roster, k = DEFAULT_K, n = DEFAULT_N, replicas = 1 } = {}) {
+  if (!backend || typeof backend.putShard !== 'function') throw new Error('disperseBody: backend.putShard required')
+  if (!Array.isArray(roster) || !roster.length) throw new Error('disperseBody: a non-empty relay roster is required')
+  const body = te.encode(String(bodyStr == null ? '' : bodyStr))
+  const { C, contentKey, iv, blobId } = await box(body)
+
+  const shards = await encode(C, { k, n })            // [{ index, bytes, id, shardLen }]
+  const shardIds = shards.map((s) => s.id)             // index i -> shardId
+  const byId = new Map(shards.map((s) => [s.id, s.bytes]))
+  const assignment = await place(shardIds, roster, { replicas, k }) // Map<relayPub, shardId[]>
+
+  const receipts = []
+  for (const [relayPub, ids] of assignment) {
+    for (const sid of ids) {
+      const receipt = await backend.putShard(relayPub, sid, byId.get(sid))
+      receipts.push({ relayPub, shardId: sid, receipt })
+    }
+  }
+  return {
+    manifest: { v: 1, blobId, contentKey, iv: toHex(iv), k, n, replicas, shardIds },
+    receipts,
+    assignment
+  }
+}
+
+// reassembleBody({ manifest, backend, roster }) -> bodyStr
+// Gathers shards (recomputing the same HRW placement to know which relays to ask),
+// content-address-checks each (SHA-256(bytes) === shardId — a relay can't
+// substitute), RS-decodes once K are in hand, then applies the SAME two gates as
+// the Phase-2 read (SHA-256(C) === blobId, and unbox()'s SHA-256(P) === contentKey).
+export async function reassembleBody ({ manifest, backend, roster } = {}) {
+  if (!manifest || !Array.isArray(manifest.shardIds)) throw new Error('reassembleBody: manifest with shardIds required')
+  if (!backend || typeof backend.getShard !== 'function') throw new Error('reassembleBody: backend.getShard required')
+  const { k, n, shardIds } = manifest
+  const assignment = await place(shardIds, roster || [], { replicas: manifest.replicas || 1, k })
+  // relays to ask for a given shardId (its placement), in HRW order.
+  const relaysFor = new Map()
+  for (const [relayPub, ids] of assignment) for (const sid of ids) { if (!relaysFor.has(sid)) relaysFor.set(sid, []); relaysFor.get(sid).push(relayPub) }
+
+  const gathered = []
+  for (let i = 0; i < shardIds.length && gathered.length < k; i++) {
+    const sid = shardIds[i]
+    for (const relayPub of (relaysFor.get(sid) || [])) {
+      let bytes
+      try { bytes = await backend.getShard(relayPub, sid) } catch { bytes = null }
+      if (!bytes) continue
+      const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+      if ((await hashBytes(u8)).toLowerCase() !== String(sid).toLowerCase()) continue // substituted/corrupt → try a replica
+      gathered.push({ index: i, bytes: u8, id: sid })
+      break // got this shard from one relay; move to the next shard
+    }
+  }
+  if (gathered.length < k) throw new Error(`reassembleBody: only ${gathered.length} of ${k} shards recovered — cannot reconstruct`)
+
+  const C = await decode(gathered, { k, n })
+  const gotBlobId = await hashBytes(C)
+  if (gotBlobId.toLowerCase() !== String(manifest.blobId).toLowerCase()) {
+    throw new Error('reassembleBody: reconstructed ciphertext does not match blobId')
+  }
+  const plaintext = await unbox(C, manifest.contentKey, fromHex(manifest.iv))
+  return td.decode(plaintext)
+}

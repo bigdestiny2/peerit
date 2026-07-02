@@ -67,10 +67,27 @@ export function parseRelayList (raw) {
   return dedupeRelayList(String(raw).split(',').map((s) => s.trim()).filter(Boolean))
 }
 
+// The roster META may hold a COMMA-LIST of URLs (same-origin file + independent
+// mirrors, e.g. an IPFS gateway). Each is fetched and verified against the SAME
+// pinned key, so a mirror can't forge — multi-homing only removes the single
+// fetch chokepoint (entry-point blocking), never adds trust. Roster URLs keep
+// their path/filename (unlike relay API bases), so they are NOT normalizeRelayBase'd.
+export function parseRosterUrls (raw) {
+  if (!raw) return []
+  const out = []; const seen = new Set()
+  for (const s of String(raw).split(',').map((x) => x.trim()).filter(Boolean)) {
+    if (seen.has(s)) continue
+    seen.add(s); out.push(s)
+  }
+  return out
+}
+
 export function readRelayRosterConfig (doc) {
   const url = metaContent(doc, ROSTER_META).trim()
   const key = metaContent(doc, ROSTER_KEY_META).trim().toLowerCase()
-  return url || key ? { url, key } : null
+  if (!url && !key) return null
+  const urls = parseRosterUrls(url)
+  return { url: urls[0] || '', urls, key }
 }
 
 export function normalizeRelayRosterPayload (payload = {}) {
@@ -130,16 +147,30 @@ export async function fetchRelayRoster ({ url, key, fetch: fetchFn = defaultFetc
   return verifyRelayRoster(roster, { expectedKey: key, now })
 }
 
-export async function resolveRelayCandidates ({ relays = [], roster = null, rosterUrl = '', rosterKey = '', fetch: fetchFn = defaultFetch(), now, onWarning } = {}) {
-  const staticRelays = dedupeRelayList(relays)
-  const cfg = roster || (rosterUrl || rosterKey ? { url: rosterUrl, key: rosterKey } : null)
-  let verified = null
-  if (cfg && cfg.url && cfg.key) {
+// Try each roster URL in order; return the FIRST payload that verifies against the
+// pinned key. Per-URL failures are reported via onWarning; all-fail returns null.
+export async function fetchRelayRosterMulti ({ urls = [], key, fetch: fetchFn = defaultFetch(), now, onWarning } = {}) {
+  const list = parseRosterUrls(Array.isArray(urls) ? urls.join(',') : urls)
+  if (!list.length || !key) return null
+  for (const url of list) {
     try {
-      verified = await fetchRelayRoster({ url: cfg.url, key: cfg.key, fetch: fetchFn, now })
+      const verified = await fetchRelayRoster({ url, key, fetch: fetchFn, now })
+      if (verified) return verified
     } catch (err) {
       if (typeof onWarning === 'function') onWarning(err)
     }
+  }
+  return null
+}
+
+export async function resolveRelayCandidates ({ relays = [], roster = null, rosterUrl = '', rosterUrls = null, rosterKey = '', fetch: fetchFn = defaultFetch(), now, onWarning } = {}) {
+  const staticRelays = dedupeRelayList(relays)
+  const cfg = roster || ((rosterUrl || rosterUrls || rosterKey) ? { url: rosterUrl, urls: rosterUrls, key: rosterKey } : null)
+  let verified = null
+  if (cfg && cfg.key) {
+    // Prefer the multi-URL list; fall back to the single `url` for older callers.
+    const urls = (cfg.urls && cfg.urls.length) ? cfg.urls : (cfg.url ? [cfg.url] : [])
+    if (urls.length) verified = await fetchRelayRosterMulti({ urls, key: cfg.key, fetch: fetchFn, now, onWarning })
   }
   return {
     relays: dedupeRelayList([...(verified ? verified.relays : []), ...staticRelays]),

@@ -142,7 +142,12 @@ for (const p of SITE_FILES) {
 
 // 2. transform index.html: relay meta + SW registration (external, CSP-safe) + SRI
 const rosterRelease = await prepareRoster()
-const relayRosterMeta = rosterRelease.meta
+// Multi-home the roster: same-origin file first, then independent mirror URLs (e.g.
+// an IPFS gateway) that serve the SAME signed roster. Each is verified client-side
+// against the pinned key, so a mirror can't forge — this only removes the single
+// fetch chokepoint. Comma-list via PEERIT_RELAY_ROSTER_MIRRORS / --relay-roster-mirrors.
+const ROSTER_MIRRORS = (process.env.PEERIT_RELAY_ROSTER_MIRRORS || arg('--relay-roster-mirrors') || (releaseConfig.relayRosterMirrors || []).join(',') || '')
+const relayRosterMeta = [rosterRelease.meta, ...ROSTER_MIRRORS.split(',').map((s) => s.trim())].filter(Boolean).join(',')
 let html = files['index.html'].toString('utf8')
 const head = [
   RELAY ? `<meta name="peerit-relay" content="${attr(RELAY)}">` : '',

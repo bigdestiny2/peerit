@@ -7,6 +7,9 @@ import {
   normalizeRelayBase,
   normalizeRelayRosterPayload,
   parseRelayList,
+  parseRosterUrls,
+  readRelayRosterConfig,
+  fetchRelayRosterMulti,
   resolveRelayCandidates,
   rosterSigningMessage,
   selectRelay,
@@ -124,6 +127,29 @@ async function main () {
   const selectedWithToken = await selectRelay(['https://down.example', 'https://up.example'], { apiToken: 'static-token', fetch: fetchStatus })
   ok(selectedWithToken && selectedWithToken.apiBase === 'https://up.example' && selectedWithToken.apiToken === 'static-token',
     'pre-baked tokens are checked against each relay before selection')
+
+  console.log('\n— multi-home roster (entry-point hardening) —')
+  const NOW = Date.parse('2029-01-01T00:00:00.000Z')
+  const mockDoc = (metas) => ({ querySelector: (sel) => { const m = sel.match(/name="([^"]+)"/); const name = m && m[1]; return name && (name in metas) ? { getAttribute: () => metas[name] } : null } })
+
+  ok(parseRosterUrls('a.json, https://m.example/r.json, a.json').length === 2, 'parseRosterUrls splits a comma-list and dedupes')
+  const cfg = readRelayRosterConfig(mockDoc({ 'peerit-relay-roster': 'relay-roster.json, https://mirror.example/roster.json', 'peerit-relay-roster-key': keypair.pubHex }))
+  ok(cfg && cfg.urls.length === 2 && cfg.url === 'relay-roster.json', 'readRelayRosterConfig parses a comma-list meta into urls[] (url = first, back-compat)')
+
+  const multiFetch = async (url) => (String(url) === 'https://mirror.example/roster.json' ? response(roster) : response({ error: 'blocked' }, 403))
+  const viaMirror = await fetchRelayRosterMulti({ urls: ['relay-roster.json', 'https://mirror.example/roster.json'], key: keypair.pubHex, fetch: multiFetch, now: NOW })
+  ok(viaMirror && viaMirror.relays.length === 2, 'fetchRelayRosterMulti fails over to a mirror when the primary URL is blocked')
+
+  const allBlocked = await fetchRelayRosterMulti({ urls: ['a', 'b'], key: keypair.pubHex, fetch: async () => response({}, 403), now: NOW })
+  ok(allBlocked === null, 'fetchRelayRosterMulti returns null when every roster URL fails')
+
+  const evil = await signedRoster({ relays: ['https://attacker.example'] })
+  const mixFetch = async (url) => (String(url) === 'bad' ? response(evil.roster) : response(roster))
+  const mix = await fetchRelayRosterMulti({ urls: ['bad', 'good'], key: keypair.pubHex, fetch: mixFetch, now: NOW })
+  ok(mix && mix.relays[0] === 'https://relay-a.example', 'a mirror signed by the WRONG key is skipped for the correctly-pinned-signed one')
+
+  const multiCand = await resolveRelayCandidates({ relays: [], roster: { urls: ['relay-roster.json', 'https://mirror.example/roster.json'], key: keypair.pubHex }, fetch: multiFetch, now: NOW })
+  ok(multiCand.rosterVerified && multiCand.relays.length === 2, 'resolveRelayCandidates multi-homes the roster fetch (verified via the mirror)')
 
   console.log(`\n✅ all ${passed} relay roster checks passed\n`)
 }

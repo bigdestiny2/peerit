@@ -251,6 +251,9 @@ export class Data {
       parentCid: parentCid || null, body: body.trim().slice(0, 10000),
       author: me.pubkey, createdAt: now, editedAt: 0, deleted: false
     }
+    // Box a long comment body too (same band as posts) — a long comment is as
+    // sensitive as a long post body. Short comments stay inline (below threshold).
+    if (canBox() && shouldBox(data.body)) await this._boxBody(data)
     await this._powSign(TYPE.COMMENT, data, onProgress)
     await this.sync.append({ type: TYPE.COMMENT, data })
     this.invalidateViewCaches()
@@ -259,14 +262,23 @@ export class Data {
 
   async listComments (community, postCid) {
     const rows = await this.sync.list(keys.commentsOn(community, postCid), { limit: 1000 })
-    return rows.map(r => r.value).filter(Boolean)
+    return Promise.all(rows.map(r => r.value).filter(Boolean).map(r => this._hydrate(r)))
+  }
+
+  // Hydrated single comment (decrypts a boxed body) — used to seed the edit prompt
+  // so editing a boxed comment shows its real body, not the stored empty placeholder.
+  async getComment (community, postCid, cid) {
+    const c = await this.sync.get(keys.comment(community, postCid, cid))
+    return c ? this._hydrate(c) : c
   }
 
   async editComment (community, postCid, cid, body) {
-    const c = await this.sync.get(keys.comment(community, postCid, cid))
+    const c = await this.sync.get(keys.comment(community, postCid, cid)) // raw (never a hydrated copy)
     if (!c) throw new Error('Comment not found')
     if (c.author !== this.me().pubkey) throw new Error('You can only edit your own comment')
     const data = { ...c, body: String(body || '').slice(0, 10000), editedAt: Date.now() }
+    delete data.blob // drop any prior manifest; re-box below if still long
+    if (canBox() && shouldBox(data.body)) await this._boxBody(data)
     Object.assign(data, await this._sign(TYPE.COMMENT, data))
     await this.sync.append({ type: TYPE.COMMENT, data })
     this.invalidateViewCaches()
@@ -278,6 +290,7 @@ export class Data {
     if (!c) return
     if (c.author !== this.me().pubkey) throw new Error('You can only delete your own comment')
     const data = { ...c, deleted: true, body: '', editedAt: Date.now() }
+    delete data.blob // a deleted comment references no blob
     Object.assign(data, await this._sign(TYPE.COMMENT, data))
     await this.sync.append({ type: TYPE.COMMENT, data })
     this.invalidateViewCaches()
@@ -456,9 +469,10 @@ export class Data {
     const communities = await this.listCommunities()
     const posts = await this.listAllPosts(communities.map(c => c.slug))
     const postTitle = new Map(posts.map(p => [p.community + '/' + p.cid, p.title]))
-    const comments = (await this._listPrefix(keys.commentPrefix()))
-      .map(r => r.value)
-      .filter(c => c && !c.deleted)
+    // Hydrate boxed comment bodies so they remain searchable (the client can
+    // decrypt; only the relay can't). Content-addressed body cache amortizes it.
+    const rawComments = (await this._listPrefix(keys.commentPrefix())).map(r => r.value).filter(c => c && !c.deleted)
+    const comments = (await Promise.all(rawComments.map(c => this._hydrate(c))))
       .map(c => ({ ...c, postTitle: postTitle.get(c.community + '/' + c.postCid) || '' }))
     const index = {
       epoch: this._contentEpoch,

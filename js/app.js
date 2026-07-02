@@ -1538,8 +1538,9 @@ async function editComment (t) {
   const community = node.dataset.community, cid = t.dataset.cid
   const { path } = parseRoute(location.hash)
   const postCid = path[3]
-  const rec = await sync.get(`comment!${community}!${postCid}!${cid}`)
-  const next = prompt('Edit comment:', rec.body || '')
+  const rec = await data.getComment(community, postCid, cid) // hydrated so a boxed body isn't seeded empty
+  if (rec && rec._blobMissing) { toast('This comment’s content is still syncing — try again in a moment.', 'error'); return }
+  const next = prompt('Edit comment:', (rec && rec.body) || '')
   if (next == null) return
   await data.editComment(community, postCid, cid, next)
   toast('Comment updated'); route()

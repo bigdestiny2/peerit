@@ -143,6 +143,22 @@ async function main () {
   ok(!merged2[blobKey].deleted, 'the tombstone poison did not win the collision')
   ok(await unboxToBody(merged2[blobKey].ct, post2.blob) === LONG, 'victim body still decrypts from the merged winner')
 
+  // ---- comments: long bodies box too (same band as posts) ----
+  console.log('\n— comments —')
+  const LONGC = 'Long comment body. '.repeat(200) + 'end' // ~3.8 KB, no trailing space (addComment trims)
+  const c1 = await data.addComment({ community: 'blindshard', postCid: small.cid, body: LONGC })
+  ok(c1.blob && c1.body === '', 'a long comment is boxed (signed manifest, empty inline body)')
+  const cShort = await data.addComment({ community: 'blindshard', postCid: small.cid, body: 'short comment' })
+  ok(!cShort.blob, 'a short comment stays inline (below threshold)')
+  const listedC = (await data.listComments('blindshard', small.cid)).find(x => x.cid === c1.cid)
+  ok(listedC && listedC.body === LONGC, 'listComments hydrates the boxed comment body')
+  ok((await data.getComment('blindshard', small.cid, c1.cid)).body === LONGC, 'getComment hydrates (so the edit prompt is not seeded empty)')
+  const editedC = await data.editComment('blindshard', small.cid, c1.cid, 'now short')
+  ok(!editedC.blob && editedC.body === 'now short', 'edit long→short comment clears the manifest')
+  const c2 = await data.addComment({ community: 'blindshard', postCid: small.cid, body: 'UNIQUEBOXEDTOKEN ' + LONGC })
+  const res = await data.search('UNIQUEBOXEDTOKEN')
+  ok(res.comments.some(x => x.cid === c2.cid), 'a boxed comment body stays searchable (hydrated into the index)')
+
   console.log(`\n${passed} checks passed`)
 }
 

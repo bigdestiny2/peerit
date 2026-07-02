@@ -76,23 +76,38 @@ export async function disperseBody (bodyStr, { backend, roster, k = DEFAULT_K, n
 export async function reassembleBody ({ manifest, backend, roster } = {}) {
   if (!manifest || !Array.isArray(manifest.shardIds)) throw new Error('reassembleBody: manifest with shardIds required')
   if (!backend || typeof backend.getShard !== 'function') throw new Error('reassembleBody: backend.getShard required')
+  const relayPubs = (roster || []).map((r) => (typeof r === 'string' ? r : (r && (r.pub || r.publicKey || r.key)))).filter(Boolean)
+  if (!relayPubs.length) throw new Error('reassembleBody: a non-empty relay roster is required')
   const { k, n, shardIds } = manifest
-  const assignment = await place(shardIds, roster || [], { replicas: manifest.replicas || 1, k })
-  // relays to ask for a given shardId (its placement), in HRW order.
-  const relaysFor = new Map()
-  for (const [relayPub, ids] of assignment) for (const sid of ids) { if (!relaysFor.has(sid)) relaysFor.set(sid, []); relaysFor.get(sid).push(relayPub) }
+
+  // HRW placement winners per shard are the EFFICIENT first-ask, but reconstruction
+  // must NOT depend on the read-time roster matching the write-time roster: if the
+  // roster churned (relays added/removed/reordered), HRW re-ranks and the winners
+  // may be relays that never received the shard even though it is still physically
+  // held elsewhere in the fleet. So try the winners first, then FALL BACK to the
+  // rest of the current roster. The content-address gate (SHA-256(bytes)===shardId)
+  // makes asking extra relays safe — a relay can't feed us a wrong shard.
+  const winners = new Map()
+  try {
+    const assignment = await place(shardIds, roster, { replicas: manifest.replicas || 1, k })
+    for (const [relayPub, ids] of assignment) for (const sid of ids) { if (!winners.has(sid)) winners.set(sid, []); winners.get(sid).push(relayPub) }
+  } catch { /* placement infeasible against the read roster → pure fan-out below */ }
+  const candidatesFor = (sid) => {
+    const w = winners.get(sid) || []
+    return [...w, ...relayPubs.filter((rp) => !w.includes(rp))]
+  }
 
   const gathered = []
   for (let i = 0; i < shardIds.length && gathered.length < k; i++) {
     const sid = shardIds[i]
-    for (const relayPub of (relaysFor.get(sid) || [])) {
+    for (const relayPub of candidatesFor(sid)) {
       let bytes
       try { bytes = await backend.getShard(relayPub, sid) } catch { bytes = null }
       if (!bytes) continue
       const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
-      if ((await hashBytes(u8)).toLowerCase() !== String(sid).toLowerCase()) continue // substituted/corrupt → try a replica
+      if ((await hashBytes(u8)).toLowerCase() !== String(sid).toLowerCase()) continue // substituted/corrupt → try the next candidate
       gathered.push({ index: i, bytes: u8, id: sid })
-      break // got this shard from one relay; move to the next shard
+      break // got this shard; move to the next
     }
   }
   if (gathered.length < k) throw new Error(`reassembleBody: only ${gathered.length} of ${k} shards recovered — cannot reconstruct`)

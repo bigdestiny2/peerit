@@ -84,6 +84,30 @@ async function main () {
   console.log('\n— server self-verify on PUT —')
   await throwsAsync(() => backend.putShard(roster[0], 'f'.repeat(64), new Uint8Array([9, 9, 9])), 'putShard rejects bytes whose SHA-256 != claimed shardId')
 
+  // ---- roster churn: read-time roster != write-time roster (review HIGH fix) ----
+  console.log('\n— roster churn resilience —')
+  const bChurn = fakeFleet()
+  const writeRoster = ['a', 'b', 'c'].map((c) => c.repeat(64))
+  const rC = await disperseBody(BODY, { backend: bChurn, roster: writeRoster, k: 4, n: 6, replicas: 1 })
+  const readRoster = ['a', 'b', 'c', 'x', 'y', 'z', 'w', 'v'].map((c) => c.repeat(64)) // 5 relays ADDED since write → HRW re-ranks
+  ok(await reassembleBody({ manifest: rC.manifest, backend: bChurn, roster: readRoster }) === BODY,
+    'reconstructs when the read roster differs from write (fan-out fallback finds shards HRW would no longer point at)')
+  await throwsAsync(() => reassembleBody({ manifest: rC.manifest, backend: fakeFleet(), roster: readRoster }),
+    'still fails when the shards are genuinely gone (empty fleet)')
+  await throwsAsync(() => reassembleBody({ manifest: rC.manifest, backend: bChurn, roster: [] }),
+    'reassembleBody guards an empty roster (symmetric with disperseBody)')
+
+  // ---- placement <K cap actually binds (not vacuous) ----
+  console.log('\n— placement <K cap binds —')
+  const tinyRoster = ['p', 'q'].map((c) => c.repeat(64)) // 2 relays, 9 shards → uncapped a relay would take >= K
+  const tiny = fakeFleet()
+  const rTiny = await disperseBody(BODY, { backend: tiny, roster: tinyRoster, k: 6, n: 9, replicas: 1 })
+  ok(tinyRoster.every((rp) => tiny.heldBy(rp) <= 6 - 1) && tinyRoster.reduce((a, rp) => a + tiny.heldBy(rp), 0) === 9,
+    'place() caps each relay at < K even on a 2-relay roster (cap binds: 9 shards would exceed K uncapped)')
+  ok(await reassembleBody({ manifest: rTiny.manifest, backend: tiny, roster: tinyRoster }) === BODY, 'tiny-roster dispersal still round-trips')
+  await throwsAsync(() => disperseBody(BODY, { backend: fakeFleet(), roster: ['z'.repeat(64)], k: 6, n: 9, replicas: 1 }),
+    'place() throws when the roster is too small to honor < K (9 shards, 1 relay)')
+
   console.log(`\n✅ all ${passed} blob-disperse checks passed`)
 }
 

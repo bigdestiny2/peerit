@@ -260,9 +260,12 @@ export class Data {
     return data
   }
 
-  async listComments (community, postCid) {
+  // Body-free callers (karma) pass { hydrate: false } to skip fetching+decrypting
+  // boxed comment bodies they only discard — mirrors listPostsIn (review FIX 4).
+  async listComments (community, postCid, { hydrate = true } = {}) {
     const rows = await this.sync.list(keys.commentsOn(community, postCid), { limit: 1000 })
-    return Promise.all(rows.map(r => r.value).filter(Boolean).map(r => this._hydrate(r)))
+    const recs = rows.map(r => r.value).filter(Boolean)
+    return hydrate ? Promise.all(recs.map(r => this._hydrate(r))) : recs
   }
 
   // Hydrated single comment (decrypts a boxed body) — used to seed the edit prompt
@@ -434,7 +437,7 @@ export class Data {
       }
       // Comments aren't prefix-listable by author cheaply; scan per community post.
       for (const p of allPosts) {
-        const cs = (await this.listComments(slug, p.cid)).filter(c => c.author === pub && !c.deleted)
+        const cs = (await this.listComments(slug, p.cid, { hydrate: false })).filter(c => c.author === pub && !c.deleted) // karma tallies by cid, never reads body
         commentCount += cs.length
         if (cs.length) {
           const t = await this.tallyMany(cs.map(c => c.cid))

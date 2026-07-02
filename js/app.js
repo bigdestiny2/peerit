@@ -817,6 +817,7 @@ function commentNode (node, post, ov, isMod, depth) {
   let bodyHtml
   if (deleted) bodyHtml = `<div class="removed-note">[deleted]</div>`
   else if (removed) bodyHtml = `<div class="removed-note">[removed by moderators]</div>`
+  else if (node._blobMissing) bodyHtml = `<div class="removed-note">[encrypted body unavailable — no relay is currently serving it]</div>`
   else bodyHtml = `<div class="md">${renderMarkdown(node.body)}</div>`
 
   const replyOpen = openReplies.has(node.cid) && !locked

@@ -4,6 +4,7 @@
 .hiverelay-seed/
 .deploy/
 .catalog-publish-*/
+.seed-author-store.json
 node_modules/
 *.log
 web/

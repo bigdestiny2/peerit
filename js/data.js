@@ -162,7 +162,7 @@ export class Data {
   }
 
   // ---- Posts ----------------------------------------------------------------
-  async submitPost ({ community, kind, title, body, url, onProgress }) {
+  async submitPost ({ community, kind, title, body, url, cid, onProgress }) {
     const c = await this.getCommunity(community)
     if (!c) throw new Error('No such community')
     const me = this.me()
@@ -175,7 +175,10 @@ export class Data {
       postUrl = String(url || '').trim().slice(0, 2000)
       if (!safeUserUrl(postUrl)) throw new Error('URL must start with http://, https://, hyper://, or pear://')
     }
-    const cid = uid()
+    // Optional caller-supplied cid (safe charset only) for idempotent/deterministic
+    // posts (e.g. seeding — same cid overwrites the same key rather than duplicating).
+    // The post is author+sig-bound, so pinning a cid can only affect your own posts.
+    cid = (typeof cid === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(cid)) ? cid : uid()
     const now = Date.now()
     const data = {
       id: mkid.post(community, cid), cid, community, kind,

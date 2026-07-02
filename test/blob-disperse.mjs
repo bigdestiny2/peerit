@@ -17,13 +17,13 @@ async function throwsAsync (fn, m) { try { await fn() } catch { ok(true, m); ret
 
 // A fake fleet: one opaque content-addressed store per relay. putShard recomputes
 // SHA-256(bytes) and rejects a wrong address (the relay's only content check, §1.2).
-function fakeFleet () {
+function fakeFleet (hashFn = hashBytes) {
   const store = new Map() // `${relayPub}\x00${shardId}` -> Uint8Array
   const K = (relayPub, sid) => relayPub + '\x00' + sid
   return {
     async putShard (relayPub, sid, bytes) {
       const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
-      if ((await hashBytes(u8)).toLowerCase() !== String(sid).toLowerCase()) throw new Error('shard address mismatch (server self-verify)')
+      if ((await hashFn(u8)).toLowerCase() !== String(sid).toLowerCase()) throw new Error('shard address mismatch (server self-verify)')
       store.set(K(relayPub, sid), u8.slice())
       return { blindContentId: sid, relayPub, anchored: true }
     },
@@ -107,6 +107,20 @@ async function main () {
   ok(await reassembleBody({ manifest: rTiny.manifest, backend: tiny, roster: tinyRoster }) === BODY, 'tiny-roster dispersal still round-trips')
   await throwsAsync(() => disperseBody(BODY, { backend: fakeFleet(), roster: ['z'.repeat(64)], k: 6, n: 9, replicas: 1 }),
     'place() throws when the roster is too small to honor < K (9 shards, 1 relay)')
+
+  // ---- injectable shard hash: matches the store's addressing (blake2b-ready) ----
+  // The real HiveRelay shard store addresses by blake2b-256; peerit's default is
+  // SHA-256. Prove the module is hash-AGNOSTIC by injecting a distinct hash and
+  // round-tripping — blake2b (from the DHT bundle's sodium) will slot in unchanged.
+  console.log('\n— injectable shard content-address (store uses blake2b-256) —')
+  const altHash = async (bytes) => hashBytes(Uint8Array.from([0xAA, ...bytes])) // a DISTINCT stand-in for blake2b
+  const bAlt = fakeFleet(altHash) // the fake store self-verifies with the SAME injected hash
+  const rAlt = await disperseBody(BODY, { backend: bAlt, roster, k: K, n: N, replicas: REPLICAS, hashShard: altHash })
+  ok(rAlt.manifest.shardIds.every((id) => /^[0-9a-f]{64}$/.test(id)), 'shards are addressed with the injected hash')
+  const rDef = await disperseBody(BODY, { backend: fakeFleet(), roster, k: K, n: N, replicas: REPLICAS })
+  ok(rAlt.manifest.shardIds.join() !== rDef.manifest.shardIds.join(), 'a different injected hash yields different shard addresses (the hash is actually used, not shard.js’s built-in)')
+  ok(await reassembleBody({ manifest: rAlt.manifest, backend: bAlt, roster, hashShard: altHash }) === BODY, 'round-trips through the injected-hash store (blake2b slots in with no logic change)')
+  await throwsAsync(() => reassembleBody({ manifest: rAlt.manifest, backend: bAlt, roster, hashShard: hashBytes }), 'a WRONG read hash fails the content-address gate (recovers nothing)')
 
   console.log(`\n✅ all ${passed} blob-disperse checks passed`)
 }

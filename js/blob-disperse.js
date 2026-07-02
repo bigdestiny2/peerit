@@ -43,15 +43,25 @@ export function shouldDisperse (bodyStr) { return shouldErasure(te.encode(String
 // content-addressed (shardId = SHA-256(bytes)), so the relay self-verifies on PUT
 // and can neither substitute nor mis-address it. `receipts` are the placement
 // acknowledgements (custody receipts) for a Phase-4 durability quorum.
-export async function disperseBody (bodyStr, { backend, roster, k = DEFAULT_K, n = DEFAULT_N, replicas = 1 } = {}) {
+// `hashShard` is the SHARD content-address function — it MUST match the store's
+// addressing. The real HiveRelay blind shard store addresses by blake2b-256
+// (`sodium.crypto_generichash`, per BLIND-SHARD-STORE-SPEC.md §2); the concrete
+// `/api/v1/shard` adapter injects that at wire time. The default here is SHA-256
+// (crypto.js hashBytes) for the fake backend + tests — the module is hash-agnostic,
+// so blake2b slots in with no logic change. (blobId, the ciphertext gate below,
+// stays SHA-256: it is peerit's own integrity check, NOT a store address.)
+export async function disperseBody (bodyStr, { backend, roster, k = DEFAULT_K, n = DEFAULT_N, replicas = 1, hashShard = hashBytes } = {}) {
   if (!backend || typeof backend.putShard !== 'function') throw new Error('disperseBody: backend.putShard required')
   if (!Array.isArray(roster) || !roster.length) throw new Error('disperseBody: a non-empty relay roster is required')
   const body = te.encode(String(bodyStr == null ? '' : bodyStr))
   const { C, contentKey, iv, blobId } = await box(body)
 
   const shards = await encode(C, { k, n })            // [{ index, bytes, id, shardLen }]
-  const shardIds = shards.map((s) => s.id)             // index i -> shardId
-  const byId = new Map(shards.map((s) => [s.id, s.bytes]))
+  // Address each shard with the injected hash (shard.js's own SHA-256 .id is ignored;
+  // decode() needs only {index, bytes}), so the addresses match the store on the wire.
+  const addressed = await Promise.all(shards.map(async (s) => ({ index: s.index, bytes: s.bytes, id: await hashShard(s.bytes) })))
+  const shardIds = addressed.map((s) => s.id)          // index i -> shardId
+  const byId = new Map(addressed.map((s) => [s.id, s.bytes]))
   const assignment = await place(shardIds, roster, { replicas, k }) // Map<relayPub, shardId[]>
 
   const receipts = []
@@ -73,7 +83,7 @@ export async function disperseBody (bodyStr, { backend, roster, k = DEFAULT_K, n
 // content-address-checks each (SHA-256(bytes) === shardId — a relay can't
 // substitute), RS-decodes once K are in hand, then applies the SAME two gates as
 // the Phase-2 read (SHA-256(C) === blobId, and unbox()'s SHA-256(P) === contentKey).
-export async function reassembleBody ({ manifest, backend, roster } = {}) {
+export async function reassembleBody ({ manifest, backend, roster, hashShard = hashBytes } = {}) {
   if (!manifest || !Array.isArray(manifest.shardIds)) throw new Error('reassembleBody: manifest with shardIds required')
   if (!backend || typeof backend.getShard !== 'function') throw new Error('reassembleBody: backend.getShard required')
   const relayPubs = (roster || []).map((r) => (typeof r === 'string' ? r : (r && (r.pub || r.publicKey || r.key)))).filter(Boolean)
@@ -105,7 +115,7 @@ export async function reassembleBody ({ manifest, backend, roster } = {}) {
       try { bytes = await backend.getShard(relayPub, sid) } catch { bytes = null }
       if (!bytes) continue
       const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
-      if ((await hashBytes(u8)).toLowerCase() !== String(sid).toLowerCase()) continue // substituted/corrupt → try the next candidate
+      if ((await hashShard(u8)).toLowerCase() !== String(sid).toLowerCase()) continue // content-address gate (store's hash); substituted/corrupt → next candidate
       gathered.push({ index: i, bytes: u8, id: sid })
       break // got this shard; move to the next
     }

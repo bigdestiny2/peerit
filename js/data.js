@@ -9,6 +9,11 @@ import { canonical } from './canon.js'
 import { uid, isValidSlug, normalizeSlug, safeUserUrl } from './util.js'
 import { mint, MIN_BITS } from './pow.js'
 import { assertRecoveryBundleMatches, buildRecoveryBundle, isHex64 } from './recovery.js'
+import { boxBody, unboxToBody, shouldBox, canBox } from './blob-store.js'
+
+// Decrypted-body cache is keyed by blobId (a content hash), so it is immutable
+// and never goes stale — a bounded FIFO is all it needs.
+const BODY_CACHE_MAX = 500
 
 export class Data {
   constructor (sync, identity, opts = {}) {
@@ -21,6 +26,7 @@ export class Data {
     this._searchIndex = null
     this._epoch = 0          // bumped on EVERY write; gates vote tallies
     this._contentEpoch = 0   // bumped only when searchable content changes; gates comment-count + search caches
+    this._bodyCache = new Map() // blobId -> decrypted body (content-addressed → never stale)
   }
 
   me () { return this.id.me() }
@@ -71,6 +77,47 @@ export class Data {
     Object.assign(data, await this._sign(type, data))
     return data
   }
+
+  // ---- BlindShard Phase 2: box-before-store --------------------------------
+  // Replace a long plaintext `data.body` with an opaque, content-addressed
+  // ciphertext record (blob!<blobId>) + a signed manifest on the record. Mutates
+  // `data` in place (body -> '', adds `data.blob`). Call BEFORE signing so the
+  // manifest is covered by the record's signature; the blob itself is a separate
+  // signed record so it flows through the normal admit/verify/merge path.
+  async _boxBody (data) {
+    const { manifest, ct } = await boxBody(data.body)
+    const blobData = { id: manifest.blobId, blobId: manifest.blobId, ct, author: this.me().pubkey }
+    await this._powSign(TYPE.BLOB, blobData) // small PoW so blobs aren't a free large-append flood vector
+    await this.sync.append({ type: TYPE.BLOB, data: blobData })
+    data.body = ''
+    data.blob = manifest
+  }
+
+  // Return a render-ready copy of a post: if it carries a blob manifest, fetch
+  // blob!<blobId>, verify the two content-address gates, and decrypt the body.
+  // Never mutates the stored record; on a missing/withheld/tampered blob it
+  // degrades gracefully to an empty body flagged `_blobMissing` (a relay can
+  // withhold a blob but can never forge one past the gates in unboxToBody).
+  async _hydrate (rec) {
+    if (!rec || !rec.blob || !rec.blob.blobId) return rec
+    const m = rec.blob
+    const cached = this._bodyCache.get(m.blobId)
+    if (cached != null) return { ...rec, body: cached }
+    try {
+      const blob = await this.sync.get(keys.blob(m.blobId))
+      if (!blob || !blob.ct) return { ...rec, body: '', _blobMissing: true }
+      const body = await unboxToBody(blob.ct, m)
+      if (this._bodyCache.size >= BODY_CACHE_MAX) this._bodyCache.delete(this._bodyCache.keys().next().value)
+      this._bodyCache.set(m.blobId, body)
+      return { ...rec, body }
+    } catch {
+      return { ...rec, body: '', _blobMissing: true }
+    }
+  }
+
+  // Raw stored post (no hydration) — used by edit/delete so a re-signed record is
+  // never built from a decrypted-and-annotated copy.
+  async _rawPost (community, cid) { return this.sync.get(keys.post(community, cid)) }
 
   // ---- Communities ----------------------------------------------------------
   async createCommunity ({ slug, title, description, rules, onProgress }) {
@@ -137,24 +184,34 @@ export class Data {
       url: kind !== 'text' ? postUrl : '',
       author: me.pubkey, createdAt: now, editedAt: 0, deleted: false
     }
+    // Box a long text body into an opaque blob before signing (design §5 Phase 2).
+    if (kind === 'text' && canBox() && shouldBox(data.body)) await this._boxBody(data)
     await this._powSign(TYPE.POST, data, onProgress)
     await this.sync.append({ type: TYPE.POST, data })
     this.invalidateViewCaches()
     return data
   }
 
-  async getPost (community, cid) { return this.sync.get(keys.post(community, cid)) }
+  async getPost (community, cid) {
+    const p = await this._rawPost(community, cid)
+    return p ? this._hydrate(p) : p
+  }
 
-  async listPostsIn (community) {
+  // Body-free callers (karma, activity) pass { hydrate: false } to skip fetching +
+  // decrypting every boxed blob they would only discard (review FIX 4).
+  async listPostsIn (community, { hydrate = true } = {}) {
     const rows = await this.sync.list(keys.postsIn(community), { limit: 1000 })
-    return rows.map(r => r.value).filter(Boolean)
+    const recs = rows.map(r => r.value).filter(Boolean)
+    return hydrate ? Promise.all(recs.map(r => this._hydrate(r))) : recs
   }
 
   async editPost (community, cid, body) {
-    const p = await this.getPost(community, cid)
+    const p = await this._rawPost(community, cid)
     if (!p) throw new Error('Post not found')
     if (p.author !== this.me().pubkey) throw new Error('You can only edit your own post')
     const data = { ...p, body: String(body || '').slice(0, 40000), editedAt: Date.now() }
+    delete data.blob // drop any prior manifest; re-box below if the new body is still long
+    if (data.kind === 'text' && canBox() && shouldBox(data.body)) await this._boxBody(data)
     Object.assign(data, await this._sign(TYPE.POST, data))
     await this.sync.append({ type: TYPE.POST, data })
     this.invalidateViewCaches()
@@ -162,10 +219,11 @@ export class Data {
   }
 
   async deletePost (community, cid) {
-    const p = await this.getPost(community, cid)
+    const p = await this._rawPost(community, cid)
     if (!p) return
     if (p.author !== this.me().pubkey) throw new Error('You can only delete your own post')
     const data = { ...p, deleted: true, body: '', url: '', title: p.title, editedAt: Date.now() }
+    delete data.blob // a deleted post references no blob
     Object.assign(data, await this._sign(TYPE.POST, data))
     await this.sync.append({ type: TYPE.POST, data })
     this.invalidateViewCaches()
@@ -354,7 +412,7 @@ export class Data {
     for (const slug of communities) {
       // List each community's posts ONCE and reuse for both the author's own
       // posts (post karma) and the per-post comment scan (comment karma).
-      const allPosts = await this.listPostsIn(slug)
+      const allPosts = await this.listPostsIn(slug, { hydrate: false }) // karma never reads bodies
       const mine = allPosts.filter(p => p.author === pub && !p.deleted)
       postCount += mine.length
       if (mine.length) {
@@ -380,7 +438,7 @@ export class Data {
     const posts = []
     const comments = []
     for (const slug of communities) {
-      const slugPosts = await this.listPostsIn(slug) // list once, reuse for both passes
+      const slugPosts = await this.listPostsIn(slug, { hydrate: false }) // activity lists titles, not bodies
       for (const p of slugPosts) {
         if (p.author === pub && !p.deleted) posts.push(p)
       }

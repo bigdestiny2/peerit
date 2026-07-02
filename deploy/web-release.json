@@ -6,6 +6,7 @@
   "readonly": false,
   "relayRoster": "relay-roster.json",
   "pinnedRosterKey": "4a7402d1a950dc3be8a434cb3ee664231ca0e58be8c745dabcaf2346ee0e0f7f",
+  "pinnedReleaseKey": "",
   "dhtRelay": "",
   "roster": {
     "version": 1,

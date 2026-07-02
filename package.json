@@ -22,6 +22,7 @@
     "proof:availability": "node scripts/availability-proof.mjs",
     "proof:availability:live": "node scripts/availability-proof.mjs --require-live",
     "build-web": "node build-web.mjs",
+    "release:sign": "node scripts/sign-release.mjs",
     "web:release": "node scripts/web-release.mjs",
     "launch:readiness": "node scripts/launch-readiness.mjs",
     "launch:seed-plan": "node scripts/launch-seed-plan.mjs",

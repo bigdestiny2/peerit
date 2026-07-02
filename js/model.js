@@ -25,7 +25,12 @@ export const TYPE = {
   // A per-outbox signed census (the "merkle root"): head!<authorPub> commits to
   // the complete set of that author's records, so a reader can detect a relay
   // that withholds records and no relay is the authoritative source of truth.
-  HEAD: 'head'
+  HEAD: 'head',
+  // BlindShard Phase 2: an opaque, content-addressed ciphertext body. blob!<blobId>
+  // (blobId = SHA-256(ciphertext)) holds a long post body the relay never sees in
+  // plaintext; the owning post carries the signed {blobId, contentKey, iv} manifest.
+  // Convergent → identical bodies share one blob (dedup). See blob-store.js / box.js.
+  BLOB: 'blob'
 }
 
 export const keys = {
@@ -49,7 +54,10 @@ export const keys = {
   modsIn: (community) => `${TYPE.MOD}!${community}!`,
 
   head: (author) => `${TYPE.HEAD}!${author}`,
-  headPrefix: () => `${TYPE.HEAD}!`
+  headPrefix: () => `${TYPE.HEAD}!`,
+
+  blob: (blobId) => `${TYPE.BLOB}!${blobId}`,
+  blobPrefix: () => `${TYPE.BLOB}!`
 }
 
 // data.id builders (the part after `type!`). These determine the storage key
@@ -61,7 +69,8 @@ export const id = {
   vote: (targetCid, author) => `${targetCid}!${author}`,
   profile: (author) => author,
   mod: (community, actionId) => `${community}!${actionId}`,
-  head: (author) => author
+  head: (author) => author,
+  blob: (blobId) => blobId
 }
 
 // MOD actions a community moderator may perform.

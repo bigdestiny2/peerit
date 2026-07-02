@@ -515,6 +515,7 @@ function postCard (post, ov, opts = {}) {
   else if (removed) bodyHtml = `<div class="removed-note">[removed by moderators]</div>`
   else if (post.kind === 'link') bodyHtml = `<a class="post-link" href="${esc(safeUrl(post.url))}" target="_blank" rel="noopener noreferrer nofollow">${esc(post.url)} ↗</a>`
   else if (post.kind === 'image') bodyHtml = `<a href="${esc(safeUrl(post.url))}" target="_blank" rel="noopener noreferrer nofollow"><img class="post-img" src="${esc(safeUrl(post.url))}" alt="${esc(post.title || 'image post')}" loading="lazy" data-fallback-url="${esc(safeUrl(post.url))}"></a>`
+  else if (post._blobMissing) bodyHtml = `<div class="removed-note">[encrypted body unavailable — no relay is currently serving it]</div>`
   else if (!opts.full) bodyHtml = post.body ? `<div class="post-excerpt">${esc(excerpt(post.body, 280))}</div>` : ''
   else bodyHtml = post.body ? `<div class="md">${renderMarkdown(post.body)}</div>` : ''
 
@@ -1518,6 +1519,9 @@ async function editPost (t) {
   const post = t.closest('.post')
   const community = post.dataset.community, cid = post.dataset.cid
   const rec = await data.getPost(community, cid)
+  // If the body is a boxed blob no relay is currently serving, refuse the edit —
+  // otherwise the prompt seeds an empty body and saving would drop the manifest.
+  if (rec && rec._blobMissing) { toast('This post’s content is still syncing — try again in a moment.', 'error'); return }
   const next = prompt('Edit post body (markdown):', rec.body || '')
   if (next == null) return
   await data.editPost(community, cid, next)

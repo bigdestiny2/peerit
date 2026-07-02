@@ -21,6 +21,7 @@
 import { TYPE, keys } from './model.js'
 import { ownerOf, expectedKey, typeFromKey, recordTs, canonical, outboxCensus, censusString } from './canon.js'
 import { verifyRecord } from './verify.js'
+import { verifyBlobRecord } from './blob-store.js'
 import { verify as edVerify, isSecure, ready as cryptoReady, hashHex } from './crypto.js'
 import { makeValidator } from './pow.js'
 
@@ -93,6 +94,10 @@ async function honored (type, val) {
 async function admit (type, val, key, pub, secure, validate) {
   if (!val || typeof val !== 'object') return false
   if (!type || expectedKey(type, val) !== key) return false // key binding
+  // Content-addressed blobs must self-certify (SHA-256(ct)===blobId): the blob! key
+  // is not author-scoped, so without this a foreign validly-signed record could win
+  // the LWW collision and suppress a boxed body. See blob-store.js verifyBlobRecord.
+  if (type === TYPE.BLOB && !(await verifyBlobRecord(val))) return false
   const owner = ownerOf(type, val)
   if (!owner) return false
   const v = await honored(type, val)
@@ -895,7 +900,7 @@ class BridgeGossipSync {
   async status () {
     const v = await this._merged()
     let viewLength = 0
-    for (const k in v) if (typeFromKey(k) !== TYPE.HEAD) viewLength++ // head! is an internal census, not a "record"
+    for (const k in v) { const t = typeFromKey(k); if (t !== TYPE.HEAD && t !== TYPE.BLOB) viewLength++ } // head!/blob! are internal (census / opaque body storage), not "records"
     return {
       appId: 'peerit',
       mode: this.mode,

@@ -40,6 +40,10 @@ const RELAY = process.env.PEERIT_RELAY || arg('--relay') || configRelay(releaseC
 const READONLY = String(process.env.PEERIT_RELAY_READONLY || arg('--readonly') || configReadonly(releaseConfig))
 const DRIVE_KEY = process.env.PEERIT_DRIVE_KEY || arg('--drive-key') || configDriveKey(releaseConfig) || ''
 const DHT_RELAY = process.env.PEERIT_DHT_RELAY || arg('--dht-relay') || releaseConfig.dhtRelay || '' // Phase 3 (optional)
+// Offline Ed25519 release key: pinned into the bundle so verify.html / mirrors / auditors
+// can confirm asset-manifest.sig (produced by scripts/sign-release.mjs) is an authentic
+// release the origin could not self-forge. Empty = unsigned dev build (verify.html says so).
+const RELEASE_KEY = (process.env.PEERIT_RELEASE_KEY || arg('--release-key') || releaseConfig.pinnedReleaseKey || '').toLowerCase()
 const NO_RELAY_ROSTER = hasArg('--no-relay-roster') || process.env.PEERIT_NO_RELAY_ROSTER === '1'
 const RELAY_ROSTER = NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER || arg('--relay-roster') || releaseConfig.relayRoster || '')
 let RELAY_ROSTER_KEY = NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER_KEY || arg('--relay-roster-key') || releaseConfig.pinnedRosterKey || '')
@@ -145,6 +149,7 @@ const head = [
   RELAY ? `<meta name="peerit-relay-readonly" content="${attr(READONLY)}">` : '',
   relayRosterMeta ? `<meta name="peerit-relay-roster" content="${attr(relayRosterMeta)}">` : '',
   RELAY_ROSTER_KEY ? `<meta name="peerit-relay-roster-key" content="${attr(RELAY_ROSTER_KEY)}">` : '',
+  RELEASE_KEY ? `<meta name="peerit-release-key" content="${attr(RELEASE_KEY)}">` : '',
   DHT_RELAY ? `<meta name="peerit-dht-relay" content="${attr(DHT_RELAY)}">` : '',
   '<script src="sw-register.js"></script>'
 ].filter(Boolean).join('\n  ')
@@ -190,13 +195,14 @@ writeFileSync(join(OUT, 'asset-manifest.json'), JSON.stringify({
     readonly: READONLY,
     relayRoster: relayRosterMeta,
     relayRosterKey: RELAY_ROSTER_KEY,
-    relayRosterSha256: rosterRelease.sha256
+    relayRosterSha256: rosterRelease.sha256,
+    releaseKey: RELEASE_KEY
   },
-  note: 'SHA-256 of every served file. Cross-check driveKey against the published hyper:// drive in PearBrowser.'
+  note: 'SHA-256 of every served file. Cross-check driveKey against the published hyper:// drive in PearBrowser. If asset-manifest.sig is present, verify it against releaseKey (see verify.html / js/release-verify.js).'
 }, null, 2))
 
 writeFileSync(join(OUT, 'sw.js'), serviceWorker(manifest))
-writeFileSync(join(OUT, 'verify.html'), verifyPage(DRIVE_KEY))
+writeFileSync(join(OUT, 'verify.html'), verifyPage(DRIVE_KEY, RELEASE_KEY))
 
 console.log(`[build-web] wrote ${SITE_FILES.length + 4 + (files['relay-roster.json'] ? 1 : 0)} files to web/`)
 console.log(`           relay=${RELAY || '(none — local-only)'} readonly=${READONLY} driveKey=${DRIVE_KEY || '(unset)'}`)
@@ -244,25 +250,37 @@ self.addEventListener('fetch', (e) => {
 `
 }
 
-function verifyPage (driveKey) {
+function verifyPage (driveKey, releaseKey) {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>verify peerit</title>
-<style>body{font-family:system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;line-height:1.6}code{background:#eee;padding:1px 5px;border-radius:4px}table{border-collapse:collapse;margin-top:1rem}td{border:1px solid #ccc;padding:4px 8px;font-size:13px}</style></head><body>
+<style>body{font-family:system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;line-height:1.6}code{background:#eee;padding:1px 5px;border-radius:4px;word-break:break-all}table{border-collapse:collapse;margin-top:1rem}td{border:1px solid #ccc;padding:4px 8px;font-size:13px}.ok{color:#0a7d24}.bad{color:#c02436}</style></head><body>
 <h1>Verify peerit</h1>
-<p>This recomputes the SHA-256 of every file this site served and compares it to <code>asset-manifest.json</code>.</p>
-<p>Published <code>hyper://</code> drive key: <code>${driveKey || '(set --drive-key at build time)'}</code> — for full assurance, open that drive in <b>PearBrowser</b> (content-addressed) and confirm it matches. A web origin can serve a tampered verify page, so treat this as a convenience check, not proof against a malicious origin.</p>
+<p>This recomputes the SHA-256 of every file this site served and compares it to <code>asset-manifest.json</code>, then checks the Ed25519 <b>release signature</b> (<code>asset-manifest.sig</code>) against the pinned release key.</p>
+<p>Pinned release key: <code>${releaseKey || '(unsigned build — no release key pinned)'}</code><br>Compare this to peerit's published release key from a channel you trust — <b>not</b> from this page. An in-page PASS only proves the bundle is internally consistent; a malicious origin can serve a tampered verify page <em>and</em> a matching bundle, so real assurance is (a) an EXTERNAL check of this key + signature, or (b) opening the <code>hyper://</code> drive in PearBrowser.</p>
+<p>Published <code>hyper://</code> drive key: <code>${driveKey || '(set --drive-key at build time)'}</code> — content-addressed; open it in <b>PearBrowser</b> for a trust root the origin does not control.</p>
 <div id="out">checking…</div>
-<script>
+<script type="module">
+import { verifyReleaseManifest } from './js/release-verify.js';
+const sha = async (b) => { const h = await crypto.subtle.digest('SHA-256', b); return [...new Uint8Array(h)].map((x) => x.toString(16).padStart(2, '0')).join(''); };
 (async () => {
-  const sha = async (b) => { const h = await crypto.subtle.digest('SHA-256', b); return [...new Uint8Array(h)].map((x) => x.toString(16).padStart(2, '0')).join(''); };
   try {
     const m = await (await fetch('asset-manifest.json', { cache: 'no-store' })).json();
     let rows = '', allok = true;
     for (const [p, want] of Object.entries(m.files)) {
       const b = await (await fetch(p, { cache: 'no-store' })).arrayBuffer();
       const ok = (await sha(b)) === want; allok = allok && ok;
-      rows += '<tr><td>' + p + '</td><td>' + (ok ? 'ok' : 'MISMATCH') + '</td></tr>';
+      rows += '<tr><td>' + p + '</td><td class="' + (ok ? 'ok' : 'bad') + '">' + (ok ? 'ok' : 'MISMATCH') + '</td></tr>';
     }
-    document.getElementById('out').innerHTML = '<p><b>' + (allok ? 'All files match the manifest.' : 'MISMATCH — served code differs from the manifest.') + '</b></p><table>' + rows + '</table>';
+    let sigLine;
+    const expected = ${JSON.stringify(releaseKey || '')} || (m.webRelease && m.webRelease.releaseKey) || '';
+    const sres = await fetch('asset-manifest.sig', { cache: 'no-store' });
+    if (!sres.ok) sigLine = '<p class="bad"><b>Release signature: UNSIGNED</b> — no asset-manifest.sig (dev build, or the release was not signed with the offline key).</p>';
+    else {
+      try {
+        const r = await verifyReleaseManifest({ manifest: m, signature: await sres.json(), expectedKey: expected });
+        sigLine = '<p class="ok"><b>Release signature: VALID</b> — signed by ' + r.key.slice(0, 16) + '… (compare to the key above).</p>';
+      } catch (e) { sigLine = '<p class="bad"><b>Release signature: INVALID</b> — ' + (e && e.message) + '</p>'; }
+    }
+    document.getElementById('out').innerHTML = sigLine + '<p class="' + (allok ? 'ok' : 'bad') + '"><b>' + (allok ? 'All files match the manifest.' : 'MISMATCH — served code differs from the manifest.') + '</b></p><table>' + rows + '</table>';
   } catch (e) { document.getElementById('out').textContent = 'verify failed: ' + (e && e.message); }
 })();
 </script></body></html>`

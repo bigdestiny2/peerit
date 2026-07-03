@@ -91,7 +91,7 @@ async function main () {
   const id = new DevIdentity(fileStore(STORE_PATH), mem()); await id.ready()
   const sync = createSync({ apiToken: tok.token, apiBase: RELAY, fetch: (...a) => fetch(...a), EventSource: NodeEventSource, storage: mem(), getMe: () => id.me().pubkey, identity: id, validate: makeValidator(), pollMs: 4000 })
   await sync.ready()
-  const data = createData(sync, id)
+  const data = createData(sync, id, { v2: process.env.SEED_V2 !== '0' }) // reseed as blind v2 records by default (SEED_V2=0 for legacy v1)
   log('author', id.me().pubkey.slice(0, 12), '(stable, from', STORE_PATH.split('/').pop() + ')', 'mode', sync.mode, '→', RELAY)
 
   const res = await seedContent(data, { log })

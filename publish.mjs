@@ -109,7 +109,7 @@ export const SITE_FILES = [
   'js/app.js', 'js/blob-store.js', 'js/box.js', 'js/canon.js', 'js/crypto.js', 'js/data.js', 'js/dht-bundle.js', 'js/gossip.js',
   'js/identity.js', 'js/identity-export.js', 'js/markdown.js', 'js/model.js', 'js/onboarding.js', 'js/pear-api.js', 'js/qr.js',
   'js/prefs.js', 'js/pow.js', 'js/ranking.js', 'js/recovery.js', 'js/relay-pool.js', 'js/relay-roster.js', 'js/release-verify.js',
-  'js/runtime.js', 'js/sync.js', 'js/util.js', 'js/verify.js'
+  'js/runtime.js', 'js/seal.js', 'js/sync.js', 'js/util.js', 'js/verify.js'
 ]
 
 // --local: create the Hyperdrive locally and host it for PearBrowser testing,

@@ -59,6 +59,17 @@ export function typeFromKey (key) { return String(key).split('!')[0] }
 // of the key; every former typeFromKey(key) site becomes typeOf(val) at cutover.
 export function typeOf (val) { return val && val._t }
 
+// The SEMANTIC type of an admitted row, dual-read: a v2 opaque row (key `v2!<okey>`)
+// carries its type in the signed `_t` field (the key is opaque); a legacy v1 row
+// derives it from the plaintext key. Every gossip typeFromKey(key) site that routes
+// admit/winner/census/sticky becomes typeForRow(key, val) so both schemes coexist
+// until the clean cutover. NOTE: v2 records SIGN over canonical('v2', data) (constant
+// wire type, so the type never leaks in the key), so verification uses 'v2' while
+// ownerOf/winner/PoW use this semantic type — see gossip.js admit().
+export function typeForRow (key, val) {
+  return String(key).startsWith('v2!') ? (val && val._t) : typeFromKey(key)
+}
+
 // The v2 opaque wire key a record MUST live under, recomputed from its own SIGNED
 // fields — the anti-eviction gate for the blind key scheme. `v2!<okey>` where okey
 // folds author + _t + semanticId, so: a peer can't park a record under a victim's
@@ -93,7 +104,7 @@ export function outboxCensus (rows, owner) {
     const key = r && r.key
     const value = r && r.value
     if (!key || !value || !value._sig) continue
-    if (typeFromKey(key) === TYPE.HEAD) continue
+    if ((value._t || typeFromKey(key)) === TYPE.HEAD) continue // v2 head keys are opaque → check _t
     if (owner && value._k !== owner) continue
     c.push(key + '\x00' + value._sig)
   }

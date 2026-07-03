@@ -19,7 +19,7 @@
 // to cooperative owner-binding (NOT secure — local simulation only).
 
 import { TYPE, keys } from './model.js'
-import { ownerOf, expectedKey, typeFromKey, recordTs, canonical, outboxCensus, censusString } from './canon.js'
+import { ownerOf, expectedKey, expectedKeyV2, typeFromKey, typeForRow, recordTs, canonical, outboxCensus, censusString } from './canon.js'
 import { verifyRecord } from './verify.js'
 import { verifyBlobRecord } from './blob-store.js'
 import { verify as edVerify, isSecure, ready as cryptoReady, hashHex } from './crypto.js'
@@ -79,11 +79,11 @@ function cachedSortedKeys (self, view) {
 // ---- authenticity (cache only positive verdicts; key binds sig TO content) --
 const _verdict = new Map()
 const VERDICT_CACHE_MAX = 50000
-async function honored (type, val) {
-  if (!val || !val._sig) return verifyRecord(type, val)
+async function honored (type, val, semType) {
+  if (!val || !val._sig) return verifyRecord(type, val, semType)
   const ck = JSON.stringify([val._sig, val._k || '', val._dk || '', val._ns || '', canonical(type, val)])
   if (_verdict.has(ck)) return _verdict.get(ck)
-  const v = await verifyRecord(type, val)
+  const v = await verifyRecord(type, val, semType)
   if (v === 'ok') { // never cache 'bad' (cheap to recompute; avoids unbounded growth from rejected forgeries)
     if (_verdict.size >= VERDICT_CACHE_MAX) _verdict.delete(_verdict.keys().next().value) // bounded FIFO eviction
     _verdict.set(ck, v)
@@ -93,20 +93,31 @@ async function honored (type, val) {
 
 async function admit (type, val, key, pub, secure, validate) {
   if (!val || typeof val !== 'object') return false
-  if (!type || expectedKey(type, val) !== key) return false // key binding
+  // KEY BINDING — recompute the storage key from the record's OWN signed fields and
+  // reject a mismatch (anti-eviction). v2 opaque rows (key `v2!<okey>`) recompute the
+  // HMAC okey; the SEMANTIC type is the signed `_t` (the key is opaque). Legacy v1 rows
+  // recompute the plaintext key. v2 records sign over canonical('v2', …) — a CONSTANT
+  // wire type so the type never leaks in the key — so the signature is verified with
+  // 'v2' while ownerOf / PoW / winner use the semantic type.
+  const v2 = String(key).startsWith('v2!')
+  if (v2) {
+    if (!val._t) return false
+    if ((await expectedKeyV2(val)) !== key) return false
+    type = val._t // semantic type (ownerOf / blob / PoW below)
+  } else if (!type || expectedKey(type, val) !== key) return false
   // Content-addressed blobs must self-certify (SHA-256(ct)===blobId): the blob! key
   // is not author-scoped, so without this a foreign validly-signed record could win
   // the LWW collision and suppress a boxed body. See blob-store.js verifyBlobRecord.
   if (type === TYPE.BLOB && !(await verifyBlobRecord(val))) return false
   const owner = ownerOf(type, val)
   if (!owner) return false
-  const v = await honored(type, val)
+  const v = await honored(v2 ? 'v2' : type, val, type) // sig covers canonical(wire type); owner-binding uses the semantic type
   if (secure) {
     if (v !== 'ok') return false // signature is the authority
   } else if (!(owner === pub && v !== 'bad')) return false // cooperative dev fallback only
   if (validate) {
     try {
-      if (!(await validate(type, val))) return false
+      if (!(await validate(type, val))) return false // PoW keyed by the semantic type
     } catch {
       return false
     }
@@ -143,7 +154,7 @@ export async function mergeOutboxes (boxes, claimed, validate) {
     for (const key in view) {
       if (PROTO_KEYS.has(key)) continue
       const val = view[key]
-      const type = typeFromKey(key)
+      const type = typeForRow(key, val)
       if (!(await admit(type, val, key, pub, secure, validate))) continue
       if (type === 'community') {
         const slug = val.slug
@@ -155,7 +166,7 @@ export async function mergeOutboxes (boxes, claimed, validate) {
   }
   // Lock the resolved community owners so a later different-creator claim can't take them.
   for (const key in out) {
-    if (typeFromKey(key) === 'community') { const s = out[key].slug; if (s && !claimed[s]) claimed[s] = out[key].creator }
+    if (typeForRow(key, out[key]) === 'community') { const s = out[key].slug; if (s && !claimed[s]) claimed[s] = out[key].creator }
   }
   return out
 }
@@ -213,7 +224,7 @@ function combineAdmitted (boxes, claimed) {
     for (const key in view) {
       if (PROTO_KEYS.has(key)) continue
       const val = view[key]
-      const type = typeFromKey(key)
+      const type = typeForRow(key, val)
       if (type === 'community') {
         const slug = val.slug
         if (claimed[slug] && claimed[slug] !== val.creator) continue // sticky: owned by another creator
@@ -223,7 +234,7 @@ function combineAdmitted (boxes, claimed) {
     }
   }
   for (const key in out) {
-    if (typeFromKey(key) === 'community') { const s = out[key].slug; if (s && !claimed[s]) claimed[s] = out[key].creator }
+    if (typeForRow(key, out[key]) === 'community') { const s = out[key].slug; if (s && !claimed[s]) claimed[s] = out[key].creator }
   }
   return out
 }
@@ -286,14 +297,14 @@ class GossipSync {
       for (const k in incoming) {
         if (PROTO_KEYS.has(k)) continue
         const iv = incoming[k]
-        if (await admit(typeFromKey(k), iv, k, m.pub, secure, this.validate)) admitted[k] = iv
+        if (await admit(typeForRow(k, iv), iv, k, m.pub, secure, this.validate)) admitted[k] = iv
       }
       // Re-read AFTER the awaits, then a single write — minimises the RMW window.
       const cur = this._outbox(m.pub)
       let changed = false
       for (const k in admitted) {
         const iv = admitted[k]
-        if (!cur[k] || winner(typeFromKey(k), iv, cur[k])) { cur[k] = iv; changed = true }
+        if (!cur[k] || winner(typeForRow(k, iv), iv, cur[k])) { cur[k] = iv; changed = true }
       }
       if (changed) { this._write(outboxKey(m.pub), cur); this._invalidate() }
       this._emit()
@@ -772,7 +783,7 @@ class BridgeGossipSync {
         newSig.set(key, tok)
         if (prevSig.get(key) === tok) continue // unchanged since last refresh — verdict still holds
         anyRowChanged = true
-        if (await admit(typeFromKey(key), val, key, pub, secure, this.validate)) view[key] = val
+        if (await admit(typeForRow(key, val), val, key, pub, secure, this.validate)) view[key] = val
         else if (key in view) delete view[key] // an edit turned a once-admitted row invalid
       }
       for (const key of prevSig.keys()) { if (!newSig.has(key)) { if (key in view) delete view[key]; anyRowChanged = true } } // key removed (rare)
@@ -822,7 +833,7 @@ class BridgeGossipSync {
           const rec = await this.pear.sync.recoverRows(pub, head)
           if (rec && rec.rows) {
             const view2 = Object.create(null); const newSig = new Map()
-            for (const r of rec.rows) { if (PROTO_KEYS.has(r.key)) continue; if (!(r.value && r.value._k === pub)) continue; if (await admit(typeFromKey(r.key), r.value, r.key, pub, secure, this.validate)) { view2[r.key] = r.value; newSig.set(r.key, changeToken(r.value)) } } // re-admit ONLY pub's own rows (a relay can't smuggle foreign-signed rows through recovery)
+            for (const r of rec.rows) { if (PROTO_KEYS.has(r.key)) continue; if (!(r.value && r.value._k === pub)) continue; if (await admit(typeForRow(r.key, r.value), r.value, r.key, pub, secure, this.validate)) { view2[r.key] = r.value; newSig.set(r.key, changeToken(r.value)) } } // re-admit ONLY pub's own rows (a relay can't smuggle foreign-signed rows through recovery)
             this._peerViews.set(pub, view2); this._peerSigs.set(pub, newSig); view = view2; anyRowChanged = true
             if (rec.base) this._readFrom.set(pub, rec.base) // pin future reads of this outbox to the relay that serves it, so the recovery STICKS (re-evaluated at reconcile)
             rows = []; for (const k in view2) rows.push({ key: k, value: view2[k] })
@@ -900,7 +911,7 @@ class BridgeGossipSync {
   async status () {
     const v = await this._merged()
     let viewLength = 0
-    for (const k in v) { const t = typeFromKey(k); if (t !== TYPE.HEAD && t !== TYPE.BLOB) viewLength++ } // head!/blob! are internal (census / opaque body storage), not "records"
+    for (const k in v) { const t = typeForRow(k, v[k]); if (t !== TYPE.HEAD && t !== TYPE.BLOB) viewLength++ } // head!/blob! are internal (census / opaque body storage), not "records"
     return {
       appId: 'peerit',
       mode: this.mode,

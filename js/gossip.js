@@ -365,7 +365,7 @@ class GossipSync {
 
 // ---- real PearBrowser gossip ------------------------------------------------
 class BridgeGossipSync {
-  constructor ({ pear, getMe, identity, storage, validate = makeValidator(), pollMs = 4000, writeHead = false, readOnly = false }) {
+  constructor ({ pear, getMe, identity, storage, validate = makeValidator(), pollMs = 4000, writeHead = false, readOnly = false, discover = true }) {
     this.mode = 'gossip-bridge'
     this.pear = pear
     this.getMe = getMe
@@ -381,6 +381,7 @@ class BridgeGossipSync {
     // relay withholding rows). Off by default so existing count-based tests are
     // untouched; app.js turns it on in production.
     this._writeHead = writeHead
+    this._discover = discover // false = announce-only (findable, doesn't join others) — used by the write-only seeder
     this._listeners = new Set()
     this._peers = new Map() // pub -> { appId, inviteKey }
     this._cache = null            // current merged view (maintained incrementally)
@@ -607,7 +608,10 @@ class BridgeGossipSync {
     try { console.log('[peerit persist] me=' + (this.getMe() || '').slice(0, 12) + ' outbox=' + (this._myInvite || '').slice(0, 12) + ' knownOutboxes=' + this._knownOutboxes().length + ' cachedPeers=' + this._peers.size) } catch {}
     try {
       this._channel = await this.pear.swarm.v1.join(TOPIC, { server: true, client: true, appName: 'peerit', reason: 'Discover other peerit users' })
-      this._channel.on('peer', () => this._announce())
+      // Send our descriptor only to the newly-connected peer (O(1)); never re-broadcast
+      // to every peer on each 'peer' event — that is the O(N²) /api/swarm/send storm that
+      // exhausts the browser socket pool and wedges cold-start boot.
+      this._channel.on('peer', (peer) => { if (peer && typeof peer.send === 'function') this._announceTo(peer); else this._scheduleAnnounce() })
       this._channel.on('message', (peer, data) => this._onDescriptor(data))
       await this._announce()
     } catch (e) { console.warn('[gossip] swarm unavailable:', e && e.message) }
@@ -637,20 +641,48 @@ class BridgeGossipSync {
     this._destroyed = true
     if (this._poll) { clearInterval(this._poll); this._poll = null }
     if (this._pollTimer) { clearTimeout(this._pollTimer); this._pollTimer = null }
+    if (this._refreshScheduled) { clearTimeout(this._refreshScheduled); this._refreshScheduled = null }
+    if (this._announceScheduled) { clearTimeout(this._announceScheduled); this._announceScheduled = null }
     if (this._channel && this._channel.destroy) { try { this._channel.destroy() } catch {} }
     if (this._refreshing) this._refreshing.catch(() => {}) // don't leave the in-flight refresh's rejection unhandled
     this._channel = null
     this._listeners.clear()
   }
 
-  async _announce () {
-    if (!this._channel) return
+  // Build our signed outbox descriptor once, reused by broadcast + per-peer sends.
+  async _descBytes () {
+    if (!this._channel) return null
     const pub = this.getMe(), appId = this._myAppId(), inviteKey = this._myInvite
     let sig = null
     try { sig = await this.identity.sign(`peerit-desc|${pub}|${appId}|${inviteKey}`) } catch {}
     const desc = JSON.stringify({ t: 'outbox-desc', pub, appId, inviteKey, sig: sig && sig.signature, dk: sig && sig.driveKey, ns: sig && sig.namespace })
-    const bytes = new TextEncoder().encode(desc)
+    return new TextEncoder().encode(desc)
+  }
+
+  // Broadcast our descriptor to every current peer (used at boot / after our outbox
+  // opens / on re-announce). One send per peer — O(N), not the O(N²) of re-broadcasting
+  // on every peer connection.
+  async _announce () {
+    const bytes = await this._descBytes()
+    if (!bytes || !this._channel) return
     for (const p of this._channel.peers) { try { p.send(bytes) } catch {} }
+  }
+
+  // Send our descriptor to a single newly-connected peer — the ONLY peer that needs it.
+  // The relay replays every remembered peer on join, so re-broadcasting to all peers on
+  // each 'peer' event is O(N²) /api/swarm/send POSTs that exhaust the browser socket pool
+  // (net::ERR_INSUFFICIENT_RESOURCES) and wedge boot into "no relay reachable".
+  async _announceTo (peer) {
+    const bytes = await this._descBytes()
+    if (bytes) { try { peer.send(bytes) } catch {} }
+  }
+
+  // Coalesce a burst of peer connections into ONE broadcast (fallback when the swarm
+  // 'peer' event doesn't hand us the peer to target directly).
+  _scheduleAnnounce () {
+    if (this._announceScheduled || this._destroyed) return
+    this._announceScheduled = setTimeout(() => { this._announceScheduled = null; this._announce().catch(() => {}) }, 500)
+    if (this._announceScheduled && this._announceScheduled.unref) this._announceScheduled.unref()
   }
 
   async _onDescriptor (data) {
@@ -662,6 +694,7 @@ class BridgeGossipSync {
       d = JSON.parse(text)
     } catch { return }
     if (!d || d.t !== 'outbox-desc' || !d.pub || d.pub === this.getMe()) return
+    if (!this._discover) return // announce-only client (e.g. the seeder): stays findable, but never joins others
     if (this._peers.size >= MAX_PEERS) return
     if (!HEX64.test(d.pub) || !HEX64.test(d.appId) || d.appId !== d.pub) return // appId must be the pubkey itself
     if (typeof d.inviteKey !== 'string' || d.inviteKey.length < 16 || d.inviteKey.length > 4096) return
@@ -671,12 +704,46 @@ class BridgeGossipSync {
     // Hyperbee it controls.
     const ok = await edVerify(d.pub, `pear.app.${d.dk}:peerit:peerit-desc|${d.pub}|${d.appId}|${d.inviteKey}`, d.sig).catch(() => false)
     if (!ok) return
-    if (this._peers.has(d.pub)) return
+    if (this._peers.has(d.pub) || (this._joinSeen && this._joinSeen.has(d.pub))) return
+    // The relay replays EVERY remembered descriptor when we join the topic, so a boot
+    // can surface dozens at once. Joining them all immediately hammers the relay's
+    // per-IP rate limit (and can fetch-fail a small relay). Enqueue + drain them at a
+    // throttled rate, then refresh ONCE for the whole burst.
+    ;(this._joinSeen || (this._joinSeen = new Set())).add(d.pub)
+    ;(this._joinQueue || (this._joinQueue = [])).push(d)
+    this._pumpJoins()
+  }
+
+  async _pumpJoins () {
+    if (this._joinPumping || this._destroyed) return
+    this._joinPumping = true
     try {
-      await this.pear.sync.join(d.appId, d.inviteKey) // only commit the peer AFTER a successful join
-      this._peers.set(d.pub, { appId: d.appId, inviteKey: d.inviteKey })
-      const changed = await this._refresh(); this._emit(changed); this._announce()
-    } catch (e) { console.warn('[gossip] join failed', e && e.message) }
+      while (this._joinQueue && this._joinQueue.length && !this._destroyed) {
+        const d = this._joinQueue.shift()
+        if (this._peers.has(d.pub) || this._peers.size >= MAX_PEERS) continue
+        try {
+          await this.pear.sync.join(d.appId, d.inviteKey)
+          this._peers.set(d.pub, { appId: d.appId, inviteKey: d.inviteKey })
+        } catch { /* transient (rate limit / fetch) — the poll re-discovers later */ }
+        await new Promise((r) => setTimeout(r, 280)) // ~3.5 joins/s — comfortably under the per-IP limit
+      }
+    } finally {
+      this._joinPumping = false
+      this._scheduleRefresh() // one coalesced refresh once the burst drains
+    }
+  }
+
+  // Debounced re-merge — many descriptors arriving in a boot burst collapse into a
+  // single refresh + emit, keeping the client well under the relay's per-IP rate limit.
+  _scheduleRefresh () {
+    if (this._refreshScheduled || this._destroyed) return
+    this._refreshScheduled = setTimeout(async () => {
+      this._refreshScheduled = null
+      if (this._destroyed) return
+      try { const changed = await this._refresh(); if (changed.length) this._emit(changed) } catch (e) { console.warn('[gossip refresh]', e && e.message) }
+      try { await this._announce() } catch {}
+    }, 700)
+    if (this._refreshScheduled && this._refreshScheduled.unref) this._refreshScheduled.unref()
   }
 
   async announce () {
@@ -1005,8 +1072,8 @@ function browserBus (name) {
   return { send: (m) => { bc.postMessage(m) }, onMessage: (fn) => { bc.onmessage = (e) => fn(e.data) } }
 }
 
-export function createGossip ({ storage, pear, getMe, identity, channelName, forceDev, bus, validate, pollMs, writeHead, readOnly } = {}) {
-  if (pear && pear.sync && pear.swarm && !forceDev) return new BridgeGossipSync({ pear, getMe, identity, storage, validate, pollMs, writeHead, readOnly })
+export function createGossip ({ storage, pear, getMe, identity, channelName, forceDev, bus, validate, pollMs, writeHead, readOnly, discover } = {}) {
+  if (pear && pear.sync && pear.swarm && !forceDev) return new BridgeGossipSync({ pear, getMe, identity, storage, validate, pollMs, writeHead, readOnly, discover })
   const theBus = bus || (typeof BroadcastChannel !== 'undefined' ? browserBus(channelName || 'peerit-gossip') : null)
   return new GossipSync({ storage, bus: theBus, getMe, validate })
 }

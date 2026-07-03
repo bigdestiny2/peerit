@@ -49,15 +49,29 @@ export const SEED = {
   }
 }
 
+// Retry a write through transient relay backpressure (429 / fetch failed) with
+// exponential backoff, so a busy relay doesn't abort the whole seed mid-run.
+async function withRetry (fn, log, tries = 7, base = 2500) {
+  for (let i = 0; ; i++) {
+    try { return await fn() } catch (e) {
+      const msg = (e && e.message) || ''
+      if (i >= tries - 1 || !/rate limit|429|fetch failed|timeout|unavailable/i.test(msg)) throw e
+      const wait = Math.round(base * Math.pow(1.7, i))
+      log(`  … ${msg}; backing off ${Math.round(wait / 1000)}s (try ${i + 2}/${tries})`)
+      await new Promise(r => setTimeout(r, wait))
+    }
+  }
+}
+
 // Apply the seed to a Data instance. Idempotent: a re-run reuses the existing
 // community and overwrites each post at its deterministic cid (no duplicates).
 export async function seedContent (data, { log = () => {} } = {}) {
   let communities = 0, posts = 0
   for (const [slug, comm] of Object.entries(SEED)) {
-    try { await data.createCommunity({ slug, title: comm.title, description: comm.description }); communities++; log('created r/' + slug) }
+    try { await withRetry(() => data.createCommunity({ slug, title: comm.title, description: comm.description }), log); communities++; log('created r/' + slug) }
     catch (e) { if (/already exists/.test(e.message || '')) log('r/' + slug + ' exists — reusing'); else throw e }
     for (const p of comm.posts) {
-      const r = await data.submitPost({ community: slug, kind: 'text', title: p.title, body: p.body, cid: p.cid })
+      const r = await withRetry(() => data.submitPost({ community: slug, kind: 'text', title: p.title, body: p.body, cid: p.cid }), log)
       posts++; log('  r/' + slug + '/' + r.cid, '—', p.title.slice(0, 42))
     }
   }
@@ -89,7 +103,14 @@ async function main () {
   const tok = await (await fetch(RELAY + '/api/token', { method: 'POST' })).json()
   // Persisted store => ready() re-loads the SAME author every run (never appends).
   const id = new DevIdentity(fileStore(STORE_PATH), mem()); await id.ready()
-  const sync = createSync({ apiToken: tok.token, apiBase: RELAY, fetch: (...a) => fetch(...a), EventSource: NodeEventSource, storage: mem(), getMe: () => id.me().pubkey, identity: id, validate: makeValidator(), pollMs: 4000 })
+  // writeHead:true — write a signed head!<me> census record after each write, EXACTLY as
+  // the browser app does (js/app.js). This registers the outbox in the relay directory so
+  // the relay durably replays its swarm descriptor to fresh readers. Without it the seed's
+  // content is on the relay but effectively undiscoverable (its descriptor is only in the
+  // relay's ephemeral in-memory swarm state → flaky/absent replay). pollMs low so a fresh
+  // reader's join surfaces quickly. The throttled join queue (js/gossip.js) keeps the boot
+  // descriptor burst under the relay's per-IP rate limit.
+  const sync = createSync({ apiToken: tok.token, apiBase: RELAY, fetch: (...a) => fetch(...a), EventSource: NodeEventSource, storage: mem(), getMe: () => id.me().pubkey, identity: id, validate: makeValidator(), pollMs: 4000, writeHead: true })
   await sync.ready()
   const data = createData(sync, id, { v2: process.env.SEED_V2 !== '0' }) // reseed as blind v2 records by default (SEED_V2=0 for legacy v1)
   log('author', id.me().pubkey.slice(0, 12), '(stable, from', STORE_PATH.split('/').pop() + ')', 'mode', sync.mode, '→', RELAY)

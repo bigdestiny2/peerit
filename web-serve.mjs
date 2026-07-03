@@ -2,6 +2,7 @@
 // peerit.com static export from build-web.mjs). Lets the browser preview load
 // the web build the way a normal browser would. NOT part of the published site.
 import http from 'node:http'
+import https from 'node:https'
 import { readFile } from 'node:fs/promises'
 import { extname, join, normalize, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -16,8 +17,11 @@ const RELAY = process.env.PEERIT_RELAY_PROXY || 'http://127.0.0.1:8787'
 
 function proxyToRelay (req, res) {
   const u = new URL(RELAY)
-  const headers = { ...req.headers, host: u.host }
-  const up = http.request({ hostname: u.hostname, port: u.port, path: req.url, method: req.method, headers }, (ur) => {
+  const secure = u.protocol === 'https:'
+  const mod = secure ? https : http
+  const port = u.port || (secure ? 443 : 80)
+  const headers = { ...req.headers, host: u.host } // SNI/host must match the upstream cert
+  const up = mod.request({ hostname: u.hostname, port, path: req.url, method: req.method, headers, servername: u.hostname }, (ur) => {
     res.writeHead(ur.statusCode || 502, ur.headers) // pipes JSON and text/event-stream (SSE) alike
     ur.pipe(res)
   })

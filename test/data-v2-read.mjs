@@ -61,6 +61,19 @@ async function main () {
   ok(comms.some(c => c.slug === 'p2p' && c.title === 'P2P'), 'listCommunities returns the community (slug cleartext, title decrypted)')
   ok(await data.postCount('p2p') === 2, 'postCount aggregates the community post count from opaque records (the UI never calls sync.count directly)')
 
+  console.log('\n— karma / search / moderation (rest of the read surface) —')
+  const me = data.me().pubkey
+  const k = await data.karmaFor(me)
+  ok(k.total === 1 && k.postCount === 2, 'karmaFor aggregates the upvote across the author’s posts (total 1 over 2 posts)')
+  const sr = await data.search('hello')
+  ok(sr.posts.some(p => p.cid === p1.cid), 'search finds the post by its decrypted body (client search index over opaque records)')
+  ok((await data.getMods('p2p')).has(me), 'getMods resolves the community creator as a mod (from the v2 community record)')
+  await data.toggleSticky('p2p', p1.cid, false) // creator stickies their own post
+  const acts = await data.listModActions('p2p')
+  ok(acts.some(a => a.action === 'sticky' && a.targetCid === p1.cid), 'a v2 mod action (sticky) writes + reads back through the opaque store')
+  const ov = await data.overlay('p2p')
+  ok(ov && ov.stickied && ov.stickied.has(p1.cid), 'the moderation overlay reflects the v2 sticky action')
+
   console.log(`\n✅ all ${passed} data-v2-read checks passed`)
 }
 main().catch(e => { console.error(e); process.exit(1) })

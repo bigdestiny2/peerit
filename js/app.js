@@ -101,14 +101,17 @@ async function boot () {
   }
   // writeHead: maintain a signed head!<me> census after each write (the outbox
   // "merkle root" — lets any reader detect a relay withholding records). Real
-  // runs only; existing count-based tests don't set it.
+  // runs only; existing count-based tests don't set it. NOT for read-only visitors:
+  // they never post, so their head is empty and only pollutes the relay directory with
+  // contentless outboxes (which can evict real content authors). Writers keep it on.
   const pearForSync = pearOverride || relayPool
   // seedOutboxes rides in runtime.syncOpts, but the pool/DHT path passes `pear` instead
   // of spreading syncOpts — so thread the pinned outboxes through explicitly on both paths.
   const seedOutboxes = runtime.syncOpts && runtime.syncOpts.seedOutboxes
+  const writeHead = !runtime.readOnly
   sync = pearForSync
-    ? createSync({ getMe: () => identity.me().pubkey, identity, pear: pearForSync, writeHead: true, readOnly: runtime.readOnly, seedOutboxes })
-    : createSync({ getMe: () => identity.me().pubkey, identity, ...runtime.syncOpts, writeHead: true, readOnly: runtime.readOnly })
+    ? createSync({ getMe: () => identity.me().pubkey, identity, pear: pearForSync, writeHead, readOnly: runtime.readOnly, seedOutboxes })
+    : createSync({ getMe: () => identity.me().pubkey, identity, ...runtime.syncOpts, writeHead, readOnly: runtime.readOnly })
   await sync.ready()
   data = createData(sync, identity, { v2: runtime.v2 })
   refreshPrefs()

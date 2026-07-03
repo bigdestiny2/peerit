@@ -1,4 +1,4 @@
-// build-web.mjs — produce the peerit.com STATIC web bundle.
+// build-web.mjs — produce the peerit.site STATIC web bundle.
 //
 // The default build mostly copies the served files into web/ and adds the
 // web-only delivery hardening:
@@ -16,7 +16,7 @@
 //
 // Usage:
 //   node build-web.mjs
-//   node build-web.mjs --relay https://relay.peerit.com --readonly false \
+//   node build-web.mjs --relay https://relay.peerit.site --readonly false \
 //     --relay-roster relay-roster.json --relay-roster-key <pubkey> --drive-key <hyperkey>
 //   node build-web.mjs --relay same-origin --no-relay-roster
 //   PEERIT_WEB_RELEASE_CONFIG=deploy/web-release.json node build-web.mjs

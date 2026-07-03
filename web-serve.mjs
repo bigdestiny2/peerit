@@ -1,5 +1,5 @@
 // web-serve.mjs — dev-only static server for the generated web/ bundle (the
-// peerit.com static export from build-web.mjs). Lets the browser preview load
+// peerit.site static export from build-web.mjs). Lets the browser preview load
 // the web build the way a normal browser would. NOT part of the published site.
 import http from 'node:http'
 import https from 'node:https'

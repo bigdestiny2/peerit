@@ -26,7 +26,7 @@ function metaContent (doc, name) {
   }
 }
 
-// Relay config is baked into the peerit.com static export only. It is absent
+// Relay config is baked into the peerit.site static export only. It is absent
 // from the hyper:// drive PearBrowser loads — and even if present, it is only
 // consulted in the no-host-bridge branch, so PearBrowser ignores it.
 export function readRelayConfig (doc) {

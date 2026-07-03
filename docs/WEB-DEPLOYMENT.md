@@ -1,4 +1,4 @@
-# Running peerit on a normal browser (peerit.com) — censorship-resistant
+# Running peerit on a normal browser (peerit.site) — censorship-resistant
 
 peerit is built for PearBrowser (a `hyper://` site with `window.pear`). This
 describes the additive path for serving it from a normal DNS so any browser can
@@ -34,7 +34,7 @@ working — the web is additive publishing.
 
 | layer | how | censorship-resistance |
 |---|---|---|
-| **code delivery** | static export to peerit.com + IPFS/ENS/Arweave; SRI + Service-Worker pin; `/verify` | tampering detectable; survives one gateway/DNS dying |
+| **code delivery** | static export to peerit.site + IPFS/ENS/Arweave; SRI + Service-Worker pin; `/verify` | tampering detectable; survives one gateway/DNS dying |
 | **data transport** | untrusted relay speaking peerit's `/api/*` (Phase 1) → in-browser DHT pipe (Phase 3) | relay withholds, never forges; seeders keep data available |
 | **identity / keys** | browser-local Ed25519 (`forceDev`); passphrase-encrypted identity export to move/back up the key | relay can never sign as a user; forgeries dropped at merge |
 
@@ -83,7 +83,7 @@ without trusting DNS, the relay, or the roster host:
   "payload": {
     "version": 1,
     "expires": "2026-12-31T00:00:00.000Z",
-    "relays": ["https://relay-a.peerit.com", "https://relay-b.peerit.com"]
+    "relays": ["https://relay-a.peerit.site", "https://relay-b.peerit.site"]
   },
   "signature": {
     "alg": "Ed25519",
@@ -119,16 +119,16 @@ drift outside that explicit config change as a publish blocker.
 ## Deploy checklist (operator — these are your steps, not the code's)
 
 1. **Relay:** deploy `02-apps/peerit-relay` (see its README) behind TLS at
-   `relay.peerit.com`, or proxy it same-origin at `peerit.com/api/*`. Run more
+   `relay.peerit.site`, or proxy it same-origin at `peerit.site/api/*`. Run more
    than one; put the fleet in `deploy/web-release.json`, and keep
    `bootstrapRelays` as a conservative fallback.
 2. **Seeders:** run `02-apps/peerit-seeder` so outboxes stay available offline.
 3. **Code:** run `npm run ship:live`. It publishes the `hyper://` drive, writes
    the new key to `manifest.json`, then runs `npm run web:release` with that key
    so `web/asset-manifest.json` and `web/verify.html` cannot lag behind.
-4. **Host/mirror:** host `web/` on peerit.com; also pin to IPFS (DNSLink),
+4. **Host/mirror:** host `web/` on peerit.site; also pin to IPFS (DNSLink),
    Arweave, and set ENS `peerit.eth` contenthash → CID so the app survives
-   DNS/registrar seizure. `peerit.com/verify.html` lets anyone cross-check the
+   DNS/registrar seizure. `peerit.site/verify.html` lets anyone cross-check the
    web bundle against the published drive key.
 
 ## Manual validation still required
@@ -160,8 +160,8 @@ otherwise.
 cd 02-apps/peerit
 npm install               # installs the exact devDependency pins below
 npm run dht:bundle        # optional direct bundle smoke helper
-node build-web.mjs --relay https://relay.peerit.com --readonly false \
-  --dht-relay wss://dht-relay.peerit.com --drive-key <key>
+node build-web.mjs --relay https://relay.peerit.site --readonly false \
+  --dht-relay wss://dht-relay.peerit.site --drive-key <key>
 ```
 
 Exact pins used by the browser DHT bundle:
@@ -207,11 +207,11 @@ Live-path caveats:
 
 ## Honest limits (what the web can never match vs PearBrowser)
 
-- **Origin-ships-JS:** a normal browser re-downloads and trusts peerit.com's JS
+- **Origin-ships-JS:** a normal browser re-downloads and trusts peerit.site's JS
   every visit; a compromised origin can serve targeted backdoored JS to one IP
   and read the in-browser key. Content-addressing + SRI + SW pinning + `/verify`
   make *global* tampering detectable, but can't protect a casual visitor on first
-  hit. peerit.com keeps records **unforgeable**; it can't prove the JS you ran is
+  hit. peerit.site keeps records **unforgeable**; it can't prove the JS you ran is
   the audited JS. High-assurance users: install PearBrowser.
 - **Privacy:** a clearnet origin sees your IP; any relay learns peer IPs (WebRTC
   can leak local IPs). Mitigate with no-log relays + an onion mirror + TURN-only

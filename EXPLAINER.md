@@ -97,13 +97,13 @@ peerit's security model is the same everywhere; only the transport changes.
 | | how peers are reached | trust |
 |---|---|---|
 | **PearBrowser** (strongest) | direct on the Hyperswarm DHT — true peer-to-peer, no middleman | fully trustless |
-| **A normal browser (peerit.com)** | through an **untrusted relay** that shuttles data | relay can withhold, never forge |
+| **A normal browser (peerit.site)** | through an **untrusted relay** that shuttles data | relay can withhold, never forge |
 | **A normal browser, no relay** | nothing — a local-only sandbox on one device | not networked |
 
 **PearBrowser** loads peerit as a content-addressed `hyper://` site and gives it
 real peer-to-peer access. This is the fully trustless mode.
 
-**peerit.com** exists because a normal web page *can't* join a peer-to-peer
+**peerit.site** exists because a normal web page *can't* join a peer-to-peer
 network directly. So it connects through a relay. The key design choice: **your
 keys never leave your browser, and your client still verifies every record** — so
 the relay can pass messages along but can never forge, tamper, or impersonate. It
@@ -145,7 +145,7 @@ peerit is built to be honest about what cryptography can and can't do:
   established communities can't be hijacked — the price is that the first person
   to claim a brand-new name keeps it (the classic Zooko's-triangle bind: names
   can't be human-readable, decentralized, and squat-proof all at once).
-- **The web trusts the origin's code.** As above, peerit.com keeps your records
+- **The web trusts the origin's code.** As above, peerit.site keeps your records
   unforgeable but can't prove the JavaScript you ran is the audited JavaScript.
   PearBrowser, which you pin by content key, doesn't have this gap.
 - **Privacy on the web.** A normal-browser visit reveals your IP address to the

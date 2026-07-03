@@ -389,7 +389,7 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
 .netstatus.warn b{color:var(--up)}
 @media(max-width:560px){ .netstatus{left:8px;bottom:8px;font-size:10.5px;padding:5px 9px} }
 
-/* ---- web read-only mode (peerit.com over a public relay) -------------------- */
+/* ---- web read-only mode (peerit.site over a public relay) ------------------- */
 .readonly-banner {
   position: sticky; top: 0; z-index: 60;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));

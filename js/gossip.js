@@ -20,6 +20,7 @@
 
 import { TYPE, keys } from './model.js'
 import { ownerOf, expectedKey, expectedKeyV2, typeFromKey, typeForRow, recordTs, canonical, outboxCensus, censusString } from './canon.js'
+import { unseal } from './seal.js'
 import { verifyRecord } from './verify.js'
 import { verifyBlobRecord } from './blob-store.js'
 import { verify as edVerify, isSecure, ready as cryptoReady, hashHex } from './crypto.js'
@@ -101,15 +102,24 @@ async function admit (type, val, key, pub, secure, validate) {
   // 'v2' while ownerOf / PoW / winner use the semantic type.
   const v2 = String(key).startsWith('v2!')
   if (v2) {
-    if (!val._t) return false
-    if ((await expectedKeyV2(val)) !== key) return false
-    type = val._t // semantic type (ownerOf / blob / PoW below)
+    if (!val._t || !val.sealed) return false
+    // The graph-bearing fields (community, cid, targetCid, …) are SEALED, so recompute
+    // the opaque okey from the DECRYPTED fields + the owner (_k, baked into the okey).
+    // A record parked under a victim's okey fails here: its own (_k, fields) can't
+    // reproduce that slot. LWW/sticky fields (createdAt/ts/deleted/slug) stay cleartext,
+    // so only this anti-eviction check needs the read key.
+    let f
+    try { f = await unseal(val.sealed) } catch { return false }
+    if (!f || typeof f !== 'object') return false
+    const rec = { ...f, _t: val._t, author: val._k, creator: val._k, by: val._k, slug: val.slug != null ? val.slug : f.slug }
+    if ((await expectedKeyV2(rec)) !== key) return false
+    type = val._t // semantic type (blob / PoW below)
   } else if (!type || expectedKey(type, val) !== key) return false
   // Content-addressed blobs must self-certify (SHA-256(ct)===blobId): the blob! key
   // is not author-scoped, so without this a foreign validly-signed record could win
   // the LWW collision and suppress a boxed body. See blob-store.js verifyBlobRecord.
   if (type === TYPE.BLOB && !(await verifyBlobRecord(val))) return false
-  const owner = ownerOf(type, val)
+  const owner = v2 ? val._k : ownerOf(type, val) // v2: the owner IS the signer (baked into the okey)
   if (!owner) return false
   const v = await honored(v2 ? 'v2' : type, val, type) // sig covers canonical(wire type); owner-binding uses the semantic type
   if (secure) {
@@ -136,7 +146,7 @@ function laterRecord (a, b) {
 function communityWins (a, b) {
   const ca = a.createdAt || 0, cb = b.createdAt || 0
   if (ca !== cb) return ca < cb
-  const ka = a.creator || '', kb = b.creator || ''
+  const ka = a.creator || a._k || '', kb = b.creator || b._k || '' // v2: owner is _k (no creator field)
   if (ka !== kb) return ka < kb
   return String(a._sig || '') < String(b._sig || '')
 }
@@ -158,7 +168,7 @@ export async function mergeOutboxes (boxes, claimed, validate) {
       if (!(await admit(type, val, key, pub, secure, validate))) continue
       if (type === 'community') {
         const slug = val.slug
-        if (claimed[slug] && claimed[slug] !== val.creator) continue // sticky: name owned by another creator
+        if (claimed[slug] && claimed[slug] !== (val.creator || val._k)) continue // sticky: name owned by another creator
       }
       const ex = out[key]
       if (!ex || winner(type, val, ex)) out[key] = val
@@ -166,7 +176,7 @@ export async function mergeOutboxes (boxes, claimed, validate) {
   }
   // Lock the resolved community owners so a later different-creator claim can't take them.
   for (const key in out) {
-    if (typeForRow(key, out[key]) === 'community') { const s = out[key].slug; if (s && !claimed[s]) claimed[s] = out[key].creator }
+    if (typeForRow(key, out[key]) === 'community') { const s = out[key].slug; if (s && !claimed[s]) claimed[s] = out[key].creator || out[key]._k }
   }
   return out
 }
@@ -227,14 +237,14 @@ function combineAdmitted (boxes, claimed) {
       const type = typeForRow(key, val)
       if (type === 'community') {
         const slug = val.slug
-        if (claimed[slug] && claimed[slug] !== val.creator) continue // sticky: owned by another creator
+        if (claimed[slug] && claimed[slug] !== (val.creator || val._k)) continue // sticky: owned by another creator
       }
       const ex = out[key]
       if (!ex || winner(type, val, ex)) out[key] = val
     }
   }
   for (const key in out) {
-    if (typeForRow(key, out[key]) === 'community') { const s = out[key].slug; if (s && !claimed[s]) claimed[s] = out[key].creator }
+    if (typeForRow(key, out[key]) === 'community') { const s = out[key].slug; if (s && !claimed[s]) claimed[s] = out[key].creator || out[key]._k }
   }
   return out
 }

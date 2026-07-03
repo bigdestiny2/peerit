@@ -27,8 +27,12 @@ function signedMessage (type, data) {
 // coincide (semType defaults to type), so this is a no-op there. See gossip.js admit().
 export async function verifyRecord (type, data, semType = type) {
   if (!data || !data._k) return 'unverifiable'
-  // The signer must BE the claimed author — no signing as someone else.
-  if (data._k !== ownerOf(semType, data)) return 'bad'
+  // The signer must BE the claimed author — no signing as someone else. v2 opaque
+  // records have NO plaintext author/creator/by field (the owner is the signer `_k`,
+  // baked into the okey = HMAC(RK, _k‖…) which admit re-checks by recompute), so the
+  // field comparison is skipped for the 'v2' canonical type — admit's okey binding is
+  // what enforces owner-binding there.
+  if (type !== 'v2' && data._k !== ownerOf(semType, data)) return 'bad'
   await cryptoReady()
   if (!isSecure()) return 'unverifiable' // no platform crypto -> cooperative dev
   if (!data._sig) return 'bad'           // secure mode: unsigned is untrusted

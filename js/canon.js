@@ -3,7 +3,8 @@
 // exactly the bytes that get checked, and a record is pinned to both its author
 // and its storage key.
 
-import { TYPE, keys } from './model.js'
+import { TYPE, keys, semanticId } from './model.js'
+import { okey, communityOkey } from './seal.js'
 
 // The pubkey that must have authored a record of this type. The verifier
 // requires the SIGNER (_k) to equal this — so you can't sign-as-someone-else.
@@ -52,6 +53,29 @@ export function canonical (type, data) {
 
 // Type prefix of a Hyperbee key (`type!...`).
 export function typeFromKey (key) { return String(key).split('!')[0] }
+
+// The v2 record type — read from the signed body field `_t`, NOT from the (now
+// opaque) key. The blind key scheme (docs/BLIND-OUTBOX-MIGRATION.md) lifts type out
+// of the key; every former typeFromKey(key) site becomes typeOf(val) at cutover.
+export function typeOf (val) { return val && val._t }
+
+// The v2 opaque wire key a record MUST live under, recomputed from its own SIGNED
+// fields — the anti-eviction gate for the blind key scheme. `v2!<okey>` where okey
+// folds author + _t + semanticId, so: a peer can't park a record under a victim's
+// slot (author ∈ HMAC), and the type can't leak in the key or be swapped (it's ∈ the
+// HMAC AND `_t` ∈ canonical, so a flip breaks BOTH this recompute AND the signature).
+// `community` is the one author-INDEPENDENT slot (rivals collide → sticky-claim fires).
+// Async because okey is HMAC-SHA256 over SubtleCrypto. Uses ownerOf/semanticId so it
+// stays symmetric with the plaintext expectedKey above.
+export async function expectedKeyV2 (val) {
+  const t = typeOf(val)
+  if (!t) return null
+  if (t === TYPE.COMMUNITY) return val.slug != null ? 'v2!' + await communityOkey(val.slug) : null
+  const author = ownerOf(t, val)
+  const sid = semanticId(t, val)
+  if (author == null || sid == null) return null
+  return 'v2!' + await okey(t, sid, author)
+}
 
 // ---- signed-outbox-head census ---------------------------------------------
 // The set a signed `head` commits to: the sorted `key\0sig` of every SIGNED,

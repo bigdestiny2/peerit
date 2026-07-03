@@ -73,6 +73,23 @@ export const id = {
   blob: (blobId) => blobId
 }
 
+// The v2 blind key scheme (docs/BLIND-OUTBOX-MIGRATION.md) folds this SAME semantic
+// tuple — not the plaintext key — into an opaque okey (js/seal.js): okey =
+// HMAC(READ_KEY, author‖_t‖semanticId). Dispatches by type exactly like id.* /
+// expectedKey, so a record's opaque slot is recomputable from its own signed fields.
+export function semanticId (type, data) {
+  switch (type) {
+    case TYPE.COMMUNITY: return data.slug != null ? id.community(data.slug) : null
+    case TYPE.POST: return data.community != null && data.cid != null ? id.post(data.community, data.cid) : null
+    case TYPE.COMMENT: return data.community != null && data.postCid != null && data.cid != null ? id.comment(data.community, data.postCid, data.cid) : null
+    case TYPE.VOTE: return data.targetCid != null && data.author != null ? id.vote(data.targetCid, data.author) : null
+    case TYPE.PROFILE: return data.author != null ? id.profile(data.author) : null
+    case TYPE.MOD: return data.community != null && data.actionId != null ? id.mod(data.community, data.actionId) : null
+    case TYPE.HEAD: return data.author != null ? id.head(data.author) : null
+    default: return null
+  }
+}
+
 // MOD actions a community moderator may perform.
 export const MOD = {
   REMOVE: 'remove', APPROVE: 'approve',

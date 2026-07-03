@@ -336,18 +336,63 @@ on `status()`.
 Tests: [`outbox-head.mjs`](test/outbox-head.mjs) (A) · [`relay-pool.mjs`](test/relay-pool.mjs) (B) ·
 [`head-floor.mjs`](test/head-floor.mjs) (C, incl. detection surviving a client restart).
 
-**Live since 2026-07-01:** the signed roster carries **two independent relays** (a
-self-hosted VPS + a managed host), so the cross-relay defenses (B) are now **active,
-not just detection-only** — a single relay that rolls back or strips a head is caught
-and read around, and no single origin is a chokepoint. The durable floor is active too.
+**Live since 2026-07-01:** the signed roster carries **two relays** (a self-hosted VPS +
+a managed host, **both currently run by the same operator**), so the cross-relay checks (B)
+are exercised end-to-end — a single relay that rolls back or strips a head is caught and read
+around. This is **rollback/withholding detection, not yet operator diversity**: true
+anti-collusion (and any "no single origin" claim) needs a second **arms-length** operator
+(see the blindness section below). The durable floor is active too.
 Grow the pool by self-hosting another relay with one `docker compose up`
 ([`deploy/peerit-relay/`](deploy/peerit-relay/)); the optional blind in-browser DHT
 transport has its own bundle ([`deploy/dht-relay/`](deploy/dht-relay/)).
 
+### Operator blindness: from readable-host toward blind-host
+
+peerit's normal-browser relay is, today, a **readable host**: records are stored under
+plaintext semantic keys (`post!<community>!<cid>`, `vote!<target>!<author>`), so an operator
+can read bodies and the social graph at rest — the weakest liability position. Two designs
+move it toward a **blind host**: an operator that holds opaque bytes it must *affirmatively
+decrypt and reconstruct* to read — no passive grep, no semantic enumeration, content-neutral
+storage, drop-by-opaque-id takedown. Full analysis:
+[`docs/OPERATOR-LIABILITY.md`](docs/OPERATOR-LIABILITY.md).
+
+> **Honest ceiling (load-bearing, not marketing).** A *public* forum's read key must reach
+> every reader, so "blind" can **never** mean confidentiality or anonymity — the operator
+> holds the key and *can* decrypt any public post, and can confirm a specific guess in O(1).
+> The win is **no passive reading, no semantic enumeration, content-neutrality, deniability**
+> — not secrecy. peerit does **not** claim "the operator can't read your posts."
+
+- **Blind-Outbox key scheme (Opaque-Log v2) — *in progress, not yet live*.** The relay key
+  *would* become an opaque `v2!<okey>` (a keyed hash over author + type + id), with structural
+  fields sealed in the value, so the relay *could* no longer grep or prefix-index the graph;
+  feed/thread/vote aggregation moves into the browser. This is the change that actually moves
+  the web tier from readable-host to blind-host. The primitives ([`js/seal.js`](js/seal.js))
+  are landed and unit-tested but **not yet wired into the write path — the live scheme is
+  still the plaintext key**; full design + phased migration:
+  [`docs/BLIND-OUTBOX-MIGRATION.md`](docs/BLIND-OUTBOX-MIGRATION.md).
+- **BlindShard — *designed, client-ready, gated on independent operators*.** Long post bodies
+  are convergent-encrypted and erasure-dispersed as opaque `shard:<hash>` fragments across a
+  pool, so **no single relay would hold a readable *or* complete copy** of a body (fewer than K
+  shards, no key). The client glue is built and tested against the **released-but-not-yet-deployed**
+  HiveRelay blind shard-store contract (source-only in hiverelay 0.22.0; its HTTP adapter is
+  unmounted on the live fleet — [`js/shard-store-adapter.js`](js/shard-store-adapter.js)), so
+  dispersal is **not live** — it needs the store deployed across **≥3 independent operators**
+  (dispersal across same-owner relays is theater). Design:
+  [`docs/BLINDSHARD-DESIGN.md`](docs/BLINDSHARD-DESIGN.md).
+
+**The tiers, honestly.** PearBrowser (`hyper://`) is already a **pure conduit** —
+content-addressed, zero origin, the operator serves nothing. The normal-browser relay is a
+readable host today, moving to blind host via the work above. A fully transitory
+`dht-relay-ws` byte-pipe (the operator relays encrypted P2P frames, stores nothing) is
+wire-validated on a local testnet but gated on upstream `@hyperswarm/dht-relay` reaching
+production readiness.
+
 ### Honest limitations
-- **Public content is plaintext on whoever seeds it.** No app-side encryption; a
-  relay/seeder can't forge or (across the pool) silently withhold, but it *can* read
-  post bodies and see IPs — a liveness/privacy cost, not an integrity one.
+- **Public content is plaintext on whoever seeds it *(today)*.** No app-side encryption yet;
+  a relay/seeder can't forge or (across the pool) silently withhold, but it *can* read post
+  bodies and see IPs — a liveness/privacy cost, not an integrity one. The Blind-Outbox
+  redesign above is closing the *passive-read + graph-index* half of this (to deniability +
+  no-passive-index, **still not secrecy** for public content).
 - **Rollback resistance ends at all-relays collusion against a first-time visitor.** The
   durable floor (Phase C) catches a rollback across your own restart and an all-relays-collude
   rollback *for content you've seen*; the signed directory (Phase D) extends that to a **fresh**

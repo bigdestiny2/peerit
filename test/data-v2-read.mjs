@@ -56,9 +56,10 @@ async function main () {
   const t = await data.tallyFor(p1.cid)
   ok(t && t.score === 1, 'tallyFor aggregates the upvote from the opaque vote record (score 1)')
 
-  console.log('\n— community list —')
+  console.log('\n— community list + post count —')
   const comms = await data.listCommunities()
   ok(comms.some(c => c.slug === 'p2p' && c.title === 'P2P'), 'listCommunities returns the community (slug cleartext, title decrypted)')
+  ok(await data.postCount('p2p') === 2, 'postCount aggregates the community post count from opaque records (the UI never calls sync.count directly)')
 
   console.log(`\n✅ all ${passed} data-v2-read checks passed`)
 }

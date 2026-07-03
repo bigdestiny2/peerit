@@ -107,7 +107,7 @@ async function boot () {
     ? createSync({ getMe: () => identity.me().pubkey, identity, pear: pearForSync, writeHead: true, readOnly: runtime.readOnly })
     : createSync({ getMe: () => identity.me().pubkey, identity, ...runtime.syncOpts, writeHead: true, readOnly: runtime.readOnly })
   await sync.ready()
-  data = createData(sync, identity)
+  data = createData(sync, identity, { v2: runtime.v2 })
   refreshPrefs()
   sync.onChange((changed) => data.invalidateViewCaches(cacheClassForChangedKeys(changed)))
 
@@ -943,7 +943,7 @@ async function viewCreateCommunity ({ guard, token }) {
 async function viewCommunities ({ guard, token }) {
   guard(skeleton('Communities'))
   const communities = await data.listCommunities()
-  await Promise.all(communities.map(async c => { c._count = await sync.count(`post!${c.slug}!`) }))
+  await Promise.all(communities.map(async c => { c._count = await data.postCount(c.slug) }))
   communities.sort((a, b) => (b._count || 0) - (a._count || 0))
   if (token !== renderToken) return
   guard(`<div class="feed-head"><h1>Communities</h1><a class="btn btn-primary" href="#/create">＋ Create</a></div>
@@ -1275,7 +1275,7 @@ function renderSidebarHome (token) { sidebarHome().then(html => renderSidebar(ht
 
 async function sidebarHome () {
   const communities = await data.listCommunities()
-  await Promise.all(communities.map(async c => { c._count = await sync.count(`post!${c.slug}!`) }))
+  await Promise.all(communities.map(async c => { c._count = await data.postCount(c.slug) }))
   communities.sort((a, b) => (b._count || 0) - (a._count || 0))
   const top = communities.slice(0, 8)
   return `<div class="card side">

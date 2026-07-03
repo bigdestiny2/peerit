@@ -319,6 +319,11 @@ export class Data {
     return hydrate ? Promise.all(recs.map(r => this._hydrate(r))) : recs
   }
 
+  // Post count for a community sidebar/card. Routes through _count so it works for
+  // both v1 (relay prefix count) and v2 (the client-reconstructed view) — the UI must
+  // never call sync.count directly, since v2 keys are opaque.
+  async postCount (community) { return this._count(keys.postsIn(community)) }
+
   async editPost (community, cid, body) {
     const p = await this._rawPost(community, cid)
     if (!p) throw new Error('Post not found')

@@ -54,13 +54,14 @@ export function readRelayConfig (doc) {
 // `rawPear` MUST be the injected host object (window.pear), NOT a resolved /api
 // surface — otherwise a configured relay would look like a host bridge.
 export function resolveRuntime ({ rawPear = null, doc = null } = {}) {
+  const v2 = metaContent(doc, 'peerit-v2') === 'true' // Opaque-Log v2 client (sealed graph fields + opaque okey keys)
   if (hasAnyPearBridgeSurface(rawPear)) {
-    return { mode: 'pearbrowser', identityOpts: {}, syncOpts: {}, readOnly: false }
+    return { mode: 'pearbrowser', identityOpts: {}, syncOpts: {}, readOnly: false, v2 }
   }
   if (metaContent(doc, 'pear-api-token')) {
     // PearBrowser mobile: the HOST injected a same-origin token; trust host
     // identity + same-origin /api exactly as today (no extra opts).
-    return { mode: 'pearbrowser-mobile', identityOpts: {}, syncOpts: {}, readOnly: false }
+    return { mode: 'pearbrowser-mobile', identityOpts: {}, syncOpts: {}, readOnly: false, v2 }
   }
   const relay = readRelayConfig(doc)
   if (relay) {
@@ -74,8 +75,9 @@ export function resolveRuntime ({ rawPear = null, doc = null } = {}) {
       relays: relay.relays,
       relayRoster: relay.relayRoster,
       dhtRelay: relay.dhtRelay,
-      readOnly: relay.readOnly
+      readOnly: relay.readOnly,
+      v2
     }
   }
-  return { mode: 'dev', identityOpts: {}, syncOpts: {}, readOnly: false }
+  return { mode: 'dev', identityOpts: {}, syncOpts: {}, readOnly: false, v2 }
 }

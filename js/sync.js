@@ -209,7 +209,7 @@ export function createSync (opts = {}) {
     if (!opts.forceDev && hasAnyPearBridgeSurface(pear) && !hasGossipPearSurface(pear)) {
       throw new Error('PearBrowser bridge is present but sync, identity, and swarm.v1 are not all available; refusing to fall back to local dev sync.')
     }
-    return createGossip({ storage, pear, getMe: opts.getMe, identity: opts.identity, channelName: opts.channelName, forceDev: opts.forceDev, bus: opts.bus, validate: opts.validate, pollMs: opts.pollMs, writeHead: opts.writeHead, readOnly: opts.readOnly, discover: opts.discover })
+    return createGossip({ storage, pear, getMe: opts.getMe, identity: opts.identity, channelName: opts.channelName, forceDev: opts.forceDev, bus: opts.bus, validate: opts.validate, pollMs: opts.pollMs, writeHead: opts.writeHead, readOnly: opts.readOnly, discover: opts.discover, seedOutboxes: opts.seedOutboxes })
   }
   if (pear && pear.sync && !opts.forceDev) return new BridgeSync(pear.sync, storage)
   return new DevSync(storage, opts.channelName)

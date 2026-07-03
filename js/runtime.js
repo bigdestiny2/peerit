@@ -51,6 +51,19 @@ export function readRelayConfig (doc) {
   }
 }
 
+// Pinned/seed outboxes baked into the web build: `<meta name="peerit-seed-outboxes">`
+// as comma-separated `appId:inviteKey` pairs (both hex64). A fresh visitor joins these
+// directly at boot so the curated launch content renders WITHOUT depending on flaky
+// swarm-descriptor discovery. The inviteKey is a public READ capability only (writing
+// still needs the author's Ed25519 secret), so it's safe to ship in a public bundle.
+export function parseSeedOutboxes (raw) {
+  if (!raw) return []
+  return String(raw).split(',').map(s => s.trim()).filter(Boolean).map(pair => {
+    const i = pair.indexOf(':')
+    return { appId: pair.slice(0, i).trim(), inviteKey: pair.slice(i + 1).trim() }
+  }).filter(o => /^[0-9a-f]{64}$/i.test(o.appId) && /^[0-9a-f]{64}$/i.test(o.inviteKey))
+}
+
 // `rawPear` MUST be the injected host object (window.pear), NOT a resolved /api
 // surface — otherwise a configured relay would look like a host bridge.
 export function resolveRuntime ({ rawPear = null, doc = null } = {}) {
@@ -71,7 +84,7 @@ export function resolveRuntime ({ rawPear = null, doc = null } = {}) {
       // deliberately NOT passed to sync — sync runs BridgeGossipSync over the
       // remote /api relay (a real transport), the identity never leaves.
       identityOpts: { forceDev: true, apiBase: relay.apiBase, apiToken: relay.apiToken },
-      syncOpts: { apiBase: relay.apiBase, apiToken: relay.apiToken },
+      syncOpts: { apiBase: relay.apiBase, apiToken: relay.apiToken, seedOutboxes: parseSeedOutboxes(metaContent(doc, 'peerit-seed-outboxes')) },
       relays: relay.relays,
       relayRoster: relay.relayRoster,
       dhtRelay: relay.dhtRelay,

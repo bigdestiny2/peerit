@@ -365,7 +365,7 @@ class GossipSync {
 
 // ---- real PearBrowser gossip ------------------------------------------------
 class BridgeGossipSync {
-  constructor ({ pear, getMe, identity, storage, validate = makeValidator(), pollMs = 4000, writeHead = false, readOnly = false, discover = true }) {
+  constructor ({ pear, getMe, identity, storage, validate = makeValidator(), pollMs = 4000, writeHead = false, readOnly = false, discover = true, seedOutboxes = [] }) {
     this.mode = 'gossip-bridge'
     this.pear = pear
     this.getMe = getMe
@@ -382,6 +382,9 @@ class BridgeGossipSync {
     // untouched; app.js turns it on in production.
     this._writeHead = writeHead
     this._discover = discover // false = announce-only (findable, doesn't join others) — used by the write-only seeder
+    // Pinned outboxes baked into the build (curated launch content). Joined directly at
+    // boot so a fresh visitor renders them without waiting on flaky swarm discovery.
+    this._seedOutboxes = (Array.isArray(seedOutboxes) ? seedOutboxes : []).filter(o => o && HEX64.test(o.appId || '') && HEX64.test(o.inviteKey || ''))
     this._listeners = new Set()
     this._peers = new Map() // pub -> { appId, inviteKey }
     this._cache = null            // current merged view (maintained incrementally)
@@ -598,6 +601,14 @@ class BridgeGossipSync {
     for (const o of this._knownOutboxes()) {
       if (this._peers.has(o.appId)) continue
       try { await this.pear.sync.join(o.appId, o.inviteKey); this._peers.set(o.appId, { appId: o.appId, inviteKey: o.inviteKey, self: true }) } catch {}
+    }
+    // Pinned/seed outboxes (curated launch content baked into the build): join them as
+    // regular CONTENT peers (NOT self) so a fresh visitor renders them immediately,
+    // independent of the flaky swarm-descriptor discovery. Read-only capability; the
+    // records still pass full signature/PoW admit like any other peer's.
+    for (const o of this._seedOutboxes) {
+      if (this._peers.has(o.appId) || o.appId === this.getMe()) continue
+      try { await this.pear.sync.join(o.appId, o.inviteKey); this._peers.set(o.appId, { appId: o.appId, inviteKey: o.inviteKey }) } catch {}
     }
     // Restore last session's verified view (+ discovered peers + heads) so the
     // first list()/get() paints instantly instead of blanking; the poll below then
@@ -1072,8 +1083,8 @@ function browserBus (name) {
   return { send: (m) => { bc.postMessage(m) }, onMessage: (fn) => { bc.onmessage = (e) => fn(e.data) } }
 }
 
-export function createGossip ({ storage, pear, getMe, identity, channelName, forceDev, bus, validate, pollMs, writeHead, readOnly, discover } = {}) {
-  if (pear && pear.sync && pear.swarm && !forceDev) return new BridgeGossipSync({ pear, getMe, identity, storage, validate, pollMs, writeHead, readOnly, discover })
+export function createGossip ({ storage, pear, getMe, identity, channelName, forceDev, bus, validate, pollMs, writeHead, readOnly, discover, seedOutboxes } = {}) {
+  if (pear && pear.sync && pear.swarm && !forceDev) return new BridgeGossipSync({ pear, getMe, identity, storage, validate, pollMs, writeHead, readOnly, discover, seedOutboxes })
   const theBus = bus || (typeof BroadcastChannel !== 'undefined' ? browserBus(channelName || 'peerit-gossip') : null)
   return new GossipSync({ storage, bus: theBus, getMe, validate })
 }

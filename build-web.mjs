@@ -40,6 +40,10 @@ const RELAY = process.env.PEERIT_RELAY || arg('--relay') || configRelay(releaseC
 const READONLY = String(process.env.PEERIT_RELAY_READONLY || arg('--readonly') || configReadonly(releaseConfig))
 const DRIVE_KEY = process.env.PEERIT_DRIVE_KEY || arg('--drive-key') || configDriveKey(releaseConfig) || ''
 const DHT_RELAY = process.env.PEERIT_DHT_RELAY || arg('--dht-relay') || releaseConfig.dhtRelay || '' // Phase 3 (optional)
+// Pinned outboxes: curated launch content joined directly at boot so a fresh visitor
+// renders it without waiting on flaky swarm discovery. `appId:inviteKey` pairs, comma
+// separated (public READ caps only). From config seedOutboxes:[{appId,inviteKey}].
+const SEED_OUTBOXES = process.env.PEERIT_SEED_OUTBOXES || arg('--seed-outboxes') || configSeedOutboxes(releaseConfig) || ''
 // Offline Ed25519 release key: pinned into the bundle so verify.html / mirrors / auditors
 // can confirm asset-manifest.sig (produced by scripts/sign-release.mjs) is an authentic
 // release the origin could not self-forge. Empty = unsigned dev build (verify.html says so).
@@ -76,6 +80,12 @@ function configReadonly (cfg) {
   if (cfg.readonly !== undefined) return cfg.readonly === false ? 'false' : 'true'
   if (cfg.readOnly !== undefined) return cfg.readOnly === false ? 'false' : 'true'
   return 'true'
+}
+
+// seedOutboxes: [{ appId, inviteKey }] -> "appId:inviteKey,appId:inviteKey"
+function configSeedOutboxes (cfg) {
+  const list = Array.isArray(cfg.seedOutboxes) ? cfg.seedOutboxes : []
+  return list.filter(o => o && o.appId && o.inviteKey).map(o => `${o.appId}:${o.inviteKey}`).join(',')
 }
 
 function configDriveKey (cfg) {
@@ -156,6 +166,7 @@ const head = [
   RELAY_ROSTER_KEY ? `<meta name="peerit-relay-roster-key" content="${attr(RELAY_ROSTER_KEY)}">` : '',
   RELEASE_KEY ? `<meta name="peerit-release-key" content="${attr(RELEASE_KEY)}">` : '',
   DHT_RELAY ? `<meta name="peerit-dht-relay" content="${attr(DHT_RELAY)}">` : '',
+  SEED_OUTBOXES ? `<meta name="peerit-seed-outboxes" content="${attr(SEED_OUTBOXES)}">` : '',
   '<script src="sw-register.js"></script>'
 ].filter(Boolean).join('\n  ')
 html = html.replace('</head>', '  ' + head + '\n</head>')

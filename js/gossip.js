@@ -549,6 +549,16 @@ class BridgeGossipSync {
       const v = h.version | 0
       const fl = this._floor.get(appId)
       if (!fl || v > fl.v) { this._floor.set(appId, { v, t: ++this._floorTick }); this._floorDirty = true }
+      // RELIABLE READ DISCOVERY: the relay serves any outbox's rows by appId (range takes
+      // no inviteKey — the drive read-cap only gates P2P replication, which the relay does
+      // on our behalf). A VERIFIED directory head is therefore enough to READ that author's
+      // content directly, without waiting on flaky swarm-descriptor gossip. Add as a content
+      // peer (inviteKey unused for relay reads; admit re-verifies every row's signature, so a
+      // lying relay still can't forge). Directory is a relay-only surface, so this never runs
+      // under PearBrowser's P2P sync (which needs the real read-cap). Skip empties + self.
+      if (this._discover && (h.count | 0) > 0 && !this._peers.has(appId) && this._peers.size < MAX_PEERS) {
+        this._peers.set(appId, { appId, inviteKey: appId, dir: true }) // inviteKey placeholder: relay range is keyed by appId
+      }
     }
     if (this._floorDirty) this._saveFloor()
   }
@@ -635,6 +645,9 @@ class BridgeGossipSync {
       const tick = async () => {
         if (this._destroyed) return
         if (!this._myInvite) { try { if (await this._ensureMyOutbox()) await this._announce() } catch {} } // relay came back → resume writing/discovery
+        // Periodically re-scan the directory so authors who first post AFTER we booted get
+        // discovered (adds them to _peers; the next refresh reads their content by appId).
+        try { if ((this._refreshCount % 5) === 0) await this._bootstrapFloor() } catch {}
         try { const changed = await this._refresh(); if (changed.length) this._emit(changed) } catch (e) { console.warn('[gossip poll]', e && e.message) }
         if (this._destroyed) return
         this._pollTimer = setTimeout(tick, jittered())

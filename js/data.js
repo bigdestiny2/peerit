@@ -5,7 +5,8 @@
 
 import { keys, id as mkid, TYPE, MOD, modOverlay, resolveMods } from './model.js'
 import { tally as tallyVotes } from './ranking.js'
-import { canonical } from './canon.js'
+import { canonical, expectedKey, expectedKeyV2 } from './canon.js'
+import { seal, unseal } from './seal.js'
 import { uid, isValidSlug, normalizeSlug, safeUserUrl } from './util.js'
 import { mint, MIN_BITS } from './pow.js'
 import { assertRecoveryBundleMatches, buildRecoveryBundle, isHex64 } from './recovery.js'
@@ -20,6 +21,7 @@ export class Data {
     this.sync = sync
     this.id = identity
     this.minBits = opts.minBits || MIN_BITS
+    this.v2 = !!opts.v2 // Opaque-Log v2 write path (sealed graph fields + okey keys). OFF by default until cutover.
     this._profileCache = new Map() // pub -> { rec, at }
     this._tallyCache = new Map()   // `${viewer}:${cid}` -> { val, epoch }
     this._commentCountCache = new Map() // `${community}/${postCid}` -> { val, contentEpoch }
@@ -52,7 +54,7 @@ export class Data {
       const opts = gt
         ? { gt, lt: prefix + '\xff', limit }
         : { gte: prefix, lt: prefix + '\xff', limit }
-      const batch = await this.sync.range(opts)
+      const batch = await this._rangeRead(opts)
       rows.push(...batch)
       const last = batch[batch.length - 1] && batch[batch.length - 1].key
       if (!last || batch.length < limit) break
@@ -76,6 +78,118 @@ export class Data {
     data.pow = await mint(type, data, this.minBits[type] || 0, { onProgress })
     Object.assign(data, await this._sign(type, data))
     return data
+  }
+
+  // ---- Opaque-Log v2 write path (docs/BLIND-OUTBOX-MIGRATION.md) --------------
+  // Fields that MUST stay cleartext at the top level: LWW/sticky needs them without
+  // a decrypt, and they leak nothing the honest ceiling doesn't already concede
+  // (timestamps, a deleted flag, and the community name — dictionary-reversible anyway).
+  static V2_CLEAR = new Set(['createdAt', 'ts', 'editedAt', 'deleted', 'slug'])
+  // Dropped entirely: id (→ okey), the owner fields (the owner IS the signer _k), and
+  // any sig/pow metadata (re-added below).
+  static V2_DROP = new Set(['id', 'author', 'creator', 'by', 'pow', '_sig', '_k', '_dk', '_ns', '_alg'])
+
+  // Turn a plaintext logical record into the sealed v2 stored form:
+  //   { id:<okey>, _t, <cleartext LWW fields>, sealed:{iv,ct} of the GRAPH fields }
+  async _toV2 (semType, logical) {
+    const wk = await expectedKeyV2({ ...logical, _t: semType }) // okey = HMAC(RK, owner‖_t‖semanticId)
+    if (!wk) throw new Error('v2: cannot derive key for ' + semType)
+    const clear = {}, graph = {}
+    for (const [k, v] of Object.entries(logical)) {
+      if (Data.V2_DROP.has(k)) continue
+      if (Data.V2_CLEAR.has(k)) clear[k] = v
+      else graph[k] = v
+    }
+    return { id: wk.slice(3), _t: semType, ...clear, sealed: await seal(graph) }
+  }
+
+  // The single write chokepoint. v1 (flag off) behaves exactly as before; v2 emits the
+  // sealed opaque record but RETURNS the plaintext logical record so the caller can
+  // render optimistically (the author already knows what it wrote). Blobs stay v1.
+  async _emit (semType, data, { pow = false, onProgress } = {}) {
+    if (this.v2 && semType !== TYPE.BLOB) {
+      const stored = await this._toV2(semType, data)
+      if (pow) stored.pow = await mint(semType, stored, this.minBits[semType] || 0, { onProgress })
+      Object.assign(stored, await this._sign('v2', stored)) // sign over canonical('v2', stored)
+      await this.sync.append({ type: 'v2', data: stored })
+      return data
+    }
+    if (pow) await this._powSign(semType, data, onProgress)
+    else Object.assign(data, await this._sign(semType, data))
+    await this.sync.append({ type: semType, data })
+    return data
+  }
+
+  // ---- Opaque-Log v2 read model --------------------------------------------
+  // The relay holds opaque v2!<okey> records; the CLIENT (holding the read key)
+  // decrypts every one and reconstructs it under its plaintext v1-style semantic key
+  // (post!<community>!<cid>, vote!<targetCid>!<author>, …). Every existing read/query
+  // then works unchanged over `_get/_list/_range/_count`, which merge the reconstructed
+  // v2 view with any legacy v1 rows (v2 wins a key collision). Built once per write
+  // epoch. This is what "aggregation moves into the browser" means in code.
+  async _buildV2View () {
+    const rows = await this.sync.list('v2!', { limit: 5000 }).catch(() => [])
+    const view = Object.create(null)
+    for (const r of (rows || [])) {
+      const s = r && r.value
+      if (!s || !s.sealed || !s._t) continue
+      let g; try { g = await unseal(s.sealed) } catch { continue }
+      if (!g || typeof g !== 'object') continue
+      const plain = {
+        ...g, _t: s._t, author: s._k, creator: s._k, by: s._k,
+        createdAt: s.createdAt, ts: s.ts, editedAt: s.editedAt, deleted: s.deleted,
+        slug: s.slug != null ? s.slug : g.slug,
+        _sig: s._sig, _k: s._k, _dk: s._dk, _ns: s._ns, _alg: s._alg, pow: s.pow
+      }
+      const k = expectedKey(s._t, plain) // reconstruct the plaintext semantic key
+      if (!k) continue
+      plain.id = k.slice(k.indexOf('!') + 1) // the v1-style data.id
+      view[k] = plain
+    }
+    return view
+  }
+
+  async _v2v () {
+    if (!this._v2View || this._v2Epoch !== this._epoch) { this._v2View = await this._buildV2View(); this._v2Epoch = this._epoch }
+    return this._v2View
+  }
+
+  // Read helpers — v1 pass through to sync; v2 answers from the reconstructed view
+  // (falling back to / merging with any legacy v1 rows so dual-read is transparent).
+  async _get (k) {
+    if (!this.v2) return this.sync.get(k)
+    const v = await this._v2v()
+    return v[k] != null ? v[k] : this.sync.get(k)
+  }
+  async _mergedRows (prefix) { // v1 rows + reconstructed v2 rows; v2 wins a key collision
+    const v1 = await this.sync.list(prefix, { limit: 5000 }).catch(() => [])
+    const m = new Map((v1 || []).map(r => [r.key, r.value]))
+    const v = await this._v2v()
+    for (const k of Object.keys(v)) if (k.startsWith(prefix)) m.set(k, v[k])
+    return [...m.entries()].map(([key, value]) => ({ key, value }))
+  }
+  async _list (prefix, { limit = 1000 } = {}) {
+    if (!this.v2) return this.sync.list(prefix, { limit })
+    return (await this._mergedRows(prefix)).slice(0, limit)
+  }
+  async _count (prefix) {
+    if (!this.v2) return this.sync.count(prefix)
+    return (await this._mergedRows(prefix)).length
+  }
+  async _rangeRead (opts = {}) {
+    if (!this.v2) return this.sync.range(opts)
+    const { gte, gt, lte, lt, limit = 1000, reverse } = opts
+    const v = await this._v2v()
+    let ks = Object.keys(v).filter(x => (gte == null || x >= gte) && (gt == null || x > gt) && (lte == null || x <= lte) && (lt == null || x < lt))
+    // include legacy v1 rows in the range too
+    const pfx = typeof gte === 'string' ? gte : (typeof gt === 'string' ? gt : '')
+    const v1 = pfx ? await this.sync.range(opts).catch(() => []) : []
+    const m = new Map((v1 || []).map(r => [r.key, r.value]))
+    for (const k of ks) m.set(k, v[k])
+    let out = [...m.entries()].map(([key, value]) => ({ key, value }))
+    out.sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
+    if (reverse) out.reverse()
+    return out.slice(0, limit)
   }
 
   // ---- BlindShard Phase 2: box-before-store --------------------------------
@@ -117,7 +231,7 @@ export class Data {
 
   // Raw stored post (no hydration) — used by edit/delete so a re-signed record is
   // never built from a decrypted-and-annotated copy.
-  async _rawPost (community, cid) { return this.sync.get(keys.post(community, cid)) }
+  async _rawPost (community, cid) { return this._get(keys.post(community, cid)) }
 
   // ---- Communities ----------------------------------------------------------
   async createCommunity ({ slug, title, description, rules, onProgress }) {
@@ -133,16 +247,15 @@ export class Data {
       rules: Array.isArray(rules) ? rules.slice(0, 20) : [],
       creator: me.pubkey, createdAt: now, updatedAt: now, author: me.pubkey
     }
-    await this._powSign(TYPE.COMMUNITY, data, onProgress)
-    await this.sync.append({ type: TYPE.COMMUNITY, data })
+    await this._emit(TYPE.COMMUNITY, data, { pow: true, onProgress })
     this.invalidateViewCaches()
     return data
   }
 
-  async getCommunity (slug) { return this.sync.get(keys.community(slug)) }
+  async getCommunity (slug) { return this._get(keys.community(slug)) }
 
   async listCommunities () {
-    const rows = await this.sync.list(keys.communityPrefix(), { limit: 1000 })
+    const rows = await this._list(keys.communityPrefix(), { limit: 1000 })
     return rows.map(r => r.value).filter(Boolean)
   }
 
@@ -155,8 +268,7 @@ export class Data {
     if (c.creator !== me.pubkey) throw new Error('Only the founder can edit community details')
     const now = Date.now()
     const data = { ...c, ...patch, id: mkid.community(slug), slug, creator: c.creator, createdAt: c.createdAt, updatedAt: now }
-    Object.assign(data, await this._sign(TYPE.COMMUNITY, data))
-    await this.sync.append({ type: TYPE.COMMUNITY, data })
+    await this._emit(TYPE.COMMUNITY, data)
     this.invalidateViewCaches()
     return data
   }
@@ -188,9 +300,8 @@ export class Data {
       author: me.pubkey, createdAt: now, editedAt: 0, deleted: false
     }
     // Box a long text body into an opaque blob before signing (design §5 Phase 2).
-    if (kind === 'text' && canBox() && shouldBox(data.body)) await this._boxBody(data)
-    await this._powSign(TYPE.POST, data, onProgress)
-    await this.sync.append({ type: TYPE.POST, data })
+    if (!this.v2 && kind === 'text' && canBox() && shouldBox(data.body)) await this._boxBody(data) // v2 seals the body inline
+    await this._emit(TYPE.POST, data, { pow: true, onProgress })
     this.invalidateViewCaches()
     return data
   }
@@ -203,7 +314,7 @@ export class Data {
   // Body-free callers (karma, activity) pass { hydrate: false } to skip fetching +
   // decrypting every boxed blob they would only discard (review FIX 4).
   async listPostsIn (community, { hydrate = true } = {}) {
-    const rows = await this.sync.list(keys.postsIn(community), { limit: 1000 })
+    const rows = await this._list(keys.postsIn(community), { limit: 1000 })
     const recs = rows.map(r => r.value).filter(Boolean)
     return hydrate ? Promise.all(recs.map(r => this._hydrate(r))) : recs
   }
@@ -214,9 +325,8 @@ export class Data {
     if (p.author !== this.me().pubkey) throw new Error('You can only edit your own post')
     const data = { ...p, body: String(body || '').slice(0, 40000), editedAt: Date.now() }
     delete data.blob // drop any prior manifest; re-box below if the new body is still long
-    if (data.kind === 'text' && canBox() && shouldBox(data.body)) await this._boxBody(data)
-    Object.assign(data, await this._sign(TYPE.POST, data))
-    await this.sync.append({ type: TYPE.POST, data })
+    if (!this.v2 && data.kind === 'text' && canBox() && shouldBox(data.body)) await this._boxBody(data)
+    await this._emit(TYPE.POST, data)
     this.invalidateViewCaches()
     return data
   }
@@ -227,8 +337,7 @@ export class Data {
     if (p.author !== this.me().pubkey) throw new Error('You can only delete your own post')
     const data = { ...p, deleted: true, body: '', url: '', title: p.title, editedAt: Date.now() }
     delete data.blob // a deleted post references no blob
-    Object.assign(data, await this._sign(TYPE.POST, data))
-    await this.sync.append({ type: TYPE.POST, data })
+    await this._emit(TYPE.POST, data)
     this.invalidateViewCaches()
   }
 
@@ -256,9 +365,8 @@ export class Data {
     }
     // Box a long comment body too (same band as posts) — a long comment is as
     // sensitive as a long post body. Short comments stay inline (below threshold).
-    if (canBox() && shouldBox(data.body)) await this._boxBody(data)
-    await this._powSign(TYPE.COMMENT, data, onProgress)
-    await this.sync.append({ type: TYPE.COMMENT, data })
+    if (!this.v2 && canBox() && shouldBox(data.body)) await this._boxBody(data)
+    await this._emit(TYPE.COMMENT, data, { pow: true, onProgress })
     this.invalidateViewCaches()
     return data
   }
@@ -266,7 +374,7 @@ export class Data {
   // Body-free callers (karma) pass { hydrate: false } to skip fetching+decrypting
   // boxed comment bodies they only discard — mirrors listPostsIn (review FIX 4).
   async listComments (community, postCid, { hydrate = true } = {}) {
-    const rows = await this.sync.list(keys.commentsOn(community, postCid), { limit: 1000 })
+    const rows = await this._list(keys.commentsOn(community, postCid), { limit: 1000 })
     const recs = rows.map(r => r.value).filter(Boolean)
     return hydrate ? Promise.all(recs.map(r => this._hydrate(r))) : recs
   }
@@ -274,31 +382,29 @@ export class Data {
   // Hydrated single comment (decrypts a boxed body) — used to seed the edit prompt
   // so editing a boxed comment shows its real body, not the stored empty placeholder.
   async getComment (community, postCid, cid) {
-    const c = await this.sync.get(keys.comment(community, postCid, cid))
+    const c = await this._get(keys.comment(community, postCid, cid))
     return c ? this._hydrate(c) : c
   }
 
   async editComment (community, postCid, cid, body) {
-    const c = await this.sync.get(keys.comment(community, postCid, cid)) // raw (never a hydrated copy)
+    const c = await this._get(keys.comment(community, postCid, cid)) // raw (never a hydrated copy)
     if (!c) throw new Error('Comment not found')
     if (c.author !== this.me().pubkey) throw new Error('You can only edit your own comment')
     const data = { ...c, body: String(body || '').slice(0, 10000), editedAt: Date.now() }
     delete data.blob // drop any prior manifest; re-box below if still long
-    if (canBox() && shouldBox(data.body)) await this._boxBody(data)
-    Object.assign(data, await this._sign(TYPE.COMMENT, data))
-    await this.sync.append({ type: TYPE.COMMENT, data })
+    if (!this.v2 && canBox() && shouldBox(data.body)) await this._boxBody(data)
+    await this._emit(TYPE.COMMENT, data)
     this.invalidateViewCaches()
     return data
   }
 
   async deleteComment (community, postCid, cid) {
-    const c = await this.sync.get(keys.comment(community, postCid, cid))
+    const c = await this._get(keys.comment(community, postCid, cid))
     if (!c) return
     if (c.author !== this.me().pubkey) throw new Error('You can only delete your own comment')
     const data = { ...c, deleted: true, body: '', editedAt: Date.now() }
     delete data.blob // a deleted comment references no blob
-    Object.assign(data, await this._sign(TYPE.COMMENT, data))
-    await this.sync.append({ type: TYPE.COMMENT, data })
+    await this._emit(TYPE.COMMENT, data)
     this.invalidateViewCaches()
   }
 
@@ -311,14 +417,13 @@ export class Data {
       id: mkid.vote(targetCid, me.pubkey), targetCid, targetType, community,
       value, author: me.pubkey, ts: now
     }
-    Object.assign(data, await this._sign(TYPE.VOTE, data))
-    await this.sync.append({ type: TYPE.VOTE, data })
+    await this._emit(TYPE.VOTE, data)
     this.invalidateViewCaches('vote')
     return data
   }
 
   async rawVotes (targetCid) {
-    const rows = await this.sync.list(keys.votesFor(targetCid), { limit: 1000 })
+    const rows = await this._list(keys.votesFor(targetCid), { limit: 1000 })
     return rows.map(r => r.value).filter(Boolean)
   }
 
@@ -399,8 +504,7 @@ export class Data {
       color: color || (prev && prev.color) || '',
       createdAt: prev ? prev.createdAt : now, updatedAt: now
     }
-    Object.assign(data, await this._sign(TYPE.PROFILE, data))
-    await this.sync.append({ type: TYPE.PROFILE, data })
+    await this._emit(TYPE.PROFILE, data)
     this._profileCache.set(me.pubkey, { rec: data, at: Date.now() })
     this.invalidateViewCaches()
     return data
@@ -409,7 +513,7 @@ export class Data {
   async getProfile (pub) {
     const cached = this._profileCache.get(pub)
     if (cached && Date.now() - cached.at < 15000) return cached.rec
-    const rec = await this.sync.get(keys.profile(pub))
+    const rec = await this._get(keys.profile(pub))
     this._profileCache.set(pub, { rec, at: Date.now() })
     return rec
   }
@@ -512,7 +616,7 @@ export class Data {
 
   // ---- Moderation -----------------------------------------------------------
   async listModActions (community) {
-    const rows = await this.sync.list(keys.modsIn(community), { limit: 1000 })
+    const rows = await this._list(keys.modsIn(community), { limit: 1000 })
     return rows.map(r => r.value).filter(Boolean)
   }
 
@@ -539,8 +643,7 @@ export class Data {
       targetCid: targetCid || null, targetUser: targetUser || null,
       reason: (reason || '').slice(0, 300), by: me.pubkey, ts: now
     }
-    Object.assign(data, await this._sign(TYPE.MOD, data))
-    await this.sync.append({ type: TYPE.MOD, data })
+    await this._emit(TYPE.MOD, data)
     this.invalidateViewCaches()
     return data
   }

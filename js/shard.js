@@ -1,3 +1,10 @@
+// ⚠️ RETIRED (2026-07-04) — NOT the shipped dispersal scheme. Do not wire into a PUT path.
+// This is the old Reed-Solomon design addressing shards by SHA-256(bytes). The surface that
+// SHIPPED (HiveRelay v0.24.0 / PR #159) uses PVSS-secp256k1 + blake2b-256 addressing. The
+// LIVE dealer is js/blind-dealer.mjs over the vendored client (js/vendor/blind-shards/);
+// addressing SHA-256 here would make every relay PUT fail (blake2b address mismatch). Kept
+// for reference only; not shipped (absent from publish.mjs), not imported by the dealer.
+//
 // shard.js — BlindShard erasure + placement primitive (Phase 3, §1/§3b/§4/§5).
 //
 // The dispersal step of BlindShard: take opaque AEAD *ciphertext* (never

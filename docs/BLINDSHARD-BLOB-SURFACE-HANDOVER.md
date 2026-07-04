@@ -1,5 +1,20 @@
 # HiveRelay Handover Spec — Phase 3 BLIND BLOB SURFACE (BlindShard)
 
+> ⚠️ **SUPERSEDED (2026-07-04) — do NOT build against this document.** The shard-store
+> surface SHIPPED in HiveRelay v0.24.0 (merged to P2P-Hiverelay `origin/main`, PR #159)
+> and it **diverges from this design**. Build against **`docs/BLINDSHARD-DEALER-CONTRACT.md`**
+> (P2P-Hiverelay main) and the vendored client (`js/vendor/blind-shards/`), which peerit's
+> dealer (`js/blind-dealer.mjs`) already targets + tests against. The three divergences that matter:
+>
+> | Axis | This spec (dead) | What shipped |
+> |---|---|---|
+> | Shard address | `SHA-256(bytes)` | **`blake2b-256(ciphertext)`** via the client codec (`shardAddressOf`). Computing SHA-256 → every PUT rejected as an address mismatch. |
+> | Transport | Noise-tunneled WSS over `dht-relay-ws` | **HTTP `/api/v1/shard`** + `POST /api/custody/intent`, custody-pin PUT auth. |
+> | Architecture | read-plane bolted onto the custody/seed pipeline (appKey Hypercores) | **standalone shard-store service** with its own content-addressed blob store. |
+>
+> The SHA-256 client primitives it names (`js/shard.js`, `js/blob-disperse.js`) are RETIRED
+> for the dispersal path — see their headers. Kept only for reference/history.
+
 **Audience:** HiveRelay agents (the `00-core/hiverelay` fleet).
 **Consumer:** peerit `feat/web-deployment` client (`js/box.js`, `js/shard.js` — already built).
 **Status:** buildable. This is the ONE net-new relay capability BlindShard needs; every other piece is client-side and done.

@@ -1,3 +1,8 @@
+// ⚠️ RETIRED (2026-07-04) — superseded by js/blind-dealer.mjs on the vendored PVSS client.
+// This is the old erasure-over-ciphertext glue (Reed-Solomon + SHA-256 addressing). The
+// shipped surface (HiveRelay v0.24.0 / PR #159) is PVSS-secp256k1 + blake2b + custody
+// intents. Not shipped, not imported by the live dealer; kept for reference only.
+//
 // blob-disperse.js — BlindShard Phase 3 glue: box a body, erasure-code the
 // ciphertext into K-of-N shards, and DISPERSE them across relays so no single
 // relay holds a readable OR complete item. The reverse gathers any K shards,

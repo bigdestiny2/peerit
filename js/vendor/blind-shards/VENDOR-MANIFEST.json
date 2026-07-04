@@ -1,0 +1,37 @@
+{
+  "source": "https://github.com/bigdestiny2/P2P-Hiverelay",
+  "sha": "4facbaeda8ef085413ad972910422ed40a173d69",
+  "syncedAt": "2026-07-04T11:12:32.238Z",
+  "files": {
+    "blind-custody.js": {
+      "path": "packages/client/blind-custody.js",
+      "sha256": "2cccb3c7fd62748fe3eea53bcb4b770ec65f169d84ccbe6409b6670380fd7c1c",
+      "bytes": 5645
+    },
+    "blind-shards.js": {
+      "path": "packages/client/blind-shards.js",
+      "sha256": "75eb25b7d69362be828207baeb471c6d2839354b9ef32db3244ec07cdfc991e5",
+      "bytes": 12107
+    },
+    "secret-sharing.js": {
+      "path": "packages/client/secret-sharing.js",
+      "sha256": "3a2d5bc0c7510ad3793446b4b3d591f031d28e19f3923c904e482a0852c0118c",
+      "bytes": 16755
+    },
+    "shard-transport.js": {
+      "path": "packages/client/shard-transport.js",
+      "sha256": "50ec9062450bbc92e9cadb1f5db0923e488b70d320b90799f3872761026cc89e",
+      "bytes": 4557
+    },
+    "custody.js": {
+      "path": "packages/client/custody.js",
+      "sha256": "71204623264af85e9d36a5c360ea528d2da7053032e01e42a424c5bb3d4738a5",
+      "bytes": 45326
+    },
+    "LICENSE": {
+      "path": "packages/client/LICENSE",
+      "sha256": "62cb4c0b5dce650b8a0544f2d3e894a7f3321f24c04367e6f18dbcb1fb15740f",
+      "bytes": 10720
+    }
+  }
+}

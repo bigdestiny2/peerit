@@ -31,14 +31,16 @@ const PINNED_SHA = '4facbaeda8ef085413ad972910422ed40a173d69'
 //   blind-shards.js   planDispersal/recoverSecret/shardAddressOf (fail-closed share checks)
 //   secret-sharing.js PVSS-secp256k1-v1 core (@noble/secp256k1 + @noble/hashes)
 //   shard-transport.js createHttpShardPut/Fetch — the /api/v1/shard wire
-//   custody.js        client-side createCustodyIntent (self-contained, Bare-safe copy;
-//                     byte-agreement with the relay pinned upstream by a cross-impl test)
+//   custody-signing.js CORE createCustodyIntent — the FULL v2 surface incl. shareManifest
+//                     (the client copy custody.js is behind: it lacks shareManifest). Only
+//                     b4a + sodium-universal, so it's Bare-safe too. This is what the
+//                     reference node dealer imports.
 const FILES = [
   'packages/client/blind-custody.js',
   'packages/client/blind-shards.js',
   'packages/client/secret-sharing.js',
   'packages/client/shard-transport.js',
-  'packages/client/custody.js',
+  'packages/core/core/custody-signing.js',
   'packages/client/LICENSE'
 ]
 

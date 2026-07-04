@@ -183,6 +183,10 @@ class BridgeSync {
     }, 4000)
   }
 
+  destroy () {
+    if (this._poll) { clearInterval(this._poll); this._poll = null }
+  }
+
   async append (op) {
     return this.sync.append(APP_ID, { type: op.type, data: op.data, timestamp: new Date().toISOString() })
   }

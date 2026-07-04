@@ -12,7 +12,7 @@ export function ownerOf (type, data) {
   switch (type) {
     case TYPE.COMMUNITY: return data.creator
     case TYPE.MOD: return data.by
-    default: return data.author // post, comment, vote, profile, head, blob
+    default: return data.author // post, comment, vote, profile, head, blob, shard
   }
 }
 
@@ -29,6 +29,7 @@ export function expectedKey (type, data) {
     case TYPE.MOD: return data.community != null && data.actionId != null ? keys.mod(data.community, data.actionId) : null
     case TYPE.HEAD: return data.author != null ? keys.head(data.author) : null
     case TYPE.BLOB: return data.blobId != null ? keys.blob(data.blobId) : null
+    case TYPE.SHARD: return data.id != null ? keys.shard(data.id) : null
     default: return null
   }
 }

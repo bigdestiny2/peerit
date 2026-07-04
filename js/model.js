@@ -30,7 +30,11 @@ export const TYPE = {
   // (blobId = SHA-256(ciphertext)) holds a long post body the relay never sees in
   // plaintext; the owning post carries the signed {blobId, contentKey, iv} manifest.
   // Convergent → identical bodies share one blob (dedup). See blob-store.js / box.js.
-  BLOB: 'blob'
+  BLOB: 'blob',
+  // BlindShard bridge transport: opaque PVSS share shards stored in the PearBrowser
+  // sync bridge instead of HTTP HiveRelay. shard!<hash> holds one encrypted share;
+  // the dispersal manifest lists the set of shard addresses needed to reconstruct.
+  SHARD: 'shard'
 }
 
 export const keys = {
@@ -57,7 +61,10 @@ export const keys = {
   headPrefix: () => `${TYPE.HEAD}!`,
 
   blob: (blobId) => `${TYPE.BLOB}!${blobId}`,
-  blobPrefix: () => `${TYPE.BLOB}!`
+  blobPrefix: () => `${TYPE.BLOB}!`,
+
+  shard: (hash) => `${TYPE.SHARD}!${hash}`,
+  shardPrefix: () => `${TYPE.SHARD}!`
 }
 
 // data.id builders (the part after `type!`). These determine the storage key
@@ -70,7 +77,8 @@ export const id = {
   profile: (author) => author,
   mod: (community, actionId) => `${community}!${actionId}`,
   head: (author) => author,
-  blob: (blobId) => blobId
+  blob: (blobId) => blobId,
+  shard: (hash) => hash
 }
 
 // The v2 blind key scheme (docs/BLIND-OUTBOX-MIGRATION.md) folds this SAME semantic

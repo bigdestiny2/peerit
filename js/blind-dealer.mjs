@@ -226,8 +226,17 @@ export async function disperseBody (bodyText, opts) {
     relays: roster.relays, publisher, retainMs: roster.retainMs,
     blindContentId: opts.blindContentId || ciphertextRoot, ciphertextRoot
   })
-  await publishIntentToRelays(intent, roster.relays, opts.fetch)
-  const placed = await putShards(plan, intent, roster.relays, publisher, roster.retainMs, opts.fetch)
+  let placed
+  if (typeof opts.putShard === 'function') {
+    placed = []
+    for (const s of plan.shares) {
+      await opts.putShard(s.bytes, { shareIndex: s.shareIndex, shard: s.shard, address: s.shard })
+      placed.push({ shareIndex: s.shareIndex, relay: 'bridge', shard: s.shard })
+    }
+  } else {
+    await publishIntentToRelays(intent, roster.relays, opts.fetch)
+    placed = await putShards(plan, intent, roster.relays, publisher, roster.retainMs, opts.fetch)
+  }
   const manifest = {
     version: 2, scheme: SHARE_SCHEME, threshold: roster.threshold, count: roster.relays.length,
     blindContentId, ciphertextRoot, commitmentRoot: plan.commitmentRoot,
@@ -278,10 +287,11 @@ export function verifyCustodyIntent (manifest, opts = {}) {
   return true
 }
 
-export async function recoverKey (manifest, relayBaseUrls, fetchImpl = globalThis.fetch) {
+export async function recoverKey (manifest, relayBaseUrls, fetchImpl = globalThis.fetch, fetchShard = null) {
   if (!manifest || !Array.isArray(manifest.shareManifest)) throw new Error('blind-dealer: manifest.shareManifest required')
   verifyCustodyIntent(manifest)
-  const rec = await recoverSecret({ shareManifest: manifest.shareManifest, threshold: manifest.threshold, fetch: createHttpShardFetch({ baseUrls: relayBaseUrls, fetch: fetchImpl }) })
+  const fetch = typeof fetchShard === 'function' ? fetchShard : createHttpShardFetch({ baseUrls: relayBaseUrls, fetch: fetchImpl })
+  const rec = await recoverSecret({ shareManifest: manifest.shareManifest, threshold: manifest.threshold, fetch })
   if (!rec.ok) { const e = new Error('blind-dealer: recover failed — ' + rec.reason); e.collected = rec.collected; e.need = rec.need; throw e }
   return rec.key
 }
@@ -289,10 +299,9 @@ export async function recoverKey (manifest, relayBaseUrls, fetchImpl = globalThi
 // Recover the full body: gather shards, reconstruct the key, fetch ciphertext, decrypt.
 // fetchCiphertext(blindContentId) is caller-provided — ciphertext storage is out-of-band.
 export async function recoverBody (manifest, opts = {}) {
-  const { relayBaseUrls, fetchCiphertext, fetchImpl = globalThis.fetch } = opts
-  if (!Array.isArray(relayBaseUrls) || !relayBaseUrls.length) throw new Error('blind-dealer: relayBaseUrls required')
+  const { relayBaseUrls, fetchCiphertext, fetchImpl = globalThis.fetch, fetchShard } = opts
   if (typeof fetchCiphertext !== 'function') throw new Error('blind-dealer: fetchCiphertext(blindContentId) required')
-  const keyHex = await recoverKey(manifest, relayBaseUrls, fetchImpl)
+  const keyHex = await recoverKey(manifest, relayBaseUrls, fetchImpl, fetchShard)
   const ciphertext = await fetchCiphertext(manifest.blindContentId)
   return decryptBody(ciphertext, manifest.iv, keyHex)
 }

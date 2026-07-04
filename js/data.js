@@ -280,19 +280,32 @@ export class Data {
     return recoverBody
   }
 
+  _isBridgeMode () {
+    return !!(this.sync && String(this.sync.mode || '').includes('bridge'))
+  }
+
   async _tryDispersalBox (bodyText) {
     const publisher = await this._publisherForDispersal()
     const roster = this._rosterForDispersal()
     if (!publisher || !roster) return null
     try {
       const { disperseBody } = await loadBlindDealer()
-      const { ciphertext, manifest } = await disperseBody(bodyText, {
+      const opts = {
         publisher,
         threshold: roster.threshold,
         relays: roster.relays,
         retainMs: roster.retainMs,
         fetch: this.fetch
-      })
+      }
+      if (this._isBridgeMode()) {
+        const { createBridgeShardPut } = await import('./bridge-shard-transport.js')
+        opts.putShard = createBridgeShardPut({
+          sync: this.sync,
+          sign: (payload, ns) => this.id.sign(payload, ns),
+          author: this.me().pubkey
+        })
+      }
+      const { ciphertext, manifest } = await disperseBody(bodyText, opts)
       const ct = b64Encode(ciphertext)
       const blobData = { id: manifest.blindContentId, blobId: manifest.blindContentId, ct, author: this.me().pubkey }
       await this._powSign(TYPE.BLOB, blobData)
@@ -320,11 +333,16 @@ export class Data {
         if (!blob || !blob.ct) return { ...rec, body: '', _blobMissing: true }
         const ctBytes = b64Decode(blob.ct)
         const recoverBody = await this._getRecoverBody()
-        const body = await recoverBody(m, {
+        const opts = {
           fetchCiphertext: () => ctBytes,
           relayBaseUrls: this._relayBaseUrls(),
           fetchImpl: this.fetch
-        })
+        }
+        if (this._isBridgeMode()) {
+          const { createBridgeShardFetch } = await import('./bridge-shard-transport.js')
+          opts.fetchShard = createBridgeShardFetch({ sync: this.sync })
+        }
+        const body = await recoverBody(m, opts)
         if (this._bodyCache.size >= BODY_CACHE_MAX) this._bodyCache.delete(this._bodyCache.keys().next().value)
         this._bodyCache.set(m.blindContentId, body)
         return { ...rec, body }

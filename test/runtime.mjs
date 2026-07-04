@@ -5,7 +5,7 @@
 // relay <meta> is also baked into the page. Run: node test/runtime.mjs
 
 import assert from 'node:assert'
-import { resolveRuntime } from '../js/runtime.js'
+import { resolveRuntime, readShardRosterConfig, fetchShardRoster, parseShardRelays } from '../js/runtime.js'
 import { createIdentity } from '../js/identity.js'
 import { createSync } from '../js/sync.js'
 
@@ -67,6 +67,25 @@ async function main () {
   // nothing configured → local dev fallback.
   const rt4 = resolveRuntime({ rawPear: null, doc: doc({}) })
   ok(rt4.mode === 'dev' && rt4.identityOpts.forceDev === undefined, 'no host bridge, no relay → local dev fallback')
+
+  console.log('\n— shard cohort config detection —')
+  ok(readShardRosterConfig(doc({})) === null, 'no shard meta → no shard cohort config')
+  const sCfg1 = readShardRosterConfig(doc({ 'peerit-shard-relays': 'https://a.example, https://b.example' }))
+  ok(sCfg1 && sCfg1.relays.length === 2 && sCfg1.relays[0] === 'https://a.example', 'inline shard relays parse into a list')
+  const sCfg2 = readShardRosterConfig(doc({ 'peerit-shard-roster': 'config/shard-roster.json', 'peerit-shard-threshold': '2' }))
+  ok(sCfg2 && sCfg2.rosterUrl === 'config/shard-roster.json' && sCfg2.threshold === 2, 'shard roster URL + threshold are retained')
+  const rtShard = resolveRuntime({ rawPear: null, doc: doc({ 'peerit-shard-roster': 'config/shard-roster.json' }) })
+  ok(rtShard.shardCohort && rtShard.shardCohort.rosterUrl === 'config/shard-roster.json', 'resolveRuntime exposes shardCohort in dev fallback')
+  ok(parseShardRelays('http://127.0.0.1:8801, https://a.example').length === 2, 'local http shard relays are allowed')
+  ok(parseShardRelays('javascript:alert(1), ftp://x').length === 0, 'dangerous shard relay schemes are rejected')
+
+  const goodFetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ threshold: 2, relays: ['http://127.0.0.1:8801', { url: 'http://127.0.0.1:8802', pubkey: 'b'.repeat(64) }] }) })
+  const roster = await fetchShardRoster({ url: 'config/shard-roster.json', fetch: goodFetch })
+  ok(roster && roster.threshold === 2 && roster.relays.length === 2 && roster.relays[1].pubkey === 'b'.repeat(64), 'fetchShardRoster parses and normalizes a roster JSON')
+
+  const badFetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ threshold: 2, relays: ['http://127.0.0.1:8801'] }) })
+  const rosterBad = await fetchShardRoster({ url: 'config/shard-roster.json', fetch: badFetch })
+  ok(rosterBad === null, 'fetchShardRoster rejects a roster with fewer than 2 relays')
 
   console.log('\n— factory integration: keys land in the right place —')
   // Host opts → BridgeIdentity (host keys), even with a relay configured.

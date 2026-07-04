@@ -43,12 +43,84 @@ export function readRelayConfig (doc) {
     apiBase: relays[0],
     apiToken: metaContent(doc, 'peerit-relay-token') || '',
     relayRoster: readRelayRosterConfig(doc),
+    shardCohort: readShardRosterConfig(doc),
     // Phase 3 (optional): a dht-relay WebSocket for the in-browser DHT transport.
     dhtRelay: metaContent(doc, 'peerit-dht-relay') || '',
     // Default to read-only: a fresh web deployment shows verified content before
     // any write/identity path is enabled. Set the meta to "false" to allow writes.
     readOnly: readonly !== 'false'
   }
+}
+
+// Shard cohort config for BlindShard dispersal. Mirrors relay-roster config
+// shape: a roster URL to fetch, or an inline comma-list of relay base URLs.
+export const SHARD_ROSTER_META = 'peerit-shard-roster'
+export const SHARD_RELAYS_META = 'peerit-shard-relays'
+export const SHARD_THRESHOLD_META = 'peerit-shard-threshold'
+
+function isLocalHttp (url) {
+  return url && (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]' || url.hostname === '::1')
+}
+
+export function normalizeShardRelay (value) {
+  const raw = String(value || '').trim()
+  if (!raw) return null
+  try {
+    const url = new URL(raw)
+    if (url.search || url.hash) return null
+    const localOk = url.protocol === 'http:' && isLocalHttp(url)
+    if (url.protocol !== 'https:' && !localOk) return null
+    return url.origin.replace(/\/+$/, '')
+  } catch { return null }
+}
+
+export function parseShardRelays (raw) {
+  if (!raw) return []
+  const out = []
+  const seen = new Set()
+  for (const s of String(raw).split(',')) {
+    const base = normalizeShardRelay(s.trim())
+    if (!base || seen.has(base)) continue
+    seen.add(base)
+    out.push(base)
+  }
+  return out
+}
+
+export function readShardRosterConfig (doc) {
+  const rosterUrl = metaContent(doc, SHARD_ROSTER_META)
+  const inlineRelays = metaContent(doc, SHARD_RELAYS_META)
+  const threshold = metaContent(doc, SHARD_THRESHOLD_META)
+  if (!rosterUrl && !inlineRelays) return null
+  return {
+    rosterUrl: rosterUrl || '',
+    relays: parseShardRelays(inlineRelays),
+    threshold: Number(threshold) || 0
+  }
+}
+
+export async function fetchShardRoster ({ url, fetch: fetchFn = defaultFetch() } = {}) {
+  if (!url || typeof fetchFn !== 'function') return null
+  try {
+    const res = await fetchFn(url, { cache: 'no-store' })
+    if (!res || !res.ok) return null
+    const text = typeof res.text === 'function' ? await res.text() : ''
+    const cfg = text ? JSON.parse(text) : null
+    if (!cfg || !Array.isArray(cfg.relays) || cfg.relays.length < 2) return null
+    const relays = cfg.relays.map((r) => {
+      if (typeof r === 'string') return { url: normalizeShardRelay(r) }
+      return { url: normalizeShardRelay(r.url || r.baseUrl), pubkey: String(r.pubkey || r.publicKey || '').toLowerCase() }
+    }).filter(r => r.url)
+    if (relays.length < 2) return null
+    const threshold = Number(cfg.threshold) || Math.min(relays.length - 1, Math.ceil(relays.length / 2))
+    return { threshold, relays, retainMs: Number(cfg.retainMs) || 30 * 24 * 60 * 60 * 1000 }
+  } catch {
+    return null
+  }
+}
+
+function defaultFetch () {
+  return typeof fetch === 'function' ? fetch.bind(globalThis) : null
 }
 
 // Pinned/seed outboxes baked into the web build: `<meta name="peerit-seed-outboxes">`
@@ -68,13 +140,14 @@ export function parseSeedOutboxes (raw) {
 // surface — otherwise a configured relay would look like a host bridge.
 export function resolveRuntime ({ rawPear = null, doc = null } = {}) {
   const v2 = metaContent(doc, 'peerit-v2') === 'true' // Opaque-Log v2 client (sealed graph fields + opaque okey keys)
+  const shardCohort = readShardRosterConfig(doc)
   if (hasAnyPearBridgeSurface(rawPear)) {
-    return { mode: 'pearbrowser', identityOpts: {}, syncOpts: {}, readOnly: false, v2 }
+    return { mode: 'pearbrowser', identityOpts: {}, syncOpts: {}, readOnly: false, v2, shardCohort }
   }
   if (metaContent(doc, 'pear-api-token')) {
     // PearBrowser mobile: the HOST injected a same-origin token; trust host
     // identity + same-origin /api exactly as today (no extra opts).
-    return { mode: 'pearbrowser-mobile', identityOpts: {}, syncOpts: {}, readOnly: false, v2 }
+    return { mode: 'pearbrowser-mobile', identityOpts: {}, syncOpts: {}, readOnly: false, v2, shardCohort }
   }
   const relay = readRelayConfig(doc)
   if (relay) {
@@ -87,10 +160,11 @@ export function resolveRuntime ({ rawPear = null, doc = null } = {}) {
       syncOpts: { apiBase: relay.apiBase, apiToken: relay.apiToken, seedOutboxes: parseSeedOutboxes(metaContent(doc, 'peerit-seed-outboxes')) },
       relays: relay.relays,
       relayRoster: relay.relayRoster,
+      shardCohort: relay.shardCohort,
       dhtRelay: relay.dhtRelay,
       readOnly: relay.readOnly,
       v2
     }
   }
-  return { mode: 'dev', identityOpts: {}, syncOpts: {}, readOnly: false, v2 }
+  return { mode: 'dev', identityOpts: {}, syncOpts: {}, readOnly: false, v2, shardCohort }
 }

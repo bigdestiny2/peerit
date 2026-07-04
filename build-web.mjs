@@ -27,6 +27,7 @@ import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SITE_FILES } from './publish.mjs'
 import { buildDhtBundle } from './scripts/build-dht-bundle.mjs'
+import { buildReaderBundle } from './scripts/build-reader-bundle.mjs'
 import { normalizeRelayRosterPayload, verifyRelayRoster } from './js/relay-roster.js'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
@@ -51,6 +52,7 @@ const RELEASE_KEY = (process.env.PEERIT_RELEASE_KEY || arg('--release-key') || r
 const NO_RELAY_ROSTER = hasArg('--no-relay-roster') || process.env.PEERIT_NO_RELAY_ROSTER === '1'
 const RELAY_ROSTER = NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER || arg('--relay-roster') || releaseConfig.relayRoster || '')
 let RELAY_ROSTER_KEY = NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER_KEY || arg('--relay-roster-key') || releaseConfig.pinnedRosterKey || '')
+const SHARD_ROSTER = process.env.PEERIT_SHARD_ROSTER || arg('--shard-roster') || releaseConfig.shardRoster || ''
 if (DHT_RELAY) assertDhtRelay(DHT_RELAY)
 
 const sri = (buf) => 'sha384-' + createHash('sha384').update(buf).digest('base64')
@@ -59,6 +61,13 @@ const attr = (s) => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').rep
 
 let dhtBundle = null
 if (DHT_RELAY) dhtBundle = await buildDhtBundle()
+
+// Build the browser reader bundle for dispersed-body recovery whenever we are
+// producing a web deployment (RELAY set) or explicitly asked. The bundle is
+// loaded dynamically, so it does not block initial page load.
+const READER_BUNDLE = hasArg('--reader-bundle') || process.env.PEERIT_READER_BUNDLE === '1' || !!RELAY
+let readerBundle = null
+if (READER_BUNDLE) readerBundle = await buildReaderBundle()
 
 function readConfig (file) {
   const abs = resolve(__dir, file || '')
@@ -144,7 +153,10 @@ const files = {}
 const manifest = {}
 const sriMap = {}
 for (const p of SITE_FILES) {
-  const buf = p === 'js/dht-bundle.js' && dhtBundle ? dhtBundle : readFileSync(join(__dir, p))
+  let buf
+  if (p === 'js/dht-bundle.js' && dhtBundle) buf = dhtBundle
+  else if (p === 'js/reader-bundle.js' && readerBundle) buf = readerBundle
+  else buf = readFileSync(join(__dir, p))
   files[p] = buf
   manifest[p] = sha256(buf)
   sriMap[p] = sri(buf)
@@ -166,6 +178,7 @@ const head = [
   RELAY_ROSTER_KEY ? `<meta name="peerit-relay-roster-key" content="${attr(RELAY_ROSTER_KEY)}">` : '',
   RELEASE_KEY ? `<meta name="peerit-release-key" content="${attr(RELEASE_KEY)}">` : '',
   DHT_RELAY ? `<meta name="peerit-dht-relay" content="${attr(DHT_RELAY)}">` : '',
+  SHARD_ROSTER ? `<meta name="peerit-shard-roster" content="${attr(SHARD_ROSTER)}">` : '',
   SEED_OUTBOXES ? `<meta name="peerit-seed-outboxes" content="${attr(SEED_OUTBOXES)}">` : '',
   '<script src="sw-register.js"></script>'
 ].filter(Boolean).join('\n  ')
@@ -224,6 +237,7 @@ console.log(`[build-web] wrote ${SITE_FILES.length + 4 + (files['relay-roster.js
 console.log(`           relay=${RELAY || '(none — local-only)'} readonly=${READONLY} driveKey=${DRIVE_KEY || '(unset)'}`)
 console.log(`           relayRoster=${relayRosterMeta || '(none)'} rosterKey=${RELAY_ROSTER_KEY ? RELAY_ROSTER_KEY.slice(0, 12) + '...' : '(unset)'}`)
 if (DHT_RELAY) console.log(`           dhtRelay=${DHT_RELAY} dhtBundle=${files['js/dht-bundle.js'].length} bytes`)
+if (READER_BUNDLE) console.log(`           readerBundle=${files['js/reader-bundle.js'].length} bytes`)
 if (!RELAY) console.log('           NOTE: no --relay → the bundle loads but stays local-only (gossip-dev) until a relay is configured.')
 if (RELAY_ROSTER && !RELAY_ROSTER_KEY) console.log('           NOTE: --relay-roster without --relay-roster-key is ignored by clients (no pinned verification key).')
 

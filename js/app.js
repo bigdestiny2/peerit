@@ -5,7 +5,7 @@
 
 import { createSync } from './sync.js'
 import { createIdentity } from './identity.js'
-import { resolveRuntime } from './runtime.js'
+import { resolveRuntime, fetchShardRoster } from './runtime.js'
 import { resolveRelayCandidates, selectRelays } from './relay-roster.js'
 import { createRelayPool } from './relay-pool.js'
 import { cacheClassForChangedKeys, createData } from './data.js'
@@ -58,6 +58,13 @@ async function boot () {
   // In web mode this is a browser-LOCAL key (forceDev); the relay never signs.
   identity = createIdentity(runtime.identityOpts)
   await identity.ready()
+
+  // BlindShard dispersal: if a shard cohort is configured (inline meta or roster
+  // JSON), fetch/validate it and enable the dispersal write path. The reader path
+  // is always present in data.js; this only turns on PVSS-split body encryption
+  // for new posts/comments. If the identity has no exportable seed (PearBrowser
+  // bridge), data.js falls back to single-blob boxing automatically.
+  const shardCohort = await resolveShardCohort(runtime)
 
   // Web mode transport selection (PearBrowser/dev use runtime.syncOpts = {}):
   //   1) strongest: an in-browser DHT pipe (Phase 3) if a dht-relay is configured
@@ -113,7 +120,12 @@ async function boot () {
     ? createSync({ getMe: () => identity.me().pubkey, identity, pear: pearForSync, writeHead, readOnly: runtime.readOnly, seedOutboxes })
     : createSync({ getMe: () => identity.me().pubkey, identity, ...runtime.syncOpts, writeHead, readOnly: runtime.readOnly })
   await sync.ready()
-  data = createData(sync, identity, { v2: runtime.v2 })
+  data = createData(sync, identity, {
+    v2: runtime.v2,
+    dispersal: !!shardCohort,
+    shardRelays: shardCohort ? shardCohort.relays : [],
+    fetch: globalThis.fetch && globalThis.fetch.bind(globalThis)
+  })
   refreshPrefs()
   sync.onChange((changed) => data.invalidateViewCaches(cacheClassForChangedKeys(changed)))
 
@@ -188,6 +200,27 @@ function isBridgeMode () {
 // blocked until a write path (local keys + writable relay) is enabled.
 function isReadOnly () { return !!(runtime && runtime.readOnly) }
 
+// True when BlindShard dispersal is active for this session.
+function isDispersalActive () { return !!(data && data.dispersal) }
+
+// Resolve a shard cohort from runtime config. Inline relay URLs are used as-is;
+// a roster URL is fetched and validated. Returns null if no usable cohort.
+async function resolveShardCohort (rt) {
+  const cfg = rt && rt.shardCohort
+  if (!cfg) return null
+  if (cfg.rosterUrl) {
+    const fetched = await fetchShardRoster({ url: cfg.rosterUrl, fetch: globalThis.fetch && globalThis.fetch.bind(globalThis) })
+    if (fetched) return fetched
+    console.warn('[peerit] shard roster fetch failed or invalid; dispersal disabled')
+    return null
+  }
+  if (cfg.relays && cfg.relays.length >= 2) {
+    const threshold = Number(cfg.threshold) || Math.min(cfg.relays.length - 1, Math.ceil(cfg.relays.length / 2))
+    return { threshold, relays: cfg.relays.map(url => ({ url })), retainMs: 30 * 24 * 60 * 60 * 1000 }
+  }
+  return null
+}
+
 // ---- chrome (header + sidebar shell) ----------------------------------------
 function renderChrome () {
   document.body.innerHTML = `
@@ -232,7 +265,7 @@ async function updateNetStatus () {
     const me = identity.me()
     const secure = s.secure !== false
     el.className = 'netstatus ' + (s.mode && s.mode.includes('bridge') ? 'bridge' : (secure ? 'ok' : 'warn'))
-    el.innerHTML = `<b>${esc(s.mode || 'sync')}</b> · ${s.peers != null ? s.peers : 1}p · ${s.viewLength || 0} recs · <span class="mono">${esc((me.pubkey || '').slice(0, 6))}…</span>${secure ? '' : ' · ⚠ insecure'}${isReadOnly() ? ' · read-only' : ''}`
+    el.innerHTML = `<b>${esc(s.mode || 'sync')}</b> · ${s.peers != null ? s.peers : 1}p · ${s.viewLength || 0} recs · <span class="mono">${esc((me.pubkey || '').slice(0, 6))}…</span>${secure ? '' : ' · ⚠ insecure'}${isReadOnly() ? ' · read-only' : ''}${isDispersalActive() ? ' · dispersed' : ''}`
   } catch (e) { el.textContent = 'sync: ' + (e.message || 'error') }
 }
 
@@ -241,13 +274,16 @@ async function renderUserMenu () {
   await primeNames([me.pubkey])
   const el = $('#usermenu')
   if (!el) return
-  const badge = (runtime && runtime.mode === 'web')
+  const modeBadge = (runtime && runtime.mode === 'web')
     ? '<span class="mode-badge web" title="Bridged to peerit\'s P2P network over a public relay — records are verified, but install PearBrowser for fully trustless P2P">web</span>'
     : !isBridgeMode()
       ? '<span class="mode-badge dev" title="Running on local dev fallback (no PearBrowser bridge detected)">dev</span>'
       : '<span class="mode-badge live" title="Connected to PearBrowser P2P bridge">p2p</span>'
+  const dispersalBadge = isDispersalActive()
+    ? '<span class="mode-badge dispersal" title="BlindShard dispersal active — long bodies are PVSS-split across a shard cohort">dispersed</span>'
+    : ''
   el.innerHTML = `
-    ${badge}
+    ${modeBadge}${dispersalBadge}
     <button class="user-pill" data-act="toggle-usermenu" aria-haspopup="menu" aria-label="Account menu">
       <span class="avatar" style="background:${colorFor(me.pubkey)}"></span>
       <span class="uname">${esc(nameOf(me.pubkey))}</span>
@@ -1196,6 +1232,7 @@ async function viewSettings ({ guard, token }) {
       <li><span>App drive key fingerprint</span><b class="mono small" title="${esc(me.driveKey)}">${esc(shortKey(me.driveKey, 12))}</b></li>
       <li><span>Backup status</span><b>${backupStatusHtml(backup)}</b></li>
       <li><span>Sync mode</span><b>${modeLabel}</b></li>
+      <li><span>Body dispersal</span><b>${isDispersalActive() ? 'BlindShard active' : 'off'}</b></li>
     </ul>
     ${identity.isDev ? `<h2>Move this identity to another device</h2>
       <p class="dim small settings-copy">Export your posting key as a <b>passphrase-encrypted</b> file, then import it in another browser or on your phone to post as the same u/${esc(shortKey(me.pubkey, 6))}. Anyone who gets both the file and the passphrase can post as you — treat it like a password.</p>

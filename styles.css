@@ -402,6 +402,7 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
 .web-readonly .composer,
 .web-readonly .votes .arrow { display: none !important; }
 .mode-badge.web{background:rgba(79,140,255,.14);color:var(--accent);border:1px solid rgba(79,140,255,.32)}
+.mode-badge.dispersal{background:rgba(168,85,247,.14);color:#c084fc;border:1px solid rgba(168,85,247,.32)}
 
 /* --- web identity export / import --- */
 .import-identity { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border, #23252b); }

@@ -10,10 +10,10 @@ const ROOT = fileURLToPath(new URL('.', import.meta.url)).replace(/\/$/, '')
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json' }
 const PORT = Number(process.env.PORT) || 8777
 const HOST = process.env.HOST || '127.0.0.1'
-const PUBLIC_FILES = new Set(['/index.html', '/styles.css', '/icon.svg', '/manifest.json'])
+const PUBLIC_FILES = new Set(['/index.html', '/styles.css', '/icon.svg', '/manifest.json', '/config/shard-roster.json'])
 
 function isPublicPath (p) {
-  return PUBLIC_FILES.has(p) || /^\/js\/[a-z0-9-]+\.js$/i.test(p)
+  return PUBLIC_FILES.has(p) || /^\/js\/[a-z0-9-]+\.js$/i.test(p) || /^\/config\/shard-roster\.json$/i.test(p)
 }
 
 function isInsideRoot (file) {

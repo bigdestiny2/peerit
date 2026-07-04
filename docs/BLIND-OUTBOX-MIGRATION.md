@@ -1,6 +1,10 @@
 # BLIND-OUTBOX-MIGRATION — Opaque-Log v2 for peerit
 
-**Status:** design + phased-migration spec. **Implementation STARTED** — `js/seal.js` (the v2 blind-key primitives: `okey` + sealed envelope) + `test/seal.mjs` (20 checks) landed 2026-07-03. peerit is LIVE (peerit.site web + PearBrowser `hyper://` installs on a deterministic drive key).
+**Status:** implementation **LIVE** — the Opaque-Log v2 write/read paths are wired in `js/data.js`,
+`js/seal.js` + `js/canon.js` provide the blind-key primitives (`okey` + sealed envelope), and the
+live seed outbox on peerit-relay is already opaque (verified by `test/live-v2-decrypt.mjs`). This
+document is retained as the design record and migration notes; the phased-migration decisions
+above (D1–D7) have been executed.
 
 > **RESOLVED DECISIONS (2026-07-03) — these OVERRIDE the §9 recommendations where they differ:**
 > - **D1 → app-wide read key.** One bundled `PEERIT_READ_KEY`; all content public; private groups are a later additive layer.

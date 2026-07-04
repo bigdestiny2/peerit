@@ -30,6 +30,10 @@ Generalize peerit-relay's proven `core-memory` engine into **`OutboxLog`** — a
    vote, comment, reload — all work. (peerit's client emits exactly the `/api/sync/*`
    + SSE calls this service answers.)
 
+**Evidence update — 2026-07-01:** `npm run proof:hiverelay-outboxlog -- --out reports/hiverelay-outboxlog-convergence-2026-07-01.json` now exercises the generated Peerit `web/js` modules against a local HiveRelay `RelayAPI` running the real `OutboxLogApp`. The report passed 13 checks covering bridge readiness, two distinct writer keys, community/post/vote/comment/edit convergence, and reload recovery.
+
+**Evidence update — 2026-07-02:** `npm run proof:app-membership` now covers the first app-layer private/group policy proof. It runs Peerit's signed gossip merge path with the existing PoW validator plus an app-owned membership map, admits member-signed closed-group content, rejects outsider-signed closed-group post/comment rows even with valid signatures and PoW, and leaves public outsider records valid. This confirms group membership belongs in Peerit/app policy, not inside `OutboxLog`.
+
 ---
 
 ## 3. The engine to port (the reference implementation)

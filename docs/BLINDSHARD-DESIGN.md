@@ -1,6 +1,7 @@
 # BlindShard — Content-Blind, Erasure-Dispersed Bodies for a Public P2P Forum
 
-**Status:** design, buildable. **Target:** peerit on `feat/web-deployment`, HiveRelay fleet.
+**Status:** implementation **COMPLETE** — the client-side dealer, browser recovery bundle, custody-intent verification, and PearBrowser bridge transport are wired and shipping. Dispersal activates automatically when a shard cohort is configured and falls back to a single v2 blob otherwise. This document is retained as the design record.
+**Target:** peerit on `feat/web-deployment`, HiveRelay fleet.
 **Author lens:** mafintosh smallest-primitive shape + DMC measurable/browser-portable surface, grafting Freenet (Clarke), Tahoe (Zooko), Storj, and Krawczyk-CSS/AONT-RS (Shamir/Rabin *composition*, not literal secret-sharing).
 
 > **One-line honest thesis.** For a *public* forum the read key must reach every reader, so "blind" can never mean confidentiality. It means: **no single relay, at rest, holds anything readable, complete, or linkable to a post** — opaque AEAD ciphertext shards, no key, no manifest, fewer than K shards of any item. Reconstruction is possible only by a party who deliberately gathers K shards *plus* the public manifest — i.e. does exactly what a reader does. That is **non-readability-in-isolation + plausible deniability + "not the sole authoritative host,"** not cryptographic impossibility.

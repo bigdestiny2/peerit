@@ -6,6 +6,12 @@ Goal: if the *mutable append-log + live-gossip* pattern becomes the default shap
 
 The good news up front: **this is a bounded extension, not a ground-up HiveRelay redesign.** It generalizes an already-proven HiveRelay pattern (the poker `SignedLog`) and peerit's browser already speaks the exact wire, so an *unmodified* peerit build can converge through a native HiveRelay running the service.
 
+**Status update — 2026-07-01:** the local Phase 2 convergence proof is now executable as `npm run proof:hiverelay-outboxlog -- --out reports/hiverelay-outboxlog-convergence-2026-07-01.json`. It runs the generated Peerit `web/js` modules against a sibling HiveRelay `RelayAPI` with the real `OutboxLogApp` and verifies create/post/vote/comment/edit/reload convergence. This closes the local in-memory Phase 2 proof; Phase 3 durability, per-key gossip, and bench gates remain separate.
+
+**Status update — 2026-07-02:** the app-layer group-membership boundary is now executable as `npm run proof:app-membership`. The proof uses Peerit's merge validator hook to compose PoW with an app-owned closed-group membership map; valid member private records are admitted, valid outsider private post/comment records are rejected, and public outsider records still work. No HiveRelay change is required for membership policy.
+
+**Status update — 2026-07-02:** the signed relay roster drift gate is now green as `npm run proof:relay-roster -- --out .deploy/relay-roster-evidence-2026-07-02.json --json`. The current roster covers both configured relays (`https://153-75-89-206.sslip.io` and `https://peerit-relay.onrender.com`) and verifies with the pinned roster key. The entry-point blocking caveat still applies: multi-relay improves relay seizure/rollback resistance, not bundle-origin blocking.
+
 ---
 
 ## 1. Recommended architecture — `OutboxLog`
@@ -49,7 +55,7 @@ An app-agnostic HiveRelay `ServiceProvider` that generalizes the poker `SignedLo
 - **Correction (critique):** `directory()` and `heads()` are currently **O(all outboxes)** and on the browser boot hot path (`_bootstrapFloor → directory`), and `directory`'s `limit: 5000` < `maxGroups: 20000` silently truncates the rollback floor at scale — a *correctness* cliff, not just perf. Must make `directory` paginated/delta and bench-gate it before claiming O(bytes-written) scaling.
 
 ### Censorship-resistant
-- The mechanism **already exists and is correct** — `js/relay-roster.js` verifies an untrusted roster against a **pinned Ed25519 key** (removes DNS/TLS/BGP/rogue-host from trust), and `js/relay-pool.js` does cross-relay highest-**verified**-head reconciliation (defeats rollback + strip). **It's simply not populated:** the roster lists exactly one relay today, so every cross-relay defense is dormant.
+- The mechanism **already exists and is correct** — `js/relay-roster.js` verifies an untrusted roster against a **pinned Ed25519 key** (removes DNS/TLS/BGP/rogue-host from trust), and `js/relay-pool.js` does cross-relay highest-**verified**-head reconciliation (defeats rollback + strip). As of the 2026-07-02 roster proof, the current signed roster carries the owner VPS plus Render; keep the proof gate green whenever the fleet changes.
 - **Honest chokepoint the plan must name (critique):** the pinned key removes the *trust* chokepoint, not the *availability* one — the roster URL and the static JS bundle are still single-origin. Block that origin and the pool is unreachable regardless of how many relays it lists. Mitigation: **inline the signed roster + pin into `index.html` at build time** (a cached/pinned bundle needs zero network to know its relays) + a bundle-distribution story (IPFS/mirrors/extension). Multi-relay resists *relay seizure*, not *entry-point blocking* — ship that limit in the threat-model doc.
 
 ### Operator liability — reframed honestly to **"content-blind," not "zero-liability"**

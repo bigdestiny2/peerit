@@ -193,6 +193,9 @@ npm run proof:availability -- --url http://127.0.0.1:8777
 npm run proof:outbox-availability
 npm run proof:outbox-availability:report
 
+# generated Peerit web build through local HiveRelay OutboxLog:
+npm run proof:hiverelay-outboxlog -- --out reports/hiverelay-outboxlog-convergence-2026-07-01.json
+
 # optional browser UI gate; install Playwright only in the operator/dev checkout
 npm install --no-save playwright
 npx playwright install chromium
@@ -203,8 +206,9 @@ npm run proof:availability:live
 ```
 
 `npm run test:browser` starts the dev server when no `--url` is supplied, then
-creates a community, creates a post, comments from two tabs/users, and verifies
-the cross-tab update path. Playwright is deliberately not a runtime dependency.
+creates a community, creates a post, edits the post body, edits/deletes comments,
+soft-deletes the post, and verifies the cross-tab update path from two
+tabs/users. Playwright is deliberately not a runtime dependency.
 `npm run proof:availability` verifies the published file list, static module
 imports, manifest drive key, sibling seeder/mirror tooling, optional HTTP asset
 fetches, live publish durability reports when present, and the checked-in
@@ -213,6 +217,9 @@ builds a fresh-client user-data proof: a new reader with empty storage recovers
 a representative profile/community/post/comment/vote set only after seeder-style
 byte catch-up is confirmed. `npm run proof:outbox-availability:report` refreshes
 the checked-in JSON evidence under `reports/`.
+`npm run proof:hiverelay-outboxlog` starts the sibling HiveRelay checkout's real
+RelayAPI with `OutboxLogApp`, runs Peerit's generated `web/js` client modules
+through HTTP+SSE, and proves create/post/vote/comment/edit/reload convergence.
 
 For the current local command surface, known gaps, and operator-run publish/runtime
 gates, see [`TEST-COMMAND-MATRIX-2026-07-01.md`](TEST-COMMAND-MATRIX-2026-07-01.md).
@@ -362,22 +369,23 @@ storage, drop-by-opaque-id takedown. Full analysis:
 > The win is **no passive reading, no semantic enumeration, content-neutrality, deniability**
 > — not secrecy. peerit does **not** claim "the operator can't read your posts."
 
-- **Blind-Outbox key scheme (Opaque-Log v2) — *in progress, not yet live*.** The relay key
-  *would* become an opaque `v2!<okey>` (a keyed hash over author + type + id), with structural
-  fields sealed in the value, so the relay *could* no longer grep or prefix-index the graph;
-  feed/thread/vote aggregation moves into the browser. This is the change that actually moves
-  the web tier from readable-host to blind-host. The primitives ([`js/seal.js`](js/seal.js))
-  are landed and unit-tested but **not yet wired into the write path — the live scheme is
-  still the plaintext key**; full design + phased migration:
+- **Blind-Outbox key scheme (Opaque-Log v2) — *live*.** The relay key is now an opaque
+  `v2!<okey>` (a keyed hash over author + type + id), with structural fields sealed in the
+  value, so the relay can no longer grep or prefix-index the graph; feed/thread/vote
+  aggregation happens in the browser. This moves the web tier from readable-host to blind-host.
+  The primitives ([`js/seal.js`](js/seal.js)) are landed, the write/read paths are wired in
+  [`js/data.js`](js/data.js), and the live seed outbox on peerit-relay is already opaque (see
+  `test/live-v2-decrypt.mjs`). Full design + migration notes:
   [`docs/BLIND-OUTBOX-MIGRATION.md`](docs/BLIND-OUTBOX-MIGRATION.md).
-- **BlindShard — *designed, client-ready, gated on independent operators*.** Long post bodies
-  are convergent-encrypted and erasure-dispersed as opaque `shard:<hash>` fragments across a
-  pool, so **no single relay would hold a readable *or* complete copy** of a body (fewer than K
-  shards, no key). The client glue is built and tested against the **released-but-not-yet-deployed**
-  HiveRelay blind shard-store contract (source-only in hiverelay 0.22.0; its HTTP adapter is
-  unmounted on the live fleet — [`js/shard-store-adapter.js`](js/shard-store-adapter.js)), so
-  dispersal is **not live** — it needs the store deployed across **≥3 independent operators**
-  (dispersal across same-owner relays is theater). Design:
+- **BlindShard — *implemented and wired, active when a shard cohort is available*.** Long post
+  bodies are convergent-encrypted and erasure-dispersed as opaque `shard:<hash>` fragments
+  across a pool, so **no single relay holds a readable *or* complete copy** of a body (fewer
+  than K shards, no key). The client path is built in [`js/blind-dealer.mjs`](js/blind-dealer.mjs),
+  the browser recovery bundle ships as [`js/reader-bundle.js`](js/reader-bundle.js), and
+  [`js/app.js`](js/app.js) enables dispersal automatically when a shard cohort is configured.
+  When no cohort is reachable the write path falls back to a single v2 blob. Live deployment
+  across ≥3 independent operators is what makes dispersal meaningful; same-owner cohorts are
+  supported for testing but do not provide operator separation. Design:
   [`docs/BLINDSHARD-DESIGN.md`](docs/BLINDSHARD-DESIGN.md).
 
 **The tiers, honestly.** PearBrowser (`hyper://`) is already a **pure conduit** —
@@ -388,11 +396,12 @@ wire-validated on a local testnet but gated on upstream `@hyperswarm/dht-relay` 
 production readiness.
 
 ### Honest limitations
-- **Public content is plaintext on whoever seeds it *(today)*.** No app-side encryption yet;
-  a relay/seeder can't forge or (across the pool) silently withhold, but it *can* read post
-  bodies and see IPs — a liveness/privacy cost, not an integrity one. The Blind-Outbox
-  redesign above is closing the *passive-read + graph-index* half of this (to deniability +
-  no-passive-index, **still not secrecy** for public content).
+- **Public content is sealed at rest, not plaintext.** With Opaque-Log v2 live, record keys are
+  opaque and values are sealed, so a relay cannot passively grep or prefix-index the graph.
+  BlindShard adds body dispersal when a cohort is available. A relay/seeder still cannot forge
+  or silently withhold across the pool, but metadata (counts, timing, sizes, IPs) still leaks.
+  Because the read key is public, a determined operator can still run the client and decrypt —
+  the win is **deniability + no passive index + content-neutral storage**, not secrecy.
 - **Rollback resistance ends at all-relays collusion against a first-time visitor.** The
   durable floor (Phase C) catches a rollback across your own restart and an all-relays-collude
   rollback *for content you've seen*; the signed directory (Phase D) extends that to a **fresh**

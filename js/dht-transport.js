@@ -36,8 +36,19 @@ export async function createDhtTransport ({ relayWsUrl, storage = 'peerit-dht', 
   ])
 
   const ws = new WebSocket(relayWsUrl)
-  await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = () => reject(new Error('dht-relay websocket failed')) })
-  const dht = new DHT(new WSStream(true, ws))
+  // Attach the transport (its 'message' listener) BEFORE awaiting open. A low-latency
+  // dht-relay sends its protomux channel-open frame the instant the socket connects; if
+  // the WSStream isn't constructed yet, ws drops that first frame (no listener), the
+  // muxer channel never pairs, and EVERY relay->client message is silently discarded —
+  // so server.listen()/connect() hang forever. WSStream._open() tolerates the not-yet-
+  // open socket, so constructing it early is safe.
+  const wsStream = new WSStream(true, ws)
+  await new Promise((resolve, reject) => {
+    if (ws.readyState === 1) return resolve()
+    ws.addEventListener('open', () => resolve(), { once: true })
+    ws.addEventListener('error', () => reject(new Error('dht-relay websocket failed')), { once: true })
+  })
+  const dht = new DHT(wsStream)
   const swarm = new Hyperswarm({ dht })
   // Corestore over IndexedDB in the browser. MUST be a random-access-web FACTORY,
   // not a path string (a string selects a file backend → needs fs). REQUIRES

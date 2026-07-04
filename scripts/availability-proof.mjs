@@ -13,7 +13,8 @@ function usage (code = 0, message = '') {
   if (message) console.error('error:', message)
   console.error([
     'usage: node scripts/availability-proof.mjs [--url <http-url>] [--require-live] [--json]',
-    '       node scripts/availability-proof.mjs --ship-report .deploy/last-ship.json --publish-report .deploy/last-publish.json'
+    '       node scripts/availability-proof.mjs --ship-report .deploy/last-ship.json --publish-report .deploy/last-publish.json',
+    '       node scripts/availability-proof.mjs --outbox-report reports/representative-outbox-availability-2026-07-01.json'
   ].join('\n'))
   process.exit(code)
 }
@@ -25,6 +26,7 @@ function parseArgs (argv) {
     json: false,
     shipReport: join(ROOT, '.deploy', 'last-ship.json'),
     publishReport: join(ROOT, '.deploy', 'last-publish.json'),
+    outboxReport: join(ROOT, 'reports', 'representative-outbox-availability-2026-07-01.json'),
     timeoutMs: DEFAULT_TIMEOUT_MS
   }
   for (let i = 0; i < argv.length; i++) {
@@ -34,6 +36,7 @@ function parseArgs (argv) {
     else if (arg === '--json') opts.json = true
     else if (arg === '--ship-report') opts.shipReport = resolve(ROOT, argv[++i] || '')
     else if (arg === '--publish-report') opts.publishReport = resolve(ROOT, argv[++i] || '')
+    else if (arg === '--outbox-report') opts.outboxReport = resolve(ROOT, argv[++i] || '')
     else if (arg === '--timeout-ms') opts.timeoutMs = Number(argv[++i]) || 0
     else if (arg === '-h' || arg === '--help') usage(0)
     else usage(2, `unknown option: ${arg}`)
@@ -182,6 +185,52 @@ function deployReportProof (proof, opts) {
   }
 }
 
+function outboxAvailabilityReportProof (proof, opts) {
+  const report = readJson(opts.outboxReport)
+  proof.data = { ...(proof.data || {}), outboxReport: opts.outboxReport, representativeOutbox: report }
+
+  if (!report) {
+    add(proof, 'data:representative-outbox-report', opts.requireLive ? 'fail' : 'warn', 'representative outbox availability report is missing; run npm run proof:outbox-availability:report.', {
+      file: opts.outboxReport
+    })
+    return
+  }
+
+  const checks = Array.isArray(report.checks) ? report.checks : []
+  const byteCatchup = checks.find((check) => check.id === 'seeder:byte-catchup')
+  const freshReader = checks.find((check) => check.id === 'fresh-reader:representative-data')
+  const audit = checks.find((check) => check.id === 'fresh-reader:signed-head-audit')
+  const ready = report.status === 'ready' &&
+    byteCatchup && byteCatchup.status === 'pass' &&
+    freshReader && freshReader.status === 'pass' &&
+    audit && audit.status === 'pass'
+
+  if (ready) {
+    add(proof, 'data:representative-outbox-report', 'pass', 'checked-in representative outbox report proves byte catch-up and fresh-reader recovery.', {
+      generatedAt: report.generatedAt,
+      fixture: report.fixture,
+      seederEvidence: report.seederEvidence && {
+        localLength: report.seederEvidence.localLength,
+        remoteLength: report.seederEvidence.remoteLength,
+        localBytes: report.seederEvidence.localBytes,
+        remoteBytes: report.seederEvidence.remoteBytes,
+        byteCatchUpConfirmed: report.seederEvidence.byteCatchUpConfirmed
+      },
+      freshReader: report.freshReader && {
+        recoveredAllRepresentativeData: report.freshReader.recoveredAllRepresentativeData,
+        status: report.freshReader.status
+      }
+    })
+  } else {
+    add(proof, 'data:representative-outbox-report', 'fail', 'representative outbox report does not prove byte catch-up plus fresh-reader recovery.', {
+      status: report.status,
+      byteCatchup,
+      freshReader,
+      audit
+    })
+  }
+}
+
 function siblingToolProof (proof) {
   const seeder = resolve(ROOT, '../peerit-seeder/seeder.mjs')
   const mirror = resolve(ROOT, '../peerit-mirror/mirror.mjs')
@@ -278,6 +327,7 @@ async function main () {
   importGraphProof(proof)
   manifestProof(proof)
   deployReportProof(proof, opts)
+  outboxAvailabilityReportProof(proof, opts)
   siblingToolProof(proof)
   await httpFetchProof(proof, opts)
   finish(proof)

@@ -98,6 +98,8 @@ async function readErr (res) {
 //   reason        'payment' (default) | 'token'  — 'custody' needs a buildPin override
 //   retainMs      pin retention window (default 30d)
 //   buildPin      optional async (shardId, bytes, ctx) -> pin  (custody/token override)
+//                 For the v0.24.0 custody pin, ctx must include { custodyIntentId,
+//                 shareIndex } — see js/blind-dealer.mjs makeCustodyBuildPin().
 //   now / nonce   injectables for deterministic tests (Date.now / random hex)
 export function createShardStoreAdapter (opts = {}) {
   const {

@@ -145,12 +145,37 @@ async function expectText (page, text, timeout = DEFAULT_TIMEOUT_MS) {
   await page.getByText(text, { exact: false }).first().waitFor({ timeout })
 }
 
+async function expectTextWithBodyDebug (page, text, context) {
+  try {
+    await expectText(page, text)
+  } catch (err) {
+    const body = await page.locator('body').innerText({ timeout: 5000 }).catch((bodyErr) => `<body unavailable: ${bodyErr.message}>`)
+    throw new Error(`${context}: expected ${JSON.stringify(text)}.\nRendered body:\n${body.slice(0, 4000)}\n\n${err.stack || err.message}`)
+  }
+}
+
 async function fillFirst (page, selector, value) {
   await page.locator(selector).first().fill(value)
 }
 
 async function submitFirst (page, selector) {
   await page.locator(selector).first().click()
+}
+
+async function acceptDialogFrom (page, action, value, type) {
+  const dialogPromise = page.waitForEvent('dialog', { timeout: DEFAULT_TIMEOUT_MS })
+  const actionPromise = Promise.resolve().then(action)
+  const dialog = await dialogPromise
+  if (type && dialog.type() !== type) throw new Error(`expected ${type} dialog, got ${dialog.type()}`)
+  await dialog.accept(value)
+  await actionPromise
+  return dialog.message()
+}
+
+async function openPostActions (page) {
+  await page.locator('article.post.full details.more-actions').first().evaluate((el) => {
+    el.open = true
+  })
 }
 
 function isExpectedConsoleError (text) {
@@ -329,6 +354,7 @@ async function installMobileHost (context, host) {
         this.readyState = 1
         window.__peeritSmokeEventSourceUrls.push(this.url)
       }
+
       close () { this.readyState = 2 }
     }
   })
@@ -365,8 +391,8 @@ async function assertMobileHostPath (page, host) {
     badge: document.querySelector('.mode-badge')?.textContent.trim() || '',
     readOnlyClass: document.body.classList.contains('web-readonly'),
     readOnlyBanner: !!document.querySelector('.readonly-banner'),
-    devUsers: localStorage.getItem('peerit:dev:users'),
-    devView: localStorage.getItem('peerit:view'),
+    devUsers: window.localStorage.getItem('peerit:dev:users'),
+    devView: window.localStorage.getItem('peerit:view'),
     eventSourceHasToken: (window.__peeritSmokeEventSourceUrls || []).some((url) => url.includes('/api/swarm/events') && url.includes('token=' + encodeURIComponent(token)))
   }), host.token)
   if (state.badge !== 'p2p') throw new Error(`mobile host smoke expected p2p badge, saw ${state.badge || 'none'}`)
@@ -409,6 +435,8 @@ async function runSmoke ({ browser, url }) {
   const community = `codex${stamp.slice(-6)}`
   const title = `Browser smoke post ${stamp}`
   const firstComment = `first browser comment ${stamp}`
+  const editedPostBody = `browser smoke body edited ${stamp}`
+  const editedFirstComment = `first browser comment edited ${stamp}`
   const secondComment = `second user comment ${stamp}`
   const userName = `smoke-${stamp}`
 
@@ -439,10 +467,29 @@ async function runSmoke ({ browser, url }) {
   await submitFirst(pageA, 'form[data-form="comment"] button[type="submit"]')
   await expectText(pageA, firstComment)
 
+  await openPostActions(pageA)
+  await acceptDialogFrom(
+    pageA,
+    () => pageA.locator('article.post.full button[data-act="edit-post"]').click(),
+    editedPostBody,
+    'prompt'
+  )
+  await expectText(pageA, editedPostBody)
+
+  const firstCommentNode = pageA.locator('.comment').filter({ hasText: firstComment }).first()
+  await acceptDialogFrom(
+    pageA,
+    () => firstCommentNode.locator('button[data-act="edit-comment"]').click(),
+    editedFirstComment,
+    'prompt'
+  )
+  await expectText(pageA, editedFirstComment)
+
   const pageB = await context.newPage()
   recordBrowserErrors(pageB, errors)
   await pageB.goto(pageA.url(), { waitUntil: 'domcontentloaded' })
-  await expectText(pageB, firstComment)
+  await expectText(pageB, editedPostBody)
+  await expectText(pageB, editedFirstComment)
 
   const badge = pageB.locator('[data-act="toggle-usermenu"] .uname')
   const beforeUser = (await badge.textContent()).trim()
@@ -460,10 +507,29 @@ async function runSmoke ({ browser, url }) {
   await expectText(pageB, secondComment)
   await expectText(pageA, secondComment)
 
+  const secondCommentNode = pageB.locator('.comment').filter({ hasText: secondComment }).first()
+  await acceptDialogFrom(
+    pageB,
+    () => secondCommentNode.locator('button[data-act="delete-comment"]').click(),
+    undefined,
+    'confirm'
+  )
+  await expectTextWithBodyDebug(pageB, '[deleted]', 'second-tab deleted comment tombstone')
+  await expectTextWithBodyDebug(pageA, '[deleted]', 'first-tab deleted comment tombstone')
+
+  await openPostActions(pageA)
+  await acceptDialogFrom(
+    pageA,
+    () => pageA.locator('article.post.full button[data-act="delete-post"]').click(),
+    undefined,
+    'confirm'
+  )
+  await expectText(pageA, '[deleted by author]')
+
   if (errors.length) throw new Error(`browser emitted errors:\n${errors.join('\n')}`)
 
   await context.close()
-  return { community, title, firstComment, secondComment, userName }
+  return { community, title, editedPostBody, editedFirstComment, secondComment, userName }
 }
 
 async function runMobileHostSmoke ({ browser, url }) {

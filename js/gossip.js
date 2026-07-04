@@ -267,6 +267,15 @@ class GossipSync {
     await cryptoReady()
     this.mode = isSecure() ? 'gossip-dev' : 'gossip-dev-insecure'
     this._addPeer(this.getMe())
+    if (typeof globalThis.addEventListener === 'function') {
+      globalThis.addEventListener('storage', (e) => {
+        if (!e || !e.key) return
+        if (e.key === PEERS_KEY || e.key.startsWith('peerit:outbox:')) {
+          this._invalidate()
+          this._emit()
+        }
+      })
+    }
     if (this.bus) {
       this.bus.onMessage((m) => this._onBus(m))
       await this.bus.send({ t: 'hello', pub: this.getMe() })

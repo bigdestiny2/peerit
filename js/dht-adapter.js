@@ -96,7 +96,17 @@ export function createHyperPearSurface ({ store, swarm, Hyperbee, Protomux, b4a,
       }
       swarm.on('connection', onConnection)
       const discovery = swarm.join(topic, { server: opts.server !== false, client: opts.client !== false })
-      if (discovery && discovery.flushed) await discovery.flushed().catch(() => {})
+      // flushed() waits for the announce query to fully complete. Over a dht-relay it
+      // can stall indefinitely (the relay proxies the DHT query and may never signal
+      // completion), which would wedge sync.ready() on the relayed/home-box path.
+      // Cap the wait — the announce is still in flight and lookup-based discovery
+      // converges regardless. On a native swarm this resolves well within the cap.
+      if (discovery && discovery.flushed) {
+        await Promise.race([
+          discovery.flushed().catch(() => {}),
+          new Promise((r) => { const t = setTimeout(r, 4000); if (t.unref) t.unref() })
+        ])
+      }
 
       return {
         topic: topicHex,

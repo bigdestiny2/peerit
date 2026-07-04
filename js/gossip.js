@@ -537,28 +537,40 @@ class BridgeGossipSync {
   async _bootstrapFloor () {
     const dirFn = this.pear.sync && this.pear.sync.directory
     if (!dirFn) return
-    let heads
-    try { const dir = await dirFn(); heads = dir && dir.heads ? dir.heads : dir } catch { return }
-    if (!heads || typeof heads !== 'object') return
     const me = this.getMe()
-    for (const appId in heads) {
-      if (PROTO_KEYS.has(appId) || !HEX64.test(appId) || appId === me) continue
-      const h = heads[appId]
-      if (!h || h._k !== appId) continue
-      if ((await verifyRecord(TYPE.HEAD, h)) !== 'ok') continue // never seed the floor from an unverified head
-      const v = h.version | 0
-      const fl = this._floor.get(appId)
-      if (!fl || v > fl.v) { this._floor.set(appId, { v, t: ++this._floorTick }); this._floorDirty = true }
-      // RELIABLE READ DISCOVERY: the relay serves any outbox's rows by appId (range takes
-      // no inviteKey — the drive read-cap only gates P2P replication, which the relay does
-      // on our behalf). A VERIFIED directory head is therefore enough to READ that author's
-      // content directly, without waiting on flaky swarm-descriptor gossip. Add as a content
-      // peer (inviteKey unused for relay reads; admit re-verifies every row's signature, so a
-      // lying relay still can't forge). Directory is a relay-only surface, so this never runs
-      // under PearBrowser's P2P sync (which needs the real read-cap). Skip empties + self.
-      if (this._discover && (h.count | 0) > 0 && !this._peers.has(appId) && this._peers.size < MAX_PEERS) {
-        this._peers.set(appId, { appId, inviteKey: appId, dir: true }) // inviteKey placeholder: relay range is keyed by appId
+    // PAGINATE the directory: the relay caps each page (default 5000 heads) and returns a
+    // cursor. Follow nextCursor until exhausted so author #5001+ is actually discovered —
+    // otherwise a large forum silently truncates. Bounded (MAX_PAGES) so a hostile relay
+    // can't spin us forever; the 429/503 backoff in pear-api paces us under the rate limit.
+    // Degrades gracefully against an OLD relay that ignores `after` + omits hasMore (one page).
+    const PAGE = 2000, MAX_PAGES = 50
+    let after = null
+    for (let page = 0; page < MAX_PAGES; page++) {
+      let dir
+      try { dir = await dirFn({ limit: PAGE, after }) } catch { break }
+      const heads = dir && dir.heads ? dir.heads : dir
+      if (!heads || typeof heads !== 'object') break
+      for (const appId in heads) {
+        if (PROTO_KEYS.has(appId) || !HEX64.test(appId) || appId === me) continue
+        const h = heads[appId]
+        if (!h || h._k !== appId) continue
+        if ((await verifyRecord(TYPE.HEAD, h)) !== 'ok') continue // never seed the floor from an unverified head
+        const v = h.version | 0
+        const fl = this._floor.get(appId)
+        if (!fl || v > fl.v) { this._floor.set(appId, { v, t: ++this._floorTick }); this._floorDirty = true }
+        // RELIABLE READ DISCOVERY: the relay serves any outbox's rows by appId (range takes
+        // no inviteKey — the drive read-cap only gates P2P replication, which the relay does
+        // on our behalf). A VERIFIED directory head is therefore enough to READ that author's
+        // content directly, without waiting on flaky swarm-descriptor gossip. Add as a content
+        // peer (inviteKey unused for relay reads; admit re-verifies every row's signature, so a
+        // lying relay still can't forge). Directory is a relay-only surface, so this never runs
+        // under PearBrowser's P2P sync (which needs the real read-cap). Skip empties + self.
+        if (this._discover && (h.count | 0) > 0 && !this._peers.has(appId) && this._peers.size < MAX_PEERS) {
+          this._peers.set(appId, { appId, inviteKey: appId, dir: true }) // inviteKey placeholder: relay range is keyed by appId
+        }
       }
+      if (!dir.hasMore || !dir.nextCursor || this._peers.size >= MAX_PEERS) break
+      after = dir.nextCursor
     }
     if (this._floorDirty) this._saveFloor()
   }

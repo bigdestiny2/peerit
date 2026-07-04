@@ -154,13 +154,32 @@ export function createPearApi (opts = {}) {
   const base = opts.apiBase || opts.base || ''
   const EventSourceCtor = opts.EventSource || defaultEventSource()
 
+  // Retry 429 (rate limited) / 503 (at capacity) with exponential backoff + jitter,
+  // honoring Retry-After. A cold-boot fans out O(authors) reads at once, so without this
+  // a busy relay throws mid-boot and the visitor sees a half-empty feed; with it the boot
+  // paces itself under the per-IP limit instead of failing.
+  async function fetchWithBackoff (url, init) {
+    let wait = 500
+    for (let attempt = 0; ; attempt++) {
+      const response = await fetchFn(url, init)
+      if ((response.status === 429 || response.status === 503) && attempt < 4) {
+        let delay = wait
+        try { const ra = Number(response.headers && response.headers.get && response.headers.get('retry-after')); if (ra > 0) delay = ra * 1000 } catch {}
+        await new Promise((r) => setTimeout(r, Math.min(delay * (0.8 + Math.random() * 0.4), 8000)))
+        wait *= 2
+        continue
+      }
+      return response
+    }
+  }
+
   async function apiGet (path) {
-    const response = await fetchFn(base + path, { headers: { 'X-Pear-Token': token } })
+    const response = await fetchWithBackoff(base + path, { headers: { 'X-Pear-Token': token } })
     return parseJsonResponse(response)
   }
 
   async function apiPost (path, body) {
-    const response = await fetchFn(base + path, {
+    const response = await fetchWithBackoff(base + path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Pear-Token': token },
       body: JSON.stringify(body || {})
@@ -282,7 +301,7 @@ export function createPearApi (opts = {}) {
       heads: (appIds) => apiPost('/api/sync/heads', { appIds }),
       // Phase D durable directory: every outbox's SIGNED head in one call, so a
       // fresh visitor bootstraps its rollback floor + author discovery at once.
-      directory: () => apiGet('/api/directory')
+      directory: (opts = {}) => apiGet(pathWithParams('/api/directory', { limit: opts.limit, after: opts.after }))
     },
     identity: {
       getPublicKey: () => apiGet('/api/identity'),

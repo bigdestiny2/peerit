@@ -191,6 +191,30 @@ async function main () {
     }
   }
 
+  {
+    // Mutate one stored shard in-place so the fetch returns wrong bytes for the
+    // address. recoverSecret catches the content-address mismatch and drops it.
+    const base = cfg.relays[0].url
+    const firstShare = manifest.shareManifest[0]
+    const addr = firstShare.shard
+    const original = fleet.shards.get(base).get(addr)
+    const tampered = new Uint8Array(original)
+    tampered[0] ^= 0xff
+    fleet.shards.get(base).set(addr, tampered)
+    try {
+      await recoverBody(manifest, {
+        relayBaseUrls: cfg.relays.slice(0, K).map(r => r.url),
+        fetchCiphertext: async () => ciphertext,
+        fetchImpl: fleet.fetch
+      })
+      assert.fail('tampered shard content should be rejected')
+    } catch (e) {
+      ok(/recover failed|INSUFFICIENT_SHARDS/i.test(e.message), 'tampered shard content is rejected')
+    }
+    // Restore so later tests (if any) see valid shards.
+    fleet.shards.get(base).set(addr, original)
+  }
+
   console.log('\n— orphan-intent rejection —')
   {
     // The mockFetch rejects POST /api/v1/shard when no intent was published to

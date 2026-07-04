@@ -28,7 +28,7 @@
 import sodium from 'sodium-universal'
 import { planDispersal, recoverSecret, shardAddressOf } from './vendor/blind-shards/blind-shards.js'
 import { createHttpShardPut, createHttpShardFetch } from './vendor/blind-shards/shard-transport.js'
-import { createCustodyIntent } from './vendor/blind-shards/custody-signing.js'
+import { createCustodyIntent, verifyCustodyEntry } from './vendor/blind-shards/custody-signing.js'
 import { shardPinSignable } from './shard-store-adapter.js' // byte-identical to the relay's verifyShardPin
 import { genKeyPair, ready as cryptoReady } from './crypto.js'
 
@@ -232,13 +232,55 @@ export async function disperseBody (bodyText, opts) {
     version: 2, scheme: SHARE_SCHEME, threshold: roster.threshold, count: roster.relays.length,
     blindContentId, ciphertextRoot, commitmentRoot: plan.commitmentRoot,
     shareBundleKey: shardAddressOf(fromHex(plan.commitmentRoot)).slice('shard:'.length),
-    shareManifest, iv, alg: 'AES-256-GCM'
+    shareManifest, iv, alg: 'AES-256-GCM',
+    publisherPubkey: intent.publisherPubkey,
+    intentId: intent.intentId,
+    intent
   }
   return { ciphertext, manifest, intent, plan, publisher, placed }
 }
 
+function sameValue (a, b) {
+  if (typeof a === 'number' && typeof b === 'number') return a === b
+  return String(a || '').toLowerCase() === String(b || '').toLowerCase()
+}
+
+function sameShardManifest (a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (!sameValue(a[i].shareIndex, b[i].shareIndex)) return false
+    if (!sameValue(a[i].shard, b[i].shard)) return false
+    if (!sameValue(a[i].shareCommitment, b[i].shareCommitment)) return false
+  }
+  return true
+}
+
+// Verify that the publisher-signed custody intent embedded in the manifest is
+// authentic and that it binds the exact manifest fields a reader will trust.
+// Callers MUST validate the intent before reconstructing the secret; without it
+// an attacker can substitute share commitments and make recovery yield a wrong key.
+export function verifyCustodyIntent (manifest, opts = {}) {
+  const intent = manifest && manifest.intent
+  if (!intent || typeof intent !== 'object') throw new Error('blind-dealer: custody intent missing from manifest')
+  const verified = verifyCustodyEntry(intent, opts)
+  if (!verified.valid) throw new Error('blind-dealer: custody intent signature invalid — ' + verified.reason)
+
+  if (!sameValue(manifest.publisherPubkey, intent.publisherPubkey)) throw new Error('blind-dealer: custody intent publisherPubkey mismatch')
+  if (!sameValue(manifest.blindContentId, intent.blindContentId)) throw new Error('blind-dealer: custody intent blindContentId mismatch')
+  if (!sameValue(manifest.ciphertextRoot, intent.ciphertextRoot)) throw new Error('blind-dealer: custody intent ciphertextRoot mismatch')
+  if (!sameValue(manifest.commitmentRoot, intent.commitmentRoot)) throw new Error('blind-dealer: custody intent commitmentRoot mismatch')
+  if (!sameValue(manifest.shareBundleKey, intent.shareBundleKey)) throw new Error('blind-dealer: custody intent shareBundleKey mismatch')
+  if (manifest.scheme !== intent.shareScheme) throw new Error('blind-dealer: custody intent shareScheme mismatch')
+  if (manifest.threshold !== intent.shareThreshold) throw new Error('blind-dealer: custody intent shareThreshold mismatch')
+  if (!sameShardManifest(manifest.shareManifest, intent.shareManifest)) throw new Error('blind-dealer: custody intent shareManifest mismatch')
+
+  return true
+}
+
 export async function recoverKey (manifest, relayBaseUrls, fetchImpl = globalThis.fetch) {
   if (!manifest || !Array.isArray(manifest.shareManifest)) throw new Error('blind-dealer: manifest.shareManifest required')
+  verifyCustodyIntent(manifest)
   const rec = await recoverSecret({ shareManifest: manifest.shareManifest, threshold: manifest.threshold, fetch: createHttpShardFetch({ baseUrls: relayBaseUrls, fetch: fetchImpl }) })
   if (!rec.ok) { const e = new Error('blind-dealer: recover failed — ' + rec.reason); e.collected = rec.collected; e.need = rec.need; throw e }
   return rec.key

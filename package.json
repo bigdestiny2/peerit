@@ -45,6 +45,7 @@
   "devDependencies": {
     "@hyperswarm/dht-relay": "0.4.3",
     "@hyperswarm/testnet": "3.1.4",
+    "@noble/curves": "^1.9.0",
     "@noble/hashes": "^2.2.0",
     "@noble/secp256k1": "^3.1.0",
     "b4a": "1.8.1",

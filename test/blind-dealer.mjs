@@ -7,11 +7,13 @@
 
 import assert from 'node:assert'
 import crypto from 'node:crypto'
+import sodium from 'sodium-universal'
 import { shardAddressOf } from '../js/vendor/blind-shards/blind-shards.js'
 import {
-  disperseBody, recoverBody, recoverKey, makeHiverelayKeypair,
+  disperseBody, recoverBody, recoverKey, makeHiverelayKeypair, verifyCustodyIntent,
   encryptBody, decryptBody, normalizeRoster
 } from '../js/blind-dealer.mjs'
+import { genKeyPair, ready as cryptoReady } from '../js/crypto.js'
 
 function blake2b256Hex (buf) {
   return shardAddressOf(buf).slice('shard:'.length)
@@ -94,6 +96,7 @@ function makeMockFleet (n) {
 }
 
 async function main () {
+  await cryptoReady()
   const N = 4
   const K = 3
   const fleet = makeMockFleet(N)
@@ -114,8 +117,7 @@ async function main () {
 
   console.log('\n— full disperse → recover round-trip —')
   const body = 'The quick brown fox jumps over the lazy dog.'
-  const publisherSeed = crypto.randomBytes(32).toString('hex')
-  const publisherPub = crypto.generateKeyPairSync('ed25519', { privateKeyEncoding: { type: 'pkcs8', format: 'der' }, publicKeyEncoding: { type: 'spki', format: 'der' } }).publicKey.slice(-32).toString('hex')
+  const { seedHex: publisherSeed, pubHex: publisherPub } = await genKeyPair()
 
   const { ciphertext, manifest, intent, placed } = await disperseBody(body, {
     threshold: K,
@@ -153,6 +155,40 @@ async function main () {
     assert.fail('k-1 recovery should have failed')
   } catch (e) {
     ok(/recover failed|INSUFFICIENT_SHARDS/i.test(e.message), 'k-1 relays cannot reconstruct')
+  }
+
+  console.log('\n— custody-intent verification —')
+  ok(verifyCustodyIntent(manifest), 'valid custody intent verifies')
+
+  {
+    const missing = { ...manifest }
+    delete missing.intent
+    try {
+      await recoverKey(missing, cfg.relays.slice(0, K).map(r => r.url), fleet.fetch)
+      assert.fail('missing intent should be rejected')
+    } catch (e) {
+      ok(/custody intent missing/i.test(e.message), 'manifest without intent is rejected')
+    }
+  }
+
+  {
+    const tamperedSig = { ...manifest, intent: { ...manifest.intent, signature: '0'.repeat(128) } }
+    try {
+      await recoverKey(tamperedSig, cfg.relays.slice(0, K).map(r => r.url), fleet.fetch)
+      assert.fail('tampered intent signature should be rejected')
+    } catch (e) {
+      ok(/signature invalid/i.test(e.message), 'tampered intent signature is rejected')
+    }
+  }
+
+  {
+    const mismatched = { ...manifest, blindContentId: '0'.repeat(64) }
+    try {
+      await recoverKey(mismatched, cfg.relays.slice(0, K).map(r => r.url), fleet.fetch)
+      assert.fail('mismatched intent binding should be rejected')
+    } catch (e) {
+      ok(/blindContentId mismatch/i.test(e.message), 'mismatched manifest blindContentId is rejected')
+    }
   }
 
   console.log('\n— orphan-intent rejection —')

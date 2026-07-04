@@ -15,6 +15,23 @@ import { boxBody, unboxToBody, shouldBox, canBox } from './blob-store.js'
 // Decrypted-body cache is keyed by blobId (a content hash), so it is immutable
 // and never goes stale — a bounded FIFO is all it needs.
 const BODY_CACHE_MAX = 500
+const BLIND_DEALER_MODULE = './blind-dealer.mjs'
+
+async function loadBlindDealer () {
+  return import(BLIND_DEALER_MODULE)
+}
+
+// Small base64 helpers for the dispersal path (ciphertext stored as blob!<blindContentId>).
+function b64Encode (u8) {
+  if (typeof btoa === 'function') { let s = ''; for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]); return btoa(s) }
+  if (typeof Buffer !== 'undefined') return Buffer.from(u8).toString('base64')
+  throw new Error('base64 encoder unavailable')
+}
+function b64Decode (s) {
+  if (typeof atob === 'function') { const bin = atob(String(s)); const u = new Uint8Array(bin.length); for (let i = 0; i < u.length; i++) u[i] = bin.charCodeAt(i); return u }
+  if (typeof Buffer !== 'undefined') return new Uint8Array(Buffer.from(String(s), 'base64'))
+  throw new Error('base64 decoder unavailable')
+}
 
 export class Data {
   constructor (sync, identity, opts = {}) {
@@ -22,6 +39,9 @@ export class Data {
     this.id = identity
     this.minBits = opts.minBits || MIN_BITS
     this.v2 = !!opts.v2 // Opaque-Log v2 write path (sealed graph fields + okey keys). OFF by default until cutover.
+    this.dispersal = !!opts.dispersal // BlindShard dispersal: node writer attaches PVSS manifest; browser/Node reader recovers.
+    this.shardRelays = Array.isArray(opts.shardRelays) ? opts.shardRelays : [] // [{url,pubkey}] or [url] for shard fetch
+    this.fetch = opts.fetch || globalThis.fetch // injected for tests; defaults to global fetch
     this._profileCache = new Map() // pub -> { rec, at }
     this._tallyCache = new Map()   // `${viewer}:${cid}` -> { val, epoch }
     this._commentCountCache = new Map() // `${community}/${postCid}` -> { val, contentEpoch }
@@ -192,13 +212,29 @@ export class Data {
     return out.slice(0, limit)
   }
 
-  // ---- BlindShard Phase 2: box-before-store --------------------------------
+  // ---- BlindShard Phase 2/3: box-before-store + dispersal ------------------
   // Replace a long plaintext `data.body` with an opaque, content-addressed
   // ciphertext record (blob!<blobId>) + a signed manifest on the record. Mutates
   // `data` in place (body -> '', adds `data.blob`). Call BEFORE signing so the
   // manifest is covered by the record's signature; the blob itself is a separate
   // signed record so it flows through the normal admit/verify/merge path.
+  //
+  // When `this.dispersal` is enabled and the identity exposes a signing seed
+  // (Node/dev path), the AES key is PVSS-split across `this.shardRelays` and the
+  // ciphertext is still stored as blob!<blindContentId>. The record carries the
+  // dispersal manifest; the reader gathers >=threshold shards to reconstruct the
+  // key at the edge. Browser authoring remains blocked on #115, so this path is
+  // Node-only; the read path works in both Node and browser.
   async _boxBody (data) {
+    if (this.dispersal) {
+      const dispersal = await this._tryDispersalBox(data.body)
+      if (dispersal) {
+        data.body = ''
+        data.dispersal = dispersal
+        return
+      }
+      // Fall through to single-blob boxing if dispersal is not viable here.
+    }
     const { manifest, ct } = await boxBody(data.body)
     const blobData = { id: manifest.blobId, blobId: manifest.blobId, ct, author: this.me().pubkey }
     await this._powSign(TYPE.BLOB, blobData) // small PoW so blobs aren't a free large-append flood vector
@@ -207,13 +243,96 @@ export class Data {
     data.blob = manifest
   }
 
+  // Build a publisher keypair from the current identity, if it exposes a seed.
+  // BridgeIdentity (PearBrowser host) does not, so dispersal authoring falls back
+  // to single-blob in that runtime.
+  async _publisherForDispersal () {
+    if (!this.id || typeof this.id.currentSeedEntry !== 'function') return null
+    const entry = this.id.currentSeedEntry()
+    if (!entry || !entry.seed || !entry.pubkey) return null
+    const { makeHiverelayKeypair } = await loadBlindDealer()
+    return makeHiverelayKeypair({ seedHex: entry.seed, pubHex: entry.pubkey })
+  }
+
+  _rosterForDispersal () {
+    const relays = this.shardRelays
+    if (!relays || relays.length < 2) return null
+    const normalized = relays.map((r) => {
+      if (typeof r === 'string') return { url: r }
+      return { url: String(r.url || r.baseUrl || ''), pubkey: r.pubkey || r.publicKey || '' }
+    }).filter((r) => r.url)
+    if (normalized.length < 2) return null
+    const threshold = Math.min(normalized.length - 1, Math.ceil(normalized.length / 2))
+    return { threshold, relays: normalized, retainMs: 30 * 24 * 60 * 60 * 1000 }
+  }
+
+  _relayBaseUrls () {
+    return (this.shardRelays || []).map((r) => typeof r === 'string' ? r : (r.url || r.baseUrl || '')).filter(Boolean)
+  }
+
+  async _getRecoverBody () {
+    const node = typeof process !== 'undefined' && !!process.versions && !!process.versions.node
+    if (node) {
+      const { recoverBody } = await loadBlindDealer()
+      return recoverBody
+    }
+    const { recoverBody } = await import('./reader-bundle.js')
+    return recoverBody
+  }
+
+  async _tryDispersalBox (bodyText) {
+    const publisher = await this._publisherForDispersal()
+    const roster = this._rosterForDispersal()
+    if (!publisher || !roster) return null
+    try {
+      const { disperseBody } = await loadBlindDealer()
+      const { ciphertext, manifest } = await disperseBody(bodyText, {
+        publisher,
+        threshold: roster.threshold,
+        relays: roster.relays,
+        retainMs: roster.retainMs,
+        fetch: this.fetch
+      })
+      const ct = b64Encode(ciphertext)
+      const blobData = { id: manifest.blindContentId, blobId: manifest.blindContentId, ct, author: this.me().pubkey }
+      await this._powSign(TYPE.BLOB, blobData)
+      await this.sync.append({ type: TYPE.BLOB, data: blobData })
+      return manifest
+    } catch (err) {
+      if (typeof console !== 'undefined' && console.warn) console.warn('[peerit] dispersal box failed, falling back:', err.message)
+      return null
+    }
+  }
+
   // Return a render-ready copy of a post: if it carries a blob manifest, fetch
   // blob!<blobId>, verify the two content-address gates, and decrypt the body.
   // Never mutates the stored record; on a missing/withheld/tampered blob it
   // degrades gracefully to an empty body flagged `_blobMissing` (a relay can
   // withhold a blob but can never forge one past the gates in unboxToBody).
   async _hydrate (rec) {
-    if (!rec || !rec.blob || !rec.blob.blobId) return rec
+    if (!rec) return rec
+    if (rec.dispersal) {
+      const m = rec.dispersal
+      const cached = this._bodyCache.get(m.blindContentId)
+      if (cached != null) return { ...rec, body: cached }
+      try {
+        const blob = await this.sync.get(keys.blob(m.blindContentId))
+        if (!blob || !blob.ct) return { ...rec, body: '', _blobMissing: true }
+        const ctBytes = b64Decode(blob.ct)
+        const recoverBody = await this._getRecoverBody()
+        const body = await recoverBody(m, {
+          fetchCiphertext: () => ctBytes,
+          relayBaseUrls: this._relayBaseUrls(),
+          fetchImpl: this.fetch
+        })
+        if (this._bodyCache.size >= BODY_CACHE_MAX) this._bodyCache.delete(this._bodyCache.keys().next().value)
+        this._bodyCache.set(m.blindContentId, body)
+        return { ...rec, body }
+      } catch {
+        return { ...rec, body: '', _blobMissing: true }
+      }
+    }
+    if (!rec.blob || !rec.blob.blobId) return rec
     const m = rec.blob
     const cached = this._bodyCache.get(m.blobId)
     if (cached != null) return { ...rec, body: cached }
@@ -330,6 +449,7 @@ export class Data {
     if (p.author !== this.me().pubkey) throw new Error('You can only edit your own post')
     const data = { ...p, body: String(body || '').slice(0, 40000), editedAt: Date.now() }
     delete data.blob // drop any prior manifest; re-box below if the new body is still long
+    delete data.dispersal
     if (!this.v2 && data.kind === 'text' && canBox() && shouldBox(data.body)) await this._boxBody(data)
     await this._emit(TYPE.POST, data)
     this.invalidateViewCaches()
@@ -342,6 +462,7 @@ export class Data {
     if (p.author !== this.me().pubkey) throw new Error('You can only delete your own post')
     const data = { ...p, deleted: true, body: '', url: '', title: p.title, editedAt: Date.now() }
     delete data.blob // a deleted post references no blob
+    delete data.dispersal
     await this._emit(TYPE.POST, data)
     this.invalidateViewCaches()
   }
@@ -397,6 +518,7 @@ export class Data {
     if (c.author !== this.me().pubkey) throw new Error('You can only edit your own comment')
     const data = { ...c, body: String(body || '').slice(0, 10000), editedAt: Date.now() }
     delete data.blob // drop any prior manifest; re-box below if still long
+    delete data.dispersal
     if (!this.v2 && canBox() && shouldBox(data.body)) await this._boxBody(data)
     await this._emit(TYPE.COMMENT, data)
     this.invalidateViewCaches()
@@ -409,6 +531,7 @@ export class Data {
     if (c.author !== this.me().pubkey) throw new Error('You can only delete your own comment')
     const data = { ...c, deleted: true, body: '', editedAt: Date.now() }
     delete data.blob // a deleted comment references no blob
+    delete data.dispersal
     await this._emit(TYPE.COMMENT, data)
     this.invalidateViewCaches()
   }

@@ -1,11 +1,20 @@
-# Public BlindShard cohort — run shard-store relays for peerit
+# Public BlindShard cohort — shard-store surface for peerit
 
-This deploys one or more **HiveRelay shard-store relays**: content-addressed
-blind blob stores that hold PVSS key shares (and, once peerit's ciphertext-off-VPS
-path lands, the ciphertext blobs). Each relay stores opaque shards it cannot
-read, link to a post, or reconstruct alone.
+The shard store is an HTTP surface **inside the same HiveRelay nodes** that
+already replicate peerit outboxes. It stores content-addressed blind blobs:
+PVSS key shares and (with peerit's ciphertext-off-VPS path) body ciphertext.
+Each relay stores opaque shards it cannot read, link to a post, or reconstruct
+alone.
 
-> **Honest scope:** running multiple relays yourself is a **mechanism/deployment**
+This directory has two uses:
+1. **Enable the shard-store surface on your existing public HiveRelays**
+   (`peerit-relay` and/or the VPS/Render relays). That is the fastest path to
+   live because the fleet already exists — just upgrade the image to
+   `feat/local-shard-cohort` and add an API key.
+2. **Add dedicated shard-store-only relays** or hand this to independent
+   operators for real collusion-resistance.
+
+> **Honest scope:** multiple relays you run yourself is a **mechanism/deployment**
 > proof, not the independence property. For real collusion-resistance you need
 > ≥3 independent legal entities running relays they alone control. See
 > [`docs/RELAY-OPERATOR-RECRUITMENT.md`](../../docs/RELAY-OPERATOR-RECRUITMENT.md).
@@ -23,9 +32,31 @@ read, link to a post, or reconstruct alone.
 
 ---
 
+## 0. Fast path: enable the shard store on existing peerit relays
+
+If you already run the peerit outbox relays (`deploy/peerit-relay/`), the
+shard-store surface lives in the **same HiveRelay process**. The fastest live
+path is to upgrade those relays to `feat/local-shard-cohort` and set
+`RELAY_API_KEY` in their `.env`:
+
+```sh
+# on each existing relay host
+git fetch origin
+git checkout feat/local-shard-cohort
+docker build -t hiverelay:shard-store .
+# edit .env: add RELAY_API_KEY and PEERIT_ORIGIN, then:
+docker compose up -d
+```
+
+The public reader roster then lists the **same relay URLs** peerit already uses
+for outbox gossip, just with an additional `pubkey` field. No new hosts are
+required for the minimal "blind pipe on the VPS" deployment.
+
+---
+
 ## 1. Build the HiveRelay image with shard-store support
 
-From the **Hiverelay repo root** (`P2P-Hiverelay`, `feat/shard-store` branch):
+From the **Hiverelay repo root** (`P2P-Hiverelay`, `feat/local-shard-cohort` branch):
 
 ```sh
 git checkout feat/local-shard-cohort

@@ -16,8 +16,9 @@ read, link to a post, or reconstruct alone.
 
 - Docker + Docker Compose on the host.
 - A public IP and either a domain or `sslip.io` address.
-- A local clone of `P2P-Hiverelay` checked out to the `feat/shard-store` branch
-  (the shard-store plugin is not yet merged to `main`).
+- A local clone of `P2P-Hiverelay` checked out to the `feat/local-shard-cohort`
+  branch (the shard-store plugin + ciphertext-off-VPS support is not yet merged
+  to `main`).
 - `git`, `openssl`, and a shell.
 
 ---
@@ -27,7 +28,7 @@ read, link to a post, or reconstruct alone.
 From the **Hiverelay repo root** (`P2P-Hiverelay`, `feat/shard-store` branch):
 
 ```sh
-git checkout feat/shard-store
+git checkout feat/local-shard-cohort
 docker build -t hiverelay:shard-store .
 ```
 

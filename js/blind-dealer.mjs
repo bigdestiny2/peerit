@@ -38,6 +38,7 @@ export const SHARE_SCHEME = 'pvss-secp256k1-v1'
 
 const te = new TextEncoder()
 const td = new TextDecoder()
+const HKDF_INFO = te.encode('peerit-blindshard-body-key-v1')
 
 function toHex (u8) {
   const bytes = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8)
@@ -62,6 +63,28 @@ async function sha256Bytes (bytes) {
   if (subtle) return toHex(await subtle.digest('SHA-256', u))
   const { default: nc } = await import('node:crypto')
   return nc.createHash('sha256').update(Buffer.from(u)).digest('hex')
+}
+
+// Derive the AES-256-GCM body key from the recovered PVSS scalar using HKDF-SHA-256.
+// Never use the scalar directly as an AES key — it is a secp256k1 scalar, not a
+// uniform random key. The salt is the signed PVSS commitmentRoot so the derived key
+// is bound to the public manifest and cannot be recombined with a different one.
+async function deriveBodyKey (scalarHex, saltBytes) {
+  const ikm = fromHex(scalarHex)
+  if (saltBytes.length !== 32) throw new Error('blind-dealer: deriveBodyKey salt must be 32 bytes')
+  const subtle = typeof crypto !== 'undefined' && crypto.subtle
+  if (subtle && subtle.importKey && subtle.deriveBits) {
+    try {
+      const baseKey = await subtle.importKey('raw', ikm, { name: 'HKDF' }, false, ['deriveBits'])
+      const bits = await subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: saltBytes, info: HKDF_INFO }, baseKey, 256)
+      return toHex(new Uint8Array(bits))
+    } catch {}
+  }
+  // Manual HKDF-SHA256 fallback (extract-then-expand; one block is enough for 32 bytes).
+  const { createHmac } = await import('node:crypto')
+  const prk = createHmac('sha256', saltBytes).update(ikm).digest()
+  const okm = createHmac('sha256', prk).update(HKDF_INFO).update(new Uint8Array([1])).digest()
+  return toHex(okm)
 }
 
 // A HiveRelay/libsodium keypair from peerit's seed/pub hex: secretKey = seed||pubkey
@@ -115,25 +138,36 @@ export async function encryptBody (bodyText) {
   return { ciphertext: new Uint8Array(ct), iv: toHex(iv), keyHex: toHex(rawKey) }
 }
 
-export async function decryptBody (ciphertext, ivHex, keyHex) {
+export async function decryptBody (ciphertext, ivHex, keyHex, plaintextHash) {
   const subtle = typeof crypto !== 'undefined' && crypto.subtle
   if (!subtle) throw new Error('blind-dealer: WebCrypto SubtleCrypto unavailable; cannot decrypt body')
   const key = await subtle.importKey('raw', fromHex(keyHex), { name: 'AES-GCM', length: 256 }, false, ['decrypt'])
   const pt = await subtle.decrypt({ name: 'AES-GCM', iv: fromHex(ivHex) }, key, ciphertext instanceof Uint8Array ? ciphertext : new Uint8Array(ciphertext))
-  return td.decode(pt)
+  const body = td.decode(pt)
+  if (plaintextHash) {
+    const h = await sha256Bytes(te.encode(body))
+    if (h !== String(plaintextHash).toLowerCase()) throw new Error('blind-dealer: plaintext hash mismatch')
+  }
+  return body
 }
 
 export function normalizeRoster (cfg) {
   const threshold = Number(cfg.threshold)
   const relays = Array.isArray(cfg.relays) ? cfg.relays : []
-  if (!Number.isInteger(threshold) || threshold < 1 || threshold > relays.length) {
-    throw new Error('blind-dealer: threshold must be an integer with 1 <= threshold <= relays.length')
+  if (!Number.isInteger(threshold) || threshold < 2 || threshold > relays.length) {
+    throw new Error('blind-dealer: threshold must be an integer with 2 <= threshold <= relays.length')
+  }
+  if (relays.length < 3) {
+    throw new Error('blind-dealer: dispersal requires at least 3 relays')
   }
   const normalized = []
+  const seen = new Set()
   for (let i = 0; i < relays.length; i++) {
     const r = relays[i]
     const pub = String(r.pubkey || r.publicKey || '').toLowerCase().trim()
     if (!/^[0-9a-f]{64}$/.test(pub)) throw new Error('blind-dealer: relay ' + i + ' pubkey must be 64-hex')
+    if (seen.has(pub)) throw new Error('blind-dealer: duplicate relay pubkey ' + pub.slice(0, 12))
+    seen.add(pub)
     const url = String(r.url || r.baseUrl || '').replace(/\/+$/, '')
     if (!url) throw new Error('blind-dealer: relay ' + i + ' needs a url/baseUrl')
     normalized.push({ pubkey: pub, url, apiKey: r.apiKey || r.token || null, index: i + 1 })
@@ -143,6 +177,7 @@ export function normalizeRoster (cfg) {
 
 const buildShareAssignments = (plan, relays) => plan.shares.map((s) => ({ relayPubkey: relays[s.shareIndex - 1].pubkey, shareIndex: s.shareIndex }))
 const buildShareManifest = (plan) => plan.shares.map((s) => ({ shareIndex: s.shareIndex, shard: s.shard, shareCommitment: s.shareCommitment }))
+const buildCiphertextAssignments = (relays) => relays.map((r) => ({ relayPubkey: r.pubkey }))
 
 async function buildIntentFromPlan (plan, opts) {
   const relays = opts.relays
@@ -153,7 +188,9 @@ async function buildIntentFromPlan (plan, opts) {
   const blindContentId = String(opts.blindContentId || await sha256Bytes(commitmentRootBytes)).toLowerCase()
   const ciphertextRoot = String(opts.ciphertextRoot || blindContentId).toLowerCase()
   const shareBundleKey = shardAddressOf(commitmentRootBytes).slice('shard:'.length)
-  const intent = createCustodyIntent({
+  const ciphertextShard = opts.ciphertext ? shardAddressOf(opts.ciphertext) : undefined
+  const plaintextHash = opts.plaintextHash ? String(opts.plaintextHash).toLowerCase() : undefined
+  const intentFields = {
     version: 2,
     blindContentId,
     ciphertextRoot,
@@ -166,8 +203,14 @@ async function buildIntentFromPlan (plan, opts) {
     shareAssignments: buildShareAssignments(plan, relays),
     shareManifest: buildShareManifest(plan),
     retainUntil: Date.now() + opts.retainMs
-  }, publisher)
-  return { intent, shareManifest: buildShareManifest(plan), shareAssignments: buildShareAssignments(plan, relays), blindContentId, ciphertextRoot }
+  }
+  if (ciphertextShard) {
+    intentFields.ciphertextAssignments = buildCiphertextAssignments(relays)
+    intentFields.ciphertextShard = ciphertextShard
+  }
+  if (plaintextHash) intentFields.plaintextHash = plaintextHash
+  const intent = createCustodyIntent(intentFields, publisher)
+  return { intent, shareManifest: buildShareManifest(plan), shareAssignments: buildShareAssignments(plan, relays), blindContentId, ciphertextRoot, ciphertextShard, plaintextHash }
 }
 
 // PVSS-split a 64-hex secret across the roster + build a signed v2 custody intent
@@ -182,33 +225,68 @@ export async function disperseKey (keyHex, opts) {
 
 export async function publishIntentToRelays (intent, relays, fetchImpl = globalThis.fetch) {
   if (typeof fetchImpl !== 'function') throw new Error('blind-dealer: fetch unavailable')
-  const errors = []
-  for (const r of relays) {
-    try {
-      const res = await fetchImpl(r.url + '/api/custody/intent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(r.apiKey ? { Authorization: 'Bearer ' + r.apiKey } : {}) },
-        body: JSON.stringify(intent)
-      })
-      if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text().catch(() => '')).slice(0, 120))
-    } catch (err) { errors.push({ relay: r.url, error: err.message }) }
-  }
+  const results = await Promise.allSettled(relays.map(async (r) => {
+    const res = await fetchImpl(r.url + '/api/custody/intent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(r.apiKey ? { Authorization: 'Bearer ' + r.apiKey } : {}) },
+      body: JSON.stringify(intent)
+    })
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text().catch(() => '')).slice(0, 120))
+    return { relay: r.url }
+  }))
+  const errors = results.filter(r => r.status === 'rejected').map((r, i) => ({ relay: relays[i].url, error: r.reason.message }))
   if (errors.length) { const e = new Error('blind-dealer: failed to publish intent to ' + errors.length + ' relay(s)'); e.errors = errors; throw e }
 }
 
 export async function putShards (plan, intent, relays, publisher, retainMs, fetchImpl = globalThis.fetch) {
   if (typeof fetchImpl !== 'function') throw new Error('blind-dealer: fetch unavailable')
-  const until = Date.now() + retainMs
-  const placed = []
-  for (const s of plan.shares) {
+  const until = Math.min(Date.now() + retainMs, intent.retainUntil || Infinity)
+  const results = await Promise.allSettled(plan.shares.map(async (s) => {
     const r = relays[s.shareIndex - 1]
     const put = createHttpShardPut({
       baseUrl: r.url,
       fetch: fetchImpl,
       signPin: ({ hash, shareIndex }) => signCustodyPin({ hash, custodyIntentId: intent.intentId, shareIndex, retainUntil: until }, publisher)
     })
-    placed.push({ shareIndex: s.shareIndex, relay: r.url, shard: await put(s.bytes, { shareIndex: s.shareIndex }) })
+    const shard = await put(s.bytes, { shareIndex: s.shareIndex })
+    return { shareIndex: s.shareIndex, relay: r.url, shard }
+  }))
+  const placed = []
+  const errors = []
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i]
+    if (r.status === 'fulfilled') placed.push(r.value)
+    else errors.push({ shareIndex: plan.shares[i].shareIndex, relay: relays[plan.shares[i].shareIndex - 1].url, error: r.reason.message })
   }
+  if (errors.length) { const e = new Error('blind-dealer: failed to PUT ' + errors.length + ' shard(s)'); e.errors = errors; throw e }
+  return placed
+}
+
+// Store the ciphertext itself as a content-addressed shard on the cohort so the
+// VPS/outbox no longer holds the body bytes. Uses shareIndex:0 to distinguish
+// the ciphertext blob from PVSS key shares. Redundant across every relay for
+// durability; the reader fetches the first copy that answers.
+export async function putCiphertextToRelays (ciphertext, intent, relays, publisher, retainMs, fetchImpl = globalThis.fetch) {
+  if (typeof fetchImpl !== 'function') throw new Error('blind-dealer: fetch unavailable')
+  if (!intent || !intent.intentId) throw new Error('blind-dealer: custody intent required')
+  const until = Math.min(Date.now() + retainMs, intent.retainUntil || Infinity)
+  const results = await Promise.allSettled(relays.map(async (r) => {
+    const put = createHttpShardPut({
+      baseUrl: r.url,
+      fetch: fetchImpl,
+      signPin: ({ hash, shareIndex }) => signCustodyPin({ hash, custodyIntentId: intent.intentId, shareIndex, retainUntil: until }, publisher)
+    })
+    const shard = await put(ciphertext, { shareIndex: 0 })
+    return { shareIndex: 0, relay: r.url, shard }
+  }))
+  const placed = []
+  const errors = []
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i]
+    if (r.status === 'fulfilled') placed.push(r.value)
+    else errors.push({ shareIndex: 0, relay: relays[i].url, error: r.reason.message })
+  }
+  if (errors.length) { const e = new Error('blind-dealer: failed to PUT ciphertext to ' + errors.length + ' relay(s)'); e.errors = errors; throw e }
   return placed
 }
 
@@ -217,36 +295,33 @@ export async function putShards (plan, intent, relays, publisher, retainMs, fetc
 export async function disperseBody (bodyText, opts) {
   const publisher = opts.publisher || await ensurePublisher(opts.publisher || {})
   const roster = normalizeRoster(opts)
-  // Plan FIRST so the PVSS secret (a valid secp256k1 scalar) IS the AES key —
-  // recovery returns the exact key needed to decrypt.
+  // Plan FIRST so the PVSS secret is a valid secp256k1 scalar; then derive the
+  // AES-256-GCM key from it with HKDF-SHA-256 (salt = commitmentRoot). The scalar
+  // itself is never used as an AES key, and the derived key is bound to the signed
+  // commitmentRoot so it cannot be swapped onto a different manifest.
   const plan = await planDispersal({ count: roster.relays.length, threshold: roster.threshold })
-  const { ciphertext, iv } = await encryptWithKey(bodyText, plan.key)
+  const bodyKey = await deriveBodyKey(plan.key, fromHex(plan.commitmentRoot))
+  const { ciphertext, iv } = await encryptWithKey(bodyText, bodyKey)
   const ciphertextRoot = await sha256Bytes(ciphertext)
-  const { intent, shareManifest, blindContentId } = await buildIntentFromPlan(plan, {
+  const plaintextHash = await sha256Bytes(te.encode(String(bodyText == null ? '' : bodyText)))
+  const { intent, shareManifest, blindContentId, ciphertextShard, plaintextHash: manifestHash } = await buildIntentFromPlan(plan, {
     relays: roster.relays, publisher, retainMs: roster.retainMs,
-    blindContentId: opts.blindContentId || ciphertextRoot, ciphertextRoot
+    blindContentId: opts.blindContentId || ciphertextRoot, ciphertextRoot, ciphertext, plaintextHash
   })
-  let placed
-  if (typeof opts.putShard === 'function') {
-    placed = []
-    for (const s of plan.shares) {
-      await opts.putShard(s.bytes, { shareIndex: s.shareIndex, shard: s.shard, address: s.shard })
-      placed.push({ shareIndex: s.shareIndex, relay: 'bridge', shard: s.shard })
-    }
-  } else {
-    await publishIntentToRelays(intent, roster.relays, opts.fetch)
-    placed = await putShards(plan, intent, roster.relays, publisher, roster.retainMs, opts.fetch)
-  }
+  await publishIntentToRelays(intent, roster.relays, opts.fetch)
+  const placedShares = await putShards(plan, intent, roster.relays, publisher, roster.retainMs, opts.fetch)
+  const placedCiphertext = await putCiphertextToRelays(ciphertext, intent, roster.relays, publisher, roster.retainMs, opts.fetch)
   const manifest = {
     version: 2, scheme: SHARE_SCHEME, threshold: roster.threshold, count: roster.relays.length,
-    blindContentId, ciphertextRoot, commitmentRoot: plan.commitmentRoot,
+    blindContentId, ciphertextRoot, ciphertextShard, commitmentRoot: plan.commitmentRoot,
     shareBundleKey: shardAddressOf(fromHex(plan.commitmentRoot)).slice('shard:'.length),
     shareManifest, iv, alg: 'AES-256-GCM',
+    plaintextHash: manifestHash,
     publisherPubkey: intent.publisherPubkey,
     intentId: intent.intentId,
     intent
   }
-  return { ciphertext, manifest, intent, plan, publisher, placed }
+  return { ciphertext, manifest, intent, plan, publisher, placed: placedShares.concat(placedCiphertext) }
 }
 
 function sameValue (a, b) {
@@ -283,6 +358,9 @@ export function verifyCustodyIntent (manifest, opts = {}) {
   if (manifest.scheme !== intent.shareScheme) throw new Error('blind-dealer: custody intent shareScheme mismatch')
   if (manifest.threshold !== intent.shareThreshold) throw new Error('blind-dealer: custody intent shareThreshold mismatch')
   if (!sameShardManifest(manifest.shareManifest, intent.shareManifest)) throw new Error('blind-dealer: custody intent shareManifest mismatch')
+  if (manifest.plaintextHash || intent.plaintextHash) {
+    if (!sameValue(manifest.plaintextHash, intent.plaintextHash)) throw new Error('blind-dealer: custody intent plaintextHash mismatch')
+  }
 
   return true
 }
@@ -301,9 +379,10 @@ export async function recoverKey (manifest, relayBaseUrls, fetchImpl = globalThi
 export async function recoverBody (manifest, opts = {}) {
   const { relayBaseUrls, fetchCiphertext, fetchImpl = globalThis.fetch, fetchShard } = opts
   if (typeof fetchCiphertext !== 'function') throw new Error('blind-dealer: fetchCiphertext(blindContentId) required')
-  const keyHex = await recoverKey(manifest, relayBaseUrls, fetchImpl, fetchShard)
+  const scalar = await recoverKey(manifest, relayBaseUrls, fetchImpl, fetchShard)
+  const bodyKey = await deriveBodyKey(scalar, fromHex(manifest.commitmentRoot))
   const ciphertext = await fetchCiphertext(manifest.blindContentId)
-  return decryptBody(ciphertext, manifest.iv, keyHex)
+  return decryptBody(ciphertext, manifest.iv, bodyKey, manifest.plaintextHash)
 }
 
 // buildPin(shardId, bytes, ctx) for the shard-store-adapter seam. ctx MUST include

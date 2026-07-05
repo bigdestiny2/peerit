@@ -125,6 +125,7 @@ function normalizeConfig (raw) {
     relayRoster: raw.relayRoster || 'relay-roster.json',
     pinnedRosterKey: String(raw.pinnedRosterKey || raw.rosterKey || '').trim().toLowerCase(),
     dhtRelay: String(raw.dhtRelay || '').trim(),
+    shardRoster: String(raw.shardRoster || '').trim(),
     roster: normalizeRelayRosterPayload(raw.roster || {
       version: 1,
       expires: raw.expires,
@@ -262,6 +263,7 @@ async function buildWeb (release, driveKey) {
     '--drive-key', driveKey
   ]
   if (release.dhtRelay) args.push('--dht-relay', release.dhtRelay)
+  if (release.shardRoster) args.push('--shard-roster', release.shardRoster)
   await run('node', args)
   addCheck('build:web', 'pass', 'Built web/ from the signed relay roster release config.')
 }
@@ -289,6 +291,9 @@ function verifyWebBundle (release, rosterInfo, driveKey) {
   if (metaContent(html, 'peerit-relay-roster') !== 'relay-roster.json') throw new Error('web/index.html relay roster meta must point at relay-roster.json')
   if (metaContent(html, 'peerit-relay-roster-key') !== release.pinnedRosterKey) throw new Error('web/index.html pinned roster key does not match deploy/web-release.json')
   if (release.dhtRelay && metaContent(html, 'peerit-dht-relay') !== release.dhtRelay) throw new Error('web/index.html DHT relay meta does not match deploy/web-release.json')
+  if (release.shardRoster) {
+    if (metaContent(html, 'peerit-shard-roster') !== release.shardRoster) throw new Error('web/index.html shard roster meta does not match deploy/web-release.json')
+  }
   addCheck('web:index-meta', 'pass', 'web/index.html contains the expected relay roster meta tags.')
 
   const rootRosterHash = rosterInfo.sha256
@@ -296,10 +301,22 @@ function verifyWebBundle (release, rosterInfo, driveKey) {
   if (webRosterHash !== rootRosterHash) throw new Error('web/relay-roster.json differs from root relay-roster.json')
   addCheck('web:roster-copy', 'pass', 'web/relay-roster.json matches root relay-roster.json.', { sha256: rootRosterHash })
 
+  let shardRosterHash = ''
+  if (release.shardRoster) {
+    const rootShardRoster = resolveRoot(release.shardRoster)
+    const webShardRoster = join(ROOT, 'web', release.shardRoster)
+    if (!existsSync(webShardRoster)) throw new Error(`${webShardRoster} is missing; run npm run build-web`)
+    shardRosterHash = sha256(readFileSync(rootShardRoster))
+    const webShardRosterHash = sha256(readFileSync(webShardRoster))
+    if (webShardRosterHash !== shardRosterHash) throw new Error(`${release.shardRoster} in web/ differs from root`)
+    addCheck('web:shard-roster-copy', 'pass', `${release.shardRoster} in web/ matches root.`, { sha256: shardRosterHash })
+  }
+
   const assetManifest = readJson(webManifest)
   if (!assetManifest) throw new Error('web/asset-manifest.json is invalid')
   if (assetManifest.driveKey !== driveKey) throw new Error('web/asset-manifest.json driveKey does not match the release drive key')
   if (!assetManifest.files || assetManifest.files['relay-roster.json'] !== rootRosterHash) throw new Error('asset-manifest.json does not pin relay-roster.json hash')
+  if (release.shardRoster && assetManifest.files[release.shardRoster] !== shardRosterHash) throw new Error('asset-manifest.json does not pin ' + release.shardRoster)
   if (!assetManifest.webRelease || assetManifest.webRelease.relayRosterKey !== release.pinnedRosterKey) throw new Error('asset-manifest.json webRelease key does not match deploy/web-release.json')
   addCheck('web:asset-manifest', 'pass', 'asset-manifest.json pins the drive key, roster key, and roster hash.', {
     driveKey,
@@ -307,6 +324,7 @@ function verifyWebBundle (release, rosterInfo, driveKey) {
   })
 
   if (!readFileSync(sw, 'utf8').includes(`"relay-roster.json":"${rootRosterHash}"`)) throw new Error('sw.js does not pin relay-roster.json')
+  if (release.shardRoster && !readFileSync(sw, 'utf8').includes(`"${release.shardRoster}":"${shardRosterHash}"`)) throw new Error('sw.js does not pin ' + release.shardRoster)
   if (!readFileSync(verify, 'utf8').includes(driveKey)) throw new Error('verify.html does not include the release drive key')
   addCheck('web:generated-assets', 'pass', 'sw.js and verify.html carry the same release pins.')
 }
@@ -329,7 +347,8 @@ async function main () {
     readonly: release.readonly,
     relayRoster: release.relayRoster,
     pinnedRosterKey: release.pinnedRosterKey,
-    dhtRelay: release.dhtRelay || null
+    dhtRelay: release.dhtRelay || null,
+    shardRoster: release.shardRoster || null
   }
   validateReleaseConfig(release)
   const rosterInfo = await prepareRoster(release)

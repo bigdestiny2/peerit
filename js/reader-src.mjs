@@ -3,3 +3,4 @@
 // to js/sodium-browser-shim.mjs so the bundle runs in a normal browser using
 // @noble (pure JS), blake2b (WASM-inlined), WebCrypto, and fetch.
 export { recoverBody, recoverKey } from './blind-dealer.mjs'
+export { createHttpShardFetch } from './vendor/blind-shards/shard-transport.js'

@@ -214,43 +214,52 @@ export async function recoverSecret ({ shareManifest, threshold, fetch } = {}) {
   if (!Number.isInteger(threshold) || threshold < 1) throw new Error('recoverSecret: threshold >= 1 required')
   if (typeof fetch !== 'function') throw new Error('recoverSecret: fetch(shard) required')
 
-  const shares = []
   const seenAddr = new Set()
-  const seenIndex = new Set()
-  for (const entry of shareManifest) {
-    if (shares.length >= threshold) break
-    if (!entry || typeof entry.shard !== 'string') continue
-    // The manifest MUST commit to this share's point. Without a well-formed
-    // commitment the share cannot be validated, so it is unusable (fail closed).
+  // Fetch every manifest entry in parallel. Each relay is raced only at the
+  // single-shard level here; the injected fetch() may itself fan out across
+  // relays. We process the first threshold valid, distinct-index shares we get.
+  const attempts = await Promise.allSettled(shareManifest.map(async (entry) => {
+    if (!entry || typeof entry.shard !== 'string') return null
     const commitment = typeof entry.shareCommitment === 'string' ? entry.shareCommitment.toLowerCase() : null
-    if (!commitment || !POINT.test(commitment)) continue
+    if (!commitment || !POINT.test(commitment)) return null
     const address = normalizeAddress(entry.shard)
-    if (seenAddr.has(address)) continue
+    if (seenAddr.has(address)) return null
     seenAddr.add(address)
     let bytes = null
     try { bytes = await fetch(address) } catch { bytes = null }
-    if (!bytes || !bytes.length) continue
+    if (!bytes || !bytes.length) return null
     // Content-address integrity: a relay returning wrong/garbage bytes for the
     // hash is caught here — no relay is trusted for the bytes.
-    if (shardAddressOf(bytes) !== address) continue
+    if (shardAddressOf(bytes) !== address) return null
     let share
-    try { share = decodeShareShard(bytes) } catch { continue }
+    try { share = decodeShareShard(bytes) } catch { return null }
     // Commitment binding: the decoded share point MUST equal the point the
     // (authenticated) manifest commits to. A valid DLEQ proof alone is forgeable
     // — it only proves S_i is the honest decryption of an attacker-suppliable
     // encryptedShare — so this equality is what actually stops a substituted
     // share from silently reconstructing a WRONG secret.
-    if (share.share.toLowerCase() !== commitment) continue
+    if (share.share.toLowerCase() !== commitment) return null
+    return share
+  }))
+
+  const shares = []
+  const seenIndex = new Set()
+  let collected = 0
+  for (const result of attempts) {
+    if (result.status !== 'fulfilled' || !result.value) continue
+    const share = result.value
+    collected++
     if (seenIndex.has(share.index)) continue // duplicate share index is unusable
     seenIndex.add(share.index)
     shares.push(share)
+    if (shares.length >= threshold) break
   }
 
   if (shares.length < threshold) {
-    return { ok: false, collected: shares.length, need: threshold, reason: 'INSUFFICIENT_SHARDS' }
+    return { ok: false, collected, need: threshold, reason: 'INSUFFICIENT_SHARDS' }
   }
   // reconstruct() re-verifies every share's DLEQ proof and Lagrange-interpolates
   // in the exponent — a substituted/forged share throws rather than corrupts.
   const out = await reconstruct({ shares, threshold })
-  return { ok: true, key: out.key, secretPoint: out.secretPoint, used: shares.length, collected: shares.length, need: threshold }
+  return { ok: true, key: out.key, secretPoint: out.secretPoint, used: shares.length, collected, need: threshold }
 }

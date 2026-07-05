@@ -10,9 +10,13 @@
 // seeded hyperdrive, etc.). This tool outputs both pieces.
 //
 // Usage:
-//   node scripts/seed-dealer.mjs --config config/shard-roster.json --body "hello world"
-//   node scripts/seed-dealer.mjs --config config/shard-roster.json --body-file post.md
-//   node scripts/seed-dealer.mjs --config config/shard-roster.json --body-file - < post.md
+//   node scripts/seed-dealer.mjs --body "hello world"
+//   node scripts/seed-dealer.mjs --body-file post.md
+//   node scripts/seed-dealer.mjs --config ~/.hiverelay-shard-cohort/roster.json --body-file - < post.md
+//
+// Default config is the live HiveRelay cohort in ~/.hiverelay-shard-cohort/roster.json
+// (contains operator apiKeys, so it stays outside the repo). Pass --config explicitly
+// to use a mock/dev roster such as config/shard-roster.json.
 //
 // Outputs (by default to stdout as JSON):
 //   {
@@ -36,7 +40,7 @@ function usage (code = 0, message = '') {
   console.error(`usage: node scripts/seed-dealer.mjs [options]
 
 Options:
-  --config <path>         Shard roster JSON (default: config/shard-roster.json)
+  --config <path>         Shard roster JSON (default: ~/.hiverelay-shard-cohort/roster.json)
   --body <text>           Body text to encrypt and disperse
   --body-file <path>      Read body from file (- for stdin)
   --out-dir <dir>         Directory for ciphertext file (default: ./seeded)
@@ -48,7 +52,7 @@ Options:
 
 function parseArgs (argv) {
   const opts = {
-    config: path.join(ROOT, 'config', 'shard-roster.json'),
+    config: path.join(process.env.HOME || '/tmp', '.hiverelay-shard-cohort', 'roster.json'),
     body: '',
     bodyFile: '',
     outDir: path.join(ROOT, 'seeded'),
@@ -87,7 +91,7 @@ async function main () {
   const body = await readBody(opts)
 
   // Validate roster early so we fail before doing any crypto.
-  normalizeRoster(cfg)
+  const roster = normalizeRoster(cfg)
 
   const publisher = await ensurePublisher(cfg.publisher)
   const { ciphertext, manifest, intent, placed } = await disperseBody(body, {

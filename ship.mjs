@@ -205,6 +205,7 @@ function verifyGitCleanForServedFiles () {
     ...SITE_FILES,
     'manifest.json',
     'relay-roster.json',
+    'config/shard-roster.public.json',
     'deploy/web-release.json',
     'docs/WEB-DEPLOYMENT.md',
     'README.md',

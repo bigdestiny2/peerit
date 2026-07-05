@@ -1,7 +1,8 @@
 {
   "source": "https://github.com/bigdestiny2/P2P-Hiverelay",
-  "sha": "4facbaeda8ef085413ad972910422ed40a173d69",
-  "syncedAt": "2026-07-04T11:29:37.973Z",
+  "sha": "4facbaeda8ef085413ad972910422ed40a173d69+ciphertext-extension",
+  "syncedAt": "2026-07-05T14:00:00.000Z",
+  "note": "Local extensions ahead of upstream: custody-signing.js adds ciphertextAssignments/ciphertextShard (ciphertext-off-VPS) and plaintextHash (key commitment); blind-shards.js parallelizes recoverSecret fetches. Re-sync after hiverelay feat/local-shard-cohort lands these fields upstream.",
   "files": {
     "blind-custody.js": {
       "path": "packages/client/blind-custody.js",
@@ -25,8 +26,8 @@
     },
     "custody-signing.js": {
       "path": "packages/core/core/custody-signing.js",
-      "sha256": "e345649eb240bc8b20419709267f344859b662b6eb012ffb45b98c844084e532",
-      "bytes": 47022
+      "sha256": "bfeb6d8b8eb448f2beed8f22707cda83e2553153f55858e18196b77dcd1e88a4",
+      "bytes": 49083
     },
     "LICENSE": {
       "path": "packages/client/LICENSE",

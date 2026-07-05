@@ -8,6 +8,7 @@
   "pinnedRosterKey": "4a7402d1a950dc3be8a434cb3ee664231ca0e58be8c745dabcaf2346ee0e0f7f",
   "pinnedReleaseKey": "",
   "dhtRelay": "",
+  "shardRoster": "config/shard-roster.public.json",
   "seedOutboxes": [
     { "appId": "be48baf150598739bed1fa3cf20eba81331908e05b22e9578412b0219e9237e7", "inviteKey": "db8eeaf9c385a275cc85e0a05c298b8315f5f38e61b361e2d901baa2f4957e23" }
   ],

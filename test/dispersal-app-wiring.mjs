@@ -100,8 +100,10 @@ async function main () {
     'dispersed post carries a PVSS manifest and an empty body placeholder')
   ok(!!post.dispersal.blindContentId, 'manifest names a blindContentId')
 
-  const blob = await sync2.get('blob!' + post.dispersal.blindContentId)
-  ok(!!blob && !!blob.ct, 'ciphertext is stored as blob!<blindContentId>')
+  const localBlob = await sync2.get('blob!' + post.dispersal.blindContentId)
+  ok(!localBlob, 'ciphertext is NOT stored as a local blob (off-VPS)')
+  const ctBytes = shardStore.shards.get(post.dispersal.ciphertextShard)
+  ok(!!ctBytes && ctBytes.length > 0, 'ciphertext shard exists on the mock cohort')
 
   const hydrated = await data2.getPost('p2p', post.cid)
   ok(hydrated.body === body && !hydrated._blobMissing, 'reader recovers the exact body from dispersed shards')

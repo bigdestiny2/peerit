@@ -11,7 +11,8 @@
 // config/shard-roster.json at them.
 
 import http from 'node:http'
-import { createHash } from 'node:crypto'
+import sodium from 'sodium-universal'
+import b4a from 'b4a'
 
 const PORT = Number(process.env.PORT) || 8801
 const HOST = process.env.HOST || '127.0.0.1'
@@ -19,11 +20,20 @@ const HOST = process.env.HOST || '127.0.0.1'
 const shards = new Map() // hash -> Buffer
 
 function hashOf (buf) {
-  return createHash('sha256').update(buf).digest('hex')
+  const out = b4a.alloc(32)
+  sodium.crypto_generichash(out, b4a.from(buf))
+  return b4a.toString(out, 'hex')
 }
 
 function send (res, status, body, type = 'application/json') {
-  const data = typeof body === 'string' ? body : JSON.stringify(body)
+  let data
+  if (Buffer.isBuffer(body) || body instanceof Uint8Array) {
+    data = body
+  } else if (typeof body === 'string') {
+    data = body
+  } else {
+    data = JSON.stringify(body)
+  }
   res.writeHead(status, {
     'Content-Type': type,
     'Access-Control-Allow-Origin': '*',

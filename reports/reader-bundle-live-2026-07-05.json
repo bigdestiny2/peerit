@@ -1,0 +1,29 @@
+{
+  "kind": "reader-bundle-live",
+  "generatedAt": "2026-07-05T10:08:46.176Z",
+  "rosterPath": "/tmp/mock-roster.json",
+  "cohort": {
+    "threshold": 2,
+    "count": 3,
+    "relays": [
+      "http://127.0.0.1:8801",
+      "http://127.0.0.1:8802",
+      "http://127.0.0.1:8803"
+    ]
+  },
+  "publisherPubkey": "d20dafa656bc6c2cbc0149f3164f1f3679044c5e15c5faf53eb81d22c5acfdda",
+  "bundleBytes": 178020,
+  "manifestSummary": {
+    "scheme": "pvss-secp256k1-v1",
+    "threshold": 2,
+    "count": 3,
+    "blindContentId": "e7bd75c02f12cf8bdab367337d2c7f6a26c99bb27cafa32d64ae3a6afd8ff531",
+    "intentId": "e503e545c4f83d8c052447e3cb09b6869bb5c0afddd333c6eac5f93d702c7cc2"
+  },
+  "checks": {
+    "bodyRecovered": true,
+    "underKRefused": true,
+    "tamperedIntentRejected": true
+  },
+  "status": "pass"
+}

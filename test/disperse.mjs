@@ -79,8 +79,10 @@ async function main () {
   ok(post.dispersal.threshold === 2 && post.dispersal.count === 3, 'manifest names a 2-of-3 scheme')
   ok(Array.isArray(post.dispersal.shareManifest) && post.dispersal.shareManifest.length === 3, 'manifest lists three shares')
 
-  const blob = await sync.get('blob!' + post.dispersal.blindContentId)
-  ok(!!blob && !!blob.ct, 'ciphertext blob exists under blindContentId')
+  const localBlob = await sync.get('blob!' + post.dispersal.blindContentId)
+  ok(!localBlob, 'ciphertext is NOT stored as a local blob (off-VPS)')
+  const ctBytes = shardStore.shards.get(post.dispersal.ciphertextShard)
+  ok(!!ctBytes && ctBytes.length > 0, 'ciphertext shard exists on the mock cohort')
 
   const hydrated = await data.getPost('p2p', post.cid)
   ok(hydrated.body === body, 'Node reader recovers the exact body from dispersed shards')
@@ -121,10 +123,10 @@ async function main () {
 
   console.log('\n— browser reader bundle verifies custody intent —')
   const { recoverBody: bundleRecoverBody } = await import('../web/js/reader-bundle.js')
-  const ctBytes = new Uint8Array(Buffer.from(blob.ct, 'base64'))
+  const cohortCtBytes = new Uint8Array(shardStore.shards.get(post.dispersal.ciphertextShard))
   const bundleBody = await bundleRecoverBody(post.dispersal, {
     relayBaseUrls: relays.map(r => r.url),
-    fetchCiphertext: async () => ctBytes,
+    fetchCiphertext: async () => cohortCtBytes,
     fetchImpl: shardStore.fetch
   })
   ok(bundleBody === body, 'browser bundle recovers body with valid custody intent')
@@ -134,7 +136,7 @@ async function main () {
   try {
     await bundleRecoverBody(tamperedManifest, {
       relayBaseUrls: relays.map(r => r.url),
-      fetchCiphertext: async () => ctBytes,
+      fetchCiphertext: async () => cohortCtBytes,
       fetchImpl: shardStore.fetch
     })
     assert.fail('browser bundle should reject tampered custody intent')

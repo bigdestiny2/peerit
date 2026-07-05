@@ -256,13 +256,18 @@ export class Data {
 
   _rosterForDispersal () {
     const relays = this.shardRelays
-    if (!relays || relays.length < 2) return null
+    if (!relays || relays.length < 3) return null
     const normalized = relays.map((r) => {
       if (typeof r === 'string') return { url: r }
-      return { url: String(r.url || r.baseUrl || ''), pubkey: r.pubkey || r.publicKey || '' }
+      return { url: String(r.url || r.baseUrl || ''), pubkey: String(r.pubkey || r.publicKey || '').toLowerCase() }
     }).filter((r) => r.url)
-    if (normalized.length < 2) return null
-    const threshold = Math.min(normalized.length - 1, Math.ceil(normalized.length / 2))
+    if (normalized.length < 3) return null
+    const uniquePubs = new Set(normalized.map(r => r.pubkey).filter(Boolean))
+    if (uniquePubs.size < normalized.length) {
+      if (typeof console !== 'undefined' && console.warn) console.warn('[peerit] shard roster contains duplicate pubkeys; refusing dispersal')
+      return null
+    }
+    const threshold = Math.max(2, Math.min(normalized.length - 1, Math.ceil(normalized.length / 2)))
     return { threshold, relays: normalized, retainMs: 30 * 24 * 60 * 60 * 1000 }
   }
 
@@ -280,36 +285,49 @@ export class Data {
     return recoverBody
   }
 
-  _isBridgeMode () {
-    return !!(this.sync && String(this.sync.mode || '').includes('bridge'))
+  async _getCreateHttpShardFetch () {
+    const node = typeof process !== 'undefined' && !!process.versions && !!process.versions.node
+    if (node) {
+      const { createHttpShardFetch } = await import('./vendor/blind-shards/shard-transport.js')
+      return createHttpShardFetch
+    }
+    const { createHttpShardFetch } = await import('./reader-bundle.js')
+    return createHttpShardFetch
   }
 
   async _tryDispersalBox (bodyText) {
     const publisher = await this._publisherForDispersal()
     const roster = this._rosterForDispersal()
     if (!publisher || !roster) return null
+    // Bind the post author to the PVSS publisher so a signed post cannot
+    // smuggle another party's dispersal manifest.
+    const mePubkey = this.me().pubkey
+    if (publisher.pubkeyHex.toLowerCase() !== mePubkey.toLowerCase()) {
+      if (typeof console !== 'undefined' && console.warn) console.warn('[peerit] dispersal publisher does not match post author; falling back')
+      return null
+    }
     try {
       const { disperseBody } = await loadBlindDealer()
-      const opts = {
+      // Shards and ciphertext are always placed on the remote HiveRelay shard cohort.
+      // Storing PVSS shares inside the peerit sync group would collapse the blind
+      // invariant (one operator/outbox would hold manifest + ciphertext + shares),
+      // so this path never falls back to local shard records.
+      const { ciphertext, manifest } = await disperseBody(bodyText, {
         publisher,
         threshold: roster.threshold,
         relays: roster.relays,
         retainMs: roster.retainMs,
         fetch: this.fetch
+      })
+      // Keep a local blob replica only for legacy manifests without a ciphertextShard.
+      // Modern manifests put the ciphertext on the shard cohort, so the VPS/outbox
+      // holds only the keyless dispersal manifest.
+      if (!manifest.ciphertextShard) {
+        const ct = b64Encode(ciphertext)
+        const blobData = { id: manifest.blindContentId, blobId: manifest.blindContentId, ct, author: this.me().pubkey }
+        await this._powSign(TYPE.BLOB, blobData)
+        await this.sync.append({ type: TYPE.BLOB, data: blobData })
       }
-      if (this._isBridgeMode()) {
-        const { createBridgeShardPut } = await import('./bridge-shard-transport.js')
-        opts.putShard = createBridgeShardPut({
-          sync: this.sync,
-          sign: (payload, ns) => this.id.sign(payload, ns),
-          author: this.me().pubkey
-        })
-      }
-      const { ciphertext, manifest } = await disperseBody(bodyText, opts)
-      const ct = b64Encode(ciphertext)
-      const blobData = { id: manifest.blindContentId, blobId: manifest.blindContentId, ct, author: this.me().pubkey }
-      await this._powSign(TYPE.BLOB, blobData)
-      await this.sync.append({ type: TYPE.BLOB, data: blobData })
       return manifest
     } catch (err) {
       if (typeof console !== 'undefined' && console.warn) console.warn('[peerit] dispersal box failed, falling back:', err.message)
@@ -329,18 +347,24 @@ export class Data {
       const cached = this._bodyCache.get(m.blindContentId)
       if (cached != null) return { ...rec, body: cached }
       try {
-        const blob = await this.sync.get(keys.blob(m.blindContentId))
-        if (!blob || !blob.ct) return { ...rec, body: '', _blobMissing: true }
-        const ctBytes = b64Decode(blob.ct)
         const recoverBody = await this._getRecoverBody()
         const opts = {
-          fetchCiphertext: () => ctBytes,
           relayBaseUrls: this._relayBaseUrls(),
           fetchImpl: this.fetch
         }
-        if (this._isBridgeMode()) {
-          const { createBridgeShardFetch } = await import('./bridge-shard-transport.js')
-          opts.fetchShard = createBridgeShardFetch({ sync: this.sync })
+        if (m.ciphertextShard) {
+          const createHttpShardFetch = await this._getCreateHttpShardFetch()
+          const fetchShard = createHttpShardFetch({ baseUrls: this._relayBaseUrls(), fetch: this.fetch })
+          opts.fetchCiphertext = async () => {
+            const bytes = await fetchShard(m.ciphertextShard)
+            if (!bytes) throw new Error('ciphertext shard not found on cohort')
+            return bytes
+          }
+        } else {
+          // Legacy dispersal manifest: ciphertext was kept as a local blob.
+          const blob = await this.sync.get(keys.blob(m.blindContentId))
+          if (!blob || !blob.ct) return { ...rec, body: '', _blobMissing: true }
+          opts.fetchCiphertext = () => b64Decode(blob.ct)
         }
         const body = await recoverBody(m, opts)
         if (this._bodyCache.size >= BODY_CACHE_MAX) this._bodyCache.delete(this._bodyCache.keys().next().value)

@@ -63,13 +63,21 @@ function makeMockFleet (n) {
       const intent = intents.get(base)
       if (!intent) return { ok: false, status: 401, text: async () => 'orphan intent' }
       const relayPub = baseToPubkey.get(base)
-      const assign = intent.shareAssignments.find(a => a.relayPubkey.toLowerCase() === relayPub)
-      if (!assign || assign.shareIndex !== pin.shareIndex) {
-        return { ok: false, status: 401, text: async () => 'bad assignment' }
-      }
-      const manifestEntry = intent.shareManifest.find(m => m.shareIndex === pin.shareIndex)
-      if (!manifestEntry || ('shard:' + manifestEntry.shard.slice('shard:'.length).toLowerCase()) !== addr) {
-        return { ok: false, status: 401, text: async () => 'manifest mismatch' }
+      // Ciphertext blob uses shareIndex:0 and is authorized by ciphertextAssignments.
+      if (pin.shareIndex === 0) {
+        const ctAssign = (intent.ciphertextAssignments || []).find(a => a.relayPubkey.toLowerCase() === relayPub)
+        if (!ctAssign) return { ok: false, status: 401, text: async () => 'ciphertext assignment missing' }
+        const expectedAddr = 'shard:' + (intent.ciphertextShard || '').replace(/^shard:/, '').toLowerCase()
+        if (expectedAddr !== addr) return { ok: false, status: 401, text: async () => 'ciphertext manifest mismatch' }
+      } else {
+        const assign = intent.shareAssignments.find(a => a.relayPubkey.toLowerCase() === relayPub)
+        if (!assign || assign.shareIndex !== pin.shareIndex) {
+          return { ok: false, status: 401, text: async () => 'bad assignment' }
+        }
+        const manifestEntry = intent.shareManifest.find(m => m.shareIndex === pin.shareIndex)
+        if (!manifestEntry || ('shard:' + manifestEntry.shard.slice('shard:'.length).toLowerCase()) !== addr) {
+          return { ok: false, status: 401, text: async () => 'manifest mismatch' }
+        }
       }
       if (!shards.has(base)) shards.set(base, new Map())
       shards.get(base).set(addr, new Uint8Array(buf))
@@ -119,7 +127,7 @@ async function main () {
   const body = 'The quick brown fox jumps over the lazy dog.'
   const { seedHex: publisherSeed, pubHex: publisherPub } = await genKeyPair()
 
-  const { ciphertext, manifest, intent, placed } = await disperseBody(body, {
+  const { ciphertext, manifest, intent, placed, plan } = await disperseBody(body, {
     threshold: K,
     relays: cfg.relays,
     publisher: makeHiverelayKeypair({ seedHex: publisherSeed, pubHex: publisherPub }),
@@ -132,10 +140,16 @@ async function main () {
   ok(manifest.scheme === 'pvss-secp256k1-v1', 'manifest scheme is pvss-secp256k1-v1')
   ok(manifest.version === 2, 'manifest version is 2')
   ok(manifest.shareManifest.length === N, 'manifest has N shard entries')
-  ok(placed.length === N, 'all N shards placed')
+  ok(placed.length === N * 2, `all ${N} share shards + ${N} ciphertext shards placed`)
+  ok(placed.filter(p => p.shareIndex === 0).length === N, 'ciphertext shard placed on every relay')
+  ok(manifest.ciphertextShard && manifest.ciphertextShard.startsWith('shard:'), 'manifest carries ciphertext shard address')
   ok(intent.version === 2, 'custody intent is v2')
   ok(intent.shareAssignments.length === N, 'intent has N share assignments')
   ok(intent.shareManifest.length === N, 'intent has N share manifest entries')
+  ok(intent.ciphertextAssignments.length === N, 'intent has N ciphertext assignments')
+  ok(intent.ciphertextShard === manifest.ciphertextShard, 'intent ciphertextShard matches manifest')
+  ok(/^[0-9a-f]{64}$/i.test(manifest.plaintextHash), 'manifest carries a 64-hex plaintextHash commitment')
+  ok(manifest.plaintextHash === intent.plaintextHash, 'intent plaintextHash matches manifest')
 
   // Recover using the first K relays.
   const recovered = await recoverBody(manifest, {
@@ -144,6 +158,46 @@ async function main () {
     fetchImpl: fleet.fetch
   })
   ok(recovered === body, 'recoverBody reproduces the exact body')
+
+  console.log('\n— recover via ciphertext shard on the cohort (no local blob) —')
+  const { createHttpShardFetch } = await import('../js/vendor/blind-shards/shard-transport.js')
+  const cohortFetch = createHttpShardFetch({ baseUrls: cfg.relays.slice(0, K).map(r => r.url), fetch: fleet.fetch })
+  const cohortRecovered = await recoverBody(manifest, {
+    relayBaseUrls: cfg.relays.slice(0, K).map(r => r.url),
+    fetchCiphertext: () => cohortFetch(manifest.ciphertextShard),
+    fetchImpl: fleet.fetch
+  })
+  ok(cohortRecovered === body, 'recoverBody fetches ciphertext from the shard cohort')
+
+  console.log('\n— HKDF: raw PVSS scalar cannot decrypt the body —')
+  try {
+    await decryptBody(ciphertext, manifest.iv, plan.key)
+    assert.fail('raw scalar should not decrypt the body')
+  } catch (e) {
+    ok(/auth|tag|failed|incorrect/i.test(e.message), 'raw PVSS scalar is rejected for body decryption (' + e.message + ')')
+  }
+
+  console.log('\n— plaintext-hash commitment: wrong hash fails —')
+  {
+    const { ciphertext: ct2, iv: iv2, keyHex } = await encryptBody('commitment test')
+    try {
+      await decryptBody(ct2, iv2, keyHex, '0'.repeat(64))
+      assert.fail('wrong plaintextHash should fail the commitment check')
+    } catch (e) {
+      ok(/plaintext hash mismatch/i.test(e.message), 'decryptBody rejects wrong plaintextHash (' + e.message + ')')
+    }
+  }
+
+  console.log('\n— plaintext-hash commitment: intent binding rejects tampered hash —')
+  {
+    const tampered = { ...manifest, plaintextHash: '0'.repeat(64) }
+    try {
+      verifyCustodyIntent(tampered)
+      assert.fail('tampered plaintextHash should break intent binding')
+    } catch (e) {
+      ok(/plaintextHash mismatch/i.test(e.message), 'verifyCustodyIntent rejects tampered plaintextHash')
+    }
+  }
 
   console.log('\n— threshold enforcement: k-1 fails —')
   try {

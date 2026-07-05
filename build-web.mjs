@@ -67,7 +67,7 @@ if (DHT_RELAY) dhtBundle = await buildDhtBundle()
 // loaded dynamically, so it does not block initial page load.
 const READER_BUNDLE = hasArg('--reader-bundle') || process.env.PEERIT_READER_BUNDLE === '1' || !!RELAY
 let readerBundle = null
-if (READER_BUNDLE) readerBundle = await buildReaderBundle()
+if (READER_BUNDLE) readerBundle = await buildReaderBundle({ minify: !hasArg('--no-minify') })
 
 function readConfig (file) {
   const abs = resolve(__dir, file || '')
@@ -192,7 +192,11 @@ manifest['index.html'] = sha256(files['index.html'])
 // 3. write the bundle
 rmSync(OUT, { recursive: true, force: true })
 mkdirSync(join(OUT, 'js'), { recursive: true })
-for (const p of SITE_FILES) writeFileSync(join(OUT, p), files[p])
+for (const p of SITE_FILES) {
+  const outPath = join(OUT, p)
+  mkdirSync(dirname(outPath), { recursive: true })
+  writeFileSync(outPath, files[p])
+}
 if (files['relay-roster.json']) writeFileSync(join(OUT, 'relay-roster.json'), files['relay-roster.json'])
 
 const swRegister = `if ('serviceWorker' in navigator) {
@@ -225,6 +229,8 @@ writeFileSync(join(OUT, 'asset-manifest.json'), JSON.stringify({
     relayRoster: relayRosterMeta,
     relayRosterKey: RELAY_ROSTER_KEY,
     relayRosterSha256: rosterRelease.sha256,
+    shardRoster: SHARD_ROSTER,
+    shardRosterSha256: SHARD_ROSTER ? manifest[SHARD_ROSTER] : '',
     releaseKey: RELEASE_KEY
   },
   note: 'SHA-256 of every served file. Cross-check driveKey against the published hyper:// drive in PearBrowser. If asset-manifest.sig is present, verify it against releaseKey (see verify.html / js/release-verify.js).'
@@ -238,6 +244,7 @@ console.log(`           relay=${RELAY || '(none — local-only)'} readonly=${REA
 console.log(`           relayRoster=${relayRosterMeta || '(none)'} rosterKey=${RELAY_ROSTER_KEY ? RELAY_ROSTER_KEY.slice(0, 12) + '...' : '(unset)'}`)
 if (DHT_RELAY) console.log(`           dhtRelay=${DHT_RELAY} dhtBundle=${files['js/dht-bundle.js'].length} bytes`)
 if (READER_BUNDLE) console.log(`           readerBundle=${files['js/reader-bundle.js'].length} bytes`)
+if (SHARD_ROSTER) console.log(`           shardRoster=${SHARD_ROSTER} sha256=${manifest[SHARD_ROSTER]?.slice(0, 12)}...`)
 if (!RELAY) console.log('           NOTE: no --relay → the bundle loads but stays local-only (gossip-dev) until a relay is configured.')
 if (RELAY_ROSTER && !RELAY_ROSTER_KEY) console.log('           NOTE: --relay-roster without --relay-roster-key is ignored by clients (no pinned verification key).')
 

@@ -1,0 +1,56 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      - RELAY_DOMAIN=${RELAY_DOMAIN}
+      - HIVERELAY_API_PORT=${HIVERELAY_API_PORT:-9100}
+    depends_on:
+      - hiverelay
+
+  hiverelay:
+    image: hiverelay:shard-store
+    restart: unless-stopped
+    # The relay runs unprivileged inside the container; the entrypoint fixes
+    # bind-mount ownership on startup then drops to uid 999.
+    user: "0:0"
+    volumes:
+      - ${HIVERELAY_STORAGE:-./data}:/data
+      - ./config:/config
+    environment:
+      - NODE_ENV=production
+      - HIVERELAY_STORAGE=/data
+      - HIVERELAY_CONFIG_DIR=/config
+      - HIVERELAY_API_PORT=${HIVERELAY_API_PORT:-9100}
+      - HIVERELAY_API_HOST=0.0.0.0
+      - HIVERELAY_API_KEY=${RELAY_API_KEY}
+      - HIVERELAY_CORS_ORIGINS=${PEERIT_ORIGIN}
+      - HIVERELAY_PLUGINS=shard-store
+      - HIVERELAY_ENABLE_API=1
+      - HIVERELAY_ENABLE_SEEDING=1
+      - HIVERELAY_ENABLE_SERVICES=1
+      - HIVERELAY_CUSTODY_ENABLED=1
+      - HIVERELAY_CUSTODY_DEFAULT_MODE=blind
+      - HIVERELAY_CUSTODY_REQUIRE_ENCRYPTED_PAYLOAD=1
+      - HIVERELAY_CUSTODY_METADATA_VISIBILITY=redacted
+      - HIVERELAY_CUSTODY_REDACTED_CATALOG=1
+      # Use mainnet HyperDHT bootstrap. Remove/comment for a local testnet.
+      - HIVERELAY_BOOTSTRAP=mainnet
+    command: ["start"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:${HIVERELAY_API_PORT:-9100}/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+volumes:
+  caddy-data:
+  caddy-config:

@@ -16,6 +16,7 @@ import { boxBody, unboxToBody, shouldBox, canBox } from './blob-store.js'
 // and never goes stale — a bounded FIFO is all it needs.
 const BODY_CACHE_MAX = 500
 const BLIND_DEALER_MODULE = './blind-dealer.mjs'
+const DISPERSAL_TIMEOUT_MS = 15000 // cap slow/unavailable cohort; fall back to single-blob
 
 async function loadBlindDealer () {
   return import(BLIND_DEALER_MODULE)
@@ -312,13 +313,17 @@ export class Data {
       // Storing PVSS shares inside the peerit sync group would collapse the blind
       // invariant (one operator/outbox would hold manifest + ciphertext + shares),
       // so this path never falls back to local shard records.
-      const { ciphertext, manifest } = await disperseBody(bodyText, {
-        publisher,
-        threshold: roster.threshold,
-        relays: roster.relays,
-        retainMs: roster.retainMs,
-        fetch: this.fetch
-      })
+      const dispersal = await Promise.race([
+        disperseBody(bodyText, {
+          publisher,
+          threshold: roster.threshold,
+          relays: roster.relays,
+          retainMs: roster.retainMs,
+          fetch: this.fetch
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('dispersal timeout')), DISPERSAL_TIMEOUT_MS))
+      ])
+      const { ciphertext, manifest } = dispersal
       // Keep a local blob replica only for legacy manifests without a ciphertextShard.
       // Modern manifests put the ciphertext on the shard cohort, so the VPS/outbox
       // holds only the keyless dispersal manifest.
@@ -460,8 +465,9 @@ export class Data {
       url: kind !== 'text' ? postUrl : '',
       author: me.pubkey, createdAt: now, editedAt: 0, deleted: false
     }
-    // Box a long text body into an opaque blob before signing (design §5 Phase 2).
-    if (!this.v2 && kind === 'text' && canBox() && shouldBox(data.body)) await this._boxBody(data) // v2 seals the body inline
+    // Box a long text body into an opaque blob/dispersal manifest before signing
+    // (design §5 Phase 2). In v2 mode the manifest is sealed inside the graph fields.
+    if (kind === 'text' && canBox() && shouldBox(data.body)) await this._boxBody(data)
     await this._emit(TYPE.POST, data, { pow: true, onProgress })
     this.invalidateViewCaches()
     return data
@@ -492,7 +498,7 @@ export class Data {
     const data = { ...p, body: String(body || '').slice(0, 40000), editedAt: Date.now() }
     delete data.blob // drop any prior manifest; re-box below if the new body is still long
     delete data.dispersal
-    if (!this.v2 && data.kind === 'text' && canBox() && shouldBox(data.body)) await this._boxBody(data)
+    if (data.kind === 'text' && canBox() && shouldBox(data.body)) await this._boxBody(data)
     await this._emit(TYPE.POST, data)
     this.invalidateViewCaches()
     return data
@@ -533,7 +539,8 @@ export class Data {
     }
     // Box a long comment body too (same band as posts) — a long comment is as
     // sensitive as a long post body. Short comments stay inline (below threshold).
-    if (!this.v2 && canBox() && shouldBox(data.body)) await this._boxBody(data)
+    // In v2 mode the blob/dispersal manifest is sealed inside the graph fields.
+    if (canBox() && shouldBox(data.body)) await this._boxBody(data)
     await this._emit(TYPE.COMMENT, data, { pow: true, onProgress })
     this.invalidateViewCaches()
     return data
@@ -561,7 +568,7 @@ export class Data {
     const data = { ...c, body: String(body || '').slice(0, 10000), editedAt: Date.now() }
     delete data.blob // drop any prior manifest; re-box below if still long
     delete data.dispersal
-    if (!this.v2 && canBox() && shouldBox(data.body)) await this._boxBody(data)
+    if (canBox() && shouldBox(data.body)) await this._boxBody(data)
     await this._emit(TYPE.COMMENT, data)
     this.invalidateViewCaches()
     return data

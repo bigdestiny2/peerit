@@ -52,8 +52,10 @@ const RELEASE_KEY = (process.env.PEERIT_RELEASE_KEY || arg('--release-key') || r
 const NO_RELAY_ROSTER = hasArg('--no-relay-roster') || process.env.PEERIT_NO_RELAY_ROSTER === '1'
 const RELAY_ROSTER = NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER || arg('--relay-roster') || releaseConfig.relayRoster || '')
 let RELAY_ROSTER_KEY = NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER_KEY || arg('--relay-roster-key') || releaseConfig.pinnedRosterKey || '')
-const SHARD_ROSTER = process.env.PEERIT_SHARD_ROSTER || arg('--shard-roster') || releaseConfig.shardRoster || ''
+const NO_SHARD_ROSTER = hasArg('--no-shard-roster') || process.env.PEERIT_NO_SHARD_ROSTER === '1'
+const SHARD_ROSTER = NO_SHARD_ROSTER ? '' : (process.env.PEERIT_SHARD_ROSTER || arg('--shard-roster') || releaseConfig.shardRoster || '')
 if (DHT_RELAY) assertDhtRelay(DHT_RELAY)
+if (SHARD_ROSTER) assertShardRoster(SHARD_ROSTER)
 
 const sri = (buf) => 'sha384-' + createHash('sha384').update(buf).digest('base64')
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex')
@@ -370,5 +372,34 @@ function assertDhtRelay (relay) {
   }
   if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
     throw new Error('--dht-relay must be a ws:// or wss:// URL')
+  }
+}
+
+function assertShardRoster (rosterPath) {
+  const abs = resolve(__dir, rosterPath)
+  if (!existsSync(abs)) throw new Error(`--shard-roster file not found: ${rosterPath}`)
+  let cfg
+  try {
+    cfg = JSON.parse(readFileSync(abs, 'utf8'))
+  } catch (err) {
+    throw new Error(`--shard-roster is not valid JSON (${rosterPath}): ${err.message}`)
+  }
+  const relays = Array.isArray(cfg.relays) ? cfg.relays : []
+  const threshold = Number(cfg.threshold) || 0
+  if (relays.length < 3) throw new Error(`--shard-roster must list at least 3 relays for k-of-n dispersal (${rosterPath})`)
+  if (!Number.isInteger(threshold) || threshold < 2 || threshold > relays.length) {
+    throw new Error(`--shard-roster threshold must satisfy 2 <= threshold <= relays.length (${rosterPath})`)
+  }
+  const seen = new Set()
+  for (let i = 0; i < relays.length; i++) {
+    const r = relays[i]
+    const url = String(r.url || r.baseUrl || '').trim()
+    const pub = String(r.pubkey || r.publicKey || '').trim().toLowerCase()
+    if (!url) throw new Error(`--shard-roster relay ${i + 1} missing url/baseUrl (${rosterPath})`)
+    if (!/^[0-9a-f]{64}$/.test(pub)) {
+      throw new Error(`--shard-roster relay ${i + 1} (${url}) has missing/invalid pubkey. Run deploy/shard-cohort/extract-pubkey.mjs on the host and paste the 64-hex publicKey into ${rosterPath}`)
+    }
+    if (seen.has(pub)) throw new Error(`--shard-roster relay ${i + 1} (${url}) duplicate pubkey (${rosterPath})`)
+    seen.add(pub)
   }
 }

@@ -147,7 +147,16 @@ async function startLocalHiveRelayOutboxLog (hiverelayRoot) {
     importFrom(hiverelayRoot, 'packages/services/builtin/outboxlog/index.js')
   ])
 
-  const provider = new OutboxLogApp()
+  // Peerit's browser bridge signs every record under its own protocol namespace
+  // (identity.js NS='peerit' → data._ns='peerit'), and that namespace is bound
+  // INTO the Ed25519 signature. The generalized HiveRelay outboxlog is
+  // app-neutral: it defaults to the 'outbox' namespace and rejects any record
+  // whose _ns is not a REGISTERED namespace (outbox-log.js namespaceInfoForAppend).
+  // A real peerit operator therefore configures the relay to register 'peerit'
+  // (see outbox-log.js DEFAULT_OUTBOXLOG_NAMESPACE back-compat note). This harness
+  // stands in for that operator, so it registers 'peerit' here — the endpoint swap
+  // stays a pure operator config, with no change to peerit's signed wire.
+  const provider = new OutboxLogApp({ namespace: 'peerit' })
   const manifest = provider.manifest()
   const node = new EventEmitter()
   Object.assign(node, {
@@ -223,7 +232,12 @@ async function getToken (base) {
 
 async function makeClient ({ base, name, local = mem(), session = mem(), pollMs, createUser = true }) {
   const token = await getToken(base)
-  const id = new DevIdentity(local, session)
+  // persistSeed:true so the writer key survives into the shared `local`/`session`
+  // storage — this models a browser that keeps its identity across a page reload,
+  // which is exactly what the reload-same-writer check exercises. (In production
+  // that durability comes from the passphrase vault; here the in-memory storage
+  // map stands in for it.)
+  const id = new DevIdentity(local, session, { persistSeed: true })
   await id.ready()
   if (createUser) await id.createUser(name)
   const sync = createSync({

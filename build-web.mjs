@@ -29,6 +29,7 @@ import { SITE_FILES } from './publish.mjs'
 import { buildDhtBundle } from './scripts/build-dht-bundle.mjs'
 import { buildReaderBundle } from './scripts/build-reader-bundle.mjs'
 import { normalizeRelayRosterPayload, verifyRelayRoster } from './js/relay-roster.js'
+import { patchCspForWeb, cspConnectOrigin } from './scripts/csp.mjs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const OUT = join(__dir, 'web')
@@ -185,7 +186,14 @@ const head = [
   '<script src="sw-register.js"></script>'
 ].filter(Boolean).join('\n  ')
 html = html.replace('</head>', '  ' + head + '\n</head>')
-if (DHT_RELAY) html = relaxCspForDht(html, DHT_RELAY)
+// Pin connect-src to exactly the origins this build talks to (relays, roster
+// mirrors, shard cohort, DHT relay) — the source CSP carries NO http:/https:
+// wildcard, so a same-origin XSS cannot exfiltrate to an arbitrary host (audit
+// PT-BRW-002). Same-origin ("same-origin"/"/") needs no entry ('self' covers it).
+const connectOrigins = collectConnectOrigins()
+if (connectOrigins.length || DHT_RELAY) {
+  html = patchCspForWeb(html, { dhtRelay: DHT_RELAY, connectOrigins })
+}
 html = html.replace('<link rel="stylesheet" href="styles.css">', `<link rel="stylesheet" href="styles.css" integrity="${sriMap['styles.css']}" crossorigin="anonymous">`)
 html = html.replace('<script type="module" src="js/app.js"></script>', `<script type="module" src="js/app.js" integrity="${sriMap['js/app.js']}" crossorigin="anonymous"></script>`)
 files['index.html'] = Buffer.from(html)
@@ -325,42 +333,39 @@ const sha = async (b) => { const h = await crypto.subtle.digest('SHA-256', b); r
 </script></body></html>`
 }
 
-function relaxCspForDht (html, relay) {
-  return html.replace(/(<meta http-equiv="Content-Security-Policy" content=")([^"]*)(")/, (m, before, policy, after) => {
-    return before + patchCsp(policy, relay) + after
-  })
-}
-
-function patchCsp (policy, relay) {
-  const dhtSource = cspSourceForWebSocket(relay)
-  const out = []
-  let sawScript = false
-  let sawConnect = false
-  for (const raw of policy.split(';')) {
-    const part = raw.trim()
-    if (!part) continue
-    const [name, ...sources] = part.split(/\s+/)
-    if (name === 'script-src') {
-      sawScript = true
-      addSource(sources, "'wasm-unsafe-eval'")
-    } else if (name === 'connect-src') {
-      sawConnect = true
-      addSource(sources, dhtSource)
+// Gather every cross-origin endpoint this web build fetches/connects to, so the
+// CSP connect-src can be pinned to exactly those origins (no wildcard). Sources:
+//   - RELAY (comma-separated failover list) + its roster payload relays
+//   - relay-roster mirror URLs (independent hosts serving the same signed roster)
+//   - shard cohort relays (BlindShard dispersal/recovery)
+// same-origin / relative entries are skipped ('self' already allows them).
+function collectConnectOrigins () {
+  const origins = new Set()
+  const add = (base) => { const o = cspConnectOrigin(base); if (o) origins.add(o) }
+  for (const r of String(RELAY || '').split(',')) add(r.trim())
+  for (const m of ROSTER_MIRRORS.split(',')) add(m.trim())
+  // Relay roster payload (the signed set of relays clients may actually reach).
+  try {
+    if (RELAY_ROSTER) {
+      const abs = resolve(__dir, RELAY_ROSTER)
+      if (existsSync(abs)) {
+        const cfg = JSON.parse(readFileSync(abs, 'utf8'))
+        const relays = (cfg && cfg.payload && cfg.payload.relays) || cfg.relays || []
+        for (const r of relays) add(typeof r === 'string' ? r : (r && (r.url || r.baseUrl)))
+      }
     }
-    out.push([name, ...sources].join(' '))
-  }
-  if (!sawScript) out.push("script-src 'self' 'wasm-unsafe-eval'")
-  if (!sawConnect) out.push("connect-src 'self' " + dhtSource)
-  return out.join('; ')
-}
-
-function addSource (sources, source) {
-  if (source && !sources.includes(source)) sources.push(source)
-}
-
-function cspSourceForWebSocket (relay) {
-  const url = new URL(relay)
-  return `${url.protocol}//${url.host}`
+  } catch {}
+  // Shard cohort relays.
+  try {
+    if (SHARD_ROSTER) {
+      const abs = resolve(__dir, SHARD_ROSTER)
+      if (existsSync(abs)) {
+        const cfg = JSON.parse(readFileSync(abs, 'utf8'))
+        for (const r of (cfg.relays || [])) add(typeof r === 'string' ? r : (r && (r.baseUrl || r.url)))
+      }
+    }
+  } catch {}
+  return [...origins]
 }
 
 function assertDhtRelay (relay) {

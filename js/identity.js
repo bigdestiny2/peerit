@@ -18,11 +18,25 @@ const NS = 'peerit'
 const HEX64 = /^[0-9a-f]{64}$/i
 
 class DevIdentity {
-  constructor (storage, session) {
+  // persistSeed: whether the raw Ed25519 SEED is allowed to be written to disk
+  // (localStorage) in CLEARTEXT. This is a bearer secret — anyone who reads it can
+  // sign as the user forever, unrevocably. So it defaults to FALSE: the roster
+  // (pubkey/driveKey/label) and the seeds are held in memory only, per browsing
+  // session. On peerit.site (web mode) DevIdentity is the PRODUCTION signing path,
+  // so a persisted cleartext seed there is directly XSS-/shared-machine-exfiltrable;
+  // in-memory-only keeps a same-origin read from yielding a permanent signing key.
+  // The durable, safe way to move a key across reloads/devices is the
+  // passphrase-encrypted envelope in identity-export.js — never cleartext at rest.
+  // Only opt in (persistSeed:true) for a genuinely local dev fallback.
+  constructor (storage, session, opts = {}) {
     this.isDev = true
     this.storage = storage
     this.session = session
+    this.persistSeed = opts.persistSeed === true
     this.ROSTER = 'peerit:dev:users'
+    // In-memory roster + seed store, used whenever persistSeed is false so that no
+    // seed (and, to avoid unusable ghost entries, no roster) is written to disk.
+    this._memRoster = null
   }
 
   async ready () {
@@ -37,8 +51,21 @@ class DevIdentity {
     return this
   }
 
-  _roster () { try { const s = this.storage.getItem(this.ROSTER); return s ? JSON.parse(s) : [] } catch { return [] } }
-  _saveRoster (r) { this.storage.setItem(this.ROSTER, JSON.stringify(r)) }
+  _roster () {
+    if (!this.persistSeed) return this._memRoster ? this._memRoster.map(u => ({ ...u })) : []
+    try { const s = this.storage.getItem(this.ROSTER); return s ? JSON.parse(s) : [] } catch { return [] }
+  }
+
+  _saveRoster (r) {
+    if (!this.persistSeed) {
+      // Hold the full roster (INCLUDING seeds) in memory only; never touch disk.
+      // Also proactively clear any legacy cleartext roster a prior build left behind.
+      this._memRoster = r.map(u => ({ ...u }))
+      try { if (this.storage.getItem(this.ROSTER) != null && typeof this.storage.removeItem === 'function') this.storage.removeItem(this.ROSTER) } catch {}
+      return
+    }
+    this.storage.setItem(this.ROSTER, JSON.stringify(r))
+  }
 
   async _mint (name) {
     const { seedHex, pubHex } = await genKeyPair()
@@ -133,7 +160,10 @@ export function createIdentity (opts = {}) {
   }
   const storage = opts.storage || (typeof localStorage !== 'undefined' ? localStorage : memShim())
   const session = opts.session || (typeof sessionStorage !== 'undefined' ? sessionStorage : memShim())
-  return new DevIdentity(storage, session)
+  // persistSeed is OFF unless a caller explicitly opts in (local dev fallback). The
+  // web/production path (forceDev) must never enable it: a persisted cleartext seed
+  // is a permanent, unrevocable sign-as-victim key on same-origin read/XSS.
+  return new DevIdentity(storage, session, { persistSeed: opts.persistSeed === true })
 }
 
 function memShim () {

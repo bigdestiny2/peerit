@@ -110,6 +110,14 @@ class DevIdentity {
     return u ? { seed: u.seed, pubkey: u.pubkey, driveKey: u.driveKey, label: u.label } : null
   }
 
+  // Restore a durable identity decrypted from the passphrase vault
+  // (identity-vault.js) into the IN-MEMORY roster and make it active. This is the
+  // A1 in-memory path — the seed is injected into _memRoster (when persistSeed is
+  // false, i.e. the web/production case) and never re-touches disk; the ciphertext
+  // vault on disk stays the only at-rest copy. Semantically identical to addUser,
+  // named separately so the boot/unlock flow reads clearly.
+  async restoreFromVault (entry) { return this.addUser(entry) }
+
   // Add an externally-provided identity (from importIdentity) to the roster and
   // switch to it — the "add to roster + switch" import model. Dedupes by pubkey.
   async addUser (entry) {

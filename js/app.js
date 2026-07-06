@@ -16,6 +16,7 @@ import { sortPosts, sortComments, POST_SORTS, COMMENT_SORTS, TIME_WINDOW_KEYS } 
 import { buildCommentTree, sortCommentTree, annotateDescendants, countDescendants, MOD } from './model.js'
 import { COPY as RECOVERY_COPY, buildRecoveryBundle, cleanOutboxes, peeritSeederCommand, recoveryBundleFilename, recoveryBundleJson } from './recovery.js'
 import { exportIdentity, importIdentity, looksLikeIdentityExport, identityExportJson, identityExportFilename, passphraseStrength, MIN_PASSPHRASE } from './identity-export.js'
+import { hasVault, vaultPubkey, saveVault, unlockVault, clearVault } from './identity-vault.js'
 import { encodeQR, qrToSvg, isScanSupported, scanQR } from './qr.js'
 import {
   escapeHtml as esc, timeAgo, fmtCount, parseRoute, buildRoute,
@@ -58,6 +59,15 @@ async function boot () {
   // In web mode this is a browser-LOCAL key (forceDev); the relay never signs.
   identity = createIdentity(runtime.identityOpts)
   await identity.ready()
+
+  // Durable identity (passphrase vault): A1 keeps the web/production seed in memory
+  // only, so a plain reload mints a fresh identity. If the user previously opted into
+  // durability, an encrypted vault sits in localStorage — unlock it here, BEFORE sync
+  // starts, so the restored key is the one signing this session. Only the DevIdentity
+  // (browser-local) path has a vault; the PearBrowser bridge holds its own key.
+  if (identity.isDev && typeof localStorage !== 'undefined' && hasVault(localStorage)) {
+    await unlockVaultAtBoot()
+  }
 
   // BlindShard dispersal: if a shard cohort is configured (inline meta or roster
   // JSON), fetch/validate it and enable the dispersal write path. The reader path
@@ -1214,6 +1224,7 @@ async function viewSettings ({ guard, token }) {
   const seederCommand = settingsSeederCommand(status, me)
   const hasOutbox = !!(currentOutbox && currentOutbox.inviteKey && seederCommand)
   const modeLabel = isBridgeMode() ? 'PearBrowser P2P bridge' : 'Local dev fallback'
+  const vaultActive = typeof localStorage !== 'undefined' && hasVault(localStorage)
   const backup = await pearBackupStatus()
   if (token !== renderToken) return
   guard(`<div class="panel settings-panel">
@@ -1234,7 +1245,15 @@ async function viewSettings ({ guard, token }) {
       <li><span>Sync mode</span><b>${modeLabel}</b></li>
       <li><span>Body dispersal</span><b>${isDispersalActive() ? 'BlindShard active' : 'off'}</b></li>
     </ul>
-    ${identity.isDev ? `<h2>Move this identity to another device</h2>
+    ${identity.isDev ? `<h2>Stay logged in on this device</h2>
+      <p class="dim small settings-copy">${vaultActive
+        ? `This browser remembers u/${esc(shortKey(me.pubkey, 6))} across reloads. Only a <b>passphrase-encrypted</b> copy is stored locally — the raw key never touches disk. You'll be asked for the passphrase each time this browser is reopened.`
+        : `By default this identity lives only until you reload. Set an unlock passphrase to keep posting as u/${esc(shortKey(me.pubkey, 6))} across reloads. Only a <b>passphrase-encrypted</b> copy is stored locally — the raw key never touches disk, and peerit can't reset the passphrase.`}</p>
+      <div class="form-actions wrap">
+        <button class="btn ${vaultActive ? 'btn-ghost' : 'btn-primary'}" type="button" data-act="remember-identity">${vaultActive ? 'Change unlock passphrase' : 'Remember this identity'}</button>
+        ${vaultActive ? '<button class="btn btn-ghost danger" type="button" data-act="forget-identity">Forget on this device</button>' : ''}
+      </div>
+      <h2>Move this identity to another device</h2>
       <p class="dim small settings-copy">Export your posting key as a <b>passphrase-encrypted</b> file, then import it in another browser or on your phone to post as the same u/${esc(shortKey(me.pubkey, 6))}. Anyone who gets both the file and the passphrase can post as you — treat it like a password.</p>
       <div class="form-actions wrap">
         <button class="btn btn-primary" type="button" data-act="export-identity">Export this identity</button>
@@ -1407,6 +1426,8 @@ async function onClick (e) {
       case 'copy-recovery-bundle': return void await copyRecoveryBundle()
       case 'export-recovery-bundle': return void await exportRecoveryBundle()
       case 'export-identity': return void openExportIdentityModal()
+      case 'remember-identity': return void openRememberIdentityModal()
+      case 'forget-identity': return void forgetVault()
       case 'download-identity-file': return void downloadIdentityExport()
       case 'copy-identity-string': return void await copyIdentityExport()
       case 'show-identity-qr': return void showIdentityQr()
@@ -1473,9 +1494,9 @@ document.addEventListener('change', (e) => {
   }
 })
 
-// Live passphrase-strength hint on the export modal.
+// Live passphrase-strength hint on the export + remember-identity modals.
 document.addEventListener('input', (e) => {
-  if (!e.target.matches('form[data-form="export-identity"] input[name="passphrase"]')) return
+  if (!e.target.matches('form[data-form="export-identity"] input[name="passphrase"], form[data-form="remember-identity"] input[name="passphrase"]')) return
   const hint = e.target.closest('form').querySelector('[data-role="pw-hint"]')
   if (hint) { const v = e.target.value; hint.textContent = v ? 'Strength: ' + passphraseStrength(v).label : '' }
 })
@@ -1633,7 +1654,7 @@ async function onSubmit (e) {
   const fd = new FormData(form)
   // Read-only web mode: search + local identity management still work; everything
   // else is a network write and stays blocked.
-  const localOnlyForms = new Set(['search', 'import-identity', 'export-identity'])
+  const localOnlyForms = new Set(['search', 'import-identity', 'export-identity', 'remember-identity'])
   if (!localOnlyForms.has(f) && isReadOnly()) { toast('peerit is read-only here — open it in PearBrowser to post, comment, or vote.', 'error'); return }
   if (form.dataset.busy) return // block double-submit while the write is in flight
   const btn = form.querySelector('button[type="submit"]')
@@ -1700,6 +1721,10 @@ async function onSubmit (e) {
     }
     if (f === 'export-identity') {
       await runIdentityExport(String(fd.get('passphrase') || ''), String(fd.get('confirm') || ''))
+      return
+    }
+    if (f === 'remember-identity') {
+      await runRememberIdentity(String(fd.get('passphrase') || ''), String(fd.get('confirm') || ''))
       return
     }
     if (f === 'import-identity') {
@@ -1803,6 +1828,115 @@ function showPearBackupInstructions () {
       <div class="form-actions"><button class="btn btn-primary" type="button" data-act="close-modal">Done</button></div>
     </div>
   </div>`
+}
+
+// ---- durable identity: passphrase vault -------------------------------------
+// A1 keeps the web seed in memory only, so a reload normally mints a fresh
+// identity. The vault (js/identity-vault.js) lets a user opt into durability: the
+// seed is sealed under a passphrase (PBKDF2 + AES-256-GCM, the same envelope as
+// identity export) and only that ciphertext lives in localStorage. These flows
+// unlock it at boot and set/forget it from Settings.
+
+// Boot-time unlock: a vault exists, so gate the app behind a passphrase prompt.
+// Runs BEFORE renderChrome, so it paints its own minimal overlay into <body> and
+// resolves once the user unlocks or chooses to start fresh. Wrong passphrase is a
+// clean retry (no lockout, no partial state); "Start fresh instead" discards the
+// vault and falls back to A1's mint-a-new-identity behavior.
+async function unlockVaultAtBoot () {
+  if (typeof document === 'undefined' || !document.body) return
+  const pub = vaultPubkey(localStorage)
+  const who = pub ? 'u/' + shortKey(pub, 8) : 'your saved identity'
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div')
+    overlay.className = 'modal-backdrop vault-unlock'
+    overlay.innerHTML = `
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="vault-unlock-title">
+        <h2 id="vault-unlock-title">Unlock ${esc(who)}</h2>
+        <p class="dim small">This device has a saved, passphrase-encrypted identity. Enter its passphrase to keep posting as ${esc(who)}. peerit has no server that can reset it.</p>
+        <form data-role="vault-unlock-form">
+          <label>Passphrase <input type="password" name="passphrase" autocomplete="current-password" autofocus required></label>
+          <p class="dim small err" data-role="vault-err" hidden></p>
+          <div class="form-actions wrap">
+            <button class="btn btn-primary" type="submit">Unlock</button>
+            <button class="btn btn-ghost" type="button" data-role="vault-fresh">Start fresh instead</button>
+          </div>
+        </form>
+      </div>`
+    document.body.appendChild(overlay)
+    const form = overlay.querySelector('[data-role="vault-unlock-form"]')
+    const errEl = overlay.querySelector('[data-role="vault-err"]')
+    const input = overlay.querySelector('input[name="passphrase"]')
+    const submitBtn = form.querySelector('button[type="submit"]')
+    const finish = () => { overlay.remove(); resolve() }
+    const showErr = (m) => { errEl.textContent = m; errEl.hidden = false; input.value = ''; input.focus() }
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      errEl.hidden = true
+      const passphrase = String(new FormData(form).get('passphrase') || '')
+      submitBtn.disabled = true; submitBtn.textContent = 'Unlocking…'
+      try {
+        // Decrypt the vault into an entry, then inject the seed into the SAME
+        // in-memory identity A1 established. Nothing new touches disk here.
+        const entry = await unlockVault(localStorage, passphrase)
+        await identity.restoreFromVault(entry)
+        toast('Welcome back, u/' + shortKey(entry.pubkey, 6))
+        finish()
+      } catch (err) {
+        submitBtn.disabled = false; submitBtn.textContent = 'Unlock'
+        showErr(err && err.message ? err.message : 'Could not unlock.')
+      }
+    })
+    overlay.querySelector('[data-role="vault-fresh"]').addEventListener('click', () => {
+      if (!confirm('Forget the saved identity on this device and start with a new one? The encrypted vault will be deleted. If you have not exported this identity, it is gone for good.')) return
+      // Drop the vault; the already-minted fresh in-memory identity (from ready())
+      // becomes the active one — exactly A1's no-vault behavior.
+      clearVault(localStorage)
+      toast('Started fresh — set a new passphrase in Settings to keep this identity.')
+      finish()
+    })
+  })
+}
+
+// "Remember this identity" (set/replace a vault passphrase). Reuses the export
+// modal shell but writes the sealed envelope to localStorage instead of offering a
+// download. Called from Settings.
+function openRememberIdentityModal () {
+  const root = $('#modal-root'); if (!root) { toast('This needs the in-app modal', 'error'); return }
+  const me = identity.me()
+  const has = typeof localStorage !== 'undefined' && hasVault(localStorage)
+  root.innerHTML = `<div class="modal-backdrop">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="vault-set-title">
+      <h2 id="vault-set-title">${has ? 'Change' : 'Set'} unlock passphrase</h2>
+      <p class="dim small">Encrypts u/${esc(shortKey(me.pubkey, 8))} under a passphrase and stores ONLY the encrypted blob in this browser, so you stay logged in across reloads. peerit can't reset this passphrase — if you forget it, unlock the export you kept, or start fresh.</p>
+      <form data-form="remember-identity">
+        <label>Passphrase <input type="password" name="passphrase" autocomplete="new-password" minlength="${MIN_PASSPHRASE}" required placeholder="at least ${MIN_PASSPHRASE} characters"></label>
+        <label>Confirm passphrase <input type="password" name="confirm" autocomplete="new-password" required></label>
+        <p class="dim small" data-role="pw-hint"></p>
+        <div class="form-actions wrap">
+          <button class="btn btn-primary" type="submit">${has ? 'Update' : 'Remember this identity'}</button>
+          <button class="btn btn-ghost" type="button" data-act="close-modal">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>`
+}
+
+async function runRememberIdentity (passphrase, confirm) {
+  if (passphrase !== confirm) throw new Error('The two passphrases do not match.')
+  const entry = identity.currentSeedEntry && identity.currentSeedEntry()
+  if (!entry) throw new Error('No local identity to remember in this browser.')
+  await saveVault(localStorage, entry, passphrase)
+  closeModal()
+  toast('Saved — this identity will now survive reloads on this device.')
+  route()
+}
+
+function forgetVault () {
+  if (typeof localStorage === 'undefined' || !hasVault(localStorage)) { toast('Nothing to forget on this device.'); return }
+  if (!confirm('Forget the saved identity on this device? Your current identity keeps working until you reload; after that, this browser mints a new one unless you export it first.')) return
+  clearVault(localStorage)
+  toast('Forgotten — this identity will not survive the next reload on this device.')
+  route()
 }
 
 // ---- web identity export / import -------------------------------------------

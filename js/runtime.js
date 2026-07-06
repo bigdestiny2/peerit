@@ -42,6 +42,10 @@ export function readRelayConfig (doc) {
     relays,
     apiBase: relays[0],
     apiToken: metaContent(doc, 'peerit-relay-token') || '',
+    // Descriptive backend kind ('' | 'peerit-relay' | 'hiverelay-outbox'). Purely
+    // informational at the transport level (the wire is identical); 'hiverelay-outbox'
+    // enables a one-shot boot probe of /api/bridge/status (see js/app.js).
+    relayBackend: metaContent(doc, 'peerit-relay-backend') || '',
     relayRoster: readRelayRosterConfig(doc),
     shardCohort: readShardRosterConfig(doc),
     // Phase 3 (optional): a dht-relay WebSocket for the in-browser DHT transport.
@@ -162,6 +166,7 @@ export function resolveRuntime ({ rawPear = null, doc = null } = {}) {
       relayRoster: relay.relayRoster,
       shardCohort: relay.shardCohort,
       dhtRelay: relay.dhtRelay,
+      relayBackend: relay.relayBackend || '',
       readOnly: relay.readOnly,
       v2
     }

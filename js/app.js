@@ -121,14 +121,19 @@ async function boot () {
     // one. The wire is identical either way, so this is a visible sanity check —
     // NOT a gate: a mismatch degrades with a warning, it never blocks boot.
     if (runtime.relayBackend === 'hiverelay-outbox' && runtime.syncOpts.apiToken) {
-      const probe = await probeRelayBackend({
+      // Fire-and-forget: boot never waits on the probe. probeRelayBackend is
+      // internally bounded (AbortController timeout) and never throws, so the
+      // warning simply appears if/when the relay answers — a slow or hanging
+      // /api/bridge/status can neither delay nor block boot.
+      probeRelayBackend({
         apiBase: runtime.syncOpts.apiBase || '',
         apiToken: runtime.syncOpts.apiToken,
         fetch: globalThis.fetch && globalThis.fetch.bind(globalThis)
-      })
-      if (probe.service !== 'outboxlog') {
-        console.warn('[peerit] configured hiverelay-outbox backend but relay /api/bridge/status did not report service=outboxlog — check the relay URL')
-      }
+      }).then((probe) => {
+        if (probe.service !== 'outboxlog') {
+          console.warn('[peerit] configured hiverelay-outbox backend but relay /api/bridge/status did not report service=outboxlog — check the relay URL')
+        }
+      }).catch(() => {})
     }
   }
   // writeHead: maintain a signed head!<me> census after each write (the outbox

@@ -334,14 +334,23 @@ export function createPearApi (opts = {}) {
 // configured for the HiveRelay outboxlog backend is actually pointed at one.
 // Dependency-injected fetch (falls back to the module default). NEVER throws:
 // any network/parse/non-2xx error degrades to { ok:false, service:null, ready:false }.
-// The token is sent as X-Pear-Token and is never logged.
-export async function probeRelayBackend ({ apiBase = '', apiToken = '', fetch } = {}) {
+// Bounded by `timeoutMs` (AbortController) so a reachable-but-hanging relay can
+// never stall the caller. The token is sent as X-Pear-Token and is never logged.
+export async function probeRelayBackend ({ apiBase = '', apiToken = '', fetch, timeoutMs = 5000 } = {}) {
   const fetchFn = fetch || defaultFetch()
   const miss = { ok: false, service: null, ready: false }
   if (typeof fetchFn !== 'function') return miss
+  let signal = null
+  let timer = null
+  if (typeof AbortController === 'function' && timeoutMs > 0) {
+    const ac = new AbortController()
+    signal = ac.signal
+    timer = setTimeout(() => { try { ac.abort() } catch {} }, timeoutMs)
+  }
   try {
     const headers = apiToken ? { 'X-Pear-Token': apiToken } : {}
-    const res = await fetchFn(apiBase + '/api/bridge/status', { headers })
+    const init = signal ? { headers, signal } : { headers }
+    const res = await fetchFn(apiBase + '/api/bridge/status', init)
     if (!res || !res.ok) return miss
     let body = null
     if (typeof res.text === 'function') {
@@ -358,6 +367,8 @@ export async function probeRelayBackend ({ apiBase = '', apiToken = '', fetch } 
     }
   } catch {
     return miss
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }
 

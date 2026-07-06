@@ -107,3 +107,17 @@ test('probeRelayBackend: unparseable body → { ok:false, ... } (never throws)',
   })
   assert.deepStrictEqual(res, { ok: false, service: null, ready: false })
 })
+
+test('probeRelayBackend: a hanging relay is bounded by timeoutMs (never stalls the caller)', async () => {
+  // A fetch that only ever settles when the AbortController signal fires — mimics
+  // a reachable-but-hung /api/bridge/status. Without the timeout this would hang forever.
+  const hangingFetch = (url, init) => new Promise((_resolve, reject) => {
+    const sig = init && init.signal
+    if (sig) sig.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+    // no signal → never settles (asserts the probe always passes a signal)
+  })
+  const started = Date.now()
+  const res = await probeRelayBackend({ apiBase: 'https://relay.example', apiToken: 'tok', fetch: hangingFetch, timeoutMs: 30 })
+  assert.deepStrictEqual(res, { ok: false, service: null, ready: false })
+  assert.ok(Date.now() - started < 2000, 'probe returned promptly via its internal timeout')
+})

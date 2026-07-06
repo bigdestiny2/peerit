@@ -318,6 +318,8 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
 .modal-card{width:min(520px,100%);background:var(--surface);border:1px solid var(--border-2);border-radius:var(--radius);padding:20px;box-shadow:0 24px 70px rgba(0,0,0,.55)}
 .modal-card h2{margin:0 0 10px;font-size:19px}
 .modal-card p{margin:0 0 10px}
+.vault-unlock{z-index:120}
+.modal-card p.err{color:var(--danger)}
 
 /* responsive */
 @media(max-width:920px){

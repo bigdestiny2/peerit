@@ -128,6 +128,38 @@ async function main () {
   const fallbackHydrated = await data3.getPost('p2p', fallbackPost.cid)
   ok(fallbackHydrated.body === fallbackBody && !fallbackHydrated._blobMissing, 'fallback blob body is recovered')
 
+  console.log('\n— v2 + dispersal compose: manifest sealed, body off-VPS —')
+  const shardStoreV2 = makeShardStore()
+  const { sync: syncV2, id: idV2 } = await setup()
+  const dataV2 = createData(syncV2, idV2, {
+    minBits: { community: 4, post: 4, comment: 4, blob: 4 },
+    v2: true,
+    dispersal: true,
+    shardRelays: [
+      { url: 'https://relay-a.example', pubkey: 'a'.repeat(64) },
+      { url: 'https://relay-b.example', pubkey: 'b'.repeat(64) },
+      { url: 'https://relay-c.example', pubkey: 'c'.repeat(64) }
+    ],
+    fetch: shardStoreV2.fetch
+  })
+  await dataV2.createCommunity({ slug: 'v2p2p', title: 'V2 P2P' })
+  const v2Body = 'v2 dispersed body — ' + 'z'.repeat(3000)
+  const v2Post = await dataV2.submitPost({ community: 'v2p2p', kind: 'text', title: 'V2 wired post', body: v2Body })
+  ok(v2Post.body === '' && !!v2Post.dispersal, 'v2+dispersal post returns with empty body and dispersal manifest')
+
+  const { expectedKeyV2 } = await import('../js/canon.js')
+  const v2Okey = (await expectedKeyV2({ ...v2Post, _t: 'post' })).slice(3)
+  const v2Stored = await syncV2.get('v2!' + v2Okey)
+  ok(!!v2Stored && v2Stored._t === 'post' && !!v2Stored.sealed, 'v2+dispersal post is stored under an opaque v2 key with sealed graph')
+  const v2RawJson = JSON.stringify(v2Stored)
+  ok(v2RawJson.indexOf(v2Post.dispersal.blindContentId) === -1, 'dispersal manifest is sealed, not greppable in the stored record')
+  ok(!await syncV2.get('blob!' + v2Post.dispersal.blindContentId), 'ciphertext is NOT stored as a local blob in v2 mode')
+  const v2CtBytes = shardStoreV2.shards.get(v2Post.dispersal.ciphertextShard)
+  ok(!!v2CtBytes && v2CtBytes.length > 0, 'ciphertext shard exists on the cohort for the v2 post')
+
+  const v2Hydrated = await dataV2.getPost('v2p2p', v2Post.cid)
+  ok(v2Hydrated.body === v2Body && !v2Hydrated._blobMissing, 'v2+dispersal reader recovers the exact body from dispersed shards')
+
   console.log('\n✅ all ' + passed + ' dispersal-app-wiring checks passed')
 }
 

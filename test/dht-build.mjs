@@ -21,6 +21,7 @@ async function main () {
     '--relay', 'same-origin',
     '--readonly', 'true',
     '--no-relay-roster',
+    '--no-shard-roster',
     '--dht-relay', relay,
     '--drive-key', 'dht-smoke'
   ], { encoding: 'utf8' })

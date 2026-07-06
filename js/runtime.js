@@ -166,5 +166,9 @@ export function resolveRuntime ({ rawPear = null, doc = null } = {}) {
       v2
     }
   }
-  return { mode: 'dev', identityOpts: {}, syncOpts: {}, readOnly: false, v2, shardCohort }
+  // Local dev fallback (nothing configured): this is a developer's own machine, so
+  // persisting the seed across reloads is a convenience, not a public-exposure risk.
+  // persistSeed is scoped to THIS branch only — the web/production path above never
+  // sets it, so peerit.site keeps the seed in memory only (see js/identity.js).
+  return { mode: 'dev', identityOpts: { persistSeed: true }, syncOpts: {}, readOnly: false, v2, shardCohort }
 }

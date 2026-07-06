@@ -1,19 +1,19 @@
 {
-  "_comment": "Public reader roster for the current live HiveRelay shard cohort. Contains only relay base URLs and pubkeys (no apiKeys). The dealer write path uses ~/.hiverelay-shard-cohort/roster.json for operator secrets. NOTE: these relays run on 127.0.0.1 — they are the local live testnet, not public-internet production.",
+  "_comment": "PRODUCTION shard cohort for peerit.site. These are the same public HiveRelays used for outbox gossip, now also exposing the /api/v1/shard surface. This file contains ONLY base URLs and Ed25519 pubkeys (no apiKeys). The dealer write path uses ~/.hiverelay-shard-cohort/roster.json for operator secrets. AT LEAST 3 RELAYS ARE REQUIRED for k-of-n dispersal; the current file intentionally lists 2 production URLs plus placeholders. EMPTY PUBKEYS ARE INTENTIONAL PLACEHOLDERS: add a third relay (ideally an independent operator), run deploy/shard-cohort/extract-pubkey.mjs on each host, and paste the real 64-hex publicKey values here before shipping. build-web.mjs will refuse to ship a release with missing/invalid pubkeys or fewer than 3 relays.",
   "threshold": 2,
   "retainMs": 2592000000,
   "relays": [
     {
-      "baseUrl": "http://127.0.0.1:64248",
-      "pubkey": "000160e441c6c3ccc9496ac127db2ce500dc629e2d4d153c22caeda2585e1f6c"
+      "baseUrl": "https://153-75-89-206.sslip.io",
+      "pubkey": ""
     },
     {
-      "baseUrl": "http://127.0.0.1:64249",
-      "pubkey": "c1ba9df8d74ea625e20f09e28c53fec3cc1dcc072dd0613d31b4d71d2881ef30"
+      "baseUrl": "https://peerit-relay.onrender.com",
+      "pubkey": ""
     },
     {
-      "baseUrl": "http://127.0.0.1:64256",
-      "pubkey": "ef015c1b445c5fae1429c4bdbe8bd1a630ce94f6260193eb6c9de41aac1a3f2f"
+      "baseUrl": "https://shard-c.example.com",
+      "pubkey": ""
     }
   ]
 }

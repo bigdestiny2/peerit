@@ -1,24 +1,24 @@
 {
   "kind": "reader-bundle-live",
-  "generatedAt": "2026-07-05T14:24:05.090Z",
-  "rosterPath": "/tmp/mock-roster.json",
+  "generatedAt": "2026-07-05T15:02:22.769Z",
+  "rosterPath": "/Users/localllm/.hiverelay-shard-cohort/roster.json",
   "cohort": {
     "threshold": 2,
     "count": 3,
     "relays": [
-      "http://127.0.0.1:8801",
-      "http://127.0.0.1:8802",
-      "http://127.0.0.1:8803"
+      "http://127.0.0.1:60396",
+      "http://127.0.0.1:60397",
+      "http://127.0.0.1:60398"
     ]
   },
-  "publisherPubkey": "be138bc5f6169bc7976fe4d7433f7260311c31ae7fa4748d3ff07de35462fe34",
+  "publisherPubkey": "e1462857bdca02e7d9ca2fe3cc6a90434589219386764fe705b5fc4a86c560b6",
   "bundleBytes": 178020,
   "manifestSummary": {
     "scheme": "pvss-secp256k1-v1",
     "threshold": 2,
     "count": 3,
-    "blindContentId": "1fbe9d7ad01f290f7518ae9ef10448ad636afe0d01fec44d491cc4734038a95d",
-    "intentId": "353ccdc90257a8906c23dc29bb0eb01e56b4d9c002110d0c1f999bca185bab1c"
+    "blindContentId": "975edbf57a9d17d98ae44adfc3e95cba1e4432f374c118d7d5b14f20863ef061",
+    "intentId": "2016b5586efcb24d149ad7f8da5ddb3392b7ef20945a04609748e9bc9687fc84"
   },
   "checks": {
     "bodyRecovered": true,

@@ -5,7 +5,8 @@
   "readonly": false,
   "relayRoster": "relay-roster.json",
   "pinnedRosterKey": "92caa893720e763de6c87e5397214cbdbd8be8c073ac029e83fa430a58812538",
-  "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
+  "_pinnedReleaseKey_pending": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b (re-pin at the next deploy and sign with scripts/sign-release.mjs — pinning without a signed asset-manifest.sig red-banners every visitor)",
+  "pinnedReleaseKey": "",
   "dhtRelay": "",
   "shardRoster": "",
   "seedOutboxes": [

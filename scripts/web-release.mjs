@@ -127,6 +127,7 @@ function normalizeConfig (raw) {
     readonly: (raw.readonly === false || raw.readOnly === false) ? 'false' : 'true',
     relayRoster: raw.relayRoster || 'relay-roster.json',
     pinnedRosterKey: String(raw.pinnedRosterKey || raw.rosterKey || '').trim().toLowerCase(),
+    pinnedReleaseKey: String(raw.pinnedReleaseKey || raw.releaseKey || '').trim().toLowerCase(),
     dhtRelay: String(raw.dhtRelay || '').trim(),
     shardRoster: String(raw.shardRoster || '').trim(),
     roster: normalizeRelayRosterPayload(raw.roster || {

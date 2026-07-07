@@ -5,7 +5,7 @@
   "readonly": false,
   "relayRoster": "relay-roster.json",
   "pinnedRosterKey": "92caa893720e763de6c87e5397214cbdbd8be8c073ac029e83fa430a58812538",
-  "pinnedReleaseKey": "",
+  "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
   "dhtRelay": "",
   "shardRoster": "",
   "seedOutboxes": [

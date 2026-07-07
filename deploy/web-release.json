@@ -9,7 +9,7 @@
   "dhtRelay": "",
   "shardRoster": "",
   "seedOutboxes": [
-    { "appId": "be48baf150598739bed1fa3cf20eba81331908e05b22e9578412b0219e9237e7", "inviteKey": "db8eeaf9c385a275cc85e0a05c298b8315f5f38e61b361e2d901baa2f4957e23" }
+    { "appId": "6b565bc4cc28544526c85c09760f53bf735464393ad931bb026fb10e0757de30", "inviteKey": "e488cea9bea7f8eeb5f9c4dee9a5a0dccebb400d23db37fcf440980e66348a4e" }
   ],
   "roster": {
     "version": 1,

@@ -374,9 +374,20 @@ class GossipSync {
 
 // ---- real PearBrowser gossip ------------------------------------------------
 class BridgeGossipSync {
-  constructor ({ pear, getMe, identity, storage, validate = makeValidator(), pollMs = 4000, writeHead = false, readOnly = false, discover = true, seedOutboxes = [] }) {
+  constructor ({ pear, getMe, identity, storage, validate = makeValidator(), pollMs = 4000, writeHead = false, readOnly = false, discover = true, seedOutboxes = [], instantBoot = false, seedSnapshot = null }) {
     this.mode = 'gossip-bridge'
     this.pear = pear
+    // instantBoot: ready() returns after the LOCAL restore (cached view / verified
+    // seed snapshot) and runs every network step in the background — so the web app
+    // paints last-known content in milliseconds like a normal website, instead of
+    // blocking first render on relay round-trips. Default OFF: the seeder and tests
+    // rely on ready() meaning "network attempted". app.js turns it on for web boot.
+    this._instantBoot = !!instantBoot
+    // seedSnapshot: signed rows baked into the static bundle ({authors:[{pub,rows}]}).
+    // Used ONLY when there is no cached view (true first visit): every row passes the
+    // SAME admit() verification as live gossip (mergeOutboxes), so the snapshot can
+    // go stale but can never forge. Gives a first-ever visitor instant real content.
+    this._seedSnapshot = seedSnapshot
     this.getMe = getMe
     this.identity = identity
     this.storage = storage
@@ -624,6 +635,28 @@ class BridgeGossipSync {
     const myKey = this._getOutboxKey(appId)
     this._peers.set(appId, { appId, inviteKey: myKey || null, self: true })
     if (HEX64.test(myKey || '')) this._rememberOutbox(appId, myKey)
+    // Restore last session's verified view (+ discovered peers + heads) so the
+    // first list()/get() paints instantly instead of blanking; the poll then
+    // re-reads only what changed and a periodic reconcile re-verifies everything.
+    // On a true first visit (no cache) fall back to the baked seed snapshot —
+    // every row admit()-verified, so it renders real content but can't forge.
+    if (!this._loadCache() && this._seedSnapshot) await this._loadSnapshot(this._seedSnapshot)
+    this._loadFloor() // Phase C: restore the durable rollback floor (survives restart by design)
+    if (this._instantBoot) {
+      // Normal-website boot: paint from the local restore NOW; do every network
+      // step in the background. Callers that need the network done (seeder,
+      // tests) leave instantBoot off or await netReady()/wake().
+      this._netReady = this._connectNet().catch((e) => { console.warn('[gossip] background connect failed (will retry on poll/wake):', e && e.message) })
+      return this
+    }
+    await this._connectNet()
+    return this
+  }
+
+  // Every network step of boot, extracted so instantBoot can run it in the
+  // background and wake() can re-run the idempotent parts after a relay pool is
+  // plugged in late. Each step is individually offline-tolerant.
+  async _connectNet () {
     // Open (or create) the WRITABLE outbox so we can post. A network failure here
     // is non-fatal — reads + the cached render still work, and the poll retries.
     await this._ensureMyOutbox()
@@ -641,22 +674,88 @@ class BridgeGossipSync {
       if (this._peers.has(o.appId) || o.appId === this.getMe()) continue
       try { await this.pear.sync.join(o.appId, o.inviteKey); this._peers.set(o.appId, { appId: o.appId, inviteKey: o.inviteKey }) } catch {}
     }
-    // Restore last session's verified view (+ discovered peers + heads) so the
-    // first list()/get() paints instantly instead of blanking; the poll below then
-    // re-reads only what changed and a periodic reconcile re-verifies everything.
-    this._loadCache()
-    this._loadFloor() // Phase C: restore the durable rollback floor (survives restart by design)
-    await this._bootstrapFloor() // Phase D: seed it from the durable directory (fresh visitor gets a cross-relay floor immediately)
+    await this._bootstrapFloor() // Phase D: seed the floor from the durable directory (fresh visitor gets a cross-relay floor immediately)
     try { console.log('[peerit persist] me=' + (this.getMe() || '').slice(0, 12) + ' outbox=' + (this._myInvite || '').slice(0, 12) + ' knownOutboxes=' + this._knownOutboxes().length + ' cachedPeers=' + this._peers.size) } catch {}
     try {
-      this._channel = await this.pear.swarm.v1.join(TOPIC, { server: true, client: true, appName: 'peerit', reason: 'Discover other peerit users' })
-      // Send our descriptor only to the newly-connected peer (O(1)); never re-broadcast
-      // to every peer on each 'peer' event — that is the O(N²) /api/swarm/send storm that
-      // exhausts the browser socket pool and wedges cold-start boot.
-      this._channel.on('peer', (peer) => { if (peer && typeof peer.send === 'function') this._announceTo(peer); else this._scheduleAnnounce() })
-      this._channel.on('message', (peer, data) => this._onDescriptor(data))
-      await this._announce()
+      if (!this._channel) {
+        this._channel = await this.pear.swarm.v1.join(TOPIC, { server: true, client: true, appName: 'peerit', reason: 'Discover other peerit users' })
+        // Send our descriptor only to the newly-connected peer (O(1)); never re-broadcast
+        // to every peer on each 'peer' event — that is the O(N²) /api/swarm/send storm that
+        // exhausts the browser socket pool and wedges cold-start boot.
+        this._channel.on('peer', (peer) => { if (peer && typeof peer.send === 'function') this._announceTo(peer); else this._scheduleAnnounce() })
+        this._channel.on('message', (peer, data) => this._onDescriptor(data))
+        await this._announce()
+      }
     } catch (e) { console.warn('[gossip] swarm unavailable:', e && e.message) }
+    this._startPoll()
+  }
+
+  // Re-kick the idempotent connect steps after connectivity appears (app.js plugs
+  // a live relay pool into a lazy facade, then calls wake()). Safe to call any
+  // time: every step no-ops when already done and tolerates a dead relay.
+  async wake () {
+    try { if (this._netReady) await this._netReady } catch {}
+    if (this._destroyed) return
+    await this._ensureMyOutbox()
+    for (const o of this._seedOutboxes) {
+      if (this._peers.has(o.appId) || o.appId === this.getMe()) continue
+      try { await this.pear.sync.join(o.appId, o.inviteKey); this._peers.set(o.appId, { appId: o.appId, inviteKey: o.inviteKey }) } catch {}
+    }
+    try { await this._bootstrapFloor() } catch {}
+    try {
+      if (!this._channel) {
+        this._channel = await this.pear.swarm.v1.join(TOPIC, { server: true, client: true, appName: 'peerit', reason: 'Discover other peerit users' })
+        this._channel.on('peer', (peer) => { if (peer && typeof peer.send === 'function') this._announceTo(peer); else this._scheduleAnnounce() })
+        this._channel.on('message', (peer, data) => this._onDescriptor(data))
+        await this._announce()
+      }
+    } catch {}
+    // Force the first post-connect refresh to be a FULL reconcile: ignore the
+    // heads gate (a throttled/absent heads endpoint must not defer the catch-up)
+    // and re-verify every cached row against the live relay.
+    this._refreshCount = RECONCILE_EVERY - 1
+    try { const changed = await this._refresh(); if (changed.length) this._emit(changed) } catch (e) { console.warn('[gossip wake]', e && e.message) }
+  }
+
+  // Verify + load the baked seed snapshot ({authors:[{pub, rows:[{key,value}]}]}).
+  // Rows go through mergeOutboxes -> admit(): full signature/key-binding/PoW checks,
+  // exactly like live gossip — the snapshot is a render floor, never a trust bypass.
+  async _loadSnapshot (snap) {
+    try {
+      const authors = (snap && Array.isArray(snap.authors)) ? snap.authors : []
+      const boxes = []
+      for (const a of authors) {
+        if (!a || !HEX64.test(a.pub || '') || !Array.isArray(a.rows)) continue
+        if (a.pub === this.getMe()) continue
+        const view = Object.create(null)
+        for (const r of a.rows) { if (r && typeof r.key === 'string' && !PROTO_KEYS.has(r.key) && r.value) view[r.key] = r.value }
+        boxes.push({ pub: a.pub, view })
+      }
+      if (!boxes.length) return false
+      if (!this._claimed) { try { this._claimed = JSON.parse(this._getLocal(CLAIMED_KEY) || '{}') } catch { this._claimed = {} } }
+      const merged = await mergeOutboxes(boxes, this._claimed, this.validate)
+      if (!Object.keys(merged).length) return false
+      // Keep only rows that SURVIVED verification in the per-peer views, and
+      // register each author as a directory-style content peer so the first live
+      // refresh re-reads them straight from the relay by appId.
+      for (const { pub, view } of boxes) {
+        const admitted = Object.create(null); const sig = new Map()
+        for (const k in view) { if (merged[k] && changeToken(merged[k]) === changeToken(view[k])) { admitted[k] = view[k]; sig.set(k, changeToken(view[k])) } }
+        if (!Object.keys(admitted).length) continue
+        this._peerViews.set(pub, admitted)
+        this._peerSigs.set(pub, sig)
+        if (!this._peers.has(pub) && this._peers.size < MAX_PEERS) this._peers.set(pub, { appId: pub, inviteKey: pub, dir: true })
+      }
+      this._cache = merged
+      this._sortedFor = null
+      console.log('[gossip] first visit: rendered ' + Object.keys(merged).length + ' verified rows from the baked seed snapshot')
+      return true
+    } catch (e) { console.warn('[gossip] seed snapshot rejected:', e && e.message); return false }
+  }
+
+  _startPoll () {
+    if (this._pollStarted || this._destroyed) return
+    this._pollStarted = true
     if (this._pollMs > 0) {
       // Re-merge incrementally and notify ONLY when a peer's rows actually
       // changed. Self-scheduling with ±15% jitter so many clients don't hit the
@@ -677,7 +776,6 @@ class BridgeGossipSync {
       this._pollTimer = setTimeout(tick, jittered())
       if (this._pollTimer && this._pollTimer.unref) this._pollTimer.unref()
     }
-    return this
   }
 
   // Tear down timers, the swarm channel, and listeners. Call on tab/SPA teardown
@@ -1117,8 +1215,8 @@ function browserBus (name) {
   return { send: (m) => { bc.postMessage(m) }, onMessage: (fn) => { bc.onmessage = (e) => fn(e.data) } }
 }
 
-export function createGossip ({ storage, pear, getMe, identity, channelName, forceDev, bus, validate, pollMs, writeHead, readOnly, discover, seedOutboxes } = {}) {
-  if (pear && pear.sync && pear.swarm && !forceDev) return new BridgeGossipSync({ pear, getMe, identity, storage, validate, pollMs, writeHead, readOnly, discover, seedOutboxes })
+export function createGossip ({ storage, pear, getMe, identity, channelName, forceDev, bus, validate, pollMs, writeHead, readOnly, discover, seedOutboxes, instantBoot, seedSnapshot } = {}) {
+  if (pear && pear.sync && pear.swarm && !forceDev) return new BridgeGossipSync({ pear, getMe, identity, storage, validate, pollMs, writeHead, readOnly, discover, seedOutboxes, instantBoot, seedSnapshot })
   const theBus = bus || (typeof BroadcastChannel !== 'undefined' ? browserBus(channelName || 'peerit-gossip') : null)
   return new GossipSync({ storage, bus: theBus, getMe, validate })
 }

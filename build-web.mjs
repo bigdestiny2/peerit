@@ -172,6 +172,28 @@ for (const p of SITE_FILES) {
   sriMap[p] = sri(buf)
 }
 
+// Baked seed snapshot (optional): signed seed rows exported by
+// scripts/export-seed-snapshot.mjs so a FIRST-EVER visitor paints real content
+// before any relay round-trip. Client-side every row still passes admit()
+// (signature/key-binding/PoW), so a stale or tampered snapshot renders nothing
+// it shouldn't — it is a floor, not a trust bypass. Hash-pinned like every asset.
+{
+  const snapPath = join(__dir, 'config', 'seed-snapshot.json')
+  if (existsSync(snapPath)) {
+    const buf = readFileSync(snapPath)
+    try {
+      const snap = JSON.parse(buf.toString('utf8'))
+      const authors = Array.isArray(snap && snap.authors) ? snap.authors.length : 0
+      const rows = (snap.authors || []).reduce((n, a) => n + ((a && a.rows && a.rows.length) || 0), 0)
+      files['seed-snapshot.json'] = buf
+      manifest['seed-snapshot.json'] = sha256(buf)
+      console.log(`[build-web] baked seed snapshot: ${authors} author(s), ${rows} row(s)`)
+    } catch (err) {
+      throw new Error(`config/seed-snapshot.json is not valid JSON: ${err.message}`)
+    }
+  }
+}
+
 // 2. transform index.html: relay meta + SW registration (external, CSP-safe) + SRI
 const rosterRelease = await prepareRoster()
 // Multi-home the roster: same-origin file first, then independent mirror URLs (e.g.
@@ -216,6 +238,7 @@ for (const p of SITE_FILES) {
   writeFileSync(outPath, files[p])
 }
 if (files['relay-roster.json']) writeFileSync(join(OUT, 'relay-roster.json'), files['relay-roster.json'])
+if (files['seed-snapshot.json']) writeFileSync(join(OUT, 'seed-snapshot.json'), files['seed-snapshot.json'])
 
 const swRegister = `if ('serviceWorker' in navigator) {
   // A new deploy changes the bundle hashes -> a new sw.js. The SW skipWaiting()s +

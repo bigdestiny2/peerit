@@ -103,47 +103,18 @@ async function boot () {
       } catch (e) { console.warn('[peerit] DHT transport unavailable; using /api relay:', e && e.message) }
     }
     if (!pearOverride) {
-      const candidates = await resolveRelayCandidates({
-        relays: runtime.relays || [runtime.syncOpts.apiBase],
-        roster: runtime.relayRoster,
-        fetch: globalThis.fetch && globalThis.fetch.bind(globalThis),
-        onWarning: (e) => console.warn('[peerit] relay roster unavailable:', e && e.message)
-      })
-      // Phase B: select UP TO 3 working relays and drive them as a pool — writes
-      // fan out and each author's signed head is cross-checked (highest version
-      // wins), which defeats a single relay serving a stale/absent head. Degrades
-      // to a pool of one (single-relay behaviour) when only one is configured.
-      const selected = await selectRelaysResilient(candidates.relays, {
-        apiToken: runtime.syncOpts.apiToken,
-        fetch: globalThis.fetch && globalThis.fetch.bind(globalThis)
-      })
-      if (selected.length) {
-        relayPool = createRelayPool({ relays: selected, fetch: runtime.syncOpts.fetch, EventSource: runtime.syncOpts.EventSource })
-        if (candidates.rosterVerified) console.log('[peerit] verified signed relay roster; pool of ' + selected.length + ' relay(s)')
-      } else {
-        runtime.syncOpts.apiToken = ''
-        console.warn('[peerit] no relay reachable — falling back to local-only mode')
-      }
+      // Normal-website boot: NEVER block first paint on relay round-trips. The
+      // gossip sync starts against a LAZY pool (every call fails fast until a real
+      // pool is plugged in) with instantBoot on, so the cached view / baked seed
+      // snapshot renders in milliseconds. Relay selection runs in the BACKGROUND
+      // (retrying forever with capped backoff); when it lands we plug the pool in
+      // and wake() the sync — reads reconcile, writes come alive, UI repaints.
+      const lazy = createLazyPearPool()
+      relayPool = lazy.pear
+      connectRelaysInBackground(lazy)
     }
-    // B3: when this build is explicitly configured for the HiveRelay outboxlog
-    // backend, verify (once, non-blocking) that the relay actually identifies as
-    // one. The wire is identical either way, so this is a visible sanity check —
-    // NOT a gate: a mismatch degrades with a warning, it never blocks boot.
-    if (runtime.relayBackend === 'hiverelay-outbox' && runtime.syncOpts.apiToken) {
-      // Fire-and-forget: boot never waits on the probe. probeRelayBackend is
-      // internally bounded (AbortController timeout) and never throws, so the
-      // warning simply appears if/when the relay answers — a slow or hanging
-      // /api/bridge/status can neither delay nor block boot.
-      probeRelayBackend({
-        apiBase: runtime.syncOpts.apiBase || '',
-        apiToken: runtime.syncOpts.apiToken,
-        fetch: globalThis.fetch && globalThis.fetch.bind(globalThis)
-      }).then((probe) => {
-        if (probe.service !== 'outboxlog') {
-          console.warn('[peerit] configured hiverelay-outbox backend but relay /api/bridge/status did not report service=outboxlog — check the relay URL')
-        }
-      }).catch(() => {})
-    }
+    // (The B3 hiverelay-outbox backend probe now runs inside
+    // connectRelaysInBackground — a token only exists once a relay is selected.)
   }
   // writeHead: maintain a signed head!<me> census after each write (the outbox
   // "merkle root" — lets any reader detect a relay withholding records). Real
@@ -155,8 +126,11 @@ async function boot () {
   // of spreading syncOpts — so thread the pinned outboxes through explicitly on both paths.
   const seedOutboxes = runtime.syncOpts && runtime.syncOpts.seedOutboxes
   const writeHead = !runtime.readOnly
+  // First-ever web visit (no cached view): load the baked seed snapshot so the very
+  // first paint shows real, admit()-verified content instead of an empty feed.
+  const seedSnapshot = await fetchSeedSnapshot(runtime)
   sync = pearForSync
-    ? createSync({ getMe: () => identity.me().pubkey, identity, pear: pearForSync, writeHead, readOnly: runtime.readOnly, seedOutboxes })
+    ? createSync({ getMe: () => identity.me().pubkey, identity, pear: pearForSync, writeHead, readOnly: runtime.readOnly, seedOutboxes, instantBoot: runtime.mode === 'web' && !pearOverride, seedSnapshot })
     : createSync({ getMe: () => identity.me().pubkey, identity, ...runtime.syncOpts, writeHead, readOnly: runtime.readOnly })
   await sync.ready()
   data = createData(sync, identity, {
@@ -288,6 +262,78 @@ async function verifyReleaseAtBoot () {
       document.body.insertBefore(warn, document.body.firstChild)
     } catch {}
   }
+}
+
+// ---- instant boot (normal-website UX) ---------------------------------------
+// A pear-shaped facade over the relay pool that exists BEFORE any relay is
+// selected. Every call fails fast until the real pool is plugged in; the gossip
+// layer already tolerates that everywhere (offline-deferred outbox, try/caught
+// joins, poll retries), so the app renders the cached view instantly while
+// selection happens in the background.
+function createLazyPearPool () {
+  let target = null
+  const notUp = () => new Error('relay not connected yet')
+  const pear = {
+    get _relayCount () { return target ? target._relayCount : 0 },
+    sync: {},
+    swarm: { v1: { join: async (...a) => { if (!target) throw notUp(); return target.swarm.v1.join(...a) } } }
+  }
+  for (const m of ['create', 'join', 'append', 'get', 'list', 'range', 'count', 'heads', 'directory', 'crossHead', 'crossRows', 'recoverRows']) {
+    pear.sync[m] = async (...a) => { if (!target) throw notUp(); return target.sync[m](...a) }
+  }
+  return { pear, setTarget: (t) => { target = t }, get connected () { return !!target } }
+}
+
+// Background relay connector: resolve the signed roster, select a pool, plug it
+// into the lazy facade, wake the sync. Retries FOREVER with capped backoff — a
+// down/rate-limited relay means stale-but-rendered content, never an empty feed.
+async function connectRelaysInBackground (lazy) {
+  const fetchFn = globalThis.fetch && globalThis.fetch.bind(globalThis)
+  let delay = 2000
+  for (;;) {
+    try {
+      const candidates = await resolveRelayCandidates({
+        relays: runtime.relays || [runtime.syncOpts.apiBase],
+        roster: runtime.relayRoster,
+        fetch: fetchFn,
+        onWarning: (e) => console.warn('[peerit] relay roster unavailable:', e && e.message)
+      })
+      // Phase B: select UP TO 3 working relays and drive them as a pool — writes
+      // fan out and each author's signed head is cross-checked (highest version
+      // wins), which defeats a single relay serving a stale/absent head.
+      const selected = await selectRelaysResilient(candidates.relays, { apiToken: runtime.syncOpts.apiToken, fetch: fetchFn })
+      if (selected.length) {
+        lazy.setTarget(createRelayPool({ relays: selected, fetch: runtime.syncOpts.fetch, EventSource: runtime.syncOpts.EventSource }))
+        if (candidates.rosterVerified) console.log('[peerit] verified signed relay roster; pool of ' + selected.length + ' relay(s)')
+        // B3: sanity-probe the configured hiverelay-outbox backend (non-blocking, warns only).
+        if (runtime.relayBackend === 'hiverelay-outbox') {
+          probeRelayBackend({ apiBase: selected[0].apiBase || '', apiToken: selected[0].apiToken, fetch: fetchFn })
+            .then((probe) => { if (probe.service !== 'outboxlog') console.warn('[peerit] configured hiverelay-outbox backend but relay /api/bridge/status did not report service=outboxlog — check the relay URL') })
+            .catch(() => {})
+        }
+        if (sync && sync.wake) { try { await sync.wake() } catch (e) { console.warn('[peerit] wake after connect:', e && e.message) } }
+        try { updateNetStatus() } catch {}
+        return
+      }
+    } catch (e) { console.warn('[peerit] relay connect attempt failed:', e && e.message) }
+    console.warn('[peerit] no relay reachable yet — showing cached content, retrying in ' + Math.round(delay / 1000) + 's')
+    try { updateNetStatus() } catch {}
+    await new Promise((r) => setTimeout(r, delay))
+    delay = Math.min(delay * 2, 30000)
+  }
+}
+
+// First-ever web visit only (no cached view in localStorage): fetch the baked,
+// hash-pinned seed snapshot so first paint shows real verified content. Returning
+// visitors skip the fetch entirely (the gossip-view cache is faster and fresher).
+async function fetchSeedSnapshot (rt) {
+  if (!rt || rt.mode !== 'web' || typeof fetch !== 'function') return null
+  try { if (typeof localStorage !== 'undefined' && localStorage.getItem('peerit:gossip-view')) return null } catch {}
+  try {
+    const res = await fetch('seed-snapshot.json', { cache: 'no-store' })
+    if (!res || !res.ok) return null
+    return await res.json()
+  } catch { return null }
 }
 
 async function resolveShardCohort (rt) {

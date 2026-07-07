@@ -8,7 +8,7 @@ import { createIdentity } from './identity.js'
 import { resolveRuntime, fetchShardRoster } from './runtime.js'
 import { verifyReleaseManifest } from './release-verify.js'
 import { probeRelayBackend } from './pear-api.js'
-import { resolveRelayCandidates, selectRelays } from './relay-roster.js'
+import { resolveRelayCandidates, selectRelaysResilient } from './relay-roster.js'
 import { createRelayPool } from './relay-pool.js'
 import { cacheClassForChangedKeys, createData } from './data.js'
 import { Prefs } from './prefs.js'
@@ -113,7 +113,7 @@ async function boot () {
       // fan out and each author's signed head is cross-checked (highest version
       // wins), which defeats a single relay serving a stale/absent head. Degrades
       // to a pool of one (single-relay behaviour) when only one is configured.
-      const selected = await selectRelays(candidates.relays, {
+      const selected = await selectRelaysResilient(candidates.relays, {
         apiToken: runtime.syncOpts.apiToken,
         fetch: globalThis.fetch && globalThis.fetch.bind(globalThis)
       })

@@ -210,6 +210,19 @@ export async function relayAcceptsToken (apiBase, token, { fetch: fetchFn = defa
   }
 }
 
+// Boot resilience: probe every relay ONCE per pass (fast failover), but if a whole
+// pass finds NO reachable relay — the common case being the relay's per-IP rate
+// limit tripped by the cold-boot fan-out + a quick refresh — retry the pass with
+// capped exponential backoff instead of dropping the visitor to an empty local-only
+// feed. A genuinely-down fleet still falls through after a bounded delay.
+export async function selectRelaysResilient (relays, { apiToken = '', fetch: fetchFn = defaultFetch(), max = 3, tries = 4, baseMs = 500, capMs = 4000 } = {}) {
+  for (let i = 0; ; i++) {
+    const out = await selectRelays(relays, { apiToken, fetch: fetchFn, max })
+    if (out.length || i >= tries - 1) return out
+    await new Promise((r) => setTimeout(r, Math.min(capMs, baseMs * Math.pow(2, i))))
+  }
+}
+
 export async function selectRelay (relays, { apiToken = '', fetch: fetchFn = defaultFetch() } = {}) {
   for (const apiBase of dedupeRelayList(relays)) {
     if (apiToken) {

@@ -10,6 +10,7 @@ import { verifyReleaseManifest } from './release-verify.js'
 import { probeRelayBackend } from './pear-api.js'
 import { resolveRelayCandidates, selectRelaysResilient } from './relay-roster.js'
 import { createRelayPool } from './relay-pool.js'
+import { createLazyPearPool } from './lazy-pool.js'
 import { cacheClassForChangedKeys, createData } from './data.js'
 import { Prefs } from './prefs.js'
 import { STARTER_COMMUNITIES, STARTER_POSTS, WELCOME_COMMUNITY, starterCommunity } from './onboarding.js'
@@ -265,33 +266,10 @@ async function verifyReleaseAtBoot () {
 }
 
 // ---- instant boot (normal-website UX) ---------------------------------------
-// A pear-shaped facade over the relay pool that exists BEFORE any relay is
-// selected. Every call fails fast until the real pool is plugged in; the gossip
-// layer already tolerates that everywhere (offline-deferred outbox, try/caught
-// joins, poll retries), so the app renders the cached view instantly while
-// selection happens in the background.
-function createLazyPearPool () {
-  let target = null
-  const notUp = () => new Error('relay not connected yet')
-  const pear = {
-    get _relayCount () { return target ? target._relayCount : 0 },
-    sync: {},
-    // identity is REQUIRED for hasGossipPearSurface() (js/pear-api.js). Without it
-    // createSync sees an incomplete PearBrowser-shaped bridge (sync + swarm, no
-    // identity) and THROWS, wedging web boot for every visitor. The gossip layer
-    // never calls pear.identity (it uses opts.identity) — these only satisfy the
-    // shape check; delegate to the real pool once connected in case anything does.
-    identity: {
-      getPublicKey: (...a) => (target && target.identity && target.identity.getPublicKey) ? target.identity.getPublicKey(...a) : null,
-      sign: (...a) => (target && target.identity && target.identity.sign) ? target.identity.sign(...a) : null
-    },
-    swarm: { v1: { join: async (...a) => { if (!target) throw notUp(); return target.swarm.v1.join(...a) } } }
-  }
-  for (const m of ['create', 'join', 'append', 'get', 'list', 'range', 'count', 'heads', 'directory', 'crossHead', 'crossRows', 'recoverRows']) {
-    pear.sync[m] = async (...a) => { if (!target) throw notUp(); return target.sync[m](...a) }
-  }
-  return { pear, setTarget: (t) => { target = t }, get connected () { return !!target } }
-}
+// createLazyPearPool lives in js/lazy-pool.js (a Node-importable module with no
+// browser globals) so test/lazy-pool-surface.mjs can drive the REAL factory
+// through createSync's surface guard — the shape is load-bearing and regressed
+// once (14d8ace). Imported at the top of this file.
 
 // Background relay connector: resolve the signed roster, select a pool, plug it
 // into the lazy facade, wake the sync. Retries FOREVER with capped backoff — a

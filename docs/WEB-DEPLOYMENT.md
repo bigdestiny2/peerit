@@ -64,6 +64,12 @@ PEERIT_ROSTER_SEED=<32-byte-hex-seed> npm run web:release
 #   3) serve:  node web-serve.mjs           # proxies /api/* → the relay, serves web/ on :8780
 ```
 
+To point the build at a **HiveRelay `outboxlog`** relay instead of the bespoke
+`peerit-relay`, add `--relay-backend hiverelay-outbox` (the wire is identical, so
+`--relay` and the CSP pinning are unchanged). This is default-off and adds a
+one-shot boot probe of `/api/bridge/status`. See
+[HIVERELAY-OUTBOX-BACKEND.md](./HIVERELAY-OUTBOX-BACKEND.md).
+
 The exported `index.html` gets the relay `<meta>`, SRI on the entry module +
 stylesheet, and a Service Worker that pins the audited bundle by SHA-256
 (so the app survives the origin going down and global JS swaps are detectable).

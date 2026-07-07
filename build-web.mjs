@@ -39,6 +39,13 @@ const hasArg = (name) => process.argv.includes(name)
 const CONFIG_PATH = process.env.PEERIT_WEB_RELEASE_CONFIG || arg('--config') || join('deploy', 'web-release.json')
 const releaseConfig = readConfig(CONFIG_PATH)
 const RELAY = process.env.PEERIT_RELAY || arg('--relay') || configRelay(releaseConfig) || ''
+// Optional, explicit relay backend kind. Purely descriptive/verifiable — it does
+// NOT change --relay or the CSP connect-origins (the operator still passes the
+// HiveRelay URL as --relay, and csp.mjs already pins that origin). Empty = default
+// (behaviour byte-identical to before this flag existed). 'hiverelay-outbox' turns
+// on a one-shot boot probe of /api/bridge/status (see js/app.js).
+const RELAY_BACKEND = String(process.env.PEERIT_RELAY_BACKEND || arg('--relay-backend') || releaseConfig.relayBackend || '')
+assertRelayBackend(RELAY_BACKEND)
 const READONLY = String(process.env.PEERIT_RELAY_READONLY || arg('--readonly') || configReadonly(releaseConfig))
 const DRIVE_KEY = process.env.PEERIT_DRIVE_KEY || arg('--drive-key') || configDriveKey(releaseConfig) || ''
 const DHT_RELAY = process.env.PEERIT_DHT_RELAY || arg('--dht-relay') || releaseConfig.dhtRelay || '' // Phase 3 (optional)
@@ -176,6 +183,7 @@ const relayRosterMeta = [rosterRelease.meta, ...ROSTER_MIRRORS.split(',').map((s
 let html = files['index.html'].toString('utf8')
 const head = [
   RELAY ? `<meta name="peerit-relay" content="${attr(RELAY)}">` : '',
+  RELAY && RELAY_BACKEND ? `<meta name="peerit-relay-backend" content="${attr(RELAY_BACKEND)}">` : '',
   RELAY ? `<meta name="peerit-relay-readonly" content="${attr(READONLY)}">` : '',
   relayRosterMeta ? `<meta name="peerit-relay-roster" content="${attr(relayRosterMeta)}">` : '',
   RELAY_ROSTER_KEY ? `<meta name="peerit-relay-roster-key" content="${attr(RELAY_ROSTER_KEY)}">` : '',
@@ -235,6 +243,7 @@ writeFileSync(join(OUT, 'asset-manifest.json'), JSON.stringify({
   driveKey: DRIVE_KEY,
   webRelease: {
     relay: RELAY,
+    relayBackend: RELAY_BACKEND,
     readonly: READONLY,
     relayRoster: relayRosterMeta,
     relayRosterKey: RELAY_ROSTER_KEY,
@@ -366,6 +375,13 @@ function collectConnectOrigins () {
     }
   } catch {}
   return [...origins]
+}
+
+function assertRelayBackend (kind) {
+  const kinds = ['', 'peerit-relay', 'hiverelay-outbox']
+  if (!kinds.includes(kind)) {
+    throw new Error(`--relay-backend must be one of ${kinds.filter(Boolean).map(k => `'${k}'`).join(', ')} (or unset); got '${kind}'`)
+  }
 }
 
 function assertDhtRelay (relay) {

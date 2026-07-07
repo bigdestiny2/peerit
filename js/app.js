@@ -6,6 +6,7 @@
 import { createSync } from './sync.js'
 import { createIdentity } from './identity.js'
 import { resolveRuntime, fetchShardRoster } from './runtime.js'
+import { probeRelayBackend } from './pear-api.js'
 import { resolveRelayCandidates, selectRelays } from './relay-roster.js'
 import { createRelayPool } from './relay-pool.js'
 import { cacheClassForChangedKeys, createData } from './data.js'
@@ -114,6 +115,25 @@ async function boot () {
         runtime.syncOpts.apiToken = ''
         console.warn('[peerit] no relay reachable — falling back to local-only mode')
       }
+    }
+    // B3: when this build is explicitly configured for the HiveRelay outboxlog
+    // backend, verify (once, non-blocking) that the relay actually identifies as
+    // one. The wire is identical either way, so this is a visible sanity check —
+    // NOT a gate: a mismatch degrades with a warning, it never blocks boot.
+    if (runtime.relayBackend === 'hiverelay-outbox' && runtime.syncOpts.apiToken) {
+      // Fire-and-forget: boot never waits on the probe. probeRelayBackend is
+      // internally bounded (AbortController timeout) and never throws, so the
+      // warning simply appears if/when the relay answers — a slow or hanging
+      // /api/bridge/status can neither delay nor block boot.
+      probeRelayBackend({
+        apiBase: runtime.syncOpts.apiBase || '',
+        apiToken: runtime.syncOpts.apiToken,
+        fetch: globalThis.fetch && globalThis.fetch.bind(globalThis)
+      }).then((probe) => {
+        if (probe.service !== 'outboxlog') {
+          console.warn('[peerit] configured hiverelay-outbox backend but relay /api/bridge/status did not report service=outboxlog — check the relay URL')
+        }
+      }).catch(() => {})
     }
   }
   // writeHead: maintain a signed head!<me> census after each write (the outbox

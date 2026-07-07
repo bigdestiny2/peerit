@@ -329,6 +329,49 @@ export function createPearApi (opts = {}) {
   }
 }
 
+// Probe a relay's token-gated `GET /api/bridge/status` once and report what
+// backend it identifies as. Used by the boot wiring to VERIFY that a build
+// configured for the HiveRelay outboxlog backend is actually pointed at one.
+// Dependency-injected fetch (falls back to the module default). NEVER throws:
+// any network/parse/non-2xx error degrades to { ok:false, service:null, ready:false }.
+// Bounded by `timeoutMs` (AbortController) so a reachable-but-hanging relay can
+// never stall the caller. The token is sent as X-Pear-Token and is never logged.
+export async function probeRelayBackend ({ apiBase = '', apiToken = '', fetch, timeoutMs = 5000 } = {}) {
+  const fetchFn = fetch || defaultFetch()
+  const miss = { ok: false, service: null, ready: false }
+  if (typeof fetchFn !== 'function') return miss
+  let signal = null
+  let timer = null
+  if (typeof AbortController === 'function' && timeoutMs > 0) {
+    const ac = new AbortController()
+    signal = ac.signal
+    timer = setTimeout(() => { try { ac.abort() } catch {} }, timeoutMs)
+  }
+  try {
+    const headers = apiToken ? { 'X-Pear-Token': apiToken } : {}
+    const init = signal ? { headers, signal } : { headers }
+    const res = await fetchFn(apiBase + '/api/bridge/status', init)
+    if (!res || !res.ok) return miss
+    let body = null
+    if (typeof res.text === 'function') {
+      const text = await res.text()
+      body = text ? JSON.parse(text) : null
+    } else if (typeof res.json === 'function') {
+      body = await res.json()
+    }
+    if (!body || typeof body !== 'object') return miss
+    return {
+      ok: true,
+      service: typeof body.service === 'string' ? body.service : null,
+      ready: body.ready === true
+    }
+  } catch {
+    return miss
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 export function resolvePear (opts = {}) {
   const browserPear = Object.prototype.hasOwnProperty.call(opts, 'pear')
     ? opts.pear

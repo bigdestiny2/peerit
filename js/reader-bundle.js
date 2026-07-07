@@ -12,3 +12,11 @@ export async function recoverBody () {
 export async function recoverKey () {
   throw new Error('peerit reader bundle is not included in this build')
 }
+
+export async function decryptBody () {
+  throw new Error('peerit reader bundle is not included in this build')
+}
+
+export function createHttpShardFetch () {
+  throw new Error('peerit reader bundle is not included in this build')
+}

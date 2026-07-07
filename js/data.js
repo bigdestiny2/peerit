@@ -47,6 +47,12 @@ export class Data {
     this.dispersal = !!opts.dispersal // BlindShard dispersal: node writer attaches PVSS manifest; browser/Node reader recovers.
     this.shardRelays = Array.isArray(opts.shardRelays) ? opts.shardRelays : [] // [{url,pubkey}] or [url] for shard fetch
     this.fetch = opts.fetch || globalThis.fetch // injected for tests; defaults to global fetch
+    // Device durability floor (ADR-2026-07-07): a localStorage-like store where the
+    // AUTHOR keeps {bodyKey, iv, ciphertext} for their own dispersed posts — device-
+    // local, NEVER synced/appended, so no relay ever co-locates key + ciphertext.
+    // With it, the author can decrypt + re-disperse after total cohort loss; without
+    // it a dispersed post would be LESS durable than a plain v2 post.
+    this.deviceStore = opts.deviceStore || null
     this._profileCache = new Map() // pub -> { rec, at }
     this._tallyCache = new Map()   // `${viewer}:${cid}` -> { val, epoch }
     this._repIndex = null          // reputation index (voter age + upvotes received), gated by _epoch
@@ -302,6 +308,43 @@ export class Data {
     return createHttpShardFetch
   }
 
+  async _getDecryptBody () {
+    const node = typeof process !== 'undefined' && !!process.versions && !!process.versions.node
+    if (node) {
+      const { decryptBody } = await loadBlindDealer()
+      return decryptBody
+    }
+    const { decryptBody } = await import('./reader-bundle.js')
+    return decryptBody
+  }
+
+  // ---- device durability floor (ADR-2026-07-07) -----------------------------
+  // The floor entry holds everything the author needs to reproduce the body with
+  // ZERO cohort relays: the HKDF-derived AES key, IV, ciphertext, and the
+  // plaintext-hash commitment (so a corrupted floor fails closed in decryptBody).
+  // Best-effort by design: quota errors or a missing store must never fail a write.
+  _floorKey (blindContentId) { return 'peerit:floor:' + String(blindContentId || '').toLowerCase() }
+
+  _saveFloor (blindContentId, entry) {
+    if (!this.deviceStore || !blindContentId) return
+    try { this.deviceStore.setItem(this._floorKey(blindContentId), JSON.stringify(entry)) } catch {}
+  }
+
+  _loadFloor (blindContentId) {
+    if (!this.deviceStore || !blindContentId) return null
+    try {
+      const raw = this.deviceStore.getItem(this._floorKey(blindContentId))
+      if (!raw) return null
+      const f = JSON.parse(raw)
+      return (f && f.v === 1 && f.key && f.iv && f.ct) ? f : null
+    } catch { return null }
+  }
+
+  _dropFloor (blindContentId) {
+    if (!this.deviceStore || !blindContentId) return
+    try { this.deviceStore.removeItem(this._floorKey(blindContentId)) } catch {}
+  }
+
   async _tryDispersalBox (bodyText) {
     const publisher = await this._publisherForDispersal()
     const roster = this._rosterForDispersal()
@@ -329,7 +372,7 @@ export class Data {
         }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('dispersal timeout')), DISPERSAL_TIMEOUT_MS))
       ])
-      const { ciphertext, manifest } = dispersal
+      const { ciphertext, manifest, bodyKeyHex } = dispersal
       // Keep a local blob replica only for legacy manifests without a ciphertextShard.
       // Modern manifests put the ciphertext on the shard cohort, so the VPS/outbox
       // holds only the keyless dispersal manifest.
@@ -339,11 +382,80 @@ export class Data {
         await this._powSign(TYPE.BLOB, blobData)
         await this.sync.append({ type: TYPE.BLOB, data: blobData })
       }
+      // Device durability floor (ADR-2026-07-07): the author keeps key+iv+ciphertext
+      // DEVICE-LOCAL (never synced). Blindness is unchanged — no relay sees the key —
+      // while the author regains the "1x on my own device" floor: decrypt and
+      // re-disperse (repairDispersal) even after total cohort loss.
+      if (bodyKeyHex) {
+        this._saveFloor(manifest.blindContentId, {
+          v: 1, key: bodyKeyHex, iv: manifest.iv, ct: b64Encode(ciphertext), ph: manifest.plaintextHash || ''
+        })
+      }
       return manifest
     } catch (err) {
       if (typeof console !== 'undefined' && console.warn) console.warn('[peerit] dispersal box failed, falling back:', err.message)
       return null
     }
+  }
+
+  // ---- Phase-4 durability teeth: probe + repair ------------------------------
+  // probeDispersal: ask the cohort which pieces of a dispersal manifest are still
+  // retrievable. Returns { total, available, threshold, ciphertextAvailable,
+  // recoverable, needsRepair }. "recoverable" = a reader could still reconstruct;
+  // "needsRepair" = the body is at/below the cliff (cohort alone can no longer
+  // reconstruct, or the ciphertext shard is gone) and only the device floor can
+  // restore it. (The write-time quorum is already enforced by the dealer: intent +
+  // every share PUT + ciphertext PUT must all ACK or the write falls back.)
+  async probeDispersal (manifest) {
+    const m = manifest && manifest.dispersal ? manifest.dispersal : manifest
+    if (!m || !Array.isArray(m.shareManifest)) throw new Error('probeDispersal: dispersal manifest required')
+    const createHttpShardFetch = await this._getCreateHttpShardFetch()
+    const fetchShard = createHttpShardFetch({ baseUrls: this._relayBaseUrls(), fetch: this.fetch })
+    const probe = async (addr) => { try { return !!(addr && await fetchShard(addr)) } catch { return false } }
+    const shares = await Promise.all(m.shareManifest.map((s) => probe(s.shard)))
+    const available = shares.filter(Boolean).length
+    const ciphertextAvailable = m.ciphertextShard ? await probe(m.ciphertextShard) : true
+    const threshold = Number(m.threshold) || 0
+    const recoverable = ciphertextAvailable && available >= threshold
+    return {
+      total: m.shareManifest.length,
+      available,
+      threshold,
+      ciphertextAvailable,
+      recoverable,
+      needsRepair: !recoverable || available < threshold + 1 // no margin left => repair now
+    }
+  }
+
+  // repairDispersal: re-establish full cohort redundancy for the author's own post
+  // from the device floor (or from the cohort itself while it can still serve).
+  // Reuses the normal edit path, so the repaired record gets a FRESH dispersal
+  // (new PVSS split, new custody intent, new floor entry) and replicates through
+  // the ordinary signed-record flow. Author-only by construction (editPost checks).
+  async repairDispersal (community, cid, { force = false } = {}) {
+    const p = await this._rawPost(community, cid)
+    if (!p) throw new Error('Post not found')
+    if (!p.dispersal) throw new Error('Post is not dispersed')
+    const m = p.dispersal
+    const status = await this.probeDispersal(m).catch(() => null)
+    if (!force && status && !status.needsRepair) return { repaired: false, status }
+    // Body source: device floor first (works at zero cohort), else the cohort
+    // while it is still above threshold.
+    let body = null
+    const floor = this._loadFloor(m.blindContentId)
+    if (floor) {
+      try {
+        const decryptBody = await this._getDecryptBody()
+        body = await decryptBody(b64Decode(floor.ct), floor.iv, floor.key, m.plaintextHash || floor.ph || undefined)
+      } catch {}
+    }
+    if (body == null) {
+      const hydrated = await this._hydrate(p)
+      if (hydrated && !hydrated._blobMissing && hydrated.body) body = hydrated.body
+    }
+    if (body == null) throw new Error('repairDispersal: body unrecoverable (no device floor and cohort below threshold)')
+    const data = await this.editPost(community, cid, body) // re-runs _boxBody -> fresh dispersal + fresh floor
+    return { repaired: true, status, record: data }
   }
 
   // Return a render-ready copy of a post: if it carries a blob manifest, fetch
@@ -357,6 +469,20 @@ export class Data {
       const m = rec.dispersal
       const cached = this._bodyCache.get(m.blindContentId)
       if (cached != null) return { ...rec, body: cached }
+      // Device floor first (author's own posts): decrypt locally with zero cohort
+      // round-trips. The plaintext-hash gate inside decryptBody keeps a corrupted
+      // floor entry from serving a wrong body — on any failure fall through to the
+      // normal cohort reconstruction below.
+      const floor = this._loadFloor(m.blindContentId)
+      if (floor) {
+        try {
+          const decryptBody = await this._getDecryptBody()
+          const body = await decryptBody(b64Decode(floor.ct), floor.iv, floor.key, m.plaintextHash || floor.ph || undefined)
+          if (this._bodyCache.size >= BODY_CACHE_MAX) this._bodyCache.delete(this._bodyCache.keys().next().value)
+          this._bodyCache.set(m.blindContentId, body)
+          return { ...rec, body }
+        } catch {}
+      }
       try {
         const recoverBody = await this._getRecoverBody()
         const opts = {
@@ -502,6 +628,7 @@ export class Data {
     if (!p) throw new Error('Post not found')
     if (p.author !== this.me().pubkey) throw new Error('You can only edit your own post')
     const data = { ...p, body: String(body || '').slice(0, 40000), editedAt: Date.now() }
+    if (p.dispersal) this._dropFloor(p.dispersal.blindContentId) // stale floor entry for the replaced body
     delete data.blob // drop any prior manifest; re-box below if the new body is still long
     delete data.dispersal
     if (data.kind === 'text' && canBox() && shouldBox(data.body)) await this._boxBody(data)
@@ -515,6 +642,7 @@ export class Data {
     if (!p) return
     if (p.author !== this.me().pubkey) throw new Error('You can only delete your own post')
     const data = { ...p, deleted: true, body: '', url: '', title: p.title, editedAt: Date.now() }
+    if (p.dispersal) this._dropFloor(p.dispersal.blindContentId) // deleted post keeps no floor copy
     delete data.blob // a deleted post references no blob
     delete data.dispersal
     await this._emit(TYPE.POST, data)
@@ -609,6 +737,7 @@ export class Data {
     if (!c) throw new Error('Comment not found')
     if (c.author !== this.me().pubkey) throw new Error('You can only edit your own comment')
     const data = { ...c, body: String(body || '').slice(0, 10000), editedAt: Date.now() }
+    if (c.dispersal) this._dropFloor(c.dispersal.blindContentId) // stale floor entry for the replaced body
     delete data.blob // drop any prior manifest; re-box below if still long
     delete data.dispersal
     if (canBox() && shouldBox(data.body)) await this._boxBody(data)
@@ -622,6 +751,7 @@ export class Data {
     if (!c) return
     if (c.author !== this.me().pubkey) throw new Error('You can only delete your own comment')
     const data = { ...c, deleted: true, body: '', editedAt: Date.now() }
+    if (c.dispersal) this._dropFloor(c.dispersal.blindContentId) // deleted comment keeps no floor copy
     delete data.blob // a deleted comment references no blob
     delete data.dispersal
     await this._emit(TYPE.COMMENT, data)

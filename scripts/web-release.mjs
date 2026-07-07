@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
-import { createHash, createPrivateKey, createPublicKey, sign as nodeSign } from 'node:crypto'
+import { createHash, createPrivateKey, createPublicKey, sign as nodeSign, verify as nodeVerify } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -10,12 +10,15 @@ import {
   rosterSigningMessage,
   verifyRelayRoster
 } from '../js/relay-roster.js'
+import { releaseSigningMessage } from '../js/release-verify.js'
+import { normalizeShardRosterPayload, shardRosterSigningMessage } from '../js/shard-roster.js'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dir, '..')
 const DEFAULT_CONFIG = join(ROOT, 'deploy', 'web-release.json')
 const DEFAULT_REPORT = join(ROOT, '.deploy', 'last-web-release.json')
 const PKCS8_PREFIX = '302e020100300506032b657004220420'
+const SPKI_PREFIX = '302a300506032b6570032100'
 const HEX64 = /^[0-9a-f]{64}$/i
 
 function usage (code = 0, message = '') {
@@ -310,6 +313,28 @@ function verifyWebBundle (release, rosterInfo, driveKey) {
     const webShardRosterHash = sha256(readFileSync(webShardRoster))
     if (webShardRosterHash !== shardRosterHash) throw new Error(`${release.shardRoster} in web/ differs from root`)
     addCheck('web:shard-roster-copy', 'pass', `${release.shardRoster} in web/ matches root.`, { sha256: shardRosterHash })
+    // A shipped shard roster must be the SIGNED envelope, signed by the pinned
+    // roster key, with real non-duplicate pubkeys and a sane threshold — the same
+    // rules the client's verifyShardRoster enforces at load. Sign it with:
+    //   PEERIT_ROSTER_SEED=<keyvault seed> node scripts/sign-shard-roster.mjs
+    const env = readJson(rootShardRoster)
+    if (!env || !env.payload || !env.signature) throw new Error(release.shardRoster + ' is not a signed roster envelope — run scripts/sign-shard-roster.mjs')
+    const srPayload = normalizeShardRosterPayload(env.payload)
+    if (String(env.signature.key || '').toLowerCase() !== String(release.pinnedRosterKey).toLowerCase()) {
+      throw new Error('shard roster is signed by ' + env.signature.key + ' but deploy/web-release.json pins ' + release.pinnedRosterKey)
+    }
+    const srOk = nodeVerify(null, Buffer.from(shardRosterSigningMessage(env.payload), 'utf8'),
+      createPublicKey({ key: Buffer.from(SPKI_PREFIX + String(env.signature.key).toLowerCase(), 'hex'), format: 'der', type: 'spki' }),
+      Buffer.from(String(env.signature.sig || ''), 'hex'))
+    if (!srOk) throw new Error('shard roster signature does not verify — re-run scripts/sign-shard-roster.mjs')
+    if (!(Date.parse(srPayload.expires) > Date.now())) throw new Error('shard roster is expired — re-sign with a fresh --expires')
+    const srPubs = srPayload.relays.map((r) => r.pubkey)
+    if (srPubs.some((p) => !HEX64.test(p))) throw new Error('shard roster has relays with missing/invalid pubkeys — a release must not ship placeholder custody targets')
+    if (new Set(srPubs).size !== srPubs.length) throw new Error('shard roster contains duplicate relay pubkeys')
+    if (!(srPayload.threshold >= 2 && srPayload.threshold <= srPayload.relays.length)) throw new Error('shard roster threshold must satisfy 2 <= k <= relays.length')
+    addCheck('shard-roster:signature', 'pass', `Signed shard roster verifies with the pinned roster key (${srPayload.threshold}-of-${srPayload.relays.length}).`, {
+      relays: srPayload.relays.map((r) => r.url)
+    })
   }
 
   const assetManifest = readJson(webManifest)
@@ -327,6 +352,27 @@ function verifyWebBundle (release, rosterInfo, driveKey) {
   if (release.shardRoster && !readFileSync(sw, 'utf8').includes(`"${release.shardRoster}":"${shardRosterHash}"`)) throw new Error('sw.js does not pin ' + release.shardRoster)
   if (!readFileSync(verify, 'utf8').includes(driveKey)) throw new Error('verify.html does not include the release drive key')
   addCheck('web:generated-assets', 'pass', 'sw.js and verify.html carry the same release pins.')
+
+  // A pinned release key makes the signed-release chain LOAD-BEARING: refuse to
+  // ship a bundle whose asset-manifest.sig is missing, signed by the wrong key, or
+  // stale (signed over a different manifest than the one just built). Sign with:
+  //   PEERIT_RELEASE_SEED=<keyvault seed> node scripts/sign-release.mjs
+  if (release.pinnedReleaseKey) {
+    const sigPath = join(ROOT, 'web', 'asset-manifest.sig')
+    if (!existsSync(sigPath)) throw new Error('pinnedReleaseKey is set but web/asset-manifest.sig is missing — run scripts/sign-release.mjs after the build')
+    const sig = readJson(sigPath)
+    if (!sig) throw new Error('web/asset-manifest.sig is invalid JSON')
+    if (String(sig.key || '').toLowerCase() !== String(release.pinnedReleaseKey).toLowerCase()) {
+      throw new Error(`asset-manifest.sig is signed by ${sig.key} but deploy/web-release.json pins ${release.pinnedReleaseKey}`)
+    }
+    const sigOk = nodeVerify(null, Buffer.from(releaseSigningMessage(assetManifest), 'utf8'),
+      createPublicKey({ key: Buffer.from(SPKI_PREFIX + String(sig.key).toLowerCase(), 'hex'), format: 'der', type: 'spki' }),
+      Buffer.from(String(sig.sig || ''), 'hex'))
+    if (!sigOk) throw new Error('asset-manifest.sig does not verify over the built asset-manifest.json (stale signature? re-run sign-release after the build)')
+    addCheck('web:release-signature', 'pass', `asset-manifest.sig verifies with the pinned release key ${String(sig.key).slice(0, 12)}...`)
+  } else {
+    addCheck('web:release-signature', 'warn', 'No pinnedReleaseKey in deploy/web-release.json — the bundle ships without the signed-release chain. Generate a keyvault seed, run sign-release.mjs, and pin its public key.')
+  }
 }
 
 function verifyDocs () {

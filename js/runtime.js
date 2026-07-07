@@ -103,22 +103,39 @@ export function readShardRosterConfig (doc) {
   }
 }
 
-export async function fetchShardRoster ({ url, fetch: fetchFn = defaultFetch() } = {}) {
+export async function fetchShardRoster ({ url, fetch: fetchFn = defaultFetch(), pinnedKey = '' } = {}) {
   if (!url || typeof fetchFn !== 'function') return null
   try {
     const res = await fetchFn(url, { cache: 'no-store' })
     if (!res || !res.ok) return null
     const text = typeof res.text === 'function' ? await res.text() : ''
     const cfg = text ? JSON.parse(text) : null
-    if (!cfg || !Array.isArray(cfg.relays) || cfg.relays.length < 2) return null
-    const relays = cfg.relays.map((r) => {
+    if (!cfg) return null
+    // Signed envelope (PURE-PIPE §5.2): { payload, signature } under the SAME pinned
+    // Ed25519 anchor as relay-roster.json. When the build pins a roster key, an
+    // unsigned/foreign/expired shard roster must NOT enable dispersal — a swapped
+    // cohort would re-point every new body + key share at an attacker's relays.
+    if (pinnedKey) {
+      const { verifyShardRoster } = await import('./shard-roster.js')
+      const payload = await verifyShardRoster(cfg, { expectedKey: pinnedKey })
+      const relays = payload.relays
+        .map((r) => ({ url: normalizeShardRelay(r.url), pubkey: r.pubkey }))
+        .filter((r) => r.url)
+      if (relays.length < 2) return null
+      return { threshold: payload.threshold, relays, retainMs: payload.retainMs }
+    }
+    // Legacy bare shape — accepted only when no roster key is pinned (dev/local).
+    const bare = cfg.payload && typeof cfg.payload === 'object' ? cfg.payload : cfg
+    if (!Array.isArray(bare.relays) || bare.relays.length < 2) return null
+    const relays = bare.relays.map((r) => {
       if (typeof r === 'string') return { url: normalizeShardRelay(r) }
       return { url: normalizeShardRelay(r.url || r.baseUrl), pubkey: String(r.pubkey || r.publicKey || '').toLowerCase() }
     }).filter(r => r.url)
     if (relays.length < 2) return null
-    const threshold = Number(cfg.threshold) || Math.min(relays.length - 1, Math.ceil(relays.length / 2))
-    return { threshold, relays, retainMs: Number(cfg.retainMs) || 30 * 24 * 60 * 60 * 1000 }
-  } catch {
+    const threshold = Number(bare.threshold) || Math.min(relays.length - 1, Math.ceil(relays.length / 2))
+    return { threshold, relays, retainMs: Number(bare.retainMs) || 30 * 24 * 60 * 60 * 1000 }
+  } catch (e) {
+    if (typeof console !== 'undefined' && console.warn) console.warn('[peerit] shard roster rejected:', e && e.message)
     return null
   }
 }

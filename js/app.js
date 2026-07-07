@@ -6,6 +6,7 @@
 import { createSync } from './sync.js'
 import { createIdentity } from './identity.js'
 import { resolveRuntime, fetchShardRoster } from './runtime.js'
+import { verifyReleaseManifest } from './release-verify.js'
 import { probeRelayBackend } from './pear-api.js'
 import { resolveRelayCandidates, selectRelays } from './relay-roster.js'
 import { createRelayPool } from './relay-pool.js'
@@ -76,6 +77,14 @@ async function boot () {
   // for new posts/comments. If the identity has no exportable seed (PearBrowser
   // bridge), data.js falls back to single-blob boxing automatically.
   const shardCohort = await resolveShardCohort(runtime)
+
+  // Release-signature tripwire: when the build pins a release key
+  // (<meta name="peerit-release-key">), verify asset-manifest.json was signed by
+  // peerit's OFFLINE release key. HONEST CEILING (release-verify.js): a fully
+  // compromised origin can also strip this check — the durable win is EXTERNAL
+  // verification (verify.html / mirrors). In-app it is a tripwire against silent
+  // partial tampering, not a root of trust, so it warns loudly rather than bricking.
+  verifyReleaseAtBoot().catch(() => {})
 
   // Web mode transport selection (PearBrowser/dev use runtime.syncOpts = {}):
   //   1) strongest: an in-browser DHT pipe (Phase 3) if a dht-relay is configured
@@ -154,7 +163,10 @@ async function boot () {
     v2: runtime.v2,
     dispersal: !!shardCohort,
     shardRelays: shardCohort ? shardCohort.relays : [],
-    fetch: globalThis.fetch && globalThis.fetch.bind(globalThis)
+    fetch: globalThis.fetch && globalThis.fetch.bind(globalThis),
+    // Device durability floor (ADR-2026-07-07): the author keeps key+iv+ciphertext
+    // for their own dispersed bodies device-local, never synced.
+    deviceStore: typeof localStorage !== 'undefined' ? localStorage : null
   })
   refreshPrefs()
   sync.onChange((changed) => data.invalidateViewCaches(cacheClassForChangedKeys(changed)))
@@ -246,11 +258,46 @@ function isDispersalActive () { return !!(data && data.dispersal) }
 
 // Resolve a shard cohort from runtime config. Inline relay URLs are used as-is;
 // a roster URL is fetched and validated. Returns null if no usable cohort.
+// Boot tripwire for the signed-release trust chain (task: wire release-verify).
+// Reads the pinned key from <meta name="peerit-release-key">, fetches the live
+// asset-manifest.json, and verifies its embedded { signature } against the pin.
+// Absent pin => no-op (release signing not enabled for this build).
+async function verifyReleaseAtBoot () {
+  if (typeof document === 'undefined' || typeof fetch !== 'function') return
+  const el = document.querySelector('meta[name="peerit-release-key"]')
+  const pinned = el && el.getAttribute('content') ? el.getAttribute('content').trim().toLowerCase() : ''
+  if (!pinned) return
+  try {
+    const [res, sigRes] = await Promise.all([
+      fetch('asset-manifest.json', { cache: 'no-store' }),
+      fetch('asset-manifest.sig', { cache: 'no-store' })
+    ])
+    if (!res.ok) throw new Error('asset-manifest.json HTTP ' + res.status)
+    if (!sigRes.ok) throw new Error('asset-manifest.sig HTTP ' + sigRes.status + ' (release key pinned but bundle unsigned)')
+    const manifest = await res.json()
+    const signature = await sigRes.json()
+    await verifyReleaseManifest({ manifest, signature, expectedKey: pinned })
+    console.log('[peerit] release signature OK (key ' + pinned.slice(0, 12) + '…)')
+  } catch (e) {
+    console.error('[peerit] RELEASE VERIFICATION FAILED:', e && e.message)
+    try {
+      const warn = document.createElement('div')
+      warn.className = 'readonly-banner'
+      warn.style.background = '#7f1d1d'
+      warn.textContent = '⚠ This copy of peerit could not be verified against the pinned release key (' + (e && e.message) + '). Treat it as untrusted — verify externally via verify.html or use PearBrowser.'
+      document.body.insertBefore(warn, document.body.firstChild)
+    } catch {}
+  }
+}
+
 async function resolveShardCohort (rt) {
   const cfg = rt && rt.shardCohort
   if (!cfg) return null
   if (cfg.rosterUrl) {
-    const fetched = await fetchShardRoster({ url: cfg.rosterUrl, fetch: globalThis.fetch && globalThis.fetch.bind(globalThis) })
+    // Pin the shard roster to the SAME Ed25519 anchor as the relay roster (§5.2):
+    // a build that pins a roster key refuses any unsigned/foreign shard roster.
+    const pinnedKey = (rt.relayRoster && rt.relayRoster.key) || ''
+    const fetched = await fetchShardRoster({ url: cfg.rosterUrl, fetch: globalThis.fetch && globalThis.fetch.bind(globalThis), pinnedKey })
     if (fetched) return fetched
     console.warn('[peerit] shard roster fetch failed or invalid; dispersal disabled')
     return null

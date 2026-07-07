@@ -321,7 +321,10 @@ export async function disperseBody (bodyText, opts) {
     intentId: intent.intentId,
     intent
   }
-  return { ciphertext, manifest, intent, plan, publisher, placed: placedShares.concat(placedCiphertext) }
+  // bodyKeyHex is the DERIVED AES key — returned so the AUTHOR's device can keep a
+  // local durability floor (decrypt + re-disperse after total cohort loss). It must
+  // never ride the manifest/record: on any relay it would collapse the blind split.
+  return { ciphertext, manifest, intent, plan, publisher, bodyKeyHex: bodyKey, placed: placedShares.concat(placedCiphertext) }
 }
 
 function sameValue (a, b) {

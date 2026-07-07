@@ -276,6 +276,15 @@ function createLazyPearPool () {
   const pear = {
     get _relayCount () { return target ? target._relayCount : 0 },
     sync: {},
+    // identity is REQUIRED for hasGossipPearSurface() (js/pear-api.js). Without it
+    // createSync sees an incomplete PearBrowser-shaped bridge (sync + swarm, no
+    // identity) and THROWS, wedging web boot for every visitor. The gossip layer
+    // never calls pear.identity (it uses opts.identity) — these only satisfy the
+    // shape check; delegate to the real pool once connected in case anything does.
+    identity: {
+      getPublicKey: (...a) => (target && target.identity && target.identity.getPublicKey) ? target.identity.getPublicKey(...a) : null,
+      sign: (...a) => (target && target.identity && target.identity.sign) ? target.identity.sign(...a) : null
+    },
     swarm: { v1: { join: async (...a) => { if (!target) throw notUp(); return target.swarm.v1.join(...a) } } }
   }
   for (const m of ['create', 'join', 'append', 'get', 'list', 'range', 'count', 'heads', 'directory', 'crossHead', 'crossRows', 'recoverRows']) {

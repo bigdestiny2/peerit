@@ -16,6 +16,10 @@ import { boxBody, unboxToBody, shouldBox, canBox } from './blob-store.js'
 // and never goes stale — a bounded FIFO is all it needs.
 const BODY_CACHE_MAX = 500
 const BLIND_DEALER_MODULE = './blind-dealer.mjs'
+// Node-only (browser takes the reader-bundle branch below); a computed specifier
+// keeps this out of the web publish graph + the ship SITE_FILES import check,
+// exactly like BLIND_DEALER_MODULE. The raw vendor files are never served to browsers.
+const SHARD_TRANSPORT_MODULE = './vendor/blind-shards/shard-transport.js'
 const DISPERSAL_TIMEOUT_MS = 15000 // cap slow/unavailable cohort; fall back to single-blob
 
 async function loadBlindDealer () {
@@ -291,7 +295,7 @@ export class Data {
   async _getCreateHttpShardFetch () {
     const node = typeof process !== 'undefined' && !!process.versions && !!process.versions.node
     if (node) {
-      const { createHttpShardFetch } = await import('./vendor/blind-shards/shard-transport.js')
+      const { createHttpShardFetch } = await import(SHARD_TRANSPORT_MODULE)
       return createHttpShardFetch
     }
     const { createHttpShardFetch } = await import('./reader-bundle.js')

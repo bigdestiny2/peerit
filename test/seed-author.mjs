@@ -102,7 +102,7 @@ async function main () {
   await cryptoReady()
   const tok = await (await fetch(RELAY + '/api/token', { method: 'POST' })).json()
   // Persisted store => ready() re-loads the SAME author every run (never appends).
-  const id = new DevIdentity(fileStore(STORE_PATH), mem()); await id.ready()
+  const id = new DevIdentity(fileStore(STORE_PATH), mem(), { persistSeed: true }); await id.ready()
   // writeHead:true — write a signed head!<me> census record after each write, EXACTLY as
   // the browser app does (js/app.js). This registers the outbox in the relay directory so
   // the relay durably replays its swarm descriptor to fresh readers. Without it the seed's

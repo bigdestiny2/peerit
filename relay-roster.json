@@ -3,13 +3,12 @@
     "version": 1,
     "expires": "2026-12-31T00:00:00.000Z",
     "relays": [
-      "https://153-75-89-206.sslip.io",
-      "https://peerit-relay.onrender.com"
+      "https://outbox.peerit.site"
     ]
   },
   "signature": {
     "alg": "Ed25519",
-    "key": "4a7402d1a950dc3be8a434cb3ee664231ca0e58be8c745dabcaf2346ee0e0f7f",
-    "sig": "e7ad46c16c4331eed9f4daa1b49b89798bd87366765aaf77ec36448732dab5da0adc213527311de8b5d4057d792569bdaa6a049052833cbd4a7550d6a72d8206"
+    "key": "92caa893720e763de6c87e5397214cbdbd8be8c073ac029e83fa430a58812538",
+    "sig": "554e4b0feacec1b86b92ba0ea432d25791bdde50c5d952a813d75fd72d0fbc013d20e8eb9bc2307a4f3f5eef7c78b4fd7da93ce020faff250ef65c0f2e239f0c"
   }
 }

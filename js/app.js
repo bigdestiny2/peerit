@@ -13,7 +13,7 @@ import { cacheClassForChangedKeys, createData } from './data.js'
 import { Prefs } from './prefs.js'
 import { STARTER_COMMUNITIES, STARTER_POSTS, WELCOME_COMMUNITY, starterCommunity } from './onboarding.js'
 import { renderMarkdown, excerpt } from './markdown.js'
-import { sortPosts, sortComments, POST_SORTS, COMMENT_SORTS, TIME_WINDOW_KEYS } from './ranking.js'
+import { sortPosts, sortComments, weight as voteWeight, POST_SORTS, COMMENT_SORTS, TIME_WINDOW_KEYS } from './ranking.js'
 import { buildCommentTree, sortCommentTree, annotateDescendants, countDescendants, MOD } from './model.js'
 import { COPY as RECOVERY_COPY, buildRecoveryBundle, cleanOutboxes, peeritSeederCommand, recoveryBundleFilename, recoveryBundleJson } from './recovery.js'
 import { exportIdentity, importIdentity, looksLikeIdentityExport, identityExportJson, identityExportFilename, passphraseStrength, MIN_PASSPHRASE } from './identity-export.js'
@@ -158,6 +158,15 @@ async function boot () {
   })
   refreshPrefs()
   sync.onChange((changed) => data.invalidateViewCaches(cacheClassForChangedKeys(changed)))
+  // One-time per identity: promote device-local follows/subs into signed follow!/
+  // member! records so the graph replicates and survives localStorage loss.
+  // Fire-and-forget — boot never blocks on it; a partial run retries next boot.
+  if (!isReadOnly()) {
+    data.migrateLocalGraph({
+      follows: prefs.follows(), subs: prefs.subs(),
+      storage: typeof localStorage !== 'undefined' ? localStorage : null
+    }).catch(() => {})
+  }
 
   // Live updates: when peers' data changes, repaint just the affected vote
   // widgets in place when we can, and only fall back to a full re-render for
@@ -197,6 +206,7 @@ async function boot () {
     soft()
   })
   sync.onChange(() => updateNetStatus())
+  sync.onChange(() => refreshNotifBadge()) // throttled; surfaces new replies in the header badge
   // The gossip layer already re-merges + emits onChange on its own poll and on
   // every real event, so a separate status timer here is redundant.
 
@@ -213,6 +223,7 @@ async function boot () {
   })
 
   renderChrome()
+  refreshNotifBadge(true) // initial inbox badge paint
   if (!location.hash) location.hash = '#/'
   route()
 }
@@ -263,6 +274,7 @@ function renderChrome () {
       </form>
       <div class="topbar-right">
         <a class="btn btn-ghost" href="#/submit" title="Create a post">＋ Post</a>
+        ${isReadOnly() ? '' : '<a class="btn btn-ghost inbox-btn" href="#/inbox" id="inbox-link" title="Inbox — replies to your posts and comments" aria-label="Inbox">✉<span class="notif-badge" id="notif-badge" hidden></span></a>'}
         <div class="usermenu" id="usermenu"></div>
       </div>
     </header>
@@ -352,6 +364,7 @@ function route () {
   // Reset scroll on genuine navigation (not on same-route soft refreshes).
   if (location.hash !== _lastHash) { _lastHash = location.hash; try { window.scrollTo(0, 0) } catch {} }
 
+  refreshNotifBadge() // throttled internally; keeps the header inbox badge current across navigation
   if (path.length === 0) return viewFeed({ scope: 'home', query, guard, token })
   switch (path[0]) {
     case 'all': return viewFeed({ scope: 'all', query, guard, token })
@@ -363,6 +376,7 @@ function route () {
     case 'search': return viewSearch({ query, guard, token })
     case 'settings': return viewSettings({ guard, token })
     case 'saved': return viewSaved({ guard, token })
+    case 'inbox': return viewInbox({ guard, token })
     case 'following': return viewFeed({ scope: 'following', query, guard, token })
     case 'u': return viewProfile({ pub: path[1], guard, token })
     case 'r':
@@ -701,8 +715,10 @@ async function viewFeed ({ scope, community, query, guard, token }) {
       posts = await data.listAllPosts(followedSlugs)
     }
   } else if (scope === 'following') {
-    // Posts by the authors you follow (local follow list; also the notify feed-head watch set).
+    // Posts by the authors you follow: the union of the device-local pref list and
+    // your signed follow! records (so follows made on another device show up here).
     const follows = new Set(prefs.follows())
+    try { for (const tgt of await data.followingOf(identity.me().pubkey)) follows.add(tgt) } catch {}
     posts = follows.size ? (await data.listAllPosts()).filter(p => follows.has(p.author)) : []
   } else {
     posts = await data.listAllPosts()
@@ -1015,7 +1031,10 @@ async function viewCreateCommunity ({ guard, token }) {
 async function viewCommunities ({ guard, token }) {
   guard(skeleton('Communities'))
   const communities = await data.listCommunities()
-  await Promise.all(communities.map(async c => { c._count = await data.postCount(c.slug) }))
+  await Promise.all(communities.map(async c => {
+    c._count = await data.postCount(c.slug)
+    c._members = await data.memberCount(c.slug).catch(() => 0) // signed member! records
+  }))
   communities.sort((a, b) => (b._count || 0) - (a._count || 0))
   if (token !== renderToken) return
   guard(`<div class="feed-head"><h1>Communities</h1><a class="btn btn-primary" href="#/create">＋ Create</a></div>
@@ -1025,7 +1044,7 @@ async function viewCommunities ({ guard, token }) {
         <div class="comm-info">
           <a class="comm-name" href="#/r/${esc(c.slug)}">r/${esc(c.slug)}</a>
           <div class="dim small">${esc(c.description || '')}</div>
-          <div class="dim small">${fmtCount(c._count || 0)} posts</div>
+          <div class="dim small">${fmtCount(c._count || 0)} posts${c._members ? ` · ${fmtCount(c._members)} member${c._members === 1 ? '' : 's'}` : ''}</div>
         </div>
         <button class="btn ${prefs.isSubscribed(c.slug) ? 'btn-ghost' : 'btn-primary'} sm" data-act="sub" data-slug="${esc(c.slug)}">${prefs.isSubscribed(c.slug) ? 'Joined' : 'Join'}</button>
       </div>`).join('') : `<div class="empty"><h3>No communities yet</h3>
@@ -1061,6 +1080,10 @@ async function viewProfile ({ pub, guard, token }) {
   const mine = pub === me.pubkey
   const profile = await data.getProfile(pub)
   const karma = await data.karmaFor(pub)
+  const wInputs = await data.weightInputsFor(pub).catch(() => [0, 0]) // [ageDays, receivedUpvotes]
+  const vw = voteWeight(wInputs[0], wInputs[1]) // this user's reputation vote weight (0.02–1.0)
+  const social = await data.followCounts(pub).catch(() => ({ followers: 0, following: 0 })) // signed follow! records
+  const iFollow = mine ? false : (prefs.isFollowing(pub) || await data.isFollowing(pub).catch(() => false))
   const activity = await data.userActivity(pub, { limit: 50 })
   await primeNames([pub])
   if (token !== renderToken) return
@@ -1083,7 +1106,7 @@ async function viewProfile ({ pub, guard, token }) {
         <h1>${esc(nameOf(pub))}</h1>
         <div class="dim mono">${esc(shortKey(pub, 10))}</div>
         ${profile && profile.bio ? `<p class="bio">${esc(profile.bio)}</p>` : ''}
-        ${mine ? '<button class="btn btn-ghost sm" data-act="edit-profile">Edit profile</button>' : `<button class="btn ${prefs.isFollowing(pub) ? 'btn-ghost' : 'btn-primary'} sm" data-act="follow" data-pub="${esc(pub)}">${prefs.isFollowing(pub) ? '✓ Following' : '+ Follow'}</button>`}
+        ${mine ? '<button class="btn btn-ghost sm" data-act="edit-profile">Edit profile</button>' : `<button class="btn ${iFollow ? 'btn-ghost' : 'btn-primary'} sm" data-act="follow" data-pub="${esc(pub)}">${iFollow ? '✓ Following' : '+ Follow'}</button>`}
       </div>
     </div>
     <div class="karma-row">
@@ -1092,6 +1115,13 @@ async function viewProfile ({ pub, guard, token }) {
       <div class="karma"><b>${fmtCount(karma.commentKarma)}</b><span>comment</span></div>
       <div class="karma"><b>${fmtCount(karma.postCount)}</b><span>posts</span></div>
       <div class="karma"><b>${fmtCount(karma.commentCount)}</b><span>comments</span></div>
+      <div class="karma"><b>${fmtCount(social.followers)}</b><span>followers</span></div>
+      <div class="karma"><b>${fmtCount(social.following)}</b><span>following</span></div>
+    </div>
+    <div class="rep-row" title="Votes are reputation-weighted: influence scales with account age + upvotes received, so fresh keys barely move rankings. Weighted karma discounts votes from low-weight accounts.">
+      <span class="rep-chip"><b>${vw.toFixed(2)}×</b> vote weight</span>
+      <span class="rep-chip"><b>${fmtCount(karma.weighted)}</b> weighted karma</span>
+      <span class="rep-meta dim">${Math.floor(wInputs[0])}d old · ${fmtCount(wInputs[1])} upvotes received</span>
     </div>
     <h2 class="section-title">Activity</h2>
     <div class="activity-feed">${feed}</div>`)
@@ -1115,6 +1145,51 @@ async function viewSaved ({ guard, token }) {
   guard(`<div class="feed-head"><h1>Saved</h1></div>
     <div class="feed">${withT.length ? withT.map(p => postCard(p, null, { commentCounts: counts })).join('') : '<div class="empty"><p>Nothing saved yet. Hit ☆ save on any post.</p></div>'}</div>`)
   renderSidebar(await sidebarHome(), token)
+}
+
+// ---- INBOX view (Slice 2) — replies to your posts + comments ----------------
+async function viewInbox ({ guard, token }) {
+  guard(skeleton('Inbox'))
+  const seenBefore = prefs.notifSeen // capture BEFORE marking, so we can flag what's new
+  const notes = await data.notificationsFor(identity.me().pubkey, { limit: 100 })
+  await primeNames(notes.map(n => n.from))
+  if (token !== renderToken) return
+  // Opening the inbox marks everything up to the newest as read (device-local).
+  if (notes.length) prefs.markNotifsSeen(notes[0].ts)
+  refreshNotifBadge(true)
+
+  const rows = notes.map(n => {
+    const href = buildRoute(['r', n.community, 'comments', n.postCid])
+    const unread = n.ts > seenBefore
+    const label = n.on === 'post' ? 'replied to your post' : 'replied to your comment'
+    return `<a class="notif-item${unread ? ' unread' : ''}" href="${href}">
+        <span class="avatar sm" style="background:${colorFor(n.from)}"></span>
+        <div class="notif-main">
+          <div class="notif-head"><b>${esc(nameOf(n.from))}</b> ${label} · <span class="dim">${timeAgo(n.ts)}</span></div>
+          <div class="notif-ctx dim small">${n.on === 'post' ? 'r/' + esc(n.community) : 'in'} “${esc((n.postTitle || 'a post').slice(0, 80))}”</div>
+          <div class="notif-body md small">${renderMarkdown((n.body || '').slice(0, 280))}</div>
+        </div>
+      </a>`
+  }).join('')
+
+  guard(`<div class="feed-head"><h1>Inbox</h1><span class="dim">replies to your posts and comments</span></div>
+    <div class="notif-list">${notes.length ? rows : '<div class="empty"><h3>No replies yet</h3><p>When someone replies to your posts or comments, it shows up here.</p></div>'}</div>`)
+  renderSidebar(await sidebarHome(), token)
+}
+
+// Header unread badge — a throttled scan (same cost class as search; the app only
+// refreshes it every ~12s or on force). Hidden at zero.
+let _notifBadgeAt = 0
+async function refreshNotifBadge (force = false) {
+  if (isReadOnly() || !data || !identity || !identity.me()) return
+  const now = Date.now()
+  if (!force && now - _notifBadgeAt < 12000) return
+  _notifBadgeAt = now
+  try {
+    const n = await data.unreadCount(prefs.notifSeen, identity.me().pubkey)
+    const b = document.getElementById('notif-badge')
+    if (b) { b.textContent = n > 99 ? '99+' : String(n); b.hidden = n <= 0 }
+  } catch {}
 }
 
 // ---- SEARCH view ------------------------------------------------------------
@@ -1426,6 +1501,9 @@ async function onClick (e) {
       case 'follow': {
         const pub = t.dataset.pub
         const now = prefs.toggleFollow(pub)
+        // Dual-write: the local pref is the instant UX; the signed follow! record is
+        // the durable network edge (replicates, survives localStorage, powers counts).
+        if (!isReadOnly()) data.setFollow(pub, now).catch(() => {})
         t.textContent = now ? '✓ Following' : '+ Follow'
         t.classList.toggle('btn-primary', !now)
         t.classList.toggle('btn-ghost', now)
@@ -1435,6 +1513,7 @@ async function onClick (e) {
       case 'sub': {
         const slug = normalizeSlug(t.dataset.slug)
         const now = prefs.toggleSub(slug)
+        if (!isReadOnly()) data.setMembership(slug, now).catch(() => {}) // signed member! edge (see 'follow')
         if (now) prefs.markWelcomeSeen()
         toast(now ? 'Joined r/' + slug : 'Left r/' + slug)
         route()

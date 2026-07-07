@@ -34,7 +34,16 @@ export const TYPE = {
   // BlindShard bridge transport: opaque PVSS share shards stored in the PearBrowser
   // sync bridge instead of HTTP HiveRelay. shard!<hash> holds one encrypted share;
   // the dispersal manifest lists the set of shard addresses needed to reconstruct.
-  SHARD: 'shard'
+  SHARD: 'shard',
+  // Signed social graph (replaces device-local prefs, which die with localStorage
+  // and are invisible to the network). One record per edge, LWW like vote:
+  //   follow!<targetPub>!<authorPub>   (unfollow = deleted:true tombstone)
+  //   member!<community>!<authorPub>   (leave    = deleted:true tombstone)
+  // NOTE the member field is `community`, NOT `slug` — V2_CLEAR keeps `slug`
+  // cleartext (community LWW needs it), so naming it `community` is what gets the
+  // membership edge SEALED in the v2 opaque form, exactly like a vote's targetCid.
+  FOLLOW: 'follow',
+  MEMBER: 'member'
 }
 
 export const keys = {
@@ -64,7 +73,15 @@ export const keys = {
   blobPrefix: () => `${TYPE.BLOB}!`,
 
   shard: (hash) => `${TYPE.SHARD}!${hash}`,
-  shardPrefix: () => `${TYPE.SHARD}!`
+  shardPrefix: () => `${TYPE.SHARD}!`,
+
+  follow: (targetPub, author) => `${TYPE.FOLLOW}!${targetPub}!${author}`,
+  followAll: () => `${TYPE.FOLLOW}!`,
+  followersOf: (targetPub) => `${TYPE.FOLLOW}!${targetPub}!`,
+
+  member: (community, author) => `${TYPE.MEMBER}!${community}!${author}`,
+  memberAll: () => `${TYPE.MEMBER}!`,
+  membersOf: (community) => `${TYPE.MEMBER}!${community}!`
 }
 
 // data.id builders (the part after `type!`). These determine the storage key
@@ -78,7 +95,9 @@ export const id = {
   mod: (community, actionId) => `${community}!${actionId}`,
   head: (author) => author,
   blob: (blobId) => blobId,
-  shard: (hash) => hash
+  shard: (hash) => hash,
+  follow: (targetPub, author) => `${targetPub}!${author}`,
+  member: (community, author) => `${community}!${author}`
 }
 
 // The v2 blind key scheme (docs/BLIND-OUTBOX-MIGRATION.md) folds this SAME semantic
@@ -94,6 +113,8 @@ export function semanticId (type, data) {
     case TYPE.PROFILE: return data.author != null ? id.profile(data.author) : null
     case TYPE.MOD: return data.community != null && data.actionId != null ? id.mod(data.community, data.actionId) : null
     case TYPE.HEAD: return data.author != null ? id.head(data.author) : null
+    case TYPE.FOLLOW: return data.target != null && data.author != null ? id.follow(data.target, data.author) : null
+    case TYPE.MEMBER: return data.community != null && data.author != null ? id.member(data.community, data.author) : null
     default: return null
   }
 }

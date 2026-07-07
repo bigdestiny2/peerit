@@ -413,3 +413,30 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
 .qr-code { background: #fff; padding: 10px; border-radius: 10px; max-width: 280px; margin: 4px auto 0; }
 .qr-code svg { display: block; width: 100%; height: auto; }
 .scan-video { width: 100%; max-width: 320px; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 10px; background: #000; margin: 8px auto; display: block; }
+
+/* ---- Inbox (Slice 2): header badge + notification list ---- */
+.inbox-btn { position: relative; padding: 0 12px; font-size: 16px; line-height: 1; }
+.notif-badge { position: absolute; top: -6px; right: -4px; min-width: 17px; height: 17px;
+  padding: 0 4px; border-radius: 999px; background: var(--down, #ff5470); color: #fff;
+  font-size: 11px; font-weight: 700; line-height: 17px; text-align: center;
+  box-shadow: 0 0 0 2px var(--bg); }
+.notif-badge[hidden] { display: none; }
+.notif-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.notif-item { display: flex; gap: 12px; padding: 14px 16px; border: 1px solid var(--border);
+  border-radius: 12px; background: var(--surface); text-decoration: none; color: inherit;
+  transition: background .12s, border-color .12s; }
+.notif-item:hover { background: var(--surface-2); border-color: var(--border-2); }
+.notif-item.unread { border-left: 3px solid var(--accent); background: var(--surface-2); }
+.notif-main { min-width: 0; flex: 1; }
+.notif-head { font-size: 14px; margin-bottom: 2px; }
+.notif-ctx { margin-bottom: 6px; }
+.notif-body { color: var(--muted, #9aa7bd); overflow: hidden; }
+.notif-body p { margin: 0; }
+
+/* ---- Reputation (Slice 3): profile vote-weight + weighted karma ---- */
+.rep-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 4px 0 8px; }
+.rep-chip { display: inline-flex; align-items: baseline; gap: 5px; padding: 4px 10px;
+  border: 1px solid var(--border-2); border-radius: 999px; background: var(--surface-2);
+  font-size: 12px; color: var(--muted, #9aa7bd); }
+.rep-chip b { color: var(--accent-2); font-size: 13px; }
+.rep-meta { font-size: 12px; }

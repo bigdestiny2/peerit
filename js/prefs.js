@@ -13,7 +13,8 @@ const DEFAULTS = Object.freeze({
   sort: 'hot',
   theme: 'dark',
   seenWelcome: false,
-  identityBackupAcked: false
+  identityBackupAcked: false,
+  notifSeen: 0 // ms timestamp of the newest notification the user has seen (device-local read marker)
 })
 const SORTS = new Set(['hot', 'new', 'top', 'rising', 'controversial'])
 
@@ -106,6 +107,11 @@ export class Prefs {
   get seenWelcome () { return this.data.seenWelcome }
   acknowledgeIdentityBackup () { this.data.identityBackupAcked = true; this._save() }
   get identityBackupAcked () { return !!this.data.identityBackupAcked }
+
+  // Inbox read-marker: the newest notification ts the user has seen. Device-local
+  // by design — "read" state is personal UI, not shared network data.
+  get notifSeen () { return this.data.notifSeen || 0 }
+  markNotifsSeen (ts) { const t = Number(ts) || Date.now(); if (t > this.data.notifSeen) { this.data.notifSeen = t; this._save() } }
 }
 
 function cleanPrefs (d) {
@@ -117,7 +123,8 @@ function cleanPrefs (d) {
     sort: cleanSort(d.sort),
     theme: d.theme === 'light' ? 'light' : 'dark',
     seenWelcome: !!d.seenWelcome,
-    identityBackupAcked: !!d.identityBackupAcked
+    identityBackupAcked: !!d.identityBackupAcked,
+    notifSeen: Number(d.notifSeen) || 0
   }
 }
 

@@ -45,6 +45,7 @@ export class Data {
     this.fetch = opts.fetch || globalThis.fetch // injected for tests; defaults to global fetch
     this._profileCache = new Map() // pub -> { rec, at }
     this._tallyCache = new Map()   // `${viewer}:${cid}` -> { val, epoch }
+    this._repIndex = null          // reputation index (voter age + upvotes received), gated by _epoch
     this._commentCountCache = new Map() // `${community}/${postCid}` -> { val, contentEpoch }
     this._searchIndex = null
     this._epoch = 0          // bumped on EVERY write; gates vote tallies
@@ -61,6 +62,7 @@ export class Data {
     if (opClass === 'none') return
     this._epoch++
     this._tallyCache.clear()
+    this._repIndex = null // voter reputation shifts as content/votes change; rebuild lazily
     if (opClass !== 'vote') {
       this._contentEpoch++
       this._commentCountCache.clear()
@@ -516,11 +518,48 @@ export class Data {
   }
 
   // Aggregate posts across communities (for home/all feeds).
-  async listAllPosts (communities) {
+  async listAllPosts (communities, { hydrate = true } = {}) {
     let slugs = communities
     if (!slugs) slugs = (await this.listCommunities()).map(c => c.slug)
-    const lists = await Promise.all(slugs.map(s => this.listPostsIn(s).catch(() => [])))
+    const lists = await Promise.all(slugs.map(s => this.listPostsIn(s, { hydrate }).catch(() => [])))
     return lists.flat()
+  }
+
+  // ---- inbox: replies to your posts + comments (Slice 2) ----------------------
+  // A PURE client-side scan of records already in the log — no new record type, no
+  // relay change. A "reply" is a comment whose parent you authored: a top-level
+  // comment (parentCid null) on YOUR post, or a nested reply whose parentCid is one
+  // of YOUR comment cids. Read state lives device-local (prefs.notifSeen).
+  async notificationsFor (pub = this.me().pubkey, { limit = 100, hydrate = true } = {}) {
+    const [allPosts, allComments] = await Promise.all([
+      this.listAllPosts(undefined, { hydrate: false }), // titles + author only; bodies not needed
+      this._listPrefix(keys.commentPrefix()).then(rows => rows.map(r => r.value).filter(Boolean))
+    ])
+    const postTitle = new Map(allPosts.map(p => [p.cid, p.title]))
+    const myPostCids = new Set(allPosts.filter(p => p.author === pub && !p.deleted).map(p => p.cid))
+    const myCommentCids = new Set(allComments.filter(c => c.author === pub && !c.deleted).map(c => c.cid))
+
+    const matches = []
+    for (const c of allComments) {
+      if (c.deleted || c.author === pub) continue
+      let on = null
+      if (c.parentCid && myCommentCids.has(c.parentCid)) on = 'comment'
+      else if (!c.parentCid && myPostCids.has(c.postCid)) on = 'post'
+      if (!on) continue
+      matches.push({ kind: 'reply', on, community: c.community, postCid: c.postCid, cid: c.cid, from: c.author, ts: c.createdAt || 0, postTitle: postTitle.get(c.postCid) || '', _raw: c })
+    }
+    matches.sort((a, b) => b.ts - a.ts)
+    const top = matches.slice(0, limit)
+    if (hydrate) await Promise.all(top.map(async (n) => { try { n.body = (await this._hydrate(n._raw)).body } catch { n.body = '' } }))
+    for (const n of top) delete n._raw
+    return top
+  }
+
+  // Unread reply count since a device-local marker ts (for the header badge).
+  // No body hydration — a count never needs to decrypt.
+  async unreadCount (since = 0, pub = this.me().pubkey) {
+    const notes = await this.notificationsFor(pub, { limit: 500, hydrate: false })
+    return notes.reduce((n, x) => n + (x.ts > since ? 1 : 0), 0)
   }
 
   // ---- Comments -------------------------------------------------------------
@@ -604,13 +643,45 @@ export class Data {
     return rows.map(r => r.value).filter(Boolean)
   }
 
-  async tallyFor (targetCid) {
-    const me = this.me().pubkey
-    const votes = await this.rawVotes(targetCid)
-    return tallyVotes(votes, me)
+  // ---- reputation index (Slice 3) -------------------------------------------
+  // Per-author inputs to the vote weight: earliest activity (age) + upvotes their
+  // content has received. Built once per write-epoch from a full scan (same cost
+  // class as the search index) and reused by every weighted tally on a feed render.
+  async _reputation () {
+    if (this._repIndex && this._repIndex.epoch === this._epoch) return this._repIndex
+    const earliest = new Map() // pub -> earliest activity ms
+    const received = new Map() // pub -> upvotes received on their content
+    const cidAuthor = new Map() // cid -> author (to attribute an upvote to a content owner)
+    const seen = (pub, ts) => { if (!pub) return; const e = earliest.get(pub); if (e == null || ts < e) earliest.set(pub, ts) }
+    const posts = await this.listAllPosts(undefined, { hydrate: false })
+    for (const p of posts) { cidAuthor.set(p.cid, p.author); seen(p.author, p.createdAt || 0) }
+    const comments = (await this._listPrefix(keys.commentPrefix())).map(r => r.value).filter(Boolean)
+    for (const c of comments) { cidAuthor.set(c.cid, c.author); seen(c.author, c.createdAt || 0) }
+    const allVotes = await this._listPrefix(keys.voteAll())
+    for (const { value: v } of allVotes) {
+      if (v && v.value === 1) { const a = cidAuthor.get(v.targetCid); if (a) received.set(a, (received.get(a) || 0) + 1) }
+    }
+    this._repIndex = { epoch: this._epoch, earliest, received, cidAuthor }
+    return this._repIndex
   }
 
-  // Tally many targets at once (used to enrich a feed). Returns Map cid->tally.
+  // [ageDays, receivedUpvotes] for a pub — the inputs to ranking.weight(). Used by
+  // the weighted tallies and surfaced on the profile ("your vote weight").
+  async weightInputsFor (pub, idx) {
+    idx = idx || await this._reputation()
+    const e = idx.earliest.get(pub)
+    return [e ? Math.max(0, (Date.now() - e) / 86400000) : 0, idx.received.get(pub) || 0]
+  }
+
+  async tallyFor (targetCid) {
+    const me = this.me().pubkey
+    const idx = await this._reputation()
+    const weightOf = (pub) => { const e = idx.earliest.get(pub); return [e ? Math.max(0, (Date.now() - e) / 86400000) : 0, idx.received.get(pub) || 0] }
+    return tallyVotes(await this.rawVotes(targetCid), me, weightOf)
+  }
+
+  // Tally many targets at once (used to enrich a feed). Returns Map cid->tally, each
+  // carrying a reputation-weighted score for ranking. Cached per (viewer,cid,epoch).
   async tallyMany (cids) {
     const me = this.me().pubkey
     const uniq = [...new Set(cids)]
@@ -623,6 +694,8 @@ export class Data {
       else missing.push(cid)
     }
     if (missing.length) {
+      const idx = await this._reputation()
+      const weightOf = (pub) => { const e = idx.earliest.get(pub); return [e ? Math.max(0, (Date.now() - e) / 86400000) : 0, idx.received.get(pub) || 0] }
       // Scan only the votes for each missing target (vote!<cid>!…) instead of the
       // whole vote table — turns a feed render from O(all votes) into O(votes on
       // the visible posts). Same prefix scheme rawVotes uses.
@@ -630,7 +703,7 @@ export class Data {
       for (let i = 0; i < missing.length; i++) {
         const cid = missing[i]
         const votes = lists[i].map(r => r.value).filter(Boolean)
-        const val = tallyVotes(votes, me)
+        const val = tallyVotes(votes, me, weightOf)
         this._tallyCache.set(me + ':' + cid, { val, epoch: this._epoch })
         out.set(cid, val)
       }
@@ -641,7 +714,7 @@ export class Data {
   // Attach `.tally` to each post/comment record.
   async withTallies (records) {
     const map = await this.tallyMany(records.map(r => r.cid))
-    return records.map(r => ({ ...r, tally: map.get(r.cid) || { up: 0, down: 0, score: 0, myVote: 0, total: 0 } }))
+    return records.map(r => ({ ...r, tally: map.get(r.cid) || { up: 0, down: 0, score: 0, weighted: 0, myVote: 0, total: 0 } }))
   }
 
   async commentCountsFor (posts) {
@@ -708,7 +781,7 @@ export class Data {
   // communities. Lazy + capped — only called on a profile page.
   async karmaFor (pub) {
     const communities = (await this.listCommunities()).map(c => c.slug)
-    let postKarma = 0, commentKarma = 0, postCount = 0, commentCount = 0
+    let postKarma = 0, commentKarma = 0, postCount = 0, commentCount = 0, weighted = 0
     for (const slug of communities) {
       // List each community's posts ONCE and reuse for both the author's own
       // posts (post karma) and the per-post comment scan (comment karma).
@@ -717,7 +790,7 @@ export class Data {
       postCount += mine.length
       if (mine.length) {
         const postTallies = await this.tallyMany(mine.map(p => p.cid))
-        for (const p of mine) postKarma += (postTallies.get(p.cid) || { score: 0 }).score
+        for (const p of mine) { const t = postTallies.get(p.cid) || { score: 0, weighted: 0 }; postKarma += t.score; weighted += t.weighted }
       }
       // Comments aren't prefix-listable by author cheaply; scan per community post.
       for (const p of allPosts) {
@@ -725,11 +798,103 @@ export class Data {
         commentCount += cs.length
         if (cs.length) {
           const t = await this.tallyMany(cs.map(c => c.cid))
-          for (const c of cs) commentKarma += (t.get(c.cid) || { score: 0 }).score
+          for (const c of cs) { const tt = t.get(c.cid) || { score: 0, weighted: 0 }; commentKarma += tt.score; weighted += tt.weighted }
         }
       }
     }
-    return { postKarma, commentKarma, total: postKarma + commentKarma, postCount, commentCount }
+    // total = raw karma (what users expect); weighted = reputation-weighted karma.
+    return { postKarma, commentKarma, total: postKarma + commentKarma, weighted: Math.round(weighted), postCount, commentCount }
+  }
+
+  // ---- signed social graph (follow! / member!) --------------------------------
+  // One LWW record per edge, exactly the vote! pattern: unfollow/leave is a
+  // deleted:true tombstone re-write of the SAME id (a later re-follow wins by ts).
+  // In v2 the edge (target / community) is a SEALED graph field — the relay stores
+  // an opaque cell and cannot enumerate who follows whom or who joined what.
+
+  async setFollow (targetPub, on = true) {
+    const me = this.me()
+    if (!targetPub || targetPub === me.pubkey) throw new Error(on ? 'Cannot follow yourself.' : 'Bad target.')
+    const now = Date.now()
+    const data = {
+      id: mkid.follow(targetPub, me.pubkey), target: targetPub,
+      author: me.pubkey, ts: now, ...(on ? {} : { deleted: true })
+    }
+    await this._emit(TYPE.FOLLOW, data)
+    this.invalidateViewCaches('vote') // graph edges don't touch comments/search; bump the view epoch only
+    return data
+  }
+
+  async isFollowing (targetPub, viewer = this.me().pubkey) {
+    const r = await this._get(keys.follow(targetPub, viewer))
+    return !!(r && !r.deleted)
+  }
+
+  // Everyone WHO FOLLOWS pub — cheap prefix read (follow!<pub>!).
+  async followersOf (pub) {
+    const rows = await this._list(keys.followersOf(pub), { limit: 5000 })
+    return rows.map(r => r.value).filter(v => v && !v.deleted).map(v => v.author)
+  }
+
+  // Everyone pub FOLLOWS — a scan of the follow! range filtered by author (client-
+  // side aggregation, same cost model as karmaFor).
+  async followingOf (pub) {
+    const rows = await this._list(keys.followAll(), { limit: 5000 })
+    return rows.map(r => r.value).filter(v => v && !v.deleted && v.author === pub).map(v => v.target)
+  }
+
+  async followCounts (pub) {
+    const [followers, following] = await Promise.all([this.followersOf(pub), this.followingOf(pub)])
+    return { followers: followers.length, following: following.length }
+  }
+
+  async setMembership (community, on = true) {
+    const me = this.me()
+    const c = await this.getCommunity(community)
+    if (!c) throw new Error('No such community: r/' + community)
+    const now = Date.now()
+    const data = {
+      id: mkid.member(community, me.pubkey), community,
+      author: me.pubkey, ts: now, ...(on ? {} : { deleted: true })
+    }
+    await this._emit(TYPE.MEMBER, data)
+    this.invalidateViewCaches('vote')
+    return data
+  }
+
+  async membersOf (community) {
+    const rows = await this._list(keys.membersOf(community), { limit: 5000 })
+    return rows.map(r => r.value).filter(v => v && !v.deleted).map(v => v.author)
+  }
+
+  async memberCount (community) { return (await this.membersOf(community)).length }
+
+  async myMemberships () {
+    const me = this.me().pubkey
+    const rows = await this._list(keys.memberAll(), { limit: 5000 })
+    return rows.map(r => r.value).filter(v => v && !v.deleted && v.author === me).map(v => v.community)
+  }
+
+  // One-time migration: device-local prefs (which die with localStorage and are
+  // invisible to peers) become signed records. Idempotent per identity — guarded
+  // by a per-pubkey flag AND skipped for edges that already have a record. The
+  // flag is only set when every edge landed, so a partial run retries next boot.
+  async migrateLocalGraph ({ follows = [], subs = [], storage } = {}) {
+    const me = this.me().pubkey
+    const flagKey = 'peerit:graph-migrated:' + me
+    try { if (storage && storage.getItem(flagKey)) return { migrated: 0, skipped: true } } catch {}
+    let migrated = 0; let failed = 0
+    for (const pub of follows) {
+      try { if (pub && pub !== me && !(await this.isFollowing(pub))) { await this.setFollow(pub, true); migrated++ } } catch { failed++ }
+    }
+    for (const slug of subs) {
+      try {
+        const mine = await this._get(keys.member(slug, me))
+        if (!mine || mine.deleted) { await this.setMembership(slug, true); migrated++ }
+      } catch { failed++ } // e.g. community not replicated yet — retried next boot
+    }
+    if (!failed) { try { if (storage) storage.setItem(flagKey, String(Date.now())) } catch {} }
+    return { migrated, failed, skipped: false }
   }
 
   // Gather a user's posts + comments across communities (for profile page).

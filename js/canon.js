@@ -30,6 +30,8 @@ export function expectedKey (type, data) {
     case TYPE.HEAD: return data.author != null ? keys.head(data.author) : null
     case TYPE.BLOB: return data.blobId != null ? keys.blob(data.blobId) : null
     case TYPE.SHARD: return data.id != null ? keys.shard(data.id) : null
+    case TYPE.FOLLOW: return data.target != null && data.author != null ? keys.follow(data.target, data.author) : null
+    case TYPE.MEMBER: return data.community != null && data.author != null ? keys.member(data.community, data.author) : null
     default: return null
   }
 }

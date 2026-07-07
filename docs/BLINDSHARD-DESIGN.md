@@ -1,6 +1,25 @@
 # BlindShard — Content-Blind, Erasure-Dispersed Bodies for a Public P2P Forum
 
-**Status:** implementation **COMPLETE** — the client-side dealer, browser recovery bundle, custody-intent verification, and PearBrowser bridge transport are wired and shipping. Dispersal activates automatically when a shard cohort is configured and falls back to a single v2 blob otherwise. This document is retained as the design record.
+> **⚠️ SUPERSEDED (2026-07-07) — this doc describes the ORIGINAL scheme, not what shipped.**
+> The code that shipped is a *different construction*. Use
+> [BLINDSHARD-RECORD-WIRING-SPEC.md](BLINDSHARD-RECORD-WIRING-SPEC.md),
+> [PURE-PIPE-SCOPE.md](PURE-PIPE-SCOPE.md), and the live dealer (`js/blind-dealer.mjs`) as the
+> source of truth. This file is retained as the design *record* only.
+>
+> | This doc says | What actually shipped |
+> |---|---|
+> | Reed-Solomon **erasure-code the ciphertext** k-of-n | **PVSS-split the AES key** k-of-n; the whole ciphertext is one shard on the cohort |
+> | `contentKey` is **public** in the manifest | key is **never published** — computationally hidden below threshold |
+> | Shards addressed by **SHA-256** | **blake2b-256** (`shardAddressOf`, matches HiveRelay) |
+> | HRW placement + `<K`-per-relay cap | fixed **1 share per relay by index** in a signed custody intent |
+> | Author **device holds full ciphertext** (durability floor) | modern manifests keep **no local blob** — ciphertext is **cohort-only** (unresolved durability decision) |
+> | only new dep = WASM Reed-Solomon | `sodium-universal` + vendored `@noble/*` PVSS-secp256k1 |
+>
+> The "COMPLETE … shipping" line below is also **not accurate**: the mechanism is wired but
+> dispersal is **disabled in the deployed config** (empty shard roster), and browser *authoring*
+> is blocked on HiveRelay #115.
+
+**Status (original, retained for the record):** implementation **COMPLETE** — the client-side dealer, browser recovery bundle, custody-intent verification, and PearBrowser bridge transport are wired and shipping. Dispersal activates automatically when a shard cohort is configured and falls back to a single v2 blob otherwise. This document is retained as the design record.
 **Target:** peerit on `feat/web-deployment`, HiveRelay fleet.
 **Author lens:** mafintosh smallest-primitive shape + DMC measurable/browser-portable surface, grafting Freenet (Clarke), Tahoe (Zooko), Storj, and Krawczyk-CSS/AONT-RS (Shamir/Rabin *composition*, not literal secret-sharing).
 

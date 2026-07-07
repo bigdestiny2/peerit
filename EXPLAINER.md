@@ -116,15 +116,18 @@ assurance, use PearBrowser; the web build says as much in its own banner.
 
 ## Under the hood (for the curious)
 
-Each record is a value stored at a structured key in a per-user
-[Hyperbee](https://github.com/holepunchto/hyperbee) log — for example
-`post!<community>!<id>`, `vote!<targetId>!<author>`, or `community!<slug>`. The
-merge is **deterministic and order-independent**: edits resolve last-write-wins
-by timestamp, a delete (tombstone) always wins a tie so content can't be
-resurrected, and a community name is **sticky** — the first valid creator keeps
-it, so an established community can't be hijacked. Identities sign with Ed25519
-via the browser's WebCrypto; the relay (when used) implements a small token-gated
-HTTP/streaming contract and holds no keys.
+Each record is a value in a per-user
+[Hyperbee](https://github.com/holepunchto/hyperbee) log. Logically it's keyed by
+structure — a post belongs to a community and id, a vote to a target and author —
+but on the default build those keys are stored **opaque** (an HMAC of the fields)
+and the fields themselves are **sealed**, so a relay operator can't enumerate the
+social graph just by reading keys off disk. The merge is **deterministic and
+order-independent**: edits resolve last-write-wins by timestamp, a delete
+(tombstone) always wins a tie so content can't be resurrected, and a community
+name is **sticky** — the first valid creator keeps it, so an established community
+can't be hijacked. Identities sign with Ed25519 via the browser's WebCrypto; the
+relay (when used) implements a small token-gated HTTP/streaming contract and holds
+no keys.
 
 When you're offline, your posts still live on your own device and on any peer that
 has replicated your outbox. For always-on availability there's a separate,

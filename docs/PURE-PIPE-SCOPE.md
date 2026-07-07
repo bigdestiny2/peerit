@@ -125,13 +125,15 @@ P5 second consumer
 These are the deltas this scope adds on top of the three source docs. Each is a concrete work
 item for whichever session (peerit / hiverelay) owns that layer.
 
-### 5.1 HiveRelay ciphertext-blob GET surface (content Phase D)
-The custody contract is **shard-scoped** (`/api/v1/shard/<addr>`, PVSS shares). The dispersed
-**body ciphertext** is not a share — it is one opaque blob addressed by `blindContentId`
-(=SHA-256(ciphertext)). Content Phase D needs HiveRelay to serve arbitrary content-addressed
-blobs (a `GET /api/v1/blob/<blindContentId>` or equivalent), or peerit must model the ciphertext
-as an (n+1)-th "ciphertext shard" under the existing shard surface. **Decision needed:** dedicated
-blob GET vs. ciphertext-as-shard. Until then, the ciphertext blob stays on the VPS (opaque, keyless).
+### 5.1 HiveRelay ciphertext-blob GET surface (content Phase D) — ✅ RESOLVED in code
+~~Decision needed~~ **Resolved: ciphertext-as-shard.** The shipped dealer stores the whole
+ciphertext as a shard at `shareIndex:0` (`js/blind-dealer.mjs` `putCiphertextToRelays`), and the
+reader fetches it via `createHttpShardFetch` (`js/data.js` `_hydrate`). No separate blob GET
+surface is needed — the ciphertext rides the existing `/api/v1/shard` contract, so this gap is
+closed. **Caveat this created:** modern manifests keep **no local device copy** of the ciphertext
+(`data.js` writes a local blob only for legacy manifests without a `ciphertextShard`), so the
+cohort is now the *only* holder of the body ciphertext — an unresolved durability trade (see the
+device-durability-floor decision).
 
 ### 5.2 Roster unification — shard cohort vs. outbox relay
 There are **two** rosters: the outbox relay roster (`relay-roster.json`, VPS + Render, signed,

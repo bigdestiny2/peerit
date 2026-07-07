@@ -83,14 +83,23 @@ export class Data {
   async _listPrefix (prefix, { limit = 1000 } = {}) {
     const rows = []
     let gt = null
-    while (true) {
+    // Hard cap: never let a relay backend whose range/cursor semantics differ from
+    // ours grow `rows` without bound. Mirrors relay-pool.js readAll()'s MAX_ROWS.
+    const MAX_ROWS = 200000
+    while (rows.length < MAX_ROWS) {
       const opts = gt
         ? { gt, lt: prefix + '\xff', limit }
         : { gte: prefix, lt: prefix + '\xff', limit }
       const batch = await this._rangeRead(opts)
       rows.push(...batch)
       const last = batch[batch.length - 1] && batch[batch.length - 1].key
-      if (!last || batch.length < limit) break
+      // Stop on: no rows, a short final page, OR a NON-ADVANCING cursor
+      // (last === gt). Without the last===gt guard, a backend that returns a full
+      // batch whose last key equals the cursor we passed (different gt-inclusivity
+      // or a stalled cursor) makes this while-loop spin forever, allocating `limit`
+      // rows per turn until the tab OOMs — the returning-visitor crash on the
+      // repointed relay. This mirrors the guard in relay-pool.js readAll().
+      if (!last || last === gt || batch.length < limit) break
       gt = last
     }
     return rows

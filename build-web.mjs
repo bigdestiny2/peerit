@@ -223,9 +223,14 @@ const swRegister = `if ('serviceWorker' in navigator) {
   // the OLD cached assets. Reload ONCE when the new SW takes control so returning
   // visitors actually run the new audited bundle instead of stale code. Guard with
   // hadController so a brand-new visitor (first install) does not reload.
+  // AT-MOST-ONCE per session: if the new SW keeps re-claiming (or two SW versions
+  // fight), an unguarded reload-on-controllerchange becomes an infinite reload loop
+  // that pins CPU + RAM until the tab/machine dies. The sessionStorage latch makes a
+  // reload loop impossible — reload runs once, then never again this session.
   var hadController = !!navigator.serviceWorker.controller, refreshing = false;
   navigator.serviceWorker.addEventListener('controllerchange', function () {
     if (refreshing || !hadController) return;
+    try { if (sessionStorage.getItem('peerit:sw-reloaded')) return; sessionStorage.setItem('peerit:sw-reloaded', '1'); } catch (e) {}
     refreshing = true; location.reload();
   });
   addEventListener('load', function () {

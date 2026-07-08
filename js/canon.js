@@ -46,7 +46,16 @@ const SIG_FIELDS = new Set(['_sig', '_k', '_dk', '_ns', '_alg'])
 function stable (v) {
   if (v === null || typeof v !== 'object') return JSON.stringify(v === undefined ? null : v)
   if (Array.isArray(v)) return '[' + v.map(stable).join(',') + ']'
-  const ks = Object.keys(v).filter(k => !SIG_FIELDS.has(k)).sort()
+  // Drop keys whose VALUE is undefined, exactly as JSON.stringify does. A record
+  // is always JSON-serialized between signing and verification (sync backend,
+  // relay wire, gossip replication), and JSON silently omits undefined-valued
+  // keys — so if canonical() kept them (serializing undefined as null), the
+  // signer would cover `"k":null` that the wire strips, and every verifier would
+  // recompute a shorter canonical and reject the signature. This bit v2 edit and
+  // delete: the reconstructed record carries ts/slug as undefined (comments have
+  // neither), which sailed into the signed form but not onto the wire → "bad
+  // signature". canonical() MUST be invariant across JSON round-trips.
+  const ks = Object.keys(v).filter(k => !SIG_FIELDS.has(k) && v[k] !== undefined).sort()
   return '{' + ks.map(k => JSON.stringify(k) + ':' + stable(v[k])).join(',') + '}'
 }
 

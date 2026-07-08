@@ -145,9 +145,13 @@ export class Data {
   // a decrypt, and they leak nothing the honest ceiling doesn't already concede
   // (timestamps, a deleted flag, and the community name — dictionary-reversible anyway).
   static V2_CLEAR = new Set(['createdAt', 'ts', 'editedAt', 'deleted', 'slug'])
-  // Dropped entirely: id (→ okey), the owner fields (the owner IS the signer _k), and
-  // any sig/pow metadata (re-added below).
-  static V2_DROP = new Set(['id', 'author', 'creator', 'by', 'pow', '_sig', '_k', '_dk', '_ns', '_alg'])
+  // Dropped entirely: id (→ okey), the owner fields (the owner IS the signer _k),
+  // any sig/pow metadata (re-added below), and _t (always re-added from semType).
+  // Dropping an inbound _t matters for re-emits (edit/delete build from the
+  // RECONSTRUCTED record, which carries _t): without it _t would seal into the
+  // graph, so an edited record's sealed blob would differ in shape from a fresh
+  // one's for no reason.
+  static V2_DROP = new Set(['id', '_t', 'author', 'creator', 'by', 'pow', '_sig', '_k', '_dk', '_ns', '_alg'])
 
   // Turn a plaintext logical record into the sealed v2 stored form:
   //   { id:<okey>, _t, <cleartext LWW fields>, sealed:{iv,ct} of the GRAPH fields }
@@ -156,6 +160,12 @@ export class Data {
     if (!wk) throw new Error('v2: cannot derive key for ' + semType)
     const clear = {}, graph = {}
     for (const [k, v] of Object.entries(logical)) {
+      // undefined never enters the stored/signed form: JSON (storage + wire)
+      // drops undefined keys, so signing over them yields a canonical no verifier
+      // can reproduce (canon.js stable() now drops them too — this is belt-and-
+      // suspenders so an undefined graph field also never seals). The v2
+      // reconstruction sets ts/slug to undefined for records that lack them.
+      if (v === undefined) continue
       if (Data.V2_DROP.has(k)) continue
       if (Data.V2_CLEAR.has(k)) clear[k] = v
       else graph[k] = v
@@ -595,7 +605,7 @@ export class Data {
     if (c.creator !== me.pubkey) throw new Error('Only the founder can edit community details')
     const now = Date.now()
     const data = { ...c, ...patch, id: mkid.community(slug), slug, creator: c.creator, createdAt: c.createdAt, updatedAt: now }
-    await this._emit(TYPE.COMMUNITY, data)
+    await this._emit(TYPE.COMMUNITY, data, { pow: true }) // re-mint: _toV2 strips the reconstructed record's pow (V2_DROP); community requires PoW, so without this the edit reaches the wire with NO proof and admit() drops it
     this.invalidateViewCaches()
     return data
   }
@@ -661,7 +671,7 @@ export class Data {
     delete data.blob // drop any prior manifest; re-box below if the new body is still long
     delete data.dispersal
     if (data.kind === 'text' && canBox() && shouldBox(data.body)) await this._boxBody(data)
-    await this._emit(TYPE.POST, data)
+    await this._emit(TYPE.POST, data, { pow: true }) // re-mint: _toV2 strips the reconstructed record's pow (V2_DROP), so without this the re-emit hits the wire with NO proof and admit()→verify() drops it. (v2 powTarget is content-independent, so this restores a present proof; it does not re-bind to the edit.)
     this.invalidateViewCaches()
     return data
   }
@@ -674,7 +684,7 @@ export class Data {
     if (p.dispersal) this._dropFloor(p.dispersal.blindContentId) // deleted post keeps no floor copy
     delete data.blob // a deleted post references no blob
     delete data.dispersal
-    await this._emit(TYPE.POST, data)
+    await this._emit(TYPE.POST, data, { pow: true }) // re-mint: _toV2 strips the reconstructed record's pow (V2_DROP), so without this the re-emit hits the wire with NO proof and admit()→verify() drops it. (v2 powTarget is content-independent, so this restores a present proof; it does not re-bind to the edit.)
     this.invalidateViewCaches()
   }
 
@@ -770,7 +780,7 @@ export class Data {
     delete data.blob // drop any prior manifest; re-box below if still long
     delete data.dispersal
     if (canBox() && shouldBox(data.body)) await this._boxBody(data)
-    await this._emit(TYPE.COMMENT, data)
+    await this._emit(TYPE.COMMENT, data, { pow: true }) // re-mint: _toV2 strips the reconstructed record's pow (V2_DROP), so without this the re-emit hits the wire with NO proof and admit()→verify() drops it. (v2 powTarget is content-independent, so this restores a present proof; it does not re-bind to the edit.)
     this.invalidateViewCaches()
     return data
   }
@@ -783,7 +793,7 @@ export class Data {
     if (c.dispersal) this._dropFloor(c.dispersal.blindContentId) // deleted comment keeps no floor copy
     delete data.blob // a deleted comment references no blob
     delete data.dispersal
-    await this._emit(TYPE.COMMENT, data)
+    await this._emit(TYPE.COMMENT, data, { pow: true }) // re-mint: _toV2 strips the reconstructed record's pow (V2_DROP), so without this the re-emit hits the wire with NO proof and admit()→verify() drops it. (v2 powTarget is content-independent, so this restores a present proof; it does not re-bind to the edit.)
     this.invalidateViewCaches()
   }
 

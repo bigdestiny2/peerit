@@ -71,6 +71,18 @@ export class Data {
 
   me () { return this.id.me() }
 
+  // Writer-identity gate for every public WRITE method. MUST run BEFORE the
+  // record is built: owner fields (author/creator) and owner-derived ids
+  // (mkid.vote/profile/follow/member bake the pubkey in) are stamped from me()
+  // at construction time — a lurker's record built pre-mint would carry
+  // author:null, which v2 rejects at key derivation and v1 verifiers reject at
+  // admit() (owner !== signer). The _emit/_boxBody calls remain as an idempotent
+  // backstop (ensureWriter single-flights in app.js, so the double call is free).
+  async _writer () {
+    if (this.ensureWriter) await this.ensureWriter()
+    return this.me()
+  }
+
   // `opClass === 'vote'` means only vote tallies changed — comment counts and the
   // search index (which votes never touch) survive, so a vote no longer forces a
   // full search-index rebuild on the next search.
@@ -554,7 +566,7 @@ export class Data {
     if (!isValidSlug(slug)) throw new Error('Community name must be 2–24 chars: a–z, 0–9, _')
     const existing = await this.getCommunity(slug)
     if (existing) throw new Error('r/' + slug + ' already exists')
-    const me = this.me()
+    const me = await this._writer() // mint BEFORE stamping creator/author
     const now = Date.now()
     const data = {
       id: mkid.community(slug), slug, title: (title || slug).slice(0, 100),
@@ -577,7 +589,7 @@ export class Data {
   async updateCommunity (slug, patch) {
     const c = await this.getCommunity(slug)
     if (!c) throw new Error('No such community')
-    const me = this.me()
+    const me = await this._writer() // mint BEFORE the owner check reads me()
     // Owner binding: only the founder's outbox holds the canonical community
     // record, so only the founder can change its metadata and have it propagate.
     if (c.creator !== me.pubkey) throw new Error('Only the founder can edit community details')
@@ -592,7 +604,7 @@ export class Data {
   async submitPost ({ community, kind, title, body, url, cid, onProgress }) {
     const c = await this.getCommunity(community)
     if (!c) throw new Error('No such community')
-    const me = this.me()
+    const me = await this._writer() // mint BEFORE stamping author
     const banned = (await this.overlay(community)).banned
     if (banned.has(me.pubkey)) throw new Error('You are banned from r/' + community)
     if (!title || !title.trim()) throw new Error('A title is required')
@@ -714,7 +726,7 @@ export class Data {
   // ---- Comments -------------------------------------------------------------
   async addComment ({ community, postCid, parentCid, body, onProgress }) {
     if (!body || !body.trim()) throw new Error('Comment cannot be empty')
-    const me = this.me()
+    const me = await this._writer() // mint BEFORE stamping author
     const ov = await this.overlay(community)
     if (ov.banned.has(me.pubkey)) throw new Error('You are banned from r/' + community)
     if (ov.locked.has(postCid)) throw new Error('This thread is locked')
@@ -777,7 +789,7 @@ export class Data {
 
   // ---- Votes ----------------------------------------------------------------
   async vote (targetCid, community, targetType, value) {
-    const me = this.me()
+    const me = await this._writer() // mint BEFORE mkid.vote bakes the pubkey into the id
     value = value === 1 ? 1 : value === -1 ? -1 : 0
     const now = Date.now()
     const data = {
@@ -900,7 +912,7 @@ export class Data {
 
   // ---- Profiles -------------------------------------------------------------
   async setProfile ({ name, bio, color }) {
-    const me = this.me()
+    const me = await this._writer() // mint BEFORE mkid.profile bakes the pubkey into the id
     const now = Date.now()
     const prev = await this.getProfile(me.pubkey)
     const data = {
@@ -969,7 +981,7 @@ export class Data {
   // an opaque cell and cannot enumerate who follows whom or who joined what.
 
   async setFollow (targetPub, on = true) {
-    const me = this.me()
+    const me = await this._writer() // mint BEFORE mkid.follow bakes the pubkey into the id
     if (!targetPub || targetPub === me.pubkey) throw new Error(on ? 'Cannot follow yourself.' : 'Bad target.')
     const now = Date.now()
     const data = {
@@ -1005,7 +1017,7 @@ export class Data {
   }
 
   async setMembership (community, on = true) {
-    const me = this.me()
+    const me = await this._writer() // mint BEFORE mkid.member bakes the pubkey into the id
     const c = await this.getCommunity(community)
     if (!c) throw new Error('No such community: r/' + community)
     const now = Date.now()
@@ -1135,7 +1147,7 @@ export class Data {
   }
 
   async modAction (community, { action, targetCid, targetUser, reason }) {
-    const me = this.me()
+    const me = await this._writer() // mint BEFORE stamping the acting mod
     const mods = await this.getMods(community)
     if (!mods.has(me.pubkey)) throw new Error('Only moderators can do that')
     const actionId = uid()

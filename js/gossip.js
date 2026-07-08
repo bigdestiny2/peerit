@@ -53,8 +53,20 @@ export function cachedViewHasRows (storage) {
     if (!raw) return false
     const c = JSON.parse(raw)
     const views = (c && typeof c === 'object' && c.views && typeof c.views === 'object') ? c.views : {}
+    // Count ONLY rows _loadCache can actually RESTORE: views whose pub appears in
+    // the cached peers list (same admission test as _loadCache). _saveCache
+    // persists the SELF view but excludes self from `peers`, so a cache holding
+    // only one's own rows would otherwise report "has rows" while a later
+    // identity-less boot (forget-on-device, lost IDB record) restores nothing —
+    // suppressing the seed-snapshot floor and booting to a blank feed.
+    const restorable = new Set()
+    if (Array.isArray(c.peers)) {
+      for (const p of c.peers) {
+        if (p && HEX64.test(p.pub || '') && p.appId === p.pub && typeof p.inviteKey === 'string') restorable.add(p.pub)
+      }
+    }
     for (const pub in views) {
-      if (PROTO_KEYS.has(pub)) continue
+      if (PROTO_KEYS.has(pub) || !restorable.has(pub)) continue
       const v = views[pub]
       if (v && typeof v === 'object') { for (const k in v) return true } // eslint-disable-line no-unreachable-loop
     }

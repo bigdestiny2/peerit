@@ -65,17 +65,38 @@ async function main () {
   ok(raced.adopted === true && raced.entry.pubkey === pubHex, 'second tab ADOPTS the first identity (its own mint is discarded)')
   ok(raced.entry.seed === seedHex, 'adopted entry carries the WINNING seed (usable for signing immediately)')
 
-  console.log('\n— corrupt record self-heals —')
+  console.log('\n— corrupt record self-heals (ATOMICALLY, review fix 2026-07-08) —')
   const kv2 = memoryKv()
-  await kv2.putIfAbsent('identity:v1', { v: 1, garbage: true })
+  await kv2.putIfAbsent('identity:v1', { v: 1, garbage: true }) // shape-invalid -> replace in ONE txn
   const store2 = createIdentityStore({ kv: kv2 })
   ok(await store2.load() === null, 'corrupt record loads as null (lurker boot, no crash)')
   const healed = await store2.saveOrAdopt(entry)
-  ok(healed.adopted === false && (await store2.load()).pubkey === pubHex, 'saveOrAdopt replaces a corrupt record with ours')
+  ok(healed.adopted === false && (await store2.load()).pubkey === pubHex, 'saveOrAdopt replaces a shape-corrupt record IN the atomic putIfAbsent (no delete+put window)')
+  // Shape-VALID but undecryptable (key/ct mismatch): must NOT be racily replaced —
+  // another tab may be signing with it. saveOrAdopt refuses; identity stays session-only.
+  const kvBad = memoryKv()
+  const alien = await (async () => {
+    const k = await globalThis.crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
+    const iv = globalThis.crypto.getRandomValues(new Uint8Array(12))
+    const ct = new Uint8Array(await globalThis.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, new Uint8Array(7))) // wrong length -> unwrap fails HEX64
+    return { v: 1, pubkey: 'e'.repeat(64), driveKey: 'e'.repeat(64), label: 'x', key: k, iv, ct }
+  })()
+  await kvBad.putIfAbsent('identity:v1', alien)
+  const storeBad = createIdentityStore({ kv: kvBad })
+  await assert.rejects(() => storeBad.saveOrAdopt(entry), /undecryptable/, 'shape-valid-but-undecryptable record is refused, never racily replaced')
+  passed++; console.log('  ✓ shape-valid-but-undecryptable record is refused, never racily replaced')
 
-  console.log('\n— clear() kills the tier —')
-  await store.clear()
+  console.log('\n— clear() kills the tier, FAIL-CLOSED (review fix 2026-07-08) —')
+  ok(await store.clear() === true, 'clear() returns true only after a read-back confirms deletion')
   ok(await store.load() === null, 'after clear(), load() is null (next boot is a lurker)')
+  // delete rejects -> record survives -> clear() must report FAILURE (a shared
+  // machine must never be told "forgotten" while the seed is still restorable).
+  const kvStuck = memoryKv()
+  await kvStuck.putIfAbsent('identity:v1', { v: 1, garbage: true })
+  const stuck = createIdentityStore({ kv: { ...kvStuck, delete: async () => { throw new Error('quota') } } })
+  ok(await stuck.clear() === false, 'clear() returns false when the delete fails and the record survives')
+  const lying = createIdentityStore({ kv: { ...kvStuck, delete: async () => true } }) // resolves but does not delete
+  ok(await lying.clear() === false, 'clear() read-back catches a delete that lied')
 
   console.log('\n— end-to-end with DevIdentity (the ensureWriterIdentity flow) —')
   const kv3 = memoryKv()

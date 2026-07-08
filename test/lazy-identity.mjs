@@ -140,7 +140,43 @@ async function main () {
   const ensured = await vaultId.ensureActive()
   ok(ensured.pubkey === entry.pubkey && vaultId.listUsers().length === 1, 'ensureActive() after restore is a no-op (no fork)')
 
+
+  console.log('\n— Data-level lurker write: the mint happens BEFORE the record is built —')
+  // REGRESSION (review 2026-07-08, CRITICAL): every write method used to capture
+  // me() BEFORE _emit's ensureWriter mint, so a lurker's first write carried
+  // author:null (v2 throws at key derivation; v1 records fail admit forever).
+  // The mint is now hoisted via _writer() — prove it at the Data layer, the
+  // exact path test coverage previously missed.
+  const { createData } = await import('../js/data.js')
+  const dWorld = countingPear()
+  const dId = new DevIdentity(mem(), mem(), { lazy: true })
+  await dId.ready()
+  const dSync = new BridgeGossipSync({
+    pear: dWorld,
+    getMe: () => dId.me().pubkey,
+    identity: dId,
+    storage: mem(),
+    validate: makeValidator({}),
+    pollMs: 0
+  })
+  await dSync.ready()
+  const dd = createData(dSync, dId, { ensureWriter: async () => { await dId.ensureActive('anon') } })
+  ok(dId.me().pubkey === null, 'Data starts with a lurker (no identity)')
+  const prof = await dd.setProfile({ name: 'first-writer' })
+  const mintedPub = dId.me().pubkey
+  ok(HEX64.test(mintedPub), 'first write minted an identity')
+  ok(prof.author === mintedPub, 'profile record is authored by the MINTED key, not null')
+  ok(prof.id.includes(mintedPub), 'owner-derived id (mkid.profile) baked the MINTED pubkey, not null')
+  const rows = [...dWorld.groups.get(mintedPub).rows.entries()]
+  const stored = rows.find(([k]) => k.startsWith('profile!'))
+  ok(stored && stored[1].author === mintedPub && stored[1]._k === mintedPub, 'stored record: author === signer (admit()-consistent), no null anywhere')
+  const target = 'd'.repeat(64)
+  const fol = await dd.setFollow(target, true)
+  ok(fol.author === mintedPub && fol.id.includes(mintedPub), 'second write reuses the same identity (no re-mint)')
+  ok(dId.listUsers().length === 1, 'exactly one identity after two writes')
+
   console.log(`\nlazy-identity: ${passed} checks passed.`)
+
 }
 
 main().catch((e) => { console.error('❌ FAILED:', e.message, '\n', e.stack); process.exit(1) })

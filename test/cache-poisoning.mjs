@@ -136,7 +136,23 @@ async function main () {
   const healedRows = await healed.list('post!')
   ok(healedRows.length === 1 && healedRows[0].value.title === 'hello world', 'poisoned device renders the seed snapshot (empty cache did not suppress the floor)')
 
-  // ---- 5. helper contract edges ----
+  // ---- 5. self-rows-only cache must NOT suppress the snapshot floor ----
+  // _saveCache persists the SELF view's rows but excludes self from `peers`;
+  // _loadCache only restores views whose pub is in peers. A cache holding ONLY
+  // one's own rows (early author who tapped "Forget on this device", then
+  // reloads as a lurker) restores NOTHING — cachedViewHasRows must agree
+  // (review fix 2026-07-08), or the snapshot floor is suppressed and the boot
+  // is a blank feed.
+  const selfOnly = mem()
+  selfOnly.setItem(CACHE_KEY, JSON.stringify({
+    v: 1,
+    peers: [], // self is never in peers (that is _saveCache's behavior)
+    views: { ['f'.repeat(64)]: { 'post!p2p!mine': { id: 'p2p!mine', title: 'my own post' } } },
+    heads: {}
+  }))
+  ok(!cachedViewHasRows(selfOnly), 'self-rows-only cache counts as NO cache (only restorable rows count)')
+
+  // ---- 6. helper contract edges ----
   ok(!cachedViewHasRows(mem()), 'no cache at all -> false')
   const junk = mem(); junk.setItem(CACHE_KEY, 'not json')
   ok(!cachedViewHasRows(junk), 'corrupt cache -> false (never throws)')

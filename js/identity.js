@@ -74,6 +74,13 @@ class DevIdentity {
     return this.me()
   }
 
+  // Mint a keypair WITHOUT activating it or touching the roster. Used by the
+  // device-persist flow: the candidate is offered to the device store first
+  // (saveOrAdopt settles a multi-tab race), and only the WINNING entry is then
+  // activated via addUser(). Activating before the race resolves would let the
+  // gossip poll open a relay outbox for a key that is about to be discarded.
+  async mintEntry (label = 'anon') { return this._mint(label || 'anon') }
+
   _roster () {
     if (!this.persistSeed) return this._memRoster ? this._memRoster.map(u => ({ ...u })) : []
     try { const s = this.storage.getItem(this.ROSTER); return s ? JSON.parse(s) : [] } catch { return [] }

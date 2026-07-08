@@ -85,16 +85,28 @@ function idbAdapter () {
     // Atomic: the get and the conditional put run in the SAME readwrite
     // transaction — IDB serializes readwrite txns on a store, so two tabs racing
     // here cannot both insert. Returns the value that WON (existing or ours).
-    putIfAbsent: (key, value) => withStore('readwrite', (store, done) => {
+    // isUsable (optional, SYNCHRONOUS — an await inside an IDB txn auto-commits
+    // it) lets a corrupt existing record be replaced atomically: without it, a
+    // separate delete + putIfAbsent lets two tabs interleave and silently
+    // un-persist an identity the other tab already signed with.
+    putIfAbsent: (key, value, isUsable) => withStore('readwrite', (store, done) => {
       const req = store.get(key)
       req.onsuccess = () => {
-        if (req.result !== undefined && req.result !== null) { done({ value: req.result, inserted: false }); return }
+        const existing = (req.result === undefined) ? null : req.result
+        if (existing !== null && (!isUsable || isUsable(existing))) { done({ value: existing, inserted: false }); return }
         store.put(value, key)
         done({ value, inserted: true })
       }
     }),
     delete: (key) => withStore('readwrite', (store, done) => { store.delete(key); done(true) })
   }
+}
+
+// Synchronous shape check for a device record — the exact condition under which
+// unwrapRecord() would return null. Used INSIDE the atomic putIfAbsent txn (so it
+// must not await): a record failing this is unreadable garbage and is replaced.
+function usableRecord (rec) {
+  return !!(rec && rec.v === 1 && rec.key && rec.iv && rec.ct)
 }
 
 // ---- the store ---------------------------------------------------------------
@@ -151,39 +163,47 @@ export function createIdentityStore ({ kv } = {}) {
     // First-write persist with LOAD-OR-ADOPT semantics: wraps OUR entry, then
     // atomically inserts it unless another tab already saved one — in which case
     // the existing identity is returned and the caller must ADOPT it (switch to
-    // it BEFORE signing anything). Returns { entry, adopted }.
+    // it BEFORE signing anything). A shape-corrupt existing record is replaced
+    // IN THE SAME transaction (usableRecord predicate) — a separate delete+put
+    // would let two racing tabs silently un-persist each other's inserts.
+    // Returns { entry, adopted }.
     async saveOrAdopt (entry) {
       if (!await available()) throw new Error('device identity store unavailable')
-      const candidate = await wrapEntry(entry) // crypto BEFORE the txn (awaits inside an IDB txn auto-commit it)
-      const res = await backing.putIfAbsent(RECORD_KEY, candidate)
+      const candidate = await wrapEntry(entry) // crypto BEFORE the txn (an await inside an IDB txn auto-commits it)
+      const res = await backing.putIfAbsent(RECORD_KEY, candidate, usableRecord)
       if (res.inserted) return { entry: { seed: entry.seed, pubkey: candidate.pubkey, driveKey: candidate.driveKey, label: candidate.label }, adopted: false }
       const existing = await unwrapRecord(res.value)
       if (existing) return { entry: existing, adopted: existing.pubkey !== candidate.pubkey }
-      // Existing record is corrupt/undecryptable: replace it with ours.
-      await backing.delete(RECORD_KEY)
-      const retry = await backing.putIfAbsent(RECORD_KEY, candidate)
-      if (retry.inserted) return { entry: { seed: entry.seed, pubkey: candidate.pubkey, driveKey: candidate.driveKey, label: candidate.label }, adopted: false }
-      const winner = await unwrapRecord(retry.value)
-      if (!winner) throw new Error('device identity store is corrupt')
-      return { entry: winner, adopted: winner.pubkey !== candidate.pubkey }
+      // Shape-valid but UNDECRYPTABLE (key/data mismatch): unrecoverable either
+      // way — the caller's identity stays session-only rather than risking a
+      // racy replace of a record another tab may be about to sign with.
+      throw new Error('device identity store record is undecryptable')
     },
 
     // Sign-out / forget-this-device: BOTH tiers' forget paths call this (a device
     // record surviving a vault clear would silently resurrect the identity).
+    // FAIL-CLOSED for key destruction: returns true only when a read-back
+    // confirms the record is gone — callers must not report "forgotten" on a
+    // swallowed delete failure (the next visitor on a shared machine would be
+    // silently signed in as the identity the user explicitly destroyed).
     async clear () {
-      try { if (backing) await backing.delete(RECORD_KEY) } catch {}
+      if (!backing) return true
+      try { await backing.delete(RECORD_KEY) } catch {}
+      try { return (await backing.get(RECORD_KEY)) == null } catch { return false }
     }
   }
 }
 
 // Map-backed kv for Node tests (Node ≥20 has webcrypto but no IndexedDB). Kept
-// here so tests and any future runtime share one reference implementation.
+// here so tests and any future runtime share one reference implementation —
+// including the isUsable replace-in-place semantics of the IDB adapter.
 export function memoryKv () {
   const m = new Map()
   return {
     get: async (k) => (m.has(k) ? m.get(k) : null),
-    putIfAbsent: async (k, v) => {
-      if (m.has(k) && m.get(k) != null) return { value: m.get(k), inserted: false }
+    putIfAbsent: async (k, v, isUsable) => {
+      const existing = m.has(k) ? m.get(k) : null
+      if (existing != null && (!isUsable || isUsable(existing))) return { value: existing, inserted: false }
       m.set(k, v)
       return { value: v, inserted: true }
     },

@@ -81,8 +81,14 @@ async function boot () {
   // prompted every boot). A vault for a DIFFERENT identity (or vault-only) gets
   // the explicit unlock modal, exactly as before.
   if (identity.isDev && typeof localStorage !== 'undefined') {
+    // Device-tier restore is LAZY-WEB ONLY: in the eager dev fallback
+    // (persistSeed:true) addUser would write the restored seed CLEARTEXT into
+    // the localStorage roster — the exact downgrade the device tier exists to
+    // avoid — and silently switch the active identity away from the dev roster.
     let deviceEntry = null
-    try { deviceEntry = await deviceIdStore.load() } catch {}
+    if (identity.lazy) {
+      try { deviceEntry = await deviceIdStore.load() } catch {}
+    }
     const vaultPub = hasVault(localStorage) ? vaultPubkey(localStorage) : null
     let deviceRestored = false
     if (deviceEntry && (!vaultPub || vaultPub === deviceEntry.pubkey)) {
@@ -280,40 +286,53 @@ async function ensureWriterIdentity () {
     // 2. Vault-unlock BEFORE mint: a saved identity exists (possibly created in
     //    another tab) but is locked — the user must choose "unlock" or "start
     //    fresh", or their first write would silently fork a brand-new pubkey.
+    //    allowCancel: mid-write this modal must have a third exit ("Not now")
+    //    that aborts the write — the boot version's only exits are unlock or
+    //    DESTROY the vault, a dead end for a user who just doesn't remember
+    //    the passphrase right now.
     if (identity.isDev && typeof localStorage !== 'undefined' && hasVault(localStorage)) {
-      await unlockVaultAtBoot()
+      await unlockVaultAtBoot({ allowCancel: true })
     }
-    // 3. Mint (idempotent + single-flight inside DevIdentity). Vault unlock may
-    //    already have populated the roster — ensureActive() is a no-op then.
-    const mintedFresh = !identity.me().pubkey
-    await identity.ensureActive('anon')
+    // 3. Mint + DEVICE-PERSIST, AWAITED before the write proceeds — a tab closed
+    //    right after the first post must not leave a relay outbox whose key was
+    //    never durably stored. When the device store is usable, the candidate is
+    //    minted WITHOUT activating (mintEntry): getMe() stays null until
+    //    saveOrAdopt settles the multi-tab race, so the gossip poll/wake cannot
+    //    open a relay outbox for a key that loses the race and gets discarded.
+    //    The store path is gated on a secure crypto backend (a 'none'-backend
+    //    placeholder identity must stay ephemeral) and degrades to today's
+    //    in-memory mint where unavailable (e.g. degraded private browsing) —
+    //    NEVER to localStorage.
     let pub = identity.me().pubkey
-    if (!pub) throw new Error('Could not create an identity on this device.')
-    // 3.5 DEVICE-PERSIST the fresh mint, AWAITED before the write proceeds — a
-    //     tab closed right after the first post must not leave a relay outbox
-    //     whose key was never durably stored (a one-off ghost). LOAD-OR-ADOPT:
-    //     if another tab won the first-write race, we ADOPT its identity NOW —
-    //     still strictly before anything is signed. Gated on a secure crypto
-    //     backend (a 'none'-backend placeholder identity must stay ephemeral),
-    //     and degrades to today's in-memory behavior where the store is
-    //     unavailable (e.g. degraded private browsing) — NEVER to localStorage.
-    if (mintedFresh && identity.isDev && isSecure() && await deviceIdStore.available()) {
-      try {
-        const entry = identity.currentSeedEntry && identity.currentSeedEntry()
-        if (entry) {
-          const res = await deviceIdStore.saveOrAdopt(entry)
-          if (res.adopted) {
-            await identity.addUser(res.entry) // the racing tab's identity wins; ours is discarded unused
-            pub = identity.me().pubkey
-          }
+    if (!pub) {
+      const useStore = identity.isDev && identity.lazy && typeof identity.mintEntry === 'function' &&
+        isSecure() && await deviceIdStore.available()
+      if (useStore) {
+        try {
+          const candidate = await identity.mintEntry('anon')
+          const res = await deviceIdStore.saveOrAdopt(candidate) // atomic: our mint OR the racing tab's winner
+          await identity.addUser(res.entry) // activate exactly the durable identity
+        } catch (e) {
+          console.warn('[peerit] device identity persist failed (identity is session-only):', e && e.message)
+          await identity.ensureActive('anon') // fall back to the in-memory mint
         }
-      } catch (e) { console.warn('[peerit] device identity persist failed (identity is session-only):', e && e.message) }
+      } else {
+        await identity.ensureActive('anon')
+      }
+      pub = identity.me().pubkey
     }
+    if (!pub) throw new Error('Could not create an identity on this device.')
     // 4. Carry the lurker's device prefs over, re-key prefs, and let the world
     //    know the new writer exists (descriptor + outbox happen on the append's
     //    own _ensureMyOutbox; announce is best-effort acceleration).
     migrateAnonPrefs(pub)
     refreshPrefs()
+    // Repaint the header NOW — route() re-renders #app/sidebar but never
+    // #usermenu, so without this the pill reads "browsing / no identity yet"
+    // for the rest of the session. Guarded + fire-and-forget: a DOM hiccup must
+    // not fail the write. Only runs on a genuine lazy mint (eager/bridge modes
+    // return from ensureWriterIdentity before reaching here).
+    try { renderUserMenu().catch(() => {}); updateNetStatus().catch(() => {}) } catch {}
     try { if (sync && sync.announce) sync.announce().catch(() => {}) } catch {}
     // 5. The boot-time local-graph promotion was skipped for lurkers — run it now
     //    that an identity exists (fire-and-forget, same as boot).
@@ -1376,7 +1395,11 @@ async function viewInbox ({ guard, token }) {
 // refreshes it every ~12s or on force). Hidden at zero.
 let _notifBadgeAt = 0
 async function refreshNotifBadge (force = false) {
-  if (isReadOnly() || !data || !identity || !identity.me()) return
+  // Guard on .pubkey, not me() — me() always returns an object ({pubkey:null}
+  // for a lurker), so the old check never skipped the identity-less state and a
+  // lurker ran a full posts+comments notification scan every ~12s for a
+  // guaranteed-zero badge.
+  if (isReadOnly() || !data || !identity || !identity.me().pubkey) return
   const now = Date.now()
   if (!force && now - _notifBadgeAt < 12000) return
   _notifBadgeAt = now
@@ -1535,8 +1558,9 @@ async function viewSettings ({ guard, token }) {
     <p class="settings-copy"><b>${esc(identityBackupSummary())}</b></p>
     <p class="dim small settings-copy">${esc(identityBackupDetail())}</p>
     <ul class="kv settings-kv">
-      <li><span>App identity fingerprint</span><b class="mono small key-inline" title="${esc(me.pubkey)}">${esc(shortKey(me.pubkey, 12))}</b></li>
-      <li><span>App drive key fingerprint</span><b class="mono small" title="${esc(me.driveKey)}">${esc(shortKey(me.driveKey, 12))}</b></li>
+      ${me.pubkey ? `<li><span>App identity fingerprint</span><b class="mono small key-inline" title="${esc(me.pubkey)}">${esc(shortKey(me.pubkey, 12))}</b></li>
+      <li><span>App drive key fingerprint</span><b class="mono small" title="${esc(me.driveKey)}">${esc(shortKey(me.driveKey, 12))}</b></li>`
+        : '<li><span>App identity</span><b>none yet — created on your first post, comment, or vote</b></li>'}
       <li><span>Backup status</span><b>${backupStatusHtml(backup)}</b></li>
       <li><span>Sync mode</span><b>${modeLabel}</b></li>
       <li><span>Body dispersal</span><b>${isDispersalActive() ? 'BlindShard active' : 'off'}</b></li>
@@ -1556,10 +1580,11 @@ async function viewSettings ({ guard, token }) {
         ${(vaultActive || deviceActive) ? '<button class="btn btn-ghost danger" type="button" data-act="forget-identity">Forget on this device</button>' : ''}
       </div>` : ''}
       <h2>Move this identity to another device</h2>
-      <p class="dim small settings-copy">Export your posting key as a <b>passphrase-encrypted</b> file, then import it in another browser or on your phone to post as the same u/${esc(shortKey(me.pubkey, 6))}. Anyone who gets both the file and the passphrase can post as you — treat it like a password.</p>
+      ${me.pubkey ? `<p class="dim small settings-copy">Export your posting key as a <b>passphrase-encrypted</b> file, then import it in another browser or on your phone to post as the same u/${esc(shortKey(me.pubkey, 6))}. Anyone who gets both the file and the passphrase can post as you — treat it like a password.</p>
       <div class="form-actions wrap">
         <button class="btn btn-primary" type="button" data-act="export-identity">Export this identity</button>
-      </div>
+      </div>`
+        : '<p class="dim small settings-copy">Nothing to export yet — an identity is created the first time you post, comment, or vote. You can import an existing identity below.</p>'}
       <form data-form="import-identity" class="import-identity">
         <h3>Import an identity here</h3>
         <p class="dim small settings-copy">Adds the imported identity alongside any already in this browser and switches to it. Your current identities are kept.</p>
@@ -1710,7 +1735,11 @@ async function onClick (e) {
         const now = prefs.toggleFollow(pub)
         // Dual-write: the local pref is the instant UX; the signed follow! record is
         // the durable network edge (replicates, survives localStorage, powers counts).
-        if (!isReadOnly()) data.setFollow(pub, now).catch(() => {})
+        // LURKERS keep the local pref only — the UI promises an identity is created
+        // on "post, comment, or vote", so a follow must not silently mint one. The
+        // pref is promoted to a signed edge by migrateLocalGraph after the real
+        // first write (ensureWriterIdentity re-kicks it).
+        if (!isReadOnly() && identity.me().pubkey) data.setFollow(pub, now).catch(() => {})
         t.textContent = now ? '✓ Following' : '+ Follow'
         t.classList.toggle('btn-primary', !now)
         t.classList.toggle('btn-ghost', now)
@@ -1720,7 +1749,7 @@ async function onClick (e) {
       case 'sub': {
         const slug = normalizeSlug(t.dataset.slug)
         const now = prefs.toggleSub(slug)
-        if (!isReadOnly()) data.setMembership(slug, now).catch(() => {}) // signed member! edge (see 'follow')
+        if (!isReadOnly() && identity.me().pubkey) data.setMembership(slug, now).catch(() => {}) // signed member! edge; lurkers keep the pref only (see 'follow')
         if (now) prefs.markWelcomeSeen()
         toast(now ? 'Joined r/' + slug : 'Left r/' + slug)
         route()
@@ -2148,11 +2177,11 @@ function showPearBackupInstructions () {
 // resolves once the user unlocks or chooses to start fresh. Wrong passphrase is a
 // clean retry (no lockout, no partial state); "Start fresh instead" discards the
 // vault and falls back to A1's mint-a-new-identity behavior.
-async function unlockVaultAtBoot () {
+async function unlockVaultAtBoot ({ allowCancel = false } = {}) {
   if (typeof document === 'undefined' || !document.body) return
   const pub = vaultPubkey(localStorage)
   const who = pub ? 'u/' + shortKey(pub, 8) : 'your saved identity'
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const overlay = document.createElement('div')
     overlay.className = 'modal-backdrop vault-unlock'
     overlay.innerHTML = `
@@ -2165,6 +2194,7 @@ async function unlockVaultAtBoot () {
           <div class="form-actions wrap">
             <button class="btn btn-primary" type="submit">Unlock</button>
             <button class="btn btn-ghost" type="button" data-role="vault-fresh">Start fresh instead</button>
+            ${allowCancel ? '<button class="btn btn-ghost" type="button" data-role="vault-cancel">Not now</button>' : ''}
           </div>
         </form>
       </div>`
@@ -2174,6 +2204,15 @@ async function unlockVaultAtBoot () {
     const input = overlay.querySelector('input[name="passphrase"]')
     const submitBtn = form.querySelector('button[type="submit"]')
     const finish = () => { overlay.remove(); resolve() }
+    // Mid-write only ("Not now" / Escape): abort the pending write instead of
+    // forcing the unlock-or-destroy choice the boot modal presents. The caller's
+    // catch rolls back its optimistic UI; the vault stays intact.
+    if (allowCancel) {
+      const cancel = () => { overlay.remove(); reject(new Error('Unlock your saved identity to post or vote.')) }
+      const cancelBtn = overlay.querySelector('[data-role="vault-cancel"]')
+      if (cancelBtn) cancelBtn.addEventListener('click', cancel)
+      overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') cancel() })
+    }
     const showErr = (m) => { errEl.textContent = m; errEl.hidden = false; input.value = ''; input.focus() }
     form.addEventListener('submit', async (e) => {
       e.preventDefault()
@@ -2252,7 +2291,14 @@ async function forgetVault () {
   if (!hasV && !hasD) { toast('Nothing to forget on this device.'); return }
   if (!confirm('Forget the saved identity on this device? Your current identity keeps working until you reload; after that, you browse without an identity until your next post/comment/vote creates a new one — unless you export this one first.')) return
   if (hasV) clearVault(localStorage)
-  await deviceIdStore.clear()
+  // Key destruction is FAIL-CLOSED: clear() read-back-verifies the delete. Never
+  // toast "forgotten" when the wrapped seed may still be restorable — on a shared
+  // machine the next user's boot would silently sign in as the destroyed identity.
+  const cleared = await deviceIdStore.clear()
+  if (!cleared) {
+    toast('Could not remove the saved identity from this device — it may still be restored on the next reload. Try again, or clear this site’s data in your browser settings.', 'error')
+    return
+  }
   toast('Forgotten — this identity will not survive the next reload on this device.')
   route()
 }

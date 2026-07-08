@@ -1,8 +1,15 @@
-# GET /api/boot — one-shot cold-boot bundle (hand-off to the relay side / bern)
+# GET /api/boot — one-shot cold-boot bundle (WITHDRAWN)
 
-**Status:** SPEC / hand-off. The relay work is bern's (HiveRelay outboxlog); the client
-wiring is peerit's and I'll add it the moment the endpoint exists. Fully backward
-compatible: absent → the client uses today's fan-out.
+**Status: WITHDRAWN 2026-07-08** under the Service Contract
+(hiverelay `docs/SERVICE-CONTRACT.md`): this is an app-shaped read pattern pushed
+into the relay — the canonical one-app-only item, and app releases must never
+require relay updates. It is also no longer needed: the boot burst it was designed
+to kill is gone client-side (lazy identity ended the per-refresh create/announce
+churn; the cached view + baked seed snapshot handle first paint; the relay's ghost
+sweep pruned the descriptor-replay amplifier). If cold-boot cost ever matters
+again, the app-side answer is a verify-client-side cache/CDN in front of the
+EXISTING read surface — every row is admit()-verified, so a cache cannot lie.
+The spec below is retained for the record only. Do not implement.
 
 ## Why
 A cold boot today is O(authors) requests against the relay:

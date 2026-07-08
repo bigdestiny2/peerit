@@ -41,6 +41,26 @@ const HEX128 = /^[0-9a-f]{128}$/i
 // only re-reads outboxes that actually changed.
 const CACHE_KEY = 'peerit:gossip-view'
 const MAX_CACHE_BYTES = 3 * 1024 * 1024 // skip persisting if the view is huge (graceful)
+
+// True when the persisted gossip view holds at least one row. "Empty cache is NO
+// cache": a blob whose views were all emptied (a relay wipe answered 200-with-
+// empty-rows under builds predating _saveCache's rowCount guard) must not count as
+// a cached view anywhere — app.js uses this to decide whether the seed-snapshot
+// floor still applies, and _loadCache applies the same rule when restoring.
+export function cachedViewHasRows (storage) {
+  try {
+    const raw = storage && storage.getItem(CACHE_KEY)
+    if (!raw) return false
+    const c = JSON.parse(raw)
+    const views = (c && typeof c === 'object' && c.views && typeof c.views === 'object') ? c.views : {}
+    for (const pub in views) {
+      if (PROTO_KEYS.has(pub)) continue
+      const v = views[pub]
+      if (v && typeof v === 'object') { for (const k in v) return true } // eslint-disable-line no-unreachable-loop
+    }
+    return false
+  } catch { return false }
+}
 const FLOOR_KEY = 'peerit:head-floor'   // Phase C durable monotonic head floor (author -> max signed head version)
 const MAX_FLOOR = 5000                  // cap tracked authors (drop lowest-version on overflow)
 const RECONCILE_EVERY = 30 // every N polls, ignore heads + re-verify everything (defends against a stale/lying relay or a tampered local cache)
@@ -473,9 +493,17 @@ class BridgeGossipSync {
   _saveCache () {
     try {
       const peers = []; const views = {}; const heads = {}
+      let rowCount = 0
       for (const [pub, info] of this._peers) { if (!info.self && HEX64.test(pub) && info.appId === pub && typeof info.inviteKey === 'string') peers.push({ pub, appId: info.appId, inviteKey: info.inviteKey }) }
-      for (const [pub, view] of this._peerViews) { const o = {}; for (const k in view) o[k] = view[k]; views[pub] = o }
+      for (const [pub, view] of this._peerViews) { const o = {}; for (const k in view) { o[k] = view[k]; rowCount++ } views[pub] = o }
       for (const [pub, v] of this._peerHeads) heads[pub] = v
+      // STALE-NEVER-EMPTY at the persistence layer: a relay restart/wipe answers
+      // 200-with-empty-rows for outboxes it forgot, which empties the in-memory
+      // views — persisting that would poison the cache (and, since the snapshot is
+      // only used when there is NO cache, suppress the seed-snapshot floor on every
+      // later boot). Keep the last non-empty view instead; the next reconcile that
+      // actually returns rows overwrites it with fresher content.
+      if (rowCount === 0) return
       const blob = JSON.stringify({ v: 1, peers, views, heads })
       if (blob.length > MAX_CACHE_BYTES) { this._setLocal(CACHE_KEY, ''); return } // too large → skip (graceful, just slower first paint)
       this._setLocal(CACHE_KEY, blob)
@@ -496,14 +524,21 @@ class BridgeGossipSync {
           this._peers.set(p.pub, { appId: p.appId, inviteKey: p.inviteKey })
         }
       }
+      let restoredRows = 0
       if (c.views && typeof c.views === 'object') for (const pub in c.views) {
         if (PROTO_KEYS.has(pub) || !this._peers.has(pub)) continue
         const v = c.views[pub]; if (!v || typeof v !== 'object') continue
         const view = Object.create(null); const sig = new Map()
-        for (const k in v) { if (PROTO_KEYS.has(k)) continue; view[k] = v[k]; sig.set(k, changeToken(v[k])) }
+        for (const k in v) { if (PROTO_KEYS.has(k)) continue; view[k] = v[k]; sig.set(k, changeToken(v[k])); restoredRows++ }
         this._peerViews.set(pub, view)
         this._peerSigs.set(pub, sig)
       }
+      // An empty cache is NO cache: a poisoned blob (all views emptied by a relay
+      // wipe — written by builds that predate the rowCount guard in _saveCache)
+      // must not count as "restored", or ready() skips the seed-snapshot floor and
+      // the app renders an empty feed forever. Restored peers stay registered so
+      // the first poll still re-reads them.
+      if (restoredRows === 0) return false
       // Deliberately do NOT restore cached heads: the production relay is the
       // EPHEMERAL memory core whose per-outbox version resets to 0 on restart, so a
       // cached version could coincidentally match a different post-restart state and

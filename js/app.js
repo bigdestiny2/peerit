@@ -4,6 +4,7 @@
 // PearBrowser bridge and the localStorage dev-fallback.
 
 import { createSync } from './sync.js'
+import { cachedViewHasRows } from './gossip.js'
 import { createIdentity } from './identity.js'
 import { resolveRuntime, fetchShardRoster } from './runtime.js'
 import { verifyReleaseManifest } from './release-verify.js'
@@ -310,12 +311,15 @@ async function connectRelaysInBackground (lazy) {
   }
 }
 
-// First-ever web visit only (no cached view in localStorage): fetch the baked,
-// hash-pinned seed snapshot so first paint shows real verified content. Returning
-// visitors skip the fetch entirely (the gossip-view cache is faster and fresher).
+// First web visit only (no cached view WITH ROWS in localStorage): fetch the
+// baked, hash-pinned seed snapshot so first paint shows real verified content.
+// Returning visitors skip the fetch entirely (the gossip-view cache is faster and
+// fresher). cachedViewHasRows (gossip.js) treats a rowless cache as NO cache — a
+// poisoned blob (views emptied by a relay wipe) must not suppress the snapshot
+// floor, or the feed renders empty forever.
 async function fetchSeedSnapshot (rt) {
   if (!rt || rt.mode !== 'web' || typeof fetch !== 'function') return null
-  try { if (typeof localStorage !== 'undefined' && localStorage.getItem('peerit:gossip-view')) return null } catch {}
+  try { if (typeof localStorage !== 'undefined' && cachedViewHasRows(localStorage)) return null } catch {}
   try {
     const res = await fetch('seed-snapshot.json', { cache: 'no-store' })
     if (!res || !res.ok) return null

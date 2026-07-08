@@ -26,7 +26,7 @@ import { isSecure } from './crypto.js'
 import { encodeQR, qrToSvg, isScanSupported, scanQR } from './qr.js'
 import {
   escapeHtml as esc, timeAgo, fmtCount, parseRoute, buildRoute,
-  colorFor, shortKey, debounce, normalizeSlug, safeUserUrl
+  colorFor, shortKey, debounce, normalizeSlug, safeUserUrl, parsePubkeyInput
 } from './util.js'
 
 // ---- app singletons ---------------------------------------------------------
@@ -949,7 +949,7 @@ async function viewFeed ({ scope, community, query, guard, token }) {
   const ranked = sortPosts(posts, sort, tw)
 
   // comment counts + author names
-  await primeNames(ranked.map(p => p.author))
+  await primeNames([...ranked.map(p => p.author), ...(scope === 'community' && mods ? [...mods] : [])]) // mods ride along: the sidebar's Moderators card names them
   const commentCounts = await countCommentsFor(ranked)
 
   if (token !== renderToken) return
@@ -1011,11 +1011,13 @@ function welcomePanel (compact) {
       <span class="tag">${esc(mode)}</span>
       <h2>Welcome to peerit</h2>
       <p>${compact
-        ? 'Your live feed is ready. Join the welcome desk when you want an easy first place to post.'
+        ? (isReadOnly()
+            ? 'Your live feed is ready. The welcome desk is an easy first place to start reading.'
+            : 'Your live feed is ready. The welcome desk is an easy first place to post — and if nobody has started it yet, opening it makes you its founder.')
         : 'A starter feed is waiting here while your peer graph fills in. Nothing below is written to the shared network until you choose a community.'}</p>
     </div>
     <div class="welcome-actions">
-      <button class="btn btn-primary" data-act="start-community" data-slug="${esc(WELCOME_COMMUNITY.slug)}">Join r/${esc(WELCOME_COMMUNITY.slug)}</button>
+      <button class="btn btn-primary" data-act="start-community" data-slug="${esc(WELCOME_COMMUNITY.slug)}">${isReadOnly() ? 'Open' : 'Open or start'} r/${esc(WELCOME_COMMUNITY.slug)}</button>
       <a class="btn btn-ghost" href="#/create">Create community</a>
       <button class="btn btn-ghost" data-act="dismiss-welcome">Dismiss</button>
     </div>
@@ -1080,7 +1082,7 @@ async function viewPost ({ community, cid, query, guard, token }) {
   comments = await data.withTallies(comments)
   // apply removal overlay to comment bodies
   comments.forEach(c => { c._removed = ov.removed.has(c.cid) })
-  await primeNames([post.author, ...comments.map(c => c.author)])
+  await primeNames([post.author, ...comments.map(c => c.author), ...(ov && ov.mods ? [...ov.mods] : [])]) // + sidebar mods
 
   const { roots } = buildCommentTree(comments)
   const sorter = (nodes) => sortComments(nodes, csort)
@@ -1281,7 +1283,7 @@ async function viewCommunityAbout ({ community, guard, token }) {
       <h2>About r/${esc(c.slug)}</h2>
       <p>${esc(c.description || 'No description.')}</p>
       <h3>Moderators</h3>
-      <ul class="mod-list">${[...ov.mods].map(m => `<li><a href="#/u/${esc(m)}">${esc(nameOf(m))}</a>${m === c.creator ? ' <span class="tag">founder</span>' : ''}</li>`).join('')}</ul>
+      ${modListHtml(c, ov.mods)}
       <h3>Created</h3><p class="dim">${new Date(c.createdAt).toLocaleString()}</p>
     </div>`)
   renderSidebar(communitySidebar(c, ov.mods), token)
@@ -1693,6 +1695,38 @@ function communityCard (c, mods) {
   </div>`
 }
 
+// The Moderators list with management controls, shared by the community sidebar
+// and the About page (a capability that exists in one list but not the other
+// reads as a bug). Mod management is visible only to CURRENT mods (resolveMods
+// is the network truth: any mod can add/remove, the founder can never be
+// removed — the × button therefore never renders on the founder row). Writes
+// still pass the data-layer gates (read-only check, mods.has(me)) — this is
+// display gating. Rows show the IMMUTABLE key next to the display name: names
+// are user-controlled and collidable, and removing a mod is destructive — the
+// key is the only trustworthy identifier.
+function modListHtml (c, mods) {
+  const myPub = identity ? identity.me().pubkey : null
+  const canMod = !!(myPub && mods && mods.has(myPub) && !isReadOnly())
+  const rows = mods
+    ? [...mods].map(m => canMod
+        ? `<div class="mod-row">
+            <a class="side-comm grow" href="#/u/${esc(m)}"><span class="avatar sm" style="background:${colorFor(m)}"></span><span class="grow">${esc(nameOf(m))} <span class="dim small mono">${esc(shortKey(m))}</span></span></a>
+            ${m === c.creator
+              ? '<span class="tag">founder</span>'
+              : `<button class="pa danger" data-act="remove-mod" data-slug="${esc(c.slug)}" data-user="${esc(m)}" title="Remove ${esc(nameOf(m))} (${esc(shortKey(m))}) as moderator" aria-label="Remove ${esc(nameOf(m))} (${esc(shortKey(m))}) as moderator">×</button>`}
+          </div>`
+        : `<a class="side-comm" href="#/u/${esc(m)}"><span class="avatar sm" style="background:${colorFor(m)}"></span><span class="grow">${esc(nameOf(m))}</span>${m === c.creator ? '<span class="tag">founder</span>' : ''}</a>`
+      ).join('')
+    : ''
+  const addForm = canMod
+    ? `<form data-form="add-mod" data-slug="${esc(c.slug)}" class="add-mod">
+        <input name="user" placeholder="full profile link or 64-hex public key" autocomplete="off" spellcheck="false" required aria-label="New moderator's full profile link or public key">
+        <button class="btn btn-ghost" type="submit">＋ Add moderator</button>
+      </form>`
+    : ''
+  return rows + addForm
+}
+
 function communitySidebar (c, mods) {
   if (!c) return ''
   return `<div class="card side">
@@ -1703,7 +1737,7 @@ function communitySidebar (c, mods) {
       <a class="btn btn-ghost block" href="#/r/${esc(c.slug)}/about">Community info</a>
     </div>
     ${c.rules && c.rules.length ? `<div class="card side"><h3>Rules</h3><ol class="rules">${c.rules.map(r => `<li>${esc(typeof r === 'string' ? r : r.title)}</li>`).join('')}</ol></div>` : ''}
-    <div class="card side"><h3>Moderators</h3>${mods ? [...mods].map(m => `<a class="side-comm" href="#/u/${esc(m)}"><span class="avatar sm" style="background:${colorFor(m)}"></span><span class="grow">${esc(nameOf(m))}</span>${m === c.creator ? '<span class="tag">founder</span>' : ''}</a>`).join('') : ''}</div>`
+    <div class="card side"><h3>Moderators</h3>${modListHtml(c, mods)}</div>`
 }
 
 // ---- skeleton / empty / 404 -------------------------------------------------
@@ -1791,6 +1825,25 @@ async function onClick (e) {
       case 'delete-comment': return void deleteComment(t)
       case 'edit-profile': { location.hash = '#/settings'; return }
       case 'mod': return void await onMod(t)
+      case 'remove-mod': {
+        const slug = normalizeSlug(t.dataset.slug)
+        const user = t.dataset.user
+        // The founder never renders a remove button, and resolveMods ignores
+        // founder removal network-wide anyway — this confirm is the only gate a
+        // mod needs (including removing themselves: stepping down is allowed).
+        // The IMMUTABLE key rides in the dialog: display names are user-
+        // controlled and collidable, so the name alone can't identify the
+        // target of a destructive action.
+        if (!confirm('Remove ' + nameOf(user) + ' (' + shortKey(user) + ') as a moderator of r/' + slug + '?')) return
+        await data.removeMod(slug, user)
+        // Verify the removal actually resolved (a non-matching entry would
+        // land a signed record yet change nothing) — never toast a false success.
+        const still = (await data.getMods(slug)).has(user)
+        if (still) toast('The removal record was published but ' + nameOf(user) + ' (' + shortKey(user) + ') is still resolving as a moderator — reload and try again.', 'error')
+        else toast('Removed ' + nameOf(user) + ' (' + shortKey(user) + ') as a moderator')
+        route()
+        return
+      }
     }
   } catch (err) { toast(err.message || String(err), 'error') }
 }
@@ -2056,6 +2109,21 @@ async function onSubmit (e) {
     }
     if (f === 'export-identity') {
       await runIdentityExport(String(fd.get('passphrase') || ''), String(fd.get('confirm') || ''))
+      return
+    }
+    if (f === 'add-mod') {
+      const slug = normalizeSlug(form.dataset.slug)
+      const pub = parsePubkeyInput(fd.get('user'))
+      // The u/ab12cd34 handles shown around the UI are TRUNCATED — only a full
+      // profile link or the full key identifies someone unambiguously.
+      if (!pub) throw new Error('Paste the full public key (64 hex characters) or their full profile link — the short u/… handles shown in the UI are truncated and not enough.')
+      await primeNames([pub])
+      const mods = await data.getMods(slug)
+      if (mods.has(pub)) { toast(nameOf(pub) + ' (' + shortKey(pub) + ') is already a moderator.'); form.reset(); return }
+      await data.addMod(slug, pub)
+      toast('Added ' + nameOf(pub) + ' (' + shortKey(pub) + ') as a moderator of r/' + slug)
+      form.reset()
+      route()
       return
     }
     if (f === 'remember-identity') {

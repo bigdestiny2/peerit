@@ -205,6 +205,12 @@ button{font-family:inherit}
 .side-comm:hover{background:var(--surface-2)}
 .side-comm .rank{width:18px;color:var(--faint);font-weight:700;font-size:13px}
 .see-all{display:inline-block;margin-top:8px;color:var(--accent);font-weight:600;font-size:13px}
+/* mod management (community sidebar, mods only) */
+.mod-row{display:flex;align-items:center;gap:4px}
+.mod-row .side-comm{flex:1;min-width:0}
+.mod-row .pa.danger{font-size:16px;line-height:1;padding:4px 8px}
+.add-mod{display:flex;gap:6px;margin-top:10px}
+.add-mod input{flex:1;min-width:0;font-size:13px}
 .tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--good);border:1px solid rgba(45,212,191,.3);border-radius:5px;padding:1px 5px}
 .rules{margin:0;padding-left:18px}
 .rules li{margin:5px 0;font-size:13.5px;color:var(--muted)}

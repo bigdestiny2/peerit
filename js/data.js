@@ -1169,7 +1169,33 @@ export class Data {
   toggleSticky (community, cid, stuck) { return this.modAction(community, { action: stuck ? MOD.UNSTICKY : MOD.STICKY, targetCid: cid }) }
   banUser (community, user, reason) { return this.modAction(community, { action: MOD.BAN, targetUser: user, reason }) }
   unbanUser (community, user) { return this.modAction(community, { action: MOD.UNBAN, targetUser: user }) }
-  addMod (community, user) { return this.modAction(community, { action: MOD.ADD_MOD, targetUser: user }) }
+
+  // Mod management. resolveMods (model.js) is the network truth: any CURRENT mod
+  // can add/remove, actions apply in timestamp order, and the founder can never
+  // be removed. Validate the pubkey shape here so a typo becomes an error
+  // instead of a signed mod record binding a key nobody holds.
+  async addMod (community, user) {
+    const pub = String(user || '').toLowerCase()
+    if (!isHex64(pub)) throw new Error('Moderator must be a full 64-character public key.')
+    return this.modAction(community, { action: MOD.ADD_MOD, targetUser: pub })
+  }
+
+  async removeMod (community, user) {
+    // resolveMods matches EXACT strings, so removal must emit exactly the entry
+    // being removed: a non-canonical mod entry (a modified client can ADD_MOD
+    // uppercase hex or arbitrary text — admit() doesn't validate targetUser
+    // shape) would otherwise be UNREMOVABLE through the product forever.
+    // Precedence: exact current-set member verbatim > lowercased set member >
+    // well-formed key (canonical lowercase). Only free-typed non-members must
+    // be well-formed.
+    const raw = String(user || '')
+    const mods = await this.getMods(community)
+    if (mods.has(raw)) return this.modAction(community, { action: MOD.REMOVE_MOD, targetUser: raw })
+    const lower = raw.toLowerCase()
+    if (mods.has(lower)) return this.modAction(community, { action: MOD.REMOVE_MOD, targetUser: lower })
+    if (!isHex64(raw)) throw new Error('Moderator must be a full 64-character public key.')
+    return this.modAction(community, { action: MOD.REMOVE_MOD, targetUser: lower })
+  }
 
   async status () { return this.sync.status() }
 

@@ -246,14 +246,20 @@ const swRegister = `if ('serviceWorker' in navigator) {
   // the OLD cached assets. Reload ONCE when the new SW takes control so returning
   // visitors actually run the new audited bundle instead of stale code. Guard with
   // hadController so a brand-new visitor (first install) does not reload.
-  // AT-MOST-ONCE per session: if the new SW keeps re-claiming (or two SW versions
-  // fight), an unguarded reload-on-controllerchange becomes an infinite reload loop
-  // that pins CPU + RAM until the tab/machine dies. The sessionStorage latch makes a
-  // reload loop impossible — reload runs once, then never again this session.
+  // RATE-LIMITED, not once-per-session: the old boolean latch blocked the reload
+  // for every deploy AFTER a tab's first, so long-lived tabs silently ran stale
+  // builds until a manual refresh. A timestamp latch keeps reload loops harmless
+  // (two fighting SW versions reload at most once per 5 minutes instead of
+  // pinning the CPU) while every real deploy — always minutes+ apart — applies.
   var hadController = !!navigator.serviceWorker.controller, refreshing = false;
+  var LATCH = 'peerit:sw-reloaded-at', WINDOW_MS = 5 * 60 * 1000;
   navigator.serviceWorker.addEventListener('controllerchange', function () {
     if (refreshing || !hadController) return;
-    try { if (sessionStorage.getItem('peerit:sw-reloaded')) return; sessionStorage.setItem('peerit:sw-reloaded', '1'); } catch (e) {}
+    try {
+      var last = Number(sessionStorage.getItem(LATCH) || 0);
+      if (Date.now() - last < WINDOW_MS) return;
+      sessionStorage.setItem(LATCH, String(Date.now()));
+    } catch (e) {}
     refreshing = true; location.reload();
   });
   addEventListener('load', function () {

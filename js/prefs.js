@@ -9,10 +9,12 @@ const DEFAULTS = Object.freeze({
   subs: [],
   saved: [],
   hidden: [],
+  follows: [], // author pubkeys the user follows (local; powers the Following feed + notify feed-head watches)
   sort: 'hot',
   theme: 'dark',
   seenWelcome: false,
-  identityBackupAcked: false
+  identityBackupAcked: false,
+  notifSeen: 0 // ms timestamp of the newest notification the user has seen (device-local read marker)
 })
 const SORTS = new Set(['hot', 'new', 'top', 'rising', 'controversial'])
 
@@ -76,6 +78,26 @@ export class Prefs {
   }
   hidden () { return this.data.hidden.slice() }
 
+  // Follows (author pubkeys). Local + private — a signed public follow list would
+  // leak the social graph; kept in localStorage like subs/saved. This is the source
+  // set for the Following feed and for notify feed-head watches (js/notify.js).
+  isFollowing (pub) { pub = cleanPub(pub); return !!(pub && this.data.follows.includes(pub)) }
+  follow (pub) {
+    pub = cleanPub(pub)
+    if (!pub) return false
+    if (!this.data.follows.includes(pub)) { this.data.follows.unshift(pub); this._save() }
+    return true
+  }
+  unfollow (pub) {
+    pub = cleanPub(pub)
+    if (!pub) return false
+    const next = this.data.follows.filter(p => p !== pub)
+    if (next.length !== this.data.follows.length) { this.data.follows = next; this._save() }
+    return false
+  }
+  toggleFollow (pub) { this.isFollowing(pub) ? this.unfollow(pub) : this.follow(pub); return this.isFollowing(pub) }
+  follows () { return this.data.follows.slice() }
+
   // Misc prefs
   setSort (s) { this.data.sort = cleanSort(s); this._save(); return this.data.sort }
   get sort () { return this.data.sort }
@@ -85,6 +107,11 @@ export class Prefs {
   get seenWelcome () { return this.data.seenWelcome }
   acknowledgeIdentityBackup () { this.data.identityBackupAcked = true; this._save() }
   get identityBackupAcked () { return !!this.data.identityBackupAcked }
+
+  // Inbox read-marker: the newest notification ts the user has seen. Device-local
+  // by design — "read" state is personal UI, not shared network data.
+  get notifSeen () { return this.data.notifSeen || 0 }
+  markNotifsSeen (ts) { const t = Number(ts) || Date.now(); if (t > this.data.notifSeen) { this.data.notifSeen = t; this._save() } }
 }
 
 function cleanPrefs (d) {
@@ -92,10 +119,12 @@ function cleanPrefs (d) {
     subs: cleanList(d.subs, cleanSlug),
     saved: cleanList(d.saved, cleanRef),
     hidden: cleanList(d.hidden, cleanRef),
+    follows: cleanList(d.follows, cleanPub),
     sort: cleanSort(d.sort),
     theme: d.theme === 'light' ? 'light' : 'dark',
     seenWelcome: !!d.seenWelcome,
-    identityBackupAcked: !!d.identityBackupAcked
+    identityBackupAcked: !!d.identityBackupAcked,
+    notifSeen: Number(d.notifSeen) || 0
   }
 }
 
@@ -115,6 +144,11 @@ function cleanList (items, clean) {
 function cleanSlug (slug) {
   const s = normalizeSlug(slug)
   return isValidSlug(s) ? s : ''
+}
+
+function cleanPub (pub) {
+  const p = String(pub || '').trim().toLowerCase()
+  return /^[0-9a-f]{64}$/.test(p) ? p : ''
 }
 
 function cleanRef (ref) {

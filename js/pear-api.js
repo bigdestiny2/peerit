@@ -154,13 +154,32 @@ export function createPearApi (opts = {}) {
   const base = opts.apiBase || opts.base || ''
   const EventSourceCtor = opts.EventSource || defaultEventSource()
 
+  // Retry 429 (rate limited) / 503 (at capacity) with exponential backoff + jitter,
+  // honoring Retry-After. A cold-boot fans out O(authors) reads at once, so without this
+  // a busy relay throws mid-boot and the visitor sees a half-empty feed; with it the boot
+  // paces itself under the per-IP limit instead of failing.
+  async function fetchWithBackoff (url, init) {
+    let wait = 500
+    for (let attempt = 0; ; attempt++) {
+      const response = await fetchFn(url, init)
+      if ((response.status === 429 || response.status === 503) && attempt < 4) {
+        let delay = wait
+        try { const ra = Number(response.headers && response.headers.get && response.headers.get('retry-after')); if (ra > 0) delay = ra * 1000 } catch {}
+        await new Promise((r) => setTimeout(r, Math.min(delay * (0.8 + Math.random() * 0.4), 8000)))
+        wait *= 2
+        continue
+      }
+      return response
+    }
+  }
+
   async function apiGet (path) {
-    const response = await fetchFn(base + path, { headers: { 'X-Pear-Token': token } })
+    const response = await fetchWithBackoff(base + path, { headers: { 'X-Pear-Token': token } })
     return parseJsonResponse(response)
   }
 
   async function apiPost (path, body) {
-    const response = await fetchFn(base + path, {
+    const response = await fetchWithBackoff(base + path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Pear-Token': token },
       body: JSON.stringify(body || {})
@@ -282,7 +301,7 @@ export function createPearApi (opts = {}) {
       heads: (appIds) => apiPost('/api/sync/heads', { appIds }),
       // Phase D durable directory: every outbox's SIGNED head in one call, so a
       // fresh visitor bootstraps its rollback floor + author discovery at once.
-      directory: () => apiGet('/api/directory')
+      directory: (opts = {}) => apiGet(pathWithParams('/api/directory', { limit: opts.limit, after: opts.after }))
     },
     identity: {
       getPublicKey: () => apiGet('/api/identity'),
@@ -307,6 +326,49 @@ export function createPearApi (opts = {}) {
     },
     navigate: (url) => { if (typeof location !== 'undefined') location.href = url },
     share: () => {}
+  }
+}
+
+// Probe a relay's token-gated `GET /api/bridge/status` once and report what
+// backend it identifies as. Used by the boot wiring to VERIFY that a build
+// configured for the HiveRelay outboxlog backend is actually pointed at one.
+// Dependency-injected fetch (falls back to the module default). NEVER throws:
+// any network/parse/non-2xx error degrades to { ok:false, service:null, ready:false }.
+// Bounded by `timeoutMs` (AbortController) so a reachable-but-hanging relay can
+// never stall the caller. The token is sent as X-Pear-Token and is never logged.
+export async function probeRelayBackend ({ apiBase = '', apiToken = '', fetch, timeoutMs = 5000 } = {}) {
+  const fetchFn = fetch || defaultFetch()
+  const miss = { ok: false, service: null, ready: false }
+  if (typeof fetchFn !== 'function') return miss
+  let signal = null
+  let timer = null
+  if (typeof AbortController === 'function' && timeoutMs > 0) {
+    const ac = new AbortController()
+    signal = ac.signal
+    timer = setTimeout(() => { try { ac.abort() } catch {} }, timeoutMs)
+  }
+  try {
+    const headers = apiToken ? { 'X-Pear-Token': apiToken } : {}
+    const init = signal ? { headers, signal } : { headers }
+    const res = await fetchFn(apiBase + '/api/bridge/status', init)
+    if (!res || !res.ok) return miss
+    let body = null
+    if (typeof res.text === 'function') {
+      const text = await res.text()
+      body = text ? JSON.parse(text) : null
+    } else if (typeof res.json === 'function') {
+      body = await res.json()
+    }
+    if (!body || typeof body !== 'object') return miss
+    return {
+      ok: true,
+      service: typeof body.service === 'string' ? body.service : null,
+      ready: body.ready === true
+    }
+  } catch {
+    return miss
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }
 

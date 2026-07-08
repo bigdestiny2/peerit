@@ -42,20 +42,39 @@ export function risingScore (score, createdAt, now = Date.now()) {
   return (score || 0) / ageHours
 }
 
-// Tally votes for a target. `votes` = array of { value, author }.
-// Last value per author wins (the materialized view already dedups by key,
-// but tallying here is defensive).
-export function tally (votes, me) {
+// Reputation weight of a VOTER (Slice 3, ported from p2pbuilders/js/reputation.js):
+// a vote's influence scales with the voter's age + upvotes received, so a brand-new
+// key can vote but barely moves the needle. Blunts (does not eliminate) Sybil
+// ballot-stuffing — the honest ceiling: a fresh key still counts, just ~0.02.
+//   weight = clamp( log2(1 + ageDays) * sqrt(1 + receivedUpvotes) / 50, 0.02, 1 )
+export function weight (ageDays, receivedUpvotes) {
+  const a = Math.max(0, ageDays || 0)
+  const r = Math.max(0, receivedUpvotes || 0)
+  const w = Math.log2(1 + a) * Math.sqrt(1 + r) / 50
+  return Math.max(0.02, Math.min(1, w))
+}
+
+// Tally votes for a target. `votes` = array of { value, author }. Last value per
+// author wins (the materialized view already dedups by key, but tallying here is
+// defensive). `weightOf(pub) -> [ageDays, receivedUpvotes]` (optional): when
+// supplied, `weighted` is the reputation-weighted score used for RANKING, while
+// `score` stays raw (up-down) for DISPLAY. Unweighted callers get weighted==score.
+export function tally (votes, me, weightOf) {
   const byAuthor = new Map()
   for (const v of votes || []) byAuthor.set(v.author, v.value)
-  let up = 0, down = 0, myVote = 0
+  let up = 0, down = 0, myVote = 0, weighted = 0
   for (const [author, value] of byAuthor) {
     if (value === 1) up++
     else if (value === -1) down++
     if (me && author === me) myVote = value
+    if (weightOf) weighted += (value || 0) * weight(...(weightOf(author) || [0, 0]))
   }
-  return { up, down, score: up - down, myVote, total: up + down }
+  if (!weightOf) weighted = up - down
+  return { up, down, score: up - down, weighted, myVote, total: up + down }
 }
+
+// Ranking uses the reputation-weighted score when present, else raw score.
+function rankScore (t) { return t ? (t.weighted != null ? t.weighted : t.score) : 0 }
 
 const TIME_WINDOWS = {
   hour: 3600000, day: 86400000, week: 604800000,
@@ -88,16 +107,16 @@ function comparator (sort, now, isComment) {
   switch (sort) {
     case 'new': return (a, b) => b.createdAt - a.createdAt
     case 'old': return (a, b) => a.createdAt - b.createdAt
-    case 'top': return (a, b) => (b.tally.score - a.tally.score) || (b.createdAt - a.createdAt)
+    case 'top': return (a, b) => (rankScore(b.tally) - rankScore(a.tally)) || (b.createdAt - a.createdAt)
     case 'controversial':
       return (a, b) => (controversyScore(b.tally.up, b.tally.down) - controversyScore(a.tally.up, a.tally.down)) || (b.createdAt - a.createdAt)
     case 'rising':
-      return (a, b) => (risingScore(b.tally.score, b.createdAt, now) - risingScore(a.tally.score, a.createdAt, now)) || (b.createdAt - a.createdAt)
+      return (a, b) => (risingScore(rankScore(b.tally), b.createdAt, now) - risingScore(rankScore(a.tally), a.createdAt, now)) || (b.createdAt - a.createdAt)
     case 'best':
       return (a, b) => (wilsonScore(b.tally.up, b.tally.down) - wilsonScore(a.tally.up, a.tally.down)) || (b.createdAt - a.createdAt)
     case 'hot':
     default:
-      return (a, b) => (hotScore(b.tally.score, b.createdAt) - hotScore(a.tally.score, a.createdAt)) || (b.createdAt - a.createdAt)
+      return (a, b) => (hotScore(rankScore(b.tally), b.createdAt) - hotScore(rankScore(a.tally), a.createdAt)) || (b.createdAt - a.createdAt)
   }
 }
 

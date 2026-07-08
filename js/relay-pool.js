@@ -95,10 +95,15 @@ export function createRelayPool ({ relays = [], fetch, EventSource, document } =
   // loses to one serving the current head). A fresh visitor calls this once to
   // bootstrap its rollback floor for every author at cross-relay strength, instead
   // of accumulating floors over a session. Relay can't forge — each head re-verified.
-  async function directory () {
-    const results = await Promise.all(apis.map((a) => (a.sync.directory ? a.sync.directory() : null)).map((p) => Promise.resolve(p).catch(() => null)))
+  async function directory (opts = {}) {
+    const results = await Promise.all(apis.map((a) => (a.sync.directory ? a.sync.directory(opts) : null)).map((p) => Promise.resolve(p).catch(() => null)))
     const out = {}
+    let nextCursor = null, hasMore = false
     for (const r of results) {
+      if (!r) continue
+      // If any relay has more pages, keep going; take the SMALLEST cursor so a relay that
+      // lagged (missing a recent author) is re-covered on the next page rather than skipped.
+      if (r.hasMore) { hasMore = true; if (r.nextCursor && (nextCursor === null || r.nextCursor < nextCursor)) nextCursor = r.nextCursor }
       const heads = r && r.heads
       if (!heads || typeof heads !== 'object') continue
       for (const appId in heads) {
@@ -109,7 +114,7 @@ export function createRelayPool ({ relays = [], fetch, EventSource, document } =
         if (!ex || (h.version | 0) > (ex.version | 0)) out[appId] = h
       }
     }
-    return { heads: out }
+    return { heads: out, nextCursor, hasMore }
   }
 
   // The authoritative write must land on the primary; mirror best-effort to the

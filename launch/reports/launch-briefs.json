@@ -1,0 +1,106 @@
+{
+  "campaign": "peerit_launch_2026_06",
+  "gatewayBase": "https://peerit.site/",
+  "pearBase": "hyper://ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4/",
+  "sourceMeta": {
+    "communities": "launch/communities.json",
+    "communitiesSha256": "4bbb63e36ad5cca155ee7b9307127bef41920f8be520262f7218dd27c32d3f73",
+    "spec": "docs/GROWTH_AUTOMATION_SPEC.md",
+    "specSha256": "129f5da753f73f7443d2b8d556c7e5e0f5c1f75fa1765392af2bfdaa08e9bf53"
+  },
+  "sponsorBriefPath": "launch/reports/sponsor-kol-briefs.md",
+  "founderIndexPath": "launch/reports/founder-packets.md",
+  "founderPackets": [
+    {
+      "board": "p2pbuilders",
+      "path": "launch/reports/founder-packets/p2pbuilders.md",
+      "starterPostCount": 18,
+      "discussionPromptCount": 4,
+      "risk": "low"
+    },
+    {
+      "board": "nostr",
+      "path": "launch/reports/founder-packets/nostr.md",
+      "starterPostCount": 15,
+      "discussionPromptCount": 4,
+      "risk": "medium"
+    },
+    {
+      "board": "selfhosted",
+      "path": "launch/reports/founder-packets/selfhosted.md",
+      "starterPostCount": 15,
+      "discussionPromptCount": 3,
+      "risk": "low"
+    },
+    {
+      "board": "privacy",
+      "path": "launch/reports/founder-packets/privacy.md",
+      "starterPostCount": 15,
+      "discussionPromptCount": 4,
+      "risk": "medium"
+    },
+    {
+      "board": "linux",
+      "path": "launch/reports/founder-packets/linux.md",
+      "starterPostCount": 12,
+      "discussionPromptCount": 3,
+      "risk": "low"
+    },
+    {
+      "board": "localfirst",
+      "path": "launch/reports/founder-packets/localfirst.md",
+      "starterPostCount": 12,
+      "discussionPromptCount": 4,
+      "risk": "low"
+    },
+    {
+      "board": "ai_local",
+      "path": "launch/reports/founder-packets/ai_local.md",
+      "starterPostCount": 12,
+      "discussionPromptCount": 3,
+      "risk": "medium"
+    },
+    {
+      "board": "fediverse",
+      "path": "launch/reports/founder-packets/fediverse.md",
+      "starterPostCount": 12,
+      "discussionPromptCount": 3,
+      "risk": "medium"
+    },
+    {
+      "board": "cypherpunk",
+      "path": "launch/reports/founder-packets/cypherpunk.md",
+      "starterPostCount": 12,
+      "discussionPromptCount": 4,
+      "risk": "medium"
+    },
+    {
+      "board": "redditalternatives",
+      "path": "launch/reports/founder-packets/redditalternatives.md",
+      "starterPostCount": 12,
+      "discussionPromptCount": 3,
+      "risk": "medium"
+    },
+    {
+      "board": "homelab",
+      "path": "launch/reports/founder-packets/homelab.md",
+      "starterPostCount": 10,
+      "discussionPromptCount": 3,
+      "risk": "low"
+    },
+    {
+      "board": "hiverelay",
+      "path": "launch/reports/founder-packets/hiverelay.md",
+      "starterPostCount": 12,
+      "discussionPromptCount": 4,
+      "risk": "low"
+    },
+    {
+      "board": "showcase",
+      "path": "launch/reports/founder-packets/showcase.md",
+      "starterPostCount": 10,
+      "discussionPromptCount": 3,
+      "risk": "low"
+    }
+  ]
+}

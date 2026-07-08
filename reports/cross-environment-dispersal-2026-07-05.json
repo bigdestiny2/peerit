@@ -1,0 +1,22 @@
+{
+  "kind": "cross-environment-dispersal",
+  "generatedAt": "2026-07-05T14:24:04.814Z",
+  "rosterPath": "/tmp/mock-roster.json",
+  "cohort": {
+    "threshold": 2,
+    "count": 3,
+    "relays": [
+      "http://127.0.0.1:8801",
+      "http://127.0.0.1:8802",
+      "http://127.0.0.1:8803"
+    ]
+  },
+  "checks": {
+    "nodeDealer": true,
+    "browserReader": true,
+    "bridgeCohortRead": true,
+    "appWiring": true,
+    "webBundleShipsReader": true
+  },
+  "status": "pass"
+}

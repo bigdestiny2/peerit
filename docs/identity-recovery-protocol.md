@@ -108,6 +108,60 @@ Required user message:
 > phrase and does not let anyone sign as you, but it can let another device or
 > seeder replicate your public outbox.
 
+### 3. Web-mode identity export
+
+Everything above assumes PearBrowser, where the signing key is derived from the
+root mnemonic and never lives in the app. In a **normal browser or phone** there
+is no PearBrowser and no mnemonic: the runtime takes the `web`/`dev` path and the
+identity is a browser-local Ed25519 seed minted by `DevIdentity` and stored in
+`localStorage`. There is no phrase to back up, and the app data recovery bundle
+(section 2) does **not** contain this seed — so neither backup above can restore a
+web identity. Clearing site data or losing the device destroys it permanently.
+
+To close that gap, web/dev mode exposes a **passphrase-encrypted identity export**
+(`js/identity-export.js`). Unlike the root mnemonic (which apps must never touch),
+this seed *is* the app's own key, so the app may export it — but only sealed:
+
+- **KDF/cipher:** PBKDF2-SHA256 (600k iterations) → AES-256-GCM, via
+  `crypto.subtle`. No new dependencies.
+- **Envelope:** the `pubkey` is cleartext (for display and as an integrity
+  anchor); the seed only ever exists inside the ciphertext.
+
+```json
+{
+  "type": "peerit-identity-export", "version": 1, "app": "peerit",
+  "pubkey": "<64 hex app public key>", "label": "anon", "createdAt": "<ISO>",
+  "kdf":    { "name": "PBKDF2", "hash": "SHA-256", "iterations": 600000, "salt": "<b64>" },
+  "cipher": { "name": "AES-GCM", "iv": "<b64>" },
+  "ciphertext": "<b64 of {seed,pubkey,driveKey,label}>"
+}
+```
+
+Import (`importIdentity`) decrypts with the passphrase, cross-checks the cleartext
+`pubkey` against the authenticated contents, and **proves the seed signs for that
+pubkey** before accepting — a seed that does not match its key is rejected. It then
+adds the identity to the local roster and switches to it (`DevIdentity.addUser`),
+keeping any identities already in that browser. The same envelope string is the
+file contents, the copy/paste blob, and the QR payload; QR encode/scan lives in
+`js/qr.js` (scan uses the native `BarcodeDetector`, absent on iOS Safari, so file
+and paste are always offered as fallbacks).
+
+Security notes:
+
+- The export is a **bearer secret**: file + passphrase together = full ability to
+  post as the user. Encryption-at-rest is mandatory (minimum passphrase length
+  enforced); export is refused when no real Ed25519 backend is present.
+- Export **copies**, it does not move — the seed remains in the source browser's
+  `localStorage`.
+- This applies only to the `web`/`dev` identity. On the PearBrowser bridge the key
+  is unreachable to the app, so no identity export exists there — back up the
+  mnemonic instead.
+
+Required user message (web/dev mode, replacing the PearBrowser phrase message):
+
+> This identity lives only in this browser. Export it to move it to another device
+> or keep a backup — peerit has no server that can recover it for you.
+
 ## Restore protocol
 
 A correct restore has this order:
@@ -174,6 +228,8 @@ Each app should expose an Identity / Recovery panel with:
   status, otherwise a button that opens PearBrowser backup instructions;
 - copy/export app recovery bundle;
 - import app recovery bundle;
+- in web/dev mode (browser-local key), a passphrase-encrypted **identity export**
+  (file / copy / QR) and a matching **identity import** (paste / file / QR scan);
 - copy Group key for seeding;
 - seeder-ready command for `peerit-seeder`;
 - seeder status if known;
@@ -197,6 +253,12 @@ Suggested copy:
   rejoins known outboxes and re-announces the current signed descriptor.
 - peerit does not yet verify seeder status inside the app; operators still need
   seeder logs or health checks to prove byte replication.
+- In web/dev mode, peerit Settings also exports the browser-local signing key as a
+  passphrase-encrypted bundle (`js/identity-export.js`) and imports it back
+  (add-to-roster + switch), with file / copy / QR transport (`js/qr.js`). This is
+  the only key backup that exists off the PearBrowser bridge; the app data recovery
+  bundle never carries the signing key. The web-mode identity-backup copy no longer
+  references a non-existent PearBrowser phrase.
 - p2pbuilders adds proof-of-work through the shared gossip `validate` hook.
 - p2pbuilders currently inherits the `peerit` signature namespace string for
   compatibility with the copied engine. New apps should choose an app-specific

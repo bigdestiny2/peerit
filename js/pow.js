@@ -7,7 +7,10 @@
 export const MIN_BITS = {
   post: 16,
   comment: 14,
-  community: 18
+  community: 18,
+  // BlindShard blobs (opaque bodies) carry a modest proof so a peer can't cheaply
+  // flood the outbox/census with large content-addressed appends (review FIX 3).
+  blob: 12
 }
 
 export function powTarget (type, data) {
@@ -18,6 +21,8 @@ export function powTarget (type, data) {
       return `comment|${data.community}|${data.postCid}|${data.cid}|${data.author}|${data.createdAt}`
     case 'community':
       return `community|${data.slug}|${data.creator}|${data.createdAt}`
+    case 'blob':
+      return `blob|${data.blobId}|${data.author}`
     default:
       return type + '|' + (data.author || data.creator || '')
   }
@@ -82,6 +87,7 @@ export function makeValidator (minBits = MIN_BITS) {
     if (type === 'post') return verify(type, val, minBits.post)
     if (type === 'comment') return verify(type, val, minBits.comment)
     if (type === 'community') return verify(type, val, minBits.community)
+    if (type === 'blob') return verify(type, val, minBits.blob)
     return true
   }
 }

@@ -106,10 +106,11 @@ async function loadHiveRelayClient () {
 // Files that make up the served site (everything the browser needs, nothing else).
 export const SITE_FILES = [
   'index.html', 'styles.css', 'icon.svg',
-  'js/app.js', 'js/canon.js', 'js/crypto.js', 'js/data.js', 'js/dht-bundle.js', 'js/gossip.js',
-  'js/identity.js', 'js/markdown.js', 'js/model.js', 'js/onboarding.js', 'js/pear-api.js',
-  'js/prefs.js', 'js/pow.js', 'js/ranking.js', 'js/recovery.js', 'js/relay-pool.js', 'js/relay-roster.js',
-  'js/runtime.js', 'js/sync.js', 'js/util.js', 'js/verify.js'
+  'js/app.js', 'js/blob-store.js', 'js/box.js', 'js/canon.js', 'js/crypto.js', 'js/data.js', 'js/dht-bundle.js', 'js/gossip.js',
+  'js/identity.js', 'js/identity-export.js', 'js/identity-store.js', 'js/identity-vault.js', 'js/lazy-pool.js', 'js/markdown.js', 'js/model.js', 'js/onboarding.js', 'js/pear-api.js', 'js/qr.js',
+  'js/prefs.js', 'js/pow.js', 'js/ranking.js', 'js/reader-bundle.js', 'js/recovery.js', 'js/relay-pool.js', 'js/relay-roster.js', 'js/release-verify.js',
+  'js/runtime.js', 'js/seal.js', 'js/shard-roster.js', 'js/sync.js', 'js/util.js', 'js/verify.js',
+  'config/shard-roster.public.json'
 ]
 
 // --local: create the Hyperdrive locally and host it for PearBrowser testing,
@@ -229,6 +230,14 @@ async function main () {
   console.log('[peerit] content/blobs core key:', contentKey || '(none — empty drive?)')
 
   if (LOCAL) {
+    report.status = 'local-ready'
+    report.durability.local = {
+      hosted: true,
+      seededToRelays: false,
+      catalogRegistered: false,
+      note: 'Local Hyperdrive host is alive while this process runs.'
+    }
+    writeDeployReport(report)
     console.log('\n[peerit] ── LOCAL TEST (not seeded to relays, not in catalog) ──')
     console.log('[peerit] Open this in PearBrowser:')
     console.log('\n    hyper://' + driveKey + '/\n')

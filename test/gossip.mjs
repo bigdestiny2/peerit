@@ -89,7 +89,7 @@ async function main () {
   ok((await mergeOutboxes([{ pub: A, view: { 'community!p2p': comm } }]))['community!p2p'], 'legit signed record is honored')
 
   // The exact bypass the audit found: relay a forged record under the victim's label.
-  let forged = await sign(mal, 'post', { id: 'p2p!x', cid: 'x', community: 'p2p', kind: 'text', title: 'FAKE', author: A, createdAt: 1, editedAt: 0, deleted: false })
+  const forged = await sign(mal, 'post', { id: 'p2p!x', cid: 'x', community: 'p2p', kind: 'text', title: 'FAKE', author: A, createdAt: 1, editedAt: 0, deleted: false })
   ok(!(await mergeOutboxes([{ pub: A, view: { 'post!p2p!x': forged } }]))['post!p2p!x'], 'forged post (author=A, signed by attacker), relayed as pub=A, is REJECTED')
   // Attacker also lies about the signer key:
   const forged2 = { ...forged, _k: A }
@@ -121,6 +121,32 @@ async function main () {
   const powTampered = { ...worked, cid: 'moved', id: 'p2p!moved' }
   ok(!(await mergeOutboxes([{ pub: A, view: { 'post!p2p!moved': powTampered } }], {}, validator))['post!p2p!moved'], 'proof-of-work target binding rejects identity tampering')
 
+  console.log('\n— app-level group membership gate —')
+  const memberId = new DevIdentity(mem(), mem()); await memberId.ready(); const MEMBER = memberId.me().pubkey
+  const outsiderId = new DevIdentity(mem(), mem()); await outsiderId.ready(); const OUTSIDER = outsiderId.me().pubkey
+  const groupMembers = new Map([['closed', new Set([A, MEMBER])]])
+  const membershipValidator = async (type, val) => {
+    if (!(await validator(type, val))) return false
+    const community = type === 'community' ? val.slug : val.community
+    const author = type === 'community' ? val.creator : (type === 'modaction' ? val.by : val.author)
+    return !groupMembers.has(community) || groupMembers.get(community).has(author)
+  }
+  const closedCommunity = await powSign(aid, 'community', { id: 'closed', slug: 'closed', creator: A, createdAt: 20, title: 'Closed', description: 'members only' })
+  const memberPost = await powSign(memberId, 'post', { id: 'closed!member', cid: 'member', community: 'closed', kind: 'text', title: 'Member', body: '', url: '', author: MEMBER, createdAt: 21, editedAt: 0, deleted: false })
+  const outsiderPost = await powSign(outsiderId, 'post', { id: 'closed!outsider', cid: 'outsider', community: 'closed', kind: 'text', title: 'Outsider', body: '', url: '', author: OUTSIDER, createdAt: 22, editedAt: 0, deleted: false })
+  const outsiderComment = await powSign(outsiderId, 'comment', { id: 'closed!member!outsider-comment', cid: 'outsider-comment', community: 'closed', postCid: 'member', parentCid: null, body: 'let me in', author: OUTSIDER, createdAt: 23, editedAt: 0, deleted: false })
+  const publicPost = await powSign(outsiderId, 'post', { id: 'public!outsider', cid: 'outsider', community: 'public', kind: 'text', title: 'Public', body: '', url: '', author: OUTSIDER, createdAt: 24, editedAt: 0, deleted: false })
+  const gated = await mergeOutboxes([
+    { pub: A, view: { 'community!closed': closedCommunity } },
+    { pub: MEMBER, view: { 'post!closed!member': memberPost } },
+    { pub: OUTSIDER, view: { 'post!closed!outsider': outsiderPost, 'comment!closed!member!outsider-comment': outsiderComment, 'post!public!outsider': publicPost } }
+  ], {}, membershipValidator)
+  ok(gated['community!closed'], 'closed group descriptor is admitted when signed by a member')
+  ok(gated['post!closed!member'], 'closed group member post is admitted by the app validator')
+  ok(!gated['post!closed!outsider'], 'closed group outsider post is rejected even with a valid signature and PoW')
+  ok(!gated['comment!closed!member!outsider-comment'], 'closed group outsider comment is rejected at the app layer')
+  ok(gated['post!public!outsider'], 'the same outsider can still publish public records')
+
   // Deterministic community winner (earliest createdAt), order-independent.
   const bid = new DevIdentity(mem(), mem()); await bid.ready(); const B = bid.me().pubkey
   const cA = await sign(aid, 'community', { id: 'dup', slug: 'dup', creator: A, createdAt: 500, title: 'A', description: '' })
@@ -130,7 +156,12 @@ async function main () {
   ok(w1.creator === B && w2.creator === B, 'earliest-createdAt community wins, regardless of merge order')
 
   // Robustness: malformed records and prototype-pollution keys do not crash/poison.
-  const junk = await mergeOutboxes([{ pub: A, view: { 'post!p2p!n': null, '__proto__': { x: 1 }, 'community!p2p': comm } }])
+  const protoPollutionKey = '__proto__'
+  const pollutionView = Object.create(null)
+  pollutionView['post!p2p!n'] = null
+  pollutionView[protoPollutionKey] = { x: 1 }
+  pollutionView['community!p2p'] = comm
+  const junk = await mergeOutboxes([{ pub: A, view: pollutionView }])
   ok(junk['community!p2p'] && !({}).x, 'null records + __proto__ key are skipped safely')
 
   console.log('\n— community ownership is sticky (no hijack) —')

@@ -205,6 +205,12 @@ button{font-family:inherit}
 .side-comm:hover{background:var(--surface-2)}
 .side-comm .rank{width:18px;color:var(--faint);font-weight:700;font-size:13px}
 .see-all{display:inline-block;margin-top:8px;color:var(--accent);font-weight:600;font-size:13px}
+/* mod management (community sidebar, mods only) */
+.mod-row{display:flex;align-items:center;gap:4px}
+.mod-row .side-comm{flex:1;min-width:0}
+.mod-row .pa.danger{font-size:16px;line-height:1;padding:4px 8px}
+.add-mod{display:flex;gap:6px;margin-top:10px}
+.add-mod input{flex:1;min-width:0;font-size:13px}
 .tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--good);border:1px solid rgba(45,212,191,.3);border-radius:5px;padding:1px 5px}
 .rules{margin:0;padding-left:18px}
 .rules li{margin:5px 0;font-size:13.5px;color:var(--muted)}
@@ -318,6 +324,8 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
 .modal-card{width:min(520px,100%);background:var(--surface);border:1px solid var(--border-2);border-radius:var(--radius);padding:20px;box-shadow:0 24px 70px rgba(0,0,0,.55)}
 .modal-card h2{margin:0 0 10px;font-size:19px}
 .modal-card p{margin:0 0 10px}
+.vault-unlock{z-index:120}
+.modal-card p.err{color:var(--danger)}
 
 /* responsive */
 @media(max-width:920px){
@@ -389,7 +397,7 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
 .netstatus.warn b{color:var(--up)}
 @media(max-width:560px){ .netstatus{left:8px;bottom:8px;font-size:10.5px;padding:5px 9px} }
 
-/* ---- web read-only mode (peerit.com over a public relay) -------------------- */
+/* ---- web read-only mode (peerit.site over a public relay) ------------------- */
 .readonly-banner {
   position: sticky; top: 0; z-index: 60;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
@@ -402,3 +410,39 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
 .web-readonly .composer,
 .web-readonly .votes .arrow { display: none !important; }
 .mode-badge.web{background:rgba(79,140,255,.14);color:var(--accent);border:1px solid rgba(79,140,255,.32)}
+.mode-badge.dispersal{background:rgba(168,85,247,.14);color:#c084fc;border:1px solid rgba(168,85,247,.32)}
+
+/* --- web identity export / import --- */
+.import-identity { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border, #23252b); }
+.import-identity h3 { margin: 0 0 4px; }
+.qr-holder { margin-top: 12px; }
+.qr-code { background: #fff; padding: 10px; border-radius: 10px; max-width: 280px; margin: 4px auto 0; }
+.qr-code svg { display: block; width: 100%; height: auto; }
+.scan-video { width: 100%; max-width: 320px; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 10px; background: #000; margin: 8px auto; display: block; }
+
+/* ---- Inbox (Slice 2): header badge + notification list ---- */
+.inbox-btn { position: relative; padding: 0 12px; font-size: 16px; line-height: 1; }
+.notif-badge { position: absolute; top: -6px; right: -4px; min-width: 17px; height: 17px;
+  padding: 0 4px; border-radius: 999px; background: var(--down, #ff5470); color: #fff;
+  font-size: 11px; font-weight: 700; line-height: 17px; text-align: center;
+  box-shadow: 0 0 0 2px var(--bg); }
+.notif-badge[hidden] { display: none; }
+.notif-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.notif-item { display: flex; gap: 12px; padding: 14px 16px; border: 1px solid var(--border);
+  border-radius: 12px; background: var(--surface); text-decoration: none; color: inherit;
+  transition: background .12s, border-color .12s; }
+.notif-item:hover { background: var(--surface-2); border-color: var(--border-2); }
+.notif-item.unread { border-left: 3px solid var(--accent); background: var(--surface-2); }
+.notif-main { min-width: 0; flex: 1; }
+.notif-head { font-size: 14px; margin-bottom: 2px; }
+.notif-ctx { margin-bottom: 6px; }
+.notif-body { color: var(--muted, #9aa7bd); overflow: hidden; }
+.notif-body p { margin: 0; }
+
+/* ---- Reputation (Slice 3): profile vote-weight + weighted karma ---- */
+.rep-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 4px 0 8px; }
+.rep-chip { display: inline-flex; align-items: baseline; gap: 5px; padding: 4px 10px;
+  border: 1px solid var(--border-2); border-radius: 999px; background: var(--surface-2);
+  font-size: 12px; color: var(--muted, #9aa7bd); }
+.rep-chip b { color: var(--accent-2); font-size: 13px; }
+.rep-meta { font-size: 12px; }

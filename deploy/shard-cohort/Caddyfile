@@ -1,0 +1,26 @@
+{
+  auto_https off
+}
+
+{$RELAY_DOMAIN} {
+  tls {$RELAY_DOMAIN}
+
+  # CORS preflight for browser fetch of shards.
+  @preflight method OPTIONS
+  handle @preflight {
+    header Access-Control-Allow-Origin "{$PEERIT_ORIGIN}"
+    header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+    header Access-Control-Allow-Headers "Content-Type, X-Shard-Pin"
+    header Access-Control-Max-Age "86400"
+    respond "" 204
+  }
+
+  # All shard-store API traffic goes to the HiveRelay container.
+  reverse_proxy hiverelay:{$HIVERELAY_API_PORT:-9100} {
+    header_up Host {host}
+    header_up X-Forwarded-For {remote}
+    header_down Access-Control-Allow-Origin "{$PEERIT_ORIGIN}"
+    header_down Access-Control-Allow-Methods "GET, POST, OPTIONS"
+    header_down Access-Control-Allow-Headers "Content-Type, X-Shard-Pin"
+  }
+}

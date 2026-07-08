@@ -76,7 +76,7 @@ HIVERELAY_ROOT=../p2p-hiverelay npm run publish:local
 For a real public publish:
 
 ```bash
-HIVERELAY_ROOT=../p2p-hiverelay STRICT_ANCHOR=1 KEEP=1 npm run publish
+HIVERELAY_ROOT=../p2p-hiverelay npm run ship:live
 ```
 
 ### Data model — riding the bridge's generic reducer
@@ -159,6 +159,8 @@ peerit/
 │   ├── identity.js     # BridgeIdentity (window.pear.identity) | DevIdentity (multi-user)
 │   ├── prefs.js        # per-device local prefs
 │   ├── recovery.js     # app data recovery bundle + peerit-seeder command helpers
+│   ├── identity-export.js # web-mode: passphrase-encrypted signing-key export/import
+│   ├── qr.js           # QR encode (Nayuki port) + scan (BarcodeDetector) for exports
 │   ├── onboarding.js   # local starter feed + welcome community metadata
 │   ├── data.js         # domain API (CRUD + queries + vote tallies + karma + mod)
 │   └── app.js          # router + views + event delegation + live refresh
@@ -187,6 +189,13 @@ npm run proof:availability
 # with npm run dev already running in another terminal:
 npm run proof:availability -- --url http://127.0.0.1:8777
 
+# representative user-data availability proof:
+npm run proof:outbox-availability
+npm run proof:outbox-availability:report
+
+# generated Peerit web build through local HiveRelay OutboxLog:
+npm run proof:hiverelay-outboxlog -- --out reports/hiverelay-outboxlog-convergence-2026-07-01.json
+
 # optional browser UI gate; install Playwright only in the operator/dev checkout
 npm install --no-save playwright
 npx playwright install chromium
@@ -197,11 +206,20 @@ npm run proof:availability:live
 ```
 
 `npm run test:browser` starts the dev server when no `--url` is supplied, then
-creates a community, creates a post, comments from two tabs/users, and verifies
-the cross-tab update path. Playwright is deliberately not a runtime dependency.
+creates a community, creates a post, edits the post body, edits/deletes comments,
+soft-deletes the post, and verifies the cross-tab update path from two
+tabs/users. Playwright is deliberately not a runtime dependency.
 `npm run proof:availability` verifies the published file list, static module
 imports, manifest drive key, sibling seeder/mirror tooling, optional HTTP asset
-fetches, and live publish durability reports when present.
+fetches, live publish durability reports when present, and the checked-in
+representative outbox availability report. `npm run proof:outbox-availability`
+builds a fresh-client user-data proof: a new reader with empty storage recovers
+a representative profile/community/post/comment/vote set only after seeder-style
+byte catch-up is confirmed. `npm run proof:outbox-availability:report` refreshes
+the checked-in JSON evidence under `reports/`.
+`npm run proof:hiverelay-outboxlog` starts the sibling HiveRelay checkout's real
+RelayAPI with `OutboxLogApp`, runs Peerit's generated `web/js` client modules
+through HTTP+SSE, and proves create/post/vote/comment/edit/reload convergence.
 
 For the current local command surface, known gaps, and operator-run publish/runtime
 gates, see [`TEST-COMMAND-MATRIX-2026-07-01.md`](TEST-COMMAND-MATRIX-2026-07-01.md).
@@ -213,25 +231,41 @@ gates, see [`TEST-COMMAND-MATRIX-2026-07-01.md`](TEST-COMMAND-MATRIX-2026-07-01.
 registers it in the PearBrowser catalog so it appears in the app's store. It now
 waits for relay byte-replication evidence after seed acceptance; use
 `STRICT_ANCHOR=1` for release publishes that should fail instead of warning when
-the drive is not durably reachable yet.
+the drive is not durably reachable yet. The public web release is tied to the
+same command: `ship:live` rebuilds `web/` from `deploy/web-release.json`,
+validates `relay-roster.json` against the pinned roster key, and embeds the
+freshly published drive key in `asset-manifest.json` and `verify.html`.
 
 ```bash
 npm run ship:check        # tests + manifest/file/git served-file preflight
-npm run ship:live         # preflight, then strict publish with a 240s anchor wait
+npm run ship:live         # preflight, strict publish, then signed web release build
+npm run web:release       # validate/sign relay-roster.json and rebuild web/ only
 npm run proof:availability  # local static + availability evidence summary
 npm run publish:local       # local PearBrowser test, not cataloged or seeded
-npm run publish             # publish + seed, then exit
-KEEP=1 npm run publish      # stay online so relays fully anchor the drive
+npm run publish             # alias for the guarded ship:live flow
+npm run publish:raw         # raw publisher, for debugging only
+KEEP=1 npm run publish:raw  # manual long-running seed hold; bypasses ship guards
 STRICT_ANCHOR=1 npm run publish
 ```
 
 `ship:live` sets `STRICT_ANCHOR=1`, `DURABILITY=archive`, and a longer
 `ANCHOR_TIMEOUT_MS=240000` by default. It writes ignored operator evidence to
-`.deploy/last-ship.json` and `.deploy/last-publish.json`. If strict anchoring
-fails after `manifest.json` was updated, `publish.mjs` restores the previous
-manifest so a partial relay anchor does not masquerade as the current release.
-By default the ship check blocks when served app files are dirty in git; use
-`node ship.mjs --allow-dirty` only for an intentional uncommitted test publish.
+`.deploy/last-ship.json`, `.deploy/last-publish.json`, and
+`.deploy/last-web-release.json`. If strict anchoring fails after `manifest.json`
+was updated, `publish.mjs` restores the previous manifest so a partial relay
+anchor does not masquerade as the current release. By default the ship check
+blocks when release files are dirty in git; use `node ship.mjs --allow-dirty`
+only for an intentional uncommitted test publish.
+`KEEP=1` is deliberately ignored by `ship:live`, because the ship process must
+regain control after `publish.mjs` writes the new drive key so it can rebuild and
+verify the web bundle.
+
+The web release source of truth is [`deploy/web-release.json`](deploy/web-release.json).
+When rotating the relay fleet, edit that file and run
+`PEERIT_ROSTER_SEED=<offline seed> npm run web:release`; without the seed, the
+same command verifies the committed signed roster and fails on any mismatch. A
+roster signing-key rotation is explicit: update `pinnedRosterKey` and the signed
+roster together.
 
 The publisher loads `p2p-hiverelay-client` from an installed package, an explicit
 HiveRelay env path, or a discoverable sibling/workspace checkout. This puts
@@ -244,7 +278,11 @@ for how PearBrowser's mnemonic, per-app identity, and app outbox recovery fit
 together.
 Inside the app, Settings -> Identity / Recovery shows identity fingerprints,
 the current Group key, recovery bundle export/import, and a ready-to-copy
-`peerit-seeder` command for user data availability.
+`peerit-seeder` command for user data availability. In web/dev mode — where the
+identity is a browser-local key rather than a PearBrowser sub-key — it also offers
+a passphrase-encrypted **identity export/import** (file, copy, or QR) so you can
+move or back up the signing key itself; the recovery bundle only carries public
+discovery data, never the key.
 
 ---
 
@@ -304,12 +342,66 @@ on `status()`.
 
 Tests: [`outbox-head.mjs`](test/outbox-head.mjs) (A) · [`relay-pool.mjs`](test/relay-pool.mjs) (B) ·
 [`head-floor.mjs`](test/head-floor.mjs) (C, incl. detection surviving a client restart).
-The pool degrades to one relay (detection-only) today; the durable floor is active now.
+
+**Live since 2026-07-01:** the signed roster carries **two relays** (a self-hosted VPS +
+a managed host, **both currently run by the same operator**), so the cross-relay checks (B)
+are exercised end-to-end — a single relay that rolls back or strips a head is caught and read
+around. This is **rollback/withholding detection, not yet operator diversity**: true
+anti-collusion (and any "no single origin" claim) needs a second **arms-length** operator
+(see the blindness section below). The durable floor is active too.
+Grow the pool by self-hosting another relay with one `docker compose up`
+([`deploy/peerit-relay/`](deploy/peerit-relay/)); the optional blind in-browser DHT
+transport has its own bundle ([`deploy/dht-relay/`](deploy/dht-relay/)).
+
+### Operator blindness: from readable-host toward blind-host
+
+peerit's normal-browser relay is, today, a **readable host**: records are stored under
+plaintext semantic keys (`post!<community>!<cid>`, `vote!<target>!<author>`), so an operator
+can read bodies and the social graph at rest — the weakest liability position. Two designs
+move it toward a **blind host**: an operator that holds opaque bytes it must *affirmatively
+decrypt and reconstruct* to read — no passive grep, no semantic enumeration, content-neutral
+storage, drop-by-opaque-id takedown. Full analysis:
+[`docs/OPERATOR-LIABILITY.md`](docs/OPERATOR-LIABILITY.md).
+
+> **Honest ceiling (load-bearing, not marketing).** A *public* forum's read key must reach
+> every reader, so "blind" can **never** mean confidentiality or anonymity — the operator
+> holds the key and *can* decrypt any public post, and can confirm a specific guess in O(1).
+> The win is **no passive reading, no semantic enumeration, content-neutrality, deniability**
+> — not secrecy. peerit does **not** claim "the operator can't read your posts."
+
+- **Blind-Outbox key scheme (Opaque-Log v2) — *live*.** The relay key is now an opaque
+  `v2!<okey>` (a keyed hash over author + type + id), with structural fields sealed in the
+  value, so the relay can no longer grep or prefix-index the graph; feed/thread/vote
+  aggregation happens in the browser. This moves the web tier from readable-host to blind-host.
+  The primitives ([`js/seal.js`](js/seal.js)) are landed, the write/read paths are wired in
+  [`js/data.js`](js/data.js), and the live seed outbox on peerit-relay is already opaque (see
+  `test/live-v2-decrypt.mjs`). Full design + migration notes:
+  [`docs/BLIND-OUTBOX-MIGRATION.md`](docs/BLIND-OUTBOX-MIGRATION.md).
+- **BlindShard — *implemented and wired, active when a shard cohort is available*.** Long post
+  bodies are convergent-encrypted and erasure-dispersed as opaque `shard:<hash>` fragments
+  across a pool, so **no single relay holds a readable *or* complete copy** of a body (fewer
+  than K shards, no key). The client path is built in [`js/blind-dealer.mjs`](js/blind-dealer.mjs),
+  the browser recovery bundle ships as [`js/reader-bundle.js`](js/reader-bundle.js), and
+  [`js/app.js`](js/app.js) enables dispersal automatically when a shard cohort is configured.
+  When no cohort is reachable the write path falls back to a single v2 blob. Live deployment
+  across ≥3 independent operators is what makes dispersal meaningful; same-owner cohorts are
+  supported for testing but do not provide operator separation. Design:
+  [`docs/BLINDSHARD-DESIGN.md`](docs/BLINDSHARD-DESIGN.md).
+
+**The tiers, honestly.** PearBrowser (`hyper://`) is already a **pure conduit** —
+content-addressed, zero origin, the operator serves nothing. The normal-browser relay is a
+readable host today, moving to blind host via the work above. A fully transitory
+`dht-relay-ws` byte-pipe (the operator relays encrypted P2P frames, stores nothing) is
+wire-validated on a local testnet but gated on upstream `@hyperswarm/dht-relay` reaching
+production readiness.
 
 ### Honest limitations
-- **Public content is plaintext on whoever seeds it.** No app-side encryption; a
-  relay/seeder can't forge or (across the pool) silently withhold, but it *can* read
-  post bodies and see IPs — a liveness/privacy cost, not an integrity one.
+- **Public content is sealed at rest, not plaintext.** With Opaque-Log v2 live, record keys are
+  opaque and values are sealed, so a relay cannot passively grep or prefix-index the graph.
+  BlindShard adds body dispersal when a cohort is available. A relay/seeder still cannot forge
+  or silently withhold across the pool, but metadata (counts, timing, sizes, IPs) still leaks.
+  Because the read key is public, a determined operator can still run the client and decrypt —
+  the win is **deniability + no passive index + content-neutral storage**, not secrecy.
 - **Rollback resistance ends at all-relays collusion against a first-time visitor.** The
   durable floor (Phase C) catches a rollback across your own restart and an all-relays-collude
   rollback *for content you've seen*; the signed directory (Phase D) extends that to a **fresh**
@@ -318,7 +410,10 @@ The pool degrades to one relay (detection-only) today; the durable floor is acti
   **independent** anchor (a HiveRelay-pinned directory the browser reads out-of-band), the
   remaining Phase D work. Detection isn't content-recovery: if no relay serves the newer content
   you're flagged but shown the stale set. A closed tab can't seed, so cold-start needs an
-  always-on provider.
+  always-on provider. **Roadmap:** this data plane is being generalized into **OutboxLog**, a
+  first-class *blind* HiveRelay service any P2P web app can use (append-log + live gossip, run by
+  many independent operators) — see [`docs/HIVERELAY-OUTBOXLOG-PLAN.md`](docs/HIVERELAY-OUTBOXLOG-PLAN.md)
+  + the [handover spec](docs/OUTBOXLOG-HANDOVER-SPEC.md).
 - **Sybil / vote weight.** Identities are free to mint, so each can cast one valid
   vote — raw scores are *advisory*, not Sybil-resistant. Real resistance needs an
   identity-cost or web-of-trust layer (out of scope).

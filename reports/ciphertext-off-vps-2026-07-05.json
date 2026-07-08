@@ -1,0 +1,29 @@
+{
+  "kind": "ciphertext-off-vps",
+  "generatedAt": "2026-07-05T14:24:04.455Z",
+  "rosterPath": "/tmp/mock-roster.json",
+  "cohort": {
+    "threshold": 2,
+    "count": 3,
+    "relays": [
+      "http://127.0.0.1:8801",
+      "http://127.0.0.1:8802",
+      "http://127.0.0.1:8803"
+    ]
+  },
+  "publisherPubkey": "818ee0dbf96cfcbf97a318a1a11648c523c6d456ef6c09acf8b26eecfcfbb132",
+  "manifestSummary": {
+    "scheme": "pvss-secp256k1-v1",
+    "threshold": 2,
+    "count": 3,
+    "blindContentId": "9b4b99313d3139953c4ccd24a2ea57f8e8447f216db3223206c6b2d81b82af9c",
+    "ciphertextShard": "shard:f8779a3e1a88c2676534d94939874cd908e156055077c644b2a9d1c7c1ce477c",
+    "intentId": "746f7b339b6332609c3b6f839c527488fa650f84958a5e69d6ab5e2d1b5c5985"
+  },
+  "checks": {
+    "bodyRecovered": true,
+    "underKRefused": true,
+    "missingCiphertextRefused": true
+  },
+  "status": "pass"
+}

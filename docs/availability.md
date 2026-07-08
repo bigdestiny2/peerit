@@ -72,8 +72,8 @@ source on GitHub, but PearBrowser will not automatically reconstruct the
 ## Repeatable Availability Proof
 
 The local proof command checks the published file list, module graph, manifest
-drive key/url consistency, sibling seeder/mirror tooling, and any available ship
-or publish evidence:
+drive key/url consistency, the checked-in representative outbox report, sibling
+seeder/mirror tooling, and any available ship or publish evidence:
 
 ```bash
 npm run proof:availability
@@ -98,7 +98,8 @@ npm run proof:availability:live
 
 This is still not a full PearBrowser bridge proof and it does not prove every
 user outbox is available. It closes the repeatability gap for the static app
-surface and makes missing live relay evidence explicit.
+surface, consumes the representative user-data report, and makes missing live
+relay evidence explicit.
 
 ## 2. User-Generated Data
 
@@ -171,6 +172,36 @@ This workflow prepares an outbox for seeding. It does not, by itself, prove that
 a seeder or relay has already downloaded all bytes. Operators still need seeder
 logs or health checks that confirm byte replication; as with the static app
 drive, `seed accepted != bytes fully replicated`.
+
+## Representative Fresh-Client Outbox Proof
+
+The repeatable user-data proof models the seeder rule above as a checked-in
+report flow:
+
+```bash
+npm run proof:outbox-availability
+npm run proof:outbox-availability:report
+```
+
+The proof creates a representative signed outbox containing a profile,
+community, post, comment, vote, and signed `head!<author>` census. It then
+models seeder evidence with both seed acceptance and byte catch-up
+(`remoteLength >= localLength` and `remoteBytes >= localBytes`), turns the author
+and seeder off, and verifies a fresh reader with empty storage can recover the
+representative data from the seeded copy. The report is written to
+`reports/representative-outbox-availability-2026-07-01.json` and is consumed by
+`npm run proof:availability`.
+
+The failure fixture is deliberate and should stay red:
+
+```bash
+node scripts/outbox-availability-proof.mjs --fixture missing-catchup
+```
+
+It records seed acceptance but withholds one row so byte catch-up is false. The
+command exits non-zero, the fresh reader misses the comment, and the signed-head
+audit reports withholding. That is the guardrail: acceptance alone must never be
+reported as user-data availability.
 
 ## What Would Make Data Always Available
 

@@ -1,0 +1,31 @@
+{
+  "_comment": "Shard roster for the peerit blind-shard dealer. Each relay runs HiveRelay v0.24.0+ with the shard-store service enabled and /api/v1/shard mounted. Relays must be listed in share-index order. threshold = k (shares needed to reconstruct).",
+  "threshold": 3,
+  "retainMs": 2592000000,
+  "publisher": {
+    "seedHex": "0000000000000000000000000000000000000000000000000000000000000000",
+    "pubHex": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "relays": [
+    {
+      "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "url": "https://relay-a.example.com:9100",
+      "apiKey": "relay-admin-api-key-a"
+    },
+    {
+      "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "url": "https://relay-b.example.com:9100",
+      "apiKey": "relay-admin-api-key-b"
+    },
+    {
+      "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "url": "https://relay-c.example.com:9100",
+      "apiKey": "relay-admin-api-key-c"
+    },
+    {
+      "pubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "url": "https://relay-d.example.com:9100",
+      "apiKey": "relay-admin-api-key-d"
+    }
+  ]
+}

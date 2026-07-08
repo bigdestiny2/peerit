@@ -1,0 +1,29 @@
+{
+  "kind": "reader-bundle-live",
+  "generatedAt": "2026-07-05T15:02:22.769Z",
+  "rosterPath": "/Users/localllm/.hiverelay-shard-cohort/roster.json",
+  "cohort": {
+    "threshold": 2,
+    "count": 3,
+    "relays": [
+      "http://127.0.0.1:60396",
+      "http://127.0.0.1:60397",
+      "http://127.0.0.1:60398"
+    ]
+  },
+  "publisherPubkey": "e1462857bdca02e7d9ca2fe3cc6a90434589219386764fe705b5fc4a86c560b6",
+  "bundleBytes": 178020,
+  "manifestSummary": {
+    "scheme": "pvss-secp256k1-v1",
+    "threshold": 2,
+    "count": 3,
+    "blindContentId": "975edbf57a9d17d98ae44adfc3e95cba1e4432f374c118d7d5b14f20863ef061",
+    "intentId": "2016b5586efcb24d149ad7f8da5ddb3392b7ef20945a04609748e9bc9687fc84"
+  },
+  "checks": {
+    "bodyRecovered": true,
+    "underKRefused": true,
+    "tamperedIntentRejected": true
+  },
+  "status": "pass"
+}

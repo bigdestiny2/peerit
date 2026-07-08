@@ -1,0 +1,19 @@
+{
+  "_comment": "PRODUCTION shard cohort for peerit.site. These are the same public HiveRelays used for outbox gossip, now also exposing the /api/v1/shard surface. This file contains ONLY base URLs and Ed25519 pubkeys (no apiKeys). The dealer write path uses ~/.hiverelay-shard-cohort/roster.json for operator secrets. AT LEAST 3 RELAYS ARE REQUIRED for k-of-n dispersal; the current file intentionally lists 2 production URLs plus placeholders. EMPTY PUBKEYS ARE INTENTIONAL PLACEHOLDERS: add a third relay (ideally an independent operator), run deploy/shard-cohort/extract-pubkey.mjs on each host, and paste the real 64-hex publicKey values here before shipping. build-web.mjs will refuse to ship a release with missing/invalid pubkeys or fewer than 3 relays.",
+  "threshold": 2,
+  "retainMs": 2592000000,
+  "relays": [
+    {
+      "baseUrl": "https://153-75-89-206.sslip.io",
+      "pubkey": ""
+    },
+    {
+      "baseUrl": "https://peerit-relay.onrender.com",
+      "pubkey": ""
+    },
+    {
+      "baseUrl": "https://shard-c.example.com",
+      "pubkey": ""
+    }
+  ]
+}

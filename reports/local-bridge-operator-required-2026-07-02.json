@@ -1,0 +1,52 @@
+{
+  "type": "peerit-local-bridge-proof-report",
+  "version": 1,
+  "session": "bp20260702",
+  "generatedAt": "2026-07-02T11:50:26.520Z",
+  "status": "operator-required",
+  "url": "hyper://ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4/",
+  "urls": {
+    "a": "hyper://ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4/#/bridge-proof/bp20260702?role=a",
+    "b": "hyper://ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4/#/bridge-proof/bp20260702?role=b"
+  },
+  "guideFile": "/Users/localllm/Projects/pear-ecosystem/02-apps/peerit/.deploy/local-bridge-proof-bp20260702.html",
+  "headlessChecks": [
+    {
+      "label": "headless gates",
+      "status": "skipped",
+      "command": "--skip-headless"
+    }
+  ],
+  "publishReportPath": null,
+  "publishReport": null,
+  "snapshots": [],
+  "snapshotsByRole": {
+    "a": null,
+    "b": null
+  },
+  "validation": {
+    "status": "operator-required",
+    "checks": [
+      {
+        "id": "two-real-pearbrowser-instances",
+        "status": "pending",
+        "detail": "open Device A and Device B URLs in two separate PearBrowser instances or profiles"
+      },
+      {
+        "id": "device-a-snapshot",
+        "status": "pending",
+        "detail": "Device A must write its proof record and later copy a final snapshot that sees Device B"
+      },
+      {
+        "id": "device-b-snapshot",
+        "status": "pending",
+        "detail": "Device B must see Device A, write its proof record, and copy its snapshot"
+      },
+      {
+        "id": "validator-pass",
+        "status": "pending",
+        "detail": "rerun the report through --verify or complete the interactive prompt until every proof check passes"
+      }
+    ]
+  }
+}

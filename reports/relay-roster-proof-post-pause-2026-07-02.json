@@ -1,0 +1,113 @@
+{
+  "kind": "peerit-relay-roster-evidence",
+  "appId": "peerit",
+  "generatedAt": "2026-07-02T10:55:51.316Z",
+  "config": "deploy/web-release.json",
+  "roster": "relay-roster.json",
+  "checks": [
+    {
+      "id": "config:bootstrap-relays",
+      "status": "pass",
+      "message": "Release config has 2 canonical bootstrap relays.",
+      "evidence": {
+        "relays": [
+          "https://153-75-89-206.sslip.io",
+          "https://peerit-relay.onrender.com"
+        ]
+      }
+    },
+    {
+      "id": "config:pinned-key",
+      "status": "pass",
+      "message": "Release config pins roster key 4a7402d1a950...",
+      "evidence": {
+        "key": "4a7402d1a950dc3be8a434cb3ee664231ca0e58be8c745dabcaf2346ee0e0f7f"
+      }
+    },
+    {
+      "id": "config:roster-relays",
+      "status": "pass",
+      "message": "Release config asks the signed roster to carry 2 relays.",
+      "evidence": {
+        "relays": [
+          "https://153-75-89-206.sslip.io",
+          "https://peerit-relay.onrender.com"
+        ]
+      }
+    },
+    {
+      "id": "roster:json",
+      "status": "pass",
+      "message": "relay-roster.json parses."
+    },
+    {
+      "id": "roster:signer",
+      "status": "pass",
+      "message": "relay-roster.json signer matches the pinned key."
+    },
+    {
+      "id": "roster:payload-match",
+      "status": "pass",
+      "message": "relay-roster.json payload matches deploy/web-release.json roster.",
+      "evidence": {
+        "relays": [
+          "https://153-75-89-206.sslip.io",
+          "https://peerit-relay.onrender.com"
+        ]
+      }
+    },
+    {
+      "id": "roster:bootstrap-covered",
+      "status": "pass",
+      "message": "Signed relay roster covers every configured bootstrap relay."
+    },
+    {
+      "id": "roster:signature",
+      "status": "pass",
+      "message": "relay-roster.json signature verifies with the pinned key.",
+      "evidence": {
+        "expires": "2026-12-31T00:00:00.000Z",
+        "relays": [
+          "https://153-75-89-206.sslip.io",
+          "https://peerit-relay.onrender.com"
+        ]
+      }
+    },
+    {
+      "id": "roster:expiry",
+      "status": "pass",
+      "message": "Signed relay roster expiry has 181 days remaining.",
+      "evidence": {
+        "expires": "2026-12-31T00:00:00.000Z"
+      }
+    }
+  ],
+  "release": {
+    "bootstrapRelays": [
+      "https://153-75-89-206.sslip.io",
+      "https://peerit-relay.onrender.com"
+    ],
+    "rosterRelays": [
+      "https://153-75-89-206.sslip.io",
+      "https://peerit-relay.onrender.com"
+    ],
+    "pinnedRosterKey": "4a7402d1a950dc3be8a434cb3ee664231ca0e58be8c745dabcaf2346ee0e0f7f",
+    "expires": "2026-12-31T00:00:00.000Z"
+  },
+  "signedRoster": {
+    "signer": "4a7402d1a950dc3be8a434cb3ee664231ca0e58be8c745dabcaf2346ee0e0f7f",
+    "relays": [
+      "https://153-75-89-206.sslip.io",
+      "https://peerit-relay.onrender.com"
+    ],
+    "expires": "2026-12-31T00:00:00.000Z"
+  },
+  "counts": {
+    "pass": 9,
+    "warn": 0,
+    "fail": 0,
+    "info": 0
+  },
+  "status": "ready",
+  "summary": "Signed relay roster matches the web release config."
+}

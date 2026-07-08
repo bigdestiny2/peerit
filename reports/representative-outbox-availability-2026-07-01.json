@@ -1,0 +1,166 @@
+{
+  "kind": "peerit-representative-outbox-availability",
+  "appId": "peerit",
+  "generatedAt": "2026-07-01T19:31:52.961Z",
+  "fixture": "ready",
+  "root": ".",
+  "checks": [
+    {
+      "id": "crypto:ed25519",
+      "status": "pass",
+      "message": "Real Ed25519 verification is available."
+    },
+    {
+      "id": "representative:signed-head",
+      "status": "pass",
+      "message": "Representative author wrote a signed head committing to the full non-head row set.",
+      "evidence": {
+        "version": 5,
+        "count": 5,
+        "expectedNonHeadRows": 5
+      }
+    },
+    {
+      "id": "seeder:seed-accepted",
+      "status": "pass",
+      "message": "Seeder fixture recorded relay seed acceptance for the representative outbox.",
+      "evidence": {
+        "seedAcceptances": 4,
+        "targetReplicas": 4
+      }
+    },
+    {
+      "id": "seeder:byte-catchup",
+      "status": "pass",
+      "message": "Fleet byte catch-up is confirmed before the fresh reader is trusted.",
+      "evidence": {
+        "localLength": 6,
+        "remoteLength": 6,
+        "localBytes": 4484,
+        "remoteBytes": 4484
+      }
+    },
+    {
+      "id": "fresh-reader:fresh-storage",
+      "status": "pass",
+      "message": "Reader started with empty storage and no cached outbox view."
+    },
+    {
+      "id": "fresh-reader:representative-data",
+      "status": "pass",
+      "message": "Fresh reader recovered representative profile, community, post, comment, and vote data from the seeded outbox.",
+      "evidence": {
+        "profile": true,
+        "community": true,
+        "post": true,
+        "comment": true,
+        "vote": true
+      }
+    },
+    {
+      "id": "fresh-reader:signed-head-audit",
+      "status": "pass",
+      "message": "Fresh reader found no unresolved withholding after auditing the signed outbox head."
+    }
+  ],
+  "context": {
+    "july1ShipReports": {
+      "ship": {
+        "file": ".deploy/last-ship.json",
+        "present": true,
+        "status": "blocked",
+        "generatedAt": "2026-07-01T19:29:30.329Z",
+        "summary": "1 failing ship check must be fixed before publish."
+      },
+      "publish": {
+        "file": ".deploy/last-publish.json",
+        "present": true,
+        "status": "ready",
+        "generatedAt": "2026-07-01T16:42:03.617Z",
+        "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
+        "metadata": {
+          "durable": true,
+          "byteLengthLocal": 430,
+          "byteLengthRemoteMax": 430
+        },
+        "blobs": {
+          "durable": true,
+          "blobLocalLen": 496,
+          "blobRemoteMax": 496
+        }
+      }
+    },
+    "seederExpectation": {
+      "source": "../peerit-seeder/seeder.mjs",
+      "requiredSignal": "remoteLength >= localLength and remoteBytes >= localBytes before fresh-reader recovery is trusted",
+      "acceptanceIsNotEnough": true
+    }
+  },
+  "representative": {
+    "authorPubkey": "c0391247e37a5fd00dfee6fb43d48f9c09a26b950de259e01565808065d296d2",
+    "outboxAppId": "c0391247e37a5fd00dfee6fb43d48f9c09a26b950de259e01565808065d296d2",
+    "outboxInviteKeyHash": "953ddb5d1e3ebc9334a28be25ab1e25ebbd24a27868e56498ef9d31ad6da7897",
+    "outboxInviteKeyPrefix": "faee8383602f",
+    "expectedRecords": [
+      "profile",
+      "community",
+      "post",
+      "comment",
+      "vote"
+    ],
+    "expectedNonHeadRows": 5,
+    "expectedTotalRows": 6,
+    "community": "availproof",
+    "postCid": "0mr2ds02g37vnxdw1",
+    "commentCid": "0mr2ds2ds3oqlz24c",
+    "head": {
+      "version": 5,
+      "count": 5,
+      "root": "9404cade80236d5d85195e6f25ff9f7c6ccfc2be44356f7eebc0ee93604295d0",
+      "updatedAt": 1782928814000
+    }
+  },
+  "seederEvidence": {
+    "appId": "c0391247e37a5fd00dfee6fb43d48f9c09a26b950de259e01565808065d296d2",
+    "inviteKeyHash": "953ddb5d1e3ebc9334a28be25ab1e25ebbd24a27868e56498ef9d31ad6da7897",
+    "inviteKeyPrefix": "faee8383602f",
+    "targetReplicas": 4,
+    "seedAcceptances": 4,
+    "localLength": 6,
+    "remoteLength": 6,
+    "localBytes": 4484,
+    "remoteBytes": 4484,
+    "localRowsSha256": "42065388c74ac0217112631a737cb59ec0b0f3c7ae2e807b935dfe21fa537553",
+    "remoteRowsSha256": "42065388c74ac0217112631a737cb59ec0b0f3c7ae2e807b935dfe21fa537553",
+    "byteCatchUpConfirmed": true
+  },
+  "freshReader": {
+    "storageKeysBefore": [],
+    "recovered": {
+      "profile": true,
+      "community": true,
+      "post": true,
+      "comment": true,
+      "vote": true
+    },
+    "recoveredAllRepresentativeData": true,
+    "status": {
+      "mode": "gossip-bridge",
+      "secure": true,
+      "peers": 2,
+      "viewLength": 5,
+      "relays": 1,
+      "withholding": []
+    },
+    "authorOnlineDuringRead": false,
+    "seederOnlineDuringRead": false
+  },
+  "counts": {
+    "pass": 7,
+    "warn": 0,
+    "fail": 0,
+    "info": 0
+  },
+  "status": "ready",
+  "summary": "Fresh-client representative outbox availability is proven."
+}

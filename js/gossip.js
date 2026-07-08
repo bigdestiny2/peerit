@@ -19,8 +19,10 @@
 // to cooperative owner-binding (NOT secure — local simulation only).
 
 import { TYPE, keys } from './model.js'
-import { ownerOf, expectedKey, typeFromKey, recordTs, canonical, outboxCensus, censusString } from './canon.js'
+import { ownerOf, expectedKey, expectedKeyV2, typeFromKey, typeForRow, recordTs, canonical, outboxCensus, censusString } from './canon.js'
+import { unseal } from './seal.js'
 import { verifyRecord } from './verify.js'
+import { verifyBlobRecord } from './blob-store.js'
 import { verify as edVerify, isSecure, ready as cryptoReady, hashHex } from './crypto.js'
 import { makeValidator } from './pow.js'
 
@@ -39,6 +41,38 @@ const HEX128 = /^[0-9a-f]{128}$/i
 // only re-reads outboxes that actually changed.
 const CACHE_KEY = 'peerit:gossip-view'
 const MAX_CACHE_BYTES = 3 * 1024 * 1024 // skip persisting if the view is huge (graceful)
+
+// True when the persisted gossip view holds at least one row. "Empty cache is NO
+// cache": a blob whose views were all emptied (a relay wipe answered 200-with-
+// empty-rows under builds predating _saveCache's rowCount guard) must not count as
+// a cached view anywhere — app.js uses this to decide whether the seed-snapshot
+// floor still applies, and _loadCache applies the same rule when restoring.
+export function cachedViewHasRows (storage) {
+  try {
+    const raw = storage && storage.getItem(CACHE_KEY)
+    if (!raw) return false
+    const c = JSON.parse(raw)
+    const views = (c && typeof c === 'object' && c.views && typeof c.views === 'object') ? c.views : {}
+    // Count ONLY rows _loadCache can actually RESTORE: views whose pub appears in
+    // the cached peers list (same admission test as _loadCache). _saveCache
+    // persists the SELF view but excludes self from `peers`, so a cache holding
+    // only one's own rows would otherwise report "has rows" while a later
+    // identity-less boot (forget-on-device, lost IDB record) restores nothing —
+    // suppressing the seed-snapshot floor and booting to a blank feed.
+    const restorable = new Set()
+    if (Array.isArray(c.peers)) {
+      for (const p of c.peers) {
+        if (p && HEX64.test(p.pub || '') && p.appId === p.pub && typeof p.inviteKey === 'string') restorable.add(p.pub)
+      }
+    }
+    for (const pub in views) {
+      if (PROTO_KEYS.has(pub) || !restorable.has(pub)) continue
+      const v = views[pub]
+      if (v && typeof v === 'object') { for (const k in v) return true } // eslint-disable-line no-unreachable-loop
+    }
+    return false
+  } catch { return false }
+}
 const FLOOR_KEY = 'peerit:head-floor'   // Phase C durable monotonic head floor (author -> max signed head version)
 const MAX_FLOOR = 5000                  // cap tracked authors (drop lowest-version on overflow)
 const RECONCILE_EVERY = 30 // every N polls, ignore heads + re-verify everything (defends against a stale/lying relay or a tampered local cache)
@@ -78,11 +112,11 @@ function cachedSortedKeys (self, view) {
 // ---- authenticity (cache only positive verdicts; key binds sig TO content) --
 const _verdict = new Map()
 const VERDICT_CACHE_MAX = 50000
-async function honored (type, val) {
-  if (!val || !val._sig) return verifyRecord(type, val)
+async function honored (type, val, semType) {
+  if (!val || !val._sig) return verifyRecord(type, val, semType)
   const ck = JSON.stringify([val._sig, val._k || '', val._dk || '', val._ns || '', canonical(type, val)])
   if (_verdict.has(ck)) return _verdict.get(ck)
-  const v = await verifyRecord(type, val)
+  const v = await verifyRecord(type, val, semType)
   if (v === 'ok') { // never cache 'bad' (cheap to recompute; avoids unbounded growth from rejected forgeries)
     if (_verdict.size >= VERDICT_CACHE_MAX) _verdict.delete(_verdict.keys().next().value) // bounded FIFO eviction
     _verdict.set(ck, v)
@@ -92,16 +126,40 @@ async function honored (type, val) {
 
 async function admit (type, val, key, pub, secure, validate) {
   if (!val || typeof val !== 'object') return false
-  if (!type || expectedKey(type, val) !== key) return false // key binding
-  const owner = ownerOf(type, val)
+  // KEY BINDING — recompute the storage key from the record's OWN signed fields and
+  // reject a mismatch (anti-eviction). v2 opaque rows (key `v2!<okey>`) recompute the
+  // HMAC okey; the SEMANTIC type is the signed `_t` (the key is opaque). Legacy v1 rows
+  // recompute the plaintext key. v2 records sign over canonical('v2', …) — a CONSTANT
+  // wire type so the type never leaks in the key — so the signature is verified with
+  // 'v2' while ownerOf / PoW / winner use the semantic type.
+  const v2 = String(key).startsWith('v2!')
+  if (v2) {
+    if (!val._t || !val.sealed) return false
+    // The graph-bearing fields (community, cid, targetCid, …) are SEALED, so recompute
+    // the opaque okey from the DECRYPTED fields + the owner (_k, baked into the okey).
+    // A record parked under a victim's okey fails here: its own (_k, fields) can't
+    // reproduce that slot. LWW/sticky fields (createdAt/ts/deleted/slug) stay cleartext,
+    // so only this anti-eviction check needs the read key.
+    let f
+    try { f = await unseal(val.sealed) } catch { return false }
+    if (!f || typeof f !== 'object') return false
+    const rec = { ...f, _t: val._t, author: val._k, creator: val._k, by: val._k, slug: val.slug != null ? val.slug : f.slug }
+    if ((await expectedKeyV2(rec)) !== key) return false
+    type = val._t // semantic type (blob / PoW below)
+  } else if (!type || expectedKey(type, val) !== key) return false
+  // Content-addressed blobs must self-certify (SHA-256(ct)===blobId): the blob! key
+  // is not author-scoped, so without this a foreign validly-signed record could win
+  // the LWW collision and suppress a boxed body. See blob-store.js verifyBlobRecord.
+  if (type === TYPE.BLOB && !(await verifyBlobRecord(val))) return false
+  const owner = v2 ? val._k : ownerOf(type, val) // v2: the owner IS the signer (baked into the okey)
   if (!owner) return false
-  const v = await honored(type, val)
+  const v = await honored(v2 ? 'v2' : type, val, type) // sig covers canonical(wire type); owner-binding uses the semantic type
   if (secure) {
     if (v !== 'ok') return false // signature is the authority
   } else if (!(owner === pub && v !== 'bad')) return false // cooperative dev fallback only
   if (validate) {
     try {
-      if (!(await validate(type, val))) return false
+      if (!(await validate(type, val))) return false // PoW keyed by the semantic type
     } catch {
       return false
     }
@@ -120,7 +178,7 @@ function laterRecord (a, b) {
 function communityWins (a, b) {
   const ca = a.createdAt || 0, cb = b.createdAt || 0
   if (ca !== cb) return ca < cb
-  const ka = a.creator || '', kb = b.creator || ''
+  const ka = a.creator || a._k || '', kb = b.creator || b._k || '' // v2: owner is _k (no creator field)
   if (ka !== kb) return ka < kb
   return String(a._sig || '') < String(b._sig || '')
 }
@@ -138,11 +196,11 @@ export async function mergeOutboxes (boxes, claimed, validate) {
     for (const key in view) {
       if (PROTO_KEYS.has(key)) continue
       const val = view[key]
-      const type = typeFromKey(key)
+      const type = typeForRow(key, val)
       if (!(await admit(type, val, key, pub, secure, validate))) continue
       if (type === 'community') {
         const slug = val.slug
-        if (claimed[slug] && claimed[slug] !== val.creator) continue // sticky: name owned by another creator
+        if (claimed[slug] && claimed[slug] !== (val.creator || val._k)) continue // sticky: name owned by another creator
       }
       const ex = out[key]
       if (!ex || winner(type, val, ex)) out[key] = val
@@ -150,7 +208,7 @@ export async function mergeOutboxes (boxes, claimed, validate) {
   }
   // Lock the resolved community owners so a later different-creator claim can't take them.
   for (const key in out) {
-    if (typeFromKey(key) === 'community') { const s = out[key].slug; if (s && !claimed[s]) claimed[s] = out[key].creator }
+    if (typeForRow(key, out[key]) === 'community') { const s = out[key].slug; if (s && !claimed[s]) claimed[s] = out[key].creator || out[key]._k }
   }
   return out
 }
@@ -208,17 +266,17 @@ function combineAdmitted (boxes, claimed) {
     for (const key in view) {
       if (PROTO_KEYS.has(key)) continue
       const val = view[key]
-      const type = typeFromKey(key)
+      const type = typeForRow(key, val)
       if (type === 'community') {
         const slug = val.slug
-        if (claimed[slug] && claimed[slug] !== val.creator) continue // sticky: owned by another creator
+        if (claimed[slug] && claimed[slug] !== (val.creator || val._k)) continue // sticky: owned by another creator
       }
       const ex = out[key]
       if (!ex || winner(type, val, ex)) out[key] = val
     }
   }
   for (const key in out) {
-    if (typeFromKey(key) === 'community') { const s = out[key].slug; if (s && !claimed[s]) claimed[s] = out[key].creator }
+    if (typeForRow(key, out[key]) === 'community') { const s = out[key].slug; if (s && !claimed[s]) claimed[s] = out[key].creator || out[key]._k }
   }
   return out
 }
@@ -241,6 +299,15 @@ class GossipSync {
     await cryptoReady()
     this.mode = isSecure() ? 'gossip-dev' : 'gossip-dev-insecure'
     this._addPeer(this.getMe())
+    if (typeof globalThis.addEventListener === 'function') {
+      globalThis.addEventListener('storage', (e) => {
+        if (!e || !e.key) return
+        if (e.key === PEERS_KEY || e.key.startsWith('peerit:outbox:')) {
+          this._invalidate()
+          this._emit()
+        }
+      })
+    }
     if (this.bus) {
       this.bus.onMessage((m) => this._onBus(m))
       await this.bus.send({ t: 'hello', pub: this.getMe() })
@@ -281,14 +348,14 @@ class GossipSync {
       for (const k in incoming) {
         if (PROTO_KEYS.has(k)) continue
         const iv = incoming[k]
-        if (await admit(typeFromKey(k), iv, k, m.pub, secure, this.validate)) admitted[k] = iv
+        if (await admit(typeForRow(k, iv), iv, k, m.pub, secure, this.validate)) admitted[k] = iv
       }
       // Re-read AFTER the awaits, then a single write — minimises the RMW window.
       const cur = this._outbox(m.pub)
       let changed = false
       for (const k in admitted) {
         const iv = admitted[k]
-        if (!cur[k] || winner(typeFromKey(k), iv, cur[k])) { cur[k] = iv; changed = true }
+        if (!cur[k] || winner(typeForRow(k, iv), iv, cur[k])) { cur[k] = iv; changed = true }
       }
       if (changed) { this._write(outboxKey(m.pub), cur); this._invalidate() }
       this._emit()
@@ -339,9 +406,20 @@ class GossipSync {
 
 // ---- real PearBrowser gossip ------------------------------------------------
 class BridgeGossipSync {
-  constructor ({ pear, getMe, identity, storage, validate = makeValidator(), pollMs = 4000, writeHead = false, readOnly = false }) {
+  constructor ({ pear, getMe, identity, storage, validate = makeValidator(), pollMs = 4000, writeHead = false, readOnly = false, discover = true, seedOutboxes = [], instantBoot = false, seedSnapshot = null }) {
     this.mode = 'gossip-bridge'
     this.pear = pear
+    // instantBoot: ready() returns after the LOCAL restore (cached view / verified
+    // seed snapshot) and runs every network step in the background — so the web app
+    // paints last-known content in milliseconds like a normal website, instead of
+    // blocking first render on relay round-trips. Default OFF: the seeder and tests
+    // rely on ready() meaning "network attempted". app.js turns it on for web boot.
+    this._instantBoot = !!instantBoot
+    // seedSnapshot: signed rows baked into the static bundle ({authors:[{pub,rows}]}).
+    // Used ONLY when there is no cached view (true first visit): every row passes the
+    // SAME admit() verification as live gossip (mergeOutboxes), so the snapshot can
+    // go stale but can never forge. Gives a first-ever visitor instant real content.
+    this._seedSnapshot = seedSnapshot
     this.getMe = getMe
     this.identity = identity
     this.storage = storage
@@ -355,6 +433,10 @@ class BridgeGossipSync {
     // relay withholding rows). Off by default so existing count-based tests are
     // untouched; app.js turns it on in production.
     this._writeHead = writeHead
+    this._discover = discover // false = announce-only (findable, doesn't join others) — used by the write-only seeder
+    // Pinned outboxes baked into the build (curated launch content). Joined directly at
+    // boot so a fresh visitor renders them without waiting on flaky swarm discovery.
+    this._seedOutboxes = (Array.isArray(seedOutboxes) ? seedOutboxes : []).filter(o => o && HEX64.test(o.appId || '') && HEX64.test(o.inviteKey || ''))
     this._listeners = new Set()
     this._peers = new Map() // pub -> { appId, inviteKey }
     this._cache = null            // current merged view (maintained incrementally)
@@ -423,9 +505,17 @@ class BridgeGossipSync {
   _saveCache () {
     try {
       const peers = []; const views = {}; const heads = {}
+      let rowCount = 0
       for (const [pub, info] of this._peers) { if (!info.self && HEX64.test(pub) && info.appId === pub && typeof info.inviteKey === 'string') peers.push({ pub, appId: info.appId, inviteKey: info.inviteKey }) }
-      for (const [pub, view] of this._peerViews) { const o = {}; for (const k in view) o[k] = view[k]; views[pub] = o }
+      for (const [pub, view] of this._peerViews) { const o = {}; for (const k in view) { o[k] = view[k]; rowCount++ } views[pub] = o }
       for (const [pub, v] of this._peerHeads) heads[pub] = v
+      // STALE-NEVER-EMPTY at the persistence layer: a relay restart/wipe answers
+      // 200-with-empty-rows for outboxes it forgot, which empties the in-memory
+      // views — persisting that would poison the cache (and, since the snapshot is
+      // only used when there is NO cache, suppress the seed-snapshot floor on every
+      // later boot). Keep the last non-empty view instead; the next reconcile that
+      // actually returns rows overwrites it with fresher content.
+      if (rowCount === 0) return
       const blob = JSON.stringify({ v: 1, peers, views, heads })
       if (blob.length > MAX_CACHE_BYTES) { this._setLocal(CACHE_KEY, ''); return } // too large → skip (graceful, just slower first paint)
       this._setLocal(CACHE_KEY, blob)
@@ -446,14 +536,21 @@ class BridgeGossipSync {
           this._peers.set(p.pub, { appId: p.appId, inviteKey: p.inviteKey })
         }
       }
+      let restoredRows = 0
       if (c.views && typeof c.views === 'object') for (const pub in c.views) {
         if (PROTO_KEYS.has(pub) || !this._peers.has(pub)) continue
         const v = c.views[pub]; if (!v || typeof v !== 'object') continue
         const view = Object.create(null); const sig = new Map()
-        for (const k in v) { if (PROTO_KEYS.has(k)) continue; view[k] = v[k]; sig.set(k, changeToken(v[k])) }
+        for (const k in v) { if (PROTO_KEYS.has(k)) continue; view[k] = v[k]; sig.set(k, changeToken(v[k])); restoredRows++ }
         this._peerViews.set(pub, view)
         this._peerSigs.set(pub, sig)
       }
+      // An empty cache is NO cache: a poisoned blob (all views emptied by a relay
+      // wipe — written by builds that predate the rowCount guard in _saveCache)
+      // must not count as "restored", or ready() skips the seed-snapshot floor and
+      // the app renders an empty feed forever. Restored peers stay registered so
+      // the first poll still re-reads them.
+      if (restoredRows === 0) return false
       // Deliberately do NOT restore cached heads: the production relay is the
       // EPHEMERAL memory core whose per-outbox version resets to 0 on restart, so a
       // cached version could coincidentally match a different post-restart state and
@@ -507,24 +604,50 @@ class BridgeGossipSync {
   async _bootstrapFloor () {
     const dirFn = this.pear.sync && this.pear.sync.directory
     if (!dirFn) return
-    let heads
-    try { const dir = await dirFn(); heads = dir && dir.heads ? dir.heads : dir } catch { return }
-    if (!heads || typeof heads !== 'object') return
     const me = this.getMe()
-    for (const appId in heads) {
-      if (PROTO_KEYS.has(appId) || !HEX64.test(appId) || appId === me) continue
-      const h = heads[appId]
-      if (!h || h._k !== appId) continue
-      if ((await verifyRecord(TYPE.HEAD, h)) !== 'ok') continue // never seed the floor from an unverified head
-      const v = h.version | 0
-      const fl = this._floor.get(appId)
-      if (!fl || v > fl.v) { this._floor.set(appId, { v, t: ++this._floorTick }); this._floorDirty = true }
+    // PAGINATE the directory: the relay caps each page (default 5000 heads) and returns a
+    // cursor. Follow nextCursor until exhausted so author #5001+ is actually discovered —
+    // otherwise a large forum silently truncates. Bounded (MAX_PAGES) so a hostile relay
+    // can't spin us forever; the 429/503 backoff in pear-api paces us under the rate limit.
+    // Degrades gracefully against an OLD relay that ignores `after` + omits hasMore (one page).
+    const PAGE = 2000, MAX_PAGES = 50
+    let after = null
+    for (let page = 0; page < MAX_PAGES; page++) {
+      let dir
+      try { dir = await dirFn({ limit: PAGE, after }) } catch { break }
+      const heads = dir && dir.heads ? dir.heads : dir
+      if (!heads || typeof heads !== 'object') break
+      for (const appId in heads) {
+        if (PROTO_KEYS.has(appId) || !HEX64.test(appId) || appId === me) continue
+        const h = heads[appId]
+        if (!h || h._k !== appId) continue
+        if ((await verifyRecord(TYPE.HEAD, h)) !== 'ok') continue // never seed the floor from an unverified head
+        const v = h.version | 0
+        const fl = this._floor.get(appId)
+        if (!fl || v > fl.v) { this._floor.set(appId, { v, t: ++this._floorTick }); this._floorDirty = true }
+        // RELIABLE READ DISCOVERY: the relay serves any outbox's rows by appId (range takes
+        // no inviteKey — the drive read-cap only gates P2P replication, which the relay does
+        // on our behalf). A VERIFIED directory head is therefore enough to READ that author's
+        // content directly, without waiting on flaky swarm-descriptor gossip. Add as a content
+        // peer (inviteKey unused for relay reads; admit re-verifies every row's signature, so a
+        // lying relay still can't forge). Directory is a relay-only surface, so this never runs
+        // under PearBrowser's P2P sync (which needs the real read-cap). Skip empties + self.
+        if (this._discover && (h.count | 0) > 0 && !this._peers.has(appId) && this._peers.size < MAX_PEERS) {
+          this._peers.set(appId, { appId, inviteKey: appId, dir: true }) // inviteKey placeholder: relay range is keyed by appId
+        }
+      }
+      if (!dir.hasMore || !dir.nextCursor || this._peers.size >= MAX_PEERS) break
+      after = dir.nextCursor
     }
     if (this._floorDirty) this._saveFloor()
   }
 
   async _openMyOutbox () {
     const appId = this._myAppId()
+    // Defensive: callers gate on identity presence (_ensureMyOutbox), but creating
+    // a relay group keyed "null" would mint exactly the ghost outbox the lazy
+    // lurker tier exists to prevent — fail loudly if a new call path slips through.
+    if (!appId) throw new Error('no writer identity yet')
     let key = null
     key = this._getOutboxKey(appId)
     try {
@@ -543,6 +666,11 @@ class BridgeGossipSync {
   // the relay comes back.
   async _ensureMyOutbox () {
     const appId = this._myAppId()
+    // Lurker (lazy web identity, pre-first-write): no identity → no outbox to
+    // open. Quiet false, NOT a warning — this is the designed steady state for
+    // readers. The first write mints an identity and the very next call (append
+    // does one inline) opens the outbox.
+    if (!appId) return false
     if (this._myInvite && this._myInviteAppId === appId) return true
     try {
       const r = await this._openMyOutbox()
@@ -559,32 +687,142 @@ class BridgeGossipSync {
     await cryptoReady()
     // Register our own outbox FIRST (with the locally-remembered key) so a reload
     // renders our content from cache even if the relay is unreachable at boot.
+    // Skipped for lurkers (lazy web identity, me() === null): a null appId in
+    // _peers would ride into the heads-poll payload and the persisted peer cache.
     const appId = this._myAppId()
-    const myKey = this._getOutboxKey(appId)
-    this._peers.set(appId, { appId, inviteKey: myKey || null, self: true })
-    if (HEX64.test(myKey || '')) this._rememberOutbox(appId, myKey)
+    if (appId) {
+      const myKey = this._getOutboxKey(appId)
+      this._peers.set(appId, { appId, inviteKey: myKey || null, self: true })
+      if (HEX64.test(myKey || '')) this._rememberOutbox(appId, myKey)
+    }
+    // Restore last session's verified view (+ discovered peers + heads) so the
+    // first list()/get() paints instantly instead of blanking; the poll then
+    // re-reads only what changed and a periodic reconcile re-verifies everything.
+    // On a true first visit (no cache) fall back to the baked seed snapshot —
+    // every row admit()-verified, so it renders real content but can't forge.
+    if (!this._loadCache() && this._seedSnapshot) await this._loadSnapshot(this._seedSnapshot)
+    this._loadFloor() // Phase C: restore the durable rollback floor (survives restart by design)
+    if (this._instantBoot) {
+      // Normal-website boot: paint from the local restore NOW; do every network
+      // step in the background. Callers that need the network done (seeder,
+      // tests) leave instantBoot off or await netReady()/wake().
+      this._netReady = this._connectNet().catch((e) => { console.warn('[gossip] background connect failed (will retry on poll/wake):', e && e.message) })
+      return this
+    }
+    await this._connectNet()
+    return this
+  }
+
+  // Every network step of boot, extracted so instantBoot can run it in the
+  // background and wake() can re-run the idempotent parts after a relay pool is
+  // plugged in late. Each step is individually offline-tolerant.
+  async _connectNet () {
     // Open (or create) the WRITABLE outbox so we can post. A network failure here
     // is non-fatal — reads + the cached render still work, and the poll retries.
     await this._ensureMyOutbox()
     // Re-join EVERY outbox we've ever owned, so a changed identity key can't
-    // strand earlier posts. (Best-effort; offline-tolerant.)
-    for (const o of this._knownOutboxes()) {
-      if (this._peers.has(o.appId)) continue
-      try { await this.pear.sync.join(o.appId, o.inviteKey); this._peers.set(o.appId, { appId: o.appId, inviteKey: o.inviteKey, self: true }) } catch {}
+    // strand earlier posts. (Best-effort; offline-tolerant.) Gated on identity
+    // PRESENCE only — never on pubkey match, because recovering outboxes owned
+    // under a DIFFERENT prior key is this loop's whole purpose (PearBrowser can
+    // hand back a new per-app key on reopen). Lurkers skip it: with no writer
+    // identity there is nothing of "mine" to recover, and web devices from the
+    // churn era carry long ghost lists that would burn one join each per boot.
+    if (this.getMe()) {
+      for (const o of this._knownOutboxes()) {
+        if (this._peers.has(o.appId)) continue
+        try { await this.pear.sync.join(o.appId, o.inviteKey); this._peers.set(o.appId, { appId: o.appId, inviteKey: o.inviteKey, self: true }) } catch {}
+      }
     }
-    // Restore last session's verified view (+ discovered peers + heads) so the
-    // first list()/get() paints instantly instead of blanking; the poll below then
-    // re-reads only what changed and a periodic reconcile re-verifies everything.
-    this._loadCache()
-    this._loadFloor() // Phase C: restore the durable rollback floor (survives restart by design)
-    await this._bootstrapFloor() // Phase D: seed it from the durable directory (fresh visitor gets a cross-relay floor immediately)
+    // Pinned/seed outboxes (curated launch content baked into the build): join them as
+    // regular CONTENT peers (NOT self) so a fresh visitor renders them immediately,
+    // independent of the flaky swarm-descriptor discovery. Read-only capability; the
+    // records still pass full signature/PoW admit like any other peer's.
+    for (const o of this._seedOutboxes) {
+      if (this._peers.has(o.appId) || o.appId === this.getMe()) continue
+      try { await this.pear.sync.join(o.appId, o.inviteKey); this._peers.set(o.appId, { appId: o.appId, inviteKey: o.inviteKey }) } catch {}
+    }
+    await this._bootstrapFloor() // Phase D: seed the floor from the durable directory (fresh visitor gets a cross-relay floor immediately)
     try { console.log('[peerit persist] me=' + (this.getMe() || '').slice(0, 12) + ' outbox=' + (this._myInvite || '').slice(0, 12) + ' knownOutboxes=' + this._knownOutboxes().length + ' cachedPeers=' + this._peers.size) } catch {}
     try {
-      this._channel = await this.pear.swarm.v1.join(TOPIC, { server: true, client: true, appName: 'peerit', reason: 'Discover other peerit users' })
-      this._channel.on('peer', () => this._announce())
-      this._channel.on('message', (peer, data) => this._onDescriptor(data))
-      await this._announce()
+      if (!this._channel) {
+        this._channel = await this.pear.swarm.v1.join(TOPIC, { server: true, client: true, appName: 'peerit', reason: 'Discover other peerit users' })
+        // Send our descriptor only to the newly-connected peer (O(1)); never re-broadcast
+        // to every peer on each 'peer' event — that is the O(N²) /api/swarm/send storm that
+        // exhausts the browser socket pool and wedges cold-start boot.
+        this._channel.on('peer', (peer) => { if (peer && typeof peer.send === 'function') this._announceTo(peer); else this._scheduleAnnounce() })
+        this._channel.on('message', (peer, data) => this._onDescriptor(data))
+        await this._announce()
+      }
     } catch (e) { console.warn('[gossip] swarm unavailable:', e && e.message) }
+    this._startPoll()
+  }
+
+  // Re-kick the idempotent connect steps after connectivity appears (app.js plugs
+  // a live relay pool into a lazy facade, then calls wake()). Safe to call any
+  // time: every step no-ops when already done and tolerates a dead relay.
+  async wake () {
+    try { if (this._netReady) await this._netReady } catch {}
+    if (this._destroyed) return
+    await this._ensureMyOutbox()
+    for (const o of this._seedOutboxes) {
+      if (this._peers.has(o.appId) || o.appId === this.getMe()) continue
+      try { await this.pear.sync.join(o.appId, o.inviteKey); this._peers.set(o.appId, { appId: o.appId, inviteKey: o.inviteKey }) } catch {}
+    }
+    try { await this._bootstrapFloor() } catch {}
+    try {
+      if (!this._channel) {
+        this._channel = await this.pear.swarm.v1.join(TOPIC, { server: true, client: true, appName: 'peerit', reason: 'Discover other peerit users' })
+        this._channel.on('peer', (peer) => { if (peer && typeof peer.send === 'function') this._announceTo(peer); else this._scheduleAnnounce() })
+        this._channel.on('message', (peer, data) => this._onDescriptor(data))
+        await this._announce()
+      }
+    } catch {}
+    // Force the first post-connect refresh to be a FULL reconcile: ignore the
+    // heads gate (a throttled/absent heads endpoint must not defer the catch-up)
+    // and re-verify every cached row against the live relay.
+    this._refreshCount = RECONCILE_EVERY - 1
+    try { const changed = await this._refresh(); if (changed.length) this._emit(changed) } catch (e) { console.warn('[gossip wake]', e && e.message) }
+  }
+
+  // Verify + load the baked seed snapshot ({authors:[{pub, rows:[{key,value}]}]}).
+  // Rows go through mergeOutboxes -> admit(): full signature/key-binding/PoW checks,
+  // exactly like live gossip — the snapshot is a render floor, never a trust bypass.
+  async _loadSnapshot (snap) {
+    try {
+      const authors = (snap && Array.isArray(snap.authors)) ? snap.authors : []
+      const boxes = []
+      for (const a of authors) {
+        if (!a || !HEX64.test(a.pub || '') || !Array.isArray(a.rows)) continue
+        if (a.pub === this.getMe()) continue
+        const view = Object.create(null)
+        for (const r of a.rows) { if (r && typeof r.key === 'string' && !PROTO_KEYS.has(r.key) && r.value) view[r.key] = r.value }
+        boxes.push({ pub: a.pub, view })
+      }
+      if (!boxes.length) return false
+      if (!this._claimed) { try { this._claimed = JSON.parse(this._getLocal(CLAIMED_KEY) || '{}') } catch { this._claimed = {} } }
+      const merged = await mergeOutboxes(boxes, this._claimed, this.validate)
+      if (!Object.keys(merged).length) return false
+      // Keep only rows that SURVIVED verification in the per-peer views, and
+      // register each author as a directory-style content peer so the first live
+      // refresh re-reads them straight from the relay by appId.
+      for (const { pub, view } of boxes) {
+        const admitted = Object.create(null); const sig = new Map()
+        for (const k in view) { if (merged[k] && changeToken(merged[k]) === changeToken(view[k])) { admitted[k] = view[k]; sig.set(k, changeToken(view[k])) } }
+        if (!Object.keys(admitted).length) continue
+        this._peerViews.set(pub, admitted)
+        this._peerSigs.set(pub, sig)
+        if (!this._peers.has(pub) && this._peers.size < MAX_PEERS) this._peers.set(pub, { appId: pub, inviteKey: pub, dir: true })
+      }
+      this._cache = merged
+      this._sortedFor = null
+      console.log('[gossip] first visit: rendered ' + Object.keys(merged).length + ' verified rows from the baked seed snapshot')
+      return true
+    } catch (e) { console.warn('[gossip] seed snapshot rejected:', e && e.message); return false }
+  }
+
+  _startPoll () {
+    if (this._pollStarted || this._destroyed) return
+    this._pollStarted = true
     if (this._pollMs > 0) {
       // Re-merge incrementally and notify ONLY when a peer's rows actually
       // changed. Self-scheduling with ±15% jitter so many clients don't hit the
@@ -594,6 +832,9 @@ class BridgeGossipSync {
       const tick = async () => {
         if (this._destroyed) return
         if (!this._myInvite) { try { if (await this._ensureMyOutbox()) await this._announce() } catch {} } // relay came back → resume writing/discovery
+        // Periodically re-scan the directory so authors who first post AFTER we booted get
+        // discovered (adds them to _peers; the next refresh reads their content by appId).
+        try { if ((this._refreshCount % 5) === 0) await this._bootstrapFloor() } catch {}
         try { const changed = await this._refresh(); if (changed.length) this._emit(changed) } catch (e) { console.warn('[gossip poll]', e && e.message) }
         if (this._destroyed) return
         this._pollTimer = setTimeout(tick, jittered())
@@ -602,7 +843,6 @@ class BridgeGossipSync {
       this._pollTimer = setTimeout(tick, jittered())
       if (this._pollTimer && this._pollTimer.unref) this._pollTimer.unref()
     }
-    return this
   }
 
   // Tear down timers, the swarm channel, and listeners. Call on tab/SPA teardown
@@ -611,20 +851,55 @@ class BridgeGossipSync {
     this._destroyed = true
     if (this._poll) { clearInterval(this._poll); this._poll = null }
     if (this._pollTimer) { clearTimeout(this._pollTimer); this._pollTimer = null }
+    if (this._refreshScheduled) { clearTimeout(this._refreshScheduled); this._refreshScheduled = null }
+    if (this._announceScheduled) { clearTimeout(this._announceScheduled); this._announceScheduled = null }
     if (this._channel && this._channel.destroy) { try { this._channel.destroy() } catch {} }
     if (this._refreshing) this._refreshing.catch(() => {}) // don't leave the in-flight refresh's rejection unhandled
     this._channel = null
     this._listeners.clear()
   }
 
-  async _announce () {
-    if (!this._channel) return
+  // Build our signed outbox descriptor once, reused by broadcast + per-peer sends.
+  async _descBytes () {
+    if (!this._channel) return null
     const pub = this.getMe(), appId = this._myAppId(), inviteKey = this._myInvite
+    // LURKERS ARE SILENT: no identity (lazy web mode, pre-first-write) or no open
+    // outbox → there is nothing announceable. Returning null here no-ops EVERY
+    // announce path at once (_announce, _announceTo, scheduled + post-refresh
+    // announces) — a null descriptor would be rejected by receivers anyway, but
+    // sending it still burns one /api/swarm/send per replayed peer against the
+    // relay's per-IP budget.
+    if (!pub || !inviteKey) return null
     let sig = null
     try { sig = await this.identity.sign(`peerit-desc|${pub}|${appId}|${inviteKey}`) } catch {}
     const desc = JSON.stringify({ t: 'outbox-desc', pub, appId, inviteKey, sig: sig && sig.signature, dk: sig && sig.driveKey, ns: sig && sig.namespace })
-    const bytes = new TextEncoder().encode(desc)
+    return new TextEncoder().encode(desc)
+  }
+
+  // Broadcast our descriptor to every current peer (used at boot / after our outbox
+  // opens / on re-announce). One send per peer — O(N), not the O(N²) of re-broadcasting
+  // on every peer connection.
+  async _announce () {
+    const bytes = await this._descBytes()
+    if (!bytes || !this._channel) return
     for (const p of this._channel.peers) { try { p.send(bytes) } catch {} }
+  }
+
+  // Send our descriptor to a single newly-connected peer — the ONLY peer that needs it.
+  // The relay replays every remembered peer on join, so re-broadcasting to all peers on
+  // each 'peer' event is O(N²) /api/swarm/send POSTs that exhaust the browser socket pool
+  // (net::ERR_INSUFFICIENT_RESOURCES) and wedge boot into "no relay reachable".
+  async _announceTo (peer) {
+    const bytes = await this._descBytes()
+    if (bytes) { try { peer.send(bytes) } catch {} }
+  }
+
+  // Coalesce a burst of peer connections into ONE broadcast (fallback when the swarm
+  // 'peer' event doesn't hand us the peer to target directly).
+  _scheduleAnnounce () {
+    if (this._announceScheduled || this._destroyed) return
+    this._announceScheduled = setTimeout(() => { this._announceScheduled = null; this._announce().catch(() => {}) }, 500)
+    if (this._announceScheduled && this._announceScheduled.unref) this._announceScheduled.unref()
   }
 
   async _onDescriptor (data) {
@@ -636,6 +911,7 @@ class BridgeGossipSync {
       d = JSON.parse(text)
     } catch { return }
     if (!d || d.t !== 'outbox-desc' || !d.pub || d.pub === this.getMe()) return
+    if (!this._discover) return // announce-only client (e.g. the seeder): stays findable, but never joins others
     if (this._peers.size >= MAX_PEERS) return
     if (!HEX64.test(d.pub) || !HEX64.test(d.appId) || d.appId !== d.pub) return // appId must be the pubkey itself
     if (typeof d.inviteKey !== 'string' || d.inviteKey.length < 16 || d.inviteKey.length > 4096) return
@@ -645,12 +921,46 @@ class BridgeGossipSync {
     // Hyperbee it controls.
     const ok = await edVerify(d.pub, `pear.app.${d.dk}:peerit:peerit-desc|${d.pub}|${d.appId}|${d.inviteKey}`, d.sig).catch(() => false)
     if (!ok) return
-    if (this._peers.has(d.pub)) return
+    if (this._peers.has(d.pub) || (this._joinSeen && this._joinSeen.has(d.pub))) return
+    // The relay replays EVERY remembered descriptor when we join the topic, so a boot
+    // can surface dozens at once. Joining them all immediately hammers the relay's
+    // per-IP rate limit (and can fetch-fail a small relay). Enqueue + drain them at a
+    // throttled rate, then refresh ONCE for the whole burst.
+    ;(this._joinSeen || (this._joinSeen = new Set())).add(d.pub)
+    ;(this._joinQueue || (this._joinQueue = [])).push(d)
+    this._pumpJoins()
+  }
+
+  async _pumpJoins () {
+    if (this._joinPumping || this._destroyed) return
+    this._joinPumping = true
     try {
-      await this.pear.sync.join(d.appId, d.inviteKey) // only commit the peer AFTER a successful join
-      this._peers.set(d.pub, { appId: d.appId, inviteKey: d.inviteKey })
-      const changed = await this._refresh(); this._emit(changed); this._announce()
-    } catch (e) { console.warn('[gossip] join failed', e && e.message) }
+      while (this._joinQueue && this._joinQueue.length && !this._destroyed) {
+        const d = this._joinQueue.shift()
+        if (this._peers.has(d.pub) || this._peers.size >= MAX_PEERS) continue
+        try {
+          await this.pear.sync.join(d.appId, d.inviteKey)
+          this._peers.set(d.pub, { appId: d.appId, inviteKey: d.inviteKey })
+        } catch { /* transient (rate limit / fetch) — the poll re-discovers later */ }
+        await new Promise((r) => setTimeout(r, 280)) // ~3.5 joins/s — comfortably under the per-IP limit
+      }
+    } finally {
+      this._joinPumping = false
+      this._scheduleRefresh() // one coalesced refresh once the burst drains
+    }
+  }
+
+  // Debounced re-merge — many descriptors arriving in a boot burst collapse into a
+  // single refresh + emit, keeping the client well under the relay's per-IP rate limit.
+  _scheduleRefresh () {
+    if (this._refreshScheduled || this._destroyed) return
+    this._refreshScheduled = setTimeout(async () => {
+      this._refreshScheduled = null
+      if (this._destroyed) return
+      try { const changed = await this._refresh(); if (changed.length) this._emit(changed) } catch (e) { console.warn('[gossip refresh]', e && e.message) }
+      try { await this._announce() } catch {}
+    }, 700)
+    if (this._refreshScheduled && this._refreshScheduled.unref) this._refreshScheduled.unref()
   }
 
   async announce () {
@@ -767,7 +1077,7 @@ class BridgeGossipSync {
         newSig.set(key, tok)
         if (prevSig.get(key) === tok) continue // unchanged since last refresh — verdict still holds
         anyRowChanged = true
-        if (await admit(typeFromKey(key), val, key, pub, secure, this.validate)) view[key] = val
+        if (await admit(typeForRow(key, val), val, key, pub, secure, this.validate)) view[key] = val
         else if (key in view) delete view[key] // an edit turned a once-admitted row invalid
       }
       for (const key of prevSig.keys()) { if (!newSig.has(key)) { if (key in view) delete view[key]; anyRowChanged = true } } // key removed (rare)
@@ -817,7 +1127,7 @@ class BridgeGossipSync {
           const rec = await this.pear.sync.recoverRows(pub, head)
           if (rec && rec.rows) {
             const view2 = Object.create(null); const newSig = new Map()
-            for (const r of rec.rows) { if (PROTO_KEYS.has(r.key)) continue; if (!(r.value && r.value._k === pub)) continue; if (await admit(typeFromKey(r.key), r.value, r.key, pub, secure, this.validate)) { view2[r.key] = r.value; newSig.set(r.key, changeToken(r.value)) } } // re-admit ONLY pub's own rows (a relay can't smuggle foreign-signed rows through recovery)
+            for (const r of rec.rows) { if (PROTO_KEYS.has(r.key)) continue; if (!(r.value && r.value._k === pub)) continue; if (await admit(typeForRow(r.key, r.value), r.value, r.key, pub, secure, this.validate)) { view2[r.key] = r.value; newSig.set(r.key, changeToken(r.value)) } } // re-admit ONLY pub's own rows (a relay can't smuggle foreign-signed rows through recovery)
             this._peerViews.set(pub, view2); this._peerSigs.set(pub, newSig); view = view2; anyRowChanged = true
             if (rec.base) this._readFrom.set(pub, rec.base) // pin future reads of this outbox to the relay that serves it, so the recovery STICKS (re-evaluated at reconcile)
             rows = []; for (const k in view2) rows.push({ key: k, value: view2[k] })
@@ -895,7 +1205,7 @@ class BridgeGossipSync {
   async status () {
     const v = await this._merged()
     let viewLength = 0
-    for (const k in v) if (typeFromKey(k) !== TYPE.HEAD) viewLength++ // head! is an internal census, not a "record"
+    for (const k in v) { const t = typeForRow(k, v[k]); if (t !== TYPE.HEAD && t !== TYPE.BLOB) viewLength++ } // head!/blob! are internal (census / opaque body storage), not "records"
     return {
       appId: 'peerit',
       mode: this.mode,
@@ -979,8 +1289,8 @@ function browserBus (name) {
   return { send: (m) => { bc.postMessage(m) }, onMessage: (fn) => { bc.onmessage = (e) => fn(e.data) } }
 }
 
-export function createGossip ({ storage, pear, getMe, identity, channelName, forceDev, bus, validate, pollMs, writeHead, readOnly } = {}) {
-  if (pear && pear.sync && pear.swarm && !forceDev) return new BridgeGossipSync({ pear, getMe, identity, storage, validate, pollMs, writeHead, readOnly })
+export function createGossip ({ storage, pear, getMe, identity, channelName, forceDev, bus, validate, pollMs, writeHead, readOnly, discover, seedOutboxes, instantBoot, seedSnapshot } = {}) {
+  if (pear && pear.sync && pear.swarm && !forceDev) return new BridgeGossipSync({ pear, getMe, identity, storage, validate, pollMs, writeHead, readOnly, discover, seedOutboxes, instantBoot, seedSnapshot })
   const theBus = bus || (typeof BroadcastChannel !== 'undefined' ? browserBus(channelName || 'peerit-gossip') : null)
   return new GossipSync({ storage, bus: theBus, getMe, validate })
 }

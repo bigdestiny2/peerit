@@ -25,7 +25,25 @@ export const TYPE = {
   // A per-outbox signed census (the "merkle root"): head!<authorPub> commits to
   // the complete set of that author's records, so a reader can detect a relay
   // that withholds records and no relay is the authoritative source of truth.
-  HEAD: 'head'
+  HEAD: 'head',
+  // BlindShard Phase 2: an opaque, content-addressed ciphertext body. blob!<blobId>
+  // (blobId = SHA-256(ciphertext)) holds a long post body the relay never sees in
+  // plaintext; the owning post carries the signed {blobId, contentKey, iv} manifest.
+  // Convergent → identical bodies share one blob (dedup). See blob-store.js / box.js.
+  BLOB: 'blob',
+  // BlindShard bridge transport: opaque PVSS share shards stored in the PearBrowser
+  // sync bridge instead of HTTP HiveRelay. shard!<hash> holds one encrypted share;
+  // the dispersal manifest lists the set of shard addresses needed to reconstruct.
+  SHARD: 'shard',
+  // Signed social graph (replaces device-local prefs, which die with localStorage
+  // and are invisible to the network). One record per edge, LWW like vote:
+  //   follow!<targetPub>!<authorPub>   (unfollow = deleted:true tombstone)
+  //   member!<community>!<authorPub>   (leave    = deleted:true tombstone)
+  // NOTE the member field is `community`, NOT `slug` — V2_CLEAR keeps `slug`
+  // cleartext (community LWW needs it), so naming it `community` is what gets the
+  // membership edge SEALED in the v2 opaque form, exactly like a vote's targetCid.
+  FOLLOW: 'follow',
+  MEMBER: 'member'
 }
 
 export const keys = {
@@ -49,7 +67,21 @@ export const keys = {
   modsIn: (community) => `${TYPE.MOD}!${community}!`,
 
   head: (author) => `${TYPE.HEAD}!${author}`,
-  headPrefix: () => `${TYPE.HEAD}!`
+  headPrefix: () => `${TYPE.HEAD}!`,
+
+  blob: (blobId) => `${TYPE.BLOB}!${blobId}`,
+  blobPrefix: () => `${TYPE.BLOB}!`,
+
+  shard: (hash) => `${TYPE.SHARD}!${hash}`,
+  shardPrefix: () => `${TYPE.SHARD}!`,
+
+  follow: (targetPub, author) => `${TYPE.FOLLOW}!${targetPub}!${author}`,
+  followAll: () => `${TYPE.FOLLOW}!`,
+  followersOf: (targetPub) => `${TYPE.FOLLOW}!${targetPub}!`,
+
+  member: (community, author) => `${TYPE.MEMBER}!${community}!${author}`,
+  memberAll: () => `${TYPE.MEMBER}!`,
+  membersOf: (community) => `${TYPE.MEMBER}!${community}!`
 }
 
 // data.id builders (the part after `type!`). These determine the storage key
@@ -61,7 +93,30 @@ export const id = {
   vote: (targetCid, author) => `${targetCid}!${author}`,
   profile: (author) => author,
   mod: (community, actionId) => `${community}!${actionId}`,
-  head: (author) => author
+  head: (author) => author,
+  blob: (blobId) => blobId,
+  shard: (hash) => hash,
+  follow: (targetPub, author) => `${targetPub}!${author}`,
+  member: (community, author) => `${community}!${author}`
+}
+
+// The v2 blind key scheme (docs/BLIND-OUTBOX-MIGRATION.md) folds this SAME semantic
+// tuple — not the plaintext key — into an opaque okey (js/seal.js): okey =
+// HMAC(READ_KEY, author‖_t‖semanticId). Dispatches by type exactly like id.* /
+// expectedKey, so a record's opaque slot is recomputable from its own signed fields.
+export function semanticId (type, data) {
+  switch (type) {
+    case TYPE.COMMUNITY: return data.slug != null ? id.community(data.slug) : null
+    case TYPE.POST: return data.community != null && data.cid != null ? id.post(data.community, data.cid) : null
+    case TYPE.COMMENT: return data.community != null && data.postCid != null && data.cid != null ? id.comment(data.community, data.postCid, data.cid) : null
+    case TYPE.VOTE: return data.targetCid != null && data.author != null ? id.vote(data.targetCid, data.author) : null
+    case TYPE.PROFILE: return data.author != null ? id.profile(data.author) : null
+    case TYPE.MOD: return data.community != null && data.actionId != null ? id.mod(data.community, data.actionId) : null
+    case TYPE.HEAD: return data.author != null ? id.head(data.author) : null
+    case TYPE.FOLLOW: return data.target != null && data.author != null ? id.follow(data.target, data.author) : null
+    case TYPE.MEMBER: return data.community != null && data.author != null ? id.member(data.community, data.author) : null
+    default: return null
+  }
 }
 
 // MOD actions a community moderator may perform.

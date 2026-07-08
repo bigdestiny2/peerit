@@ -41,7 +41,7 @@ function runNodeCheck (rel) {
 add('growth spec exists', exists('docs/GROWTH_AUTOMATION_SPEC.md'), 'docs/GROWTH_AUTOMATION_SPEC.md')
 
 const packageJson = loadJson('package.json')
-add('launch scripts registered', packageJson.scripts && packageJson.scripts['launch:readiness'] && packageJson.scripts['launch:seed-plan'], 'package.json exposes launch:readiness and launch:seed-plan')
+add('launch scripts registered', packageJson.scripts && packageJson.scripts['launch:readiness'] && packageJson.scripts['launch:seed-plan'] && packageJson.scripts['launch:utm'] && packageJson.scripts['launch:briefs'], 'package.json exposes launch:readiness, launch:seed-plan, launch:utm, and launch:briefs')
 
 let launchConfig = null
 try {

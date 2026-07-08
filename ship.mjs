@@ -10,7 +10,7 @@ const __dir = dirname(fileURLToPath(import.meta.url))
 
 function usage (code = 0, message = '') {
   if (message) console.error('error:', message)
-  console.error('usage: node ship.mjs [--publish] [--allow-dirty] [--no-test] [--anchor-timeout-ms 240000] [--report <file>]')
+  console.error('usage: node ship.mjs [--publish] [--allow-dirty] [--no-test] [--no-web] [--anchor-timeout-ms 240000] [--report <file>]')
   process.exit(code)
 }
 
@@ -19,9 +19,11 @@ function parseArgs (argv) {
     publish: false,
     allowDirty: false,
     skipTests: false,
+    skipWeb: process.env.SKIP_WEB_RELEASE === '1',
     anchorTimeoutMs: process.env.ANCHOR_TIMEOUT_MS || '240000',
     report: join(__dir, '.deploy', 'last-ship.json'),
-    publishReport: join(__dir, '.deploy', 'last-publish.json')
+    publishReport: join(__dir, '.deploy', 'last-publish.json'),
+    webReport: join(__dir, '.deploy', 'last-web-release.json')
   }
 
   for (let i = 0; i < argv.length; i++) {
@@ -30,6 +32,7 @@ function parseArgs (argv) {
     else if (arg === '--check') opts.publish = false
     else if (arg === '--allow-dirty') opts.allowDirty = true
     else if (arg === '--no-test') opts.skipTests = true
+    else if (arg === '--no-web') opts.skipWeb = true
     else if (arg === '--anchor-timeout-ms') opts.anchorTimeoutMs = argv[++i] || ''
     else if (arg === '--report') {
       const value = argv[++i]
@@ -56,6 +59,7 @@ const report = {
   generatedAt: new Date().toISOString(),
   checks: [],
   publish: null,
+  webRelease: null,
   status: 'started',
   summary: ''
 }
@@ -185,6 +189,11 @@ function verifyManifest () {
   }
 }
 
+function currentManifestDriveKey () {
+  const manifest = readJson(join(__dir, 'manifest.json'))
+  return String(manifest && manifest.driveKey || '')
+}
+
 function verifyGitCleanForServedFiles () {
   const tracked = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: __dir, encoding: 'utf8' })
   if (tracked.status !== 0) {
@@ -192,7 +201,20 @@ function verifyGitCleanForServedFiles () {
     return
   }
 
-  const files = [...SITE_FILES, 'manifest.json']
+  const files = [
+    ...SITE_FILES,
+    'manifest.json',
+    'relay-roster.json',
+    'config/shard-roster.public.json',
+    'deploy/web-release.json',
+    'docs/WEB-DEPLOYMENT.md',
+    'README.md',
+    'build-web.mjs',
+    'ship.mjs',
+    'publish.mjs',
+    'package.json',
+    'scripts/web-release.mjs'
+  ]
   const res = spawnSync('git', ['status', '--porcelain', '--', ...files], { cwd: __dir, encoding: 'utf8' })
   if (res.status !== 0) {
     addCheck('git:status', 'warn', 'Git status failed for served files.', { stderr: res.stderr.trim() })
@@ -201,14 +223,14 @@ function verifyGitCleanForServedFiles () {
 
   const dirty = res.stdout.split('\n').map((line) => line.trim()).filter(Boolean)
   if (!dirty.length) {
-    addCheck('git:served-clean', 'pass', 'Served app files are clean in git.')
+    addCheck('git:release-clean', 'pass', 'Release files are clean in git.')
     return
   }
 
   addCheck(
-    'git:served-dirty',
+    'git:release-dirty',
     opts.allowDirty ? 'warn' : 'fail',
-    `${dirty.length} served app file${dirty.length === 1 ? ' is' : 's are'} dirty; commit or pass --allow-dirty before publishing.`,
+    `${dirty.length} release file${dirty.length === 1 ? ' is' : 's are'} dirty; commit or pass --allow-dirty before publishing.`,
     { dirty }
   )
 }
@@ -237,6 +259,10 @@ async function runPublish () {
     DURABILITY: process.env.DURABILITY || 'archive',
     DEPLOY_REPORT: opts.publishReport
   }
+  if (publishEnv.KEEP) {
+    delete publishEnv.KEEP
+    addCheck('publish:keep-ignored', 'warn', 'KEEP is ignored by ship so the post-publish web release can be rebuilt with the new drive key.')
+  }
 
   mkdirSync(dirname(opts.publishReport), { recursive: true })
   await run('node', ['publish.mjs'], { env: publishEnv })
@@ -262,11 +288,47 @@ async function runPublish () {
   }
 }
 
+async function runWebRelease (driveKey) {
+  if (opts.skipWeb) {
+    addCheck('web-release:skipped', 'warn', 'Web release build was skipped by --no-web.')
+    return
+  }
+
+  mkdirSync(dirname(opts.webReport), { recursive: true })
+  try {
+    await run('node', ['scripts/web-release.mjs', '--drive-key', driveKey, '--report', opts.webReport])
+  } catch (err) {
+    const webReport = readJson(opts.webReport)
+    report.webRelease = webReport
+    addCheck('web-release:build', 'fail', err.message, webReport ? { status: webReport.status, summary: webReport.summary } : undefined)
+    return
+  }
+
+  const webReport = readJson(opts.webReport)
+  report.webRelease = webReport
+  if (!webReport) {
+    addCheck('web-release:report', 'warn', 'Web release completed, but no report was written.')
+    return
+  }
+  if (webReport.status === 'ready') {
+    addCheck('web-release:ready', 'pass', 'Web bundle, relay-roster.json, pinned key, and deploy docs are in sync.', {
+      driveKey: webReport.driveKey,
+      relayRoster: webReport.release && webReport.release.relayRoster,
+      pinnedRosterKey: webReport.release && webReport.release.pinnedRosterKey
+    })
+  } else if (webReport.status === 'review') {
+    addCheck('web-release:review', 'warn', webReport.summary, { status: webReport.status })
+  } else {
+    addCheck('web-release:blocked', 'fail', webReport.summary || 'Web release checks failed.', { status: webReport.status })
+  }
+}
+
 async function main () {
   console.log(`[ship] ${opts.publish ? 'release publish' : 'release check'} for peerit`)
   verifySiteFiles()
   verifyStaticImports()
   verifyManifest()
+  await runWebRelease(currentManifestDriveKey())
   verifyGitCleanForServedFiles()
   await runTests()
 
@@ -276,7 +338,10 @@ async function main () {
     process.exit(1)
   }
 
-  if (opts.publish) await runPublish()
+  if (opts.publish) {
+    await runPublish()
+    await runWebRelease((report.publish && report.publish.driveKey) || currentManifestDriveKey())
+  }
   writeReport()
   process.exit(report.status === 'blocked' ? 1 : 0)
 }

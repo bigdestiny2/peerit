@@ -1,0 +1,10 @@
+{
+  "_comment": "Local dev shard cohort for BlindShard dispersal testing. Start mock shard stores with: node scripts/mock-shard-cohort.mjs",
+  "threshold": 2,
+  "retainMs": 2592000000,
+  "relays": [
+    { "url": "http://127.0.0.1:8801", "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    { "url": "http://127.0.0.1:8802", "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    { "url": "http://127.0.0.1:8803", "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }
+  ]
+}

@@ -116,6 +116,19 @@ export function buildRoute (path, query) {
   return h
 }
 
+// Parse what people actually paste to identify a user: a raw 64-hex public
+// key, a "u/<hex>" handle, a "#/u/<hex>" route, or a full profile URL ending in
+// one. STRICT on purpose — never fish a 64-hex substring out of longer text,
+// because a truncated/overlong paste silently binding to the wrong key is worse
+// than an error. Returns the lowercase pubkey or null.
+export function parsePubkeyInput (s) {
+  const raw = String(s == null ? '' : s).trim()
+  if (!raw) return null
+  if (/^[0-9a-fA-F]{64}$/.test(raw)) return raw.toLowerCase()
+  const m = raw.match(/(?:^|[#/])u\/([0-9a-fA-F]{64})\/?$/)
+  return m ? m[1].toLowerCase() : null
+}
+
 export function debounce (fn, ms) {
   let t = null
   return function (...args) {

@@ -177,7 +177,10 @@ export function resolveRuntime ({ rawPear = null, doc = null } = {}) {
       // Local keys: forceDev on IDENTITY ONLY keeps signing in the browser. It is
       // deliberately NOT passed to sync — sync runs BridgeGossipSync over the
       // remote /api relay (a real transport), the identity never leaves.
-      identityOpts: { forceDev: true, apiBase: relay.apiBase, apiToken: relay.apiToken },
+      // lazy: web visitors are LURKERS (no keypair, no outbox, no announce) until
+      // their first write — kills the new-user-per-refresh churn and the ghost
+      // outboxes/descriptors it left on the relay. persistSeed stays unset here.
+      identityOpts: { forceDev: true, lazy: true, apiBase: relay.apiBase, apiToken: relay.apiToken },
       syncOpts: { apiBase: relay.apiBase, apiToken: relay.apiToken, seedOutboxes: parseSeedOutboxes(metaContent(doc, 'peerit-seed-outboxes')) },
       relays: relay.relays,
       relayRoster: relay.relayRoster,

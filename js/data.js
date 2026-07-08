@@ -47,6 +47,12 @@ export class Data {
     this.dispersal = !!opts.dispersal // BlindShard dispersal: node writer attaches PVSS manifest; browser/Node reader recovers.
     this.shardRelays = Array.isArray(opts.shardRelays) ? opts.shardRelays : [] // [{url,pubkey}] or [url] for shard fetch
     this.fetch = opts.fetch || globalThis.fetch // injected for tests; defaults to global fetch
+    // Mint-on-first-write (lazy web identity): app.js injects a callback that
+    // checks read-only mode FIRST and then ensures an active identity. It runs at
+    // the TOP of every write path, strictly BEFORE anything is signed — a key
+    // minted/adopted mid-append would leave the in-flight record signed by a
+    // discarded key (uneditable, failing its own head census).
+    this.ensureWriter = typeof opts.ensureWriter === 'function' ? opts.ensureWriter : null
     // Device durability floor (ADR-2026-07-07): a localStorage-like store where the
     // AUTHOR keeps {bodyKey, iv, ciphertext} for their own dispersed posts — device-
     // local, NEVER synced/appended, so no relay ever co-locates key + ciphertext.
@@ -149,6 +155,7 @@ export class Data {
   // sealed opaque record but RETURNS the plaintext logical record so the caller can
   // render optimistically (the author already knows what it wrote). Blobs stay v1.
   async _emit (semType, data, { pow = false, onProgress } = {}) {
+    if (this.ensureWriter) await this.ensureWriter() // read-only gate + lazy mint, BEFORE any signing
     if (this.v2 && semType !== TYPE.BLOB) {
       const stored = await this._toV2(semType, data)
       if (pow) stored.pow = await mint(semType, stored, this.minBits[semType] || 0, { onProgress })
@@ -248,6 +255,7 @@ export class Data {
   // key at the edge. Browser authoring remains blocked on #115, so this path is
   // Node-only; the read path works in both Node and browser.
   async _boxBody (data) {
+    if (this.ensureWriter) await this.ensureWriter() // blob appends happen BEFORE the parent record's _emit
     if (this.dispersal) {
       const dispersal = await this._tryDispersalBox(data.body)
       if (dispersal) {
@@ -827,11 +835,16 @@ export class Data {
   // carrying a reputation-weighted score for ranking. Cached per (viewer,cid,epoch).
   async tallyMany (cids) {
     const me = this.me().pubkey
+    // Lurkers (me === null) are a valid viewer state: tallies render with
+    // myVote 0; cache them under an explicit 'anon' viewer key rather than a
+    // stringified null. After the first-write mint the viewer key changes, so
+    // no stale lurker tally can collide with the new identity's.
+    const viewerKey = me || 'anon'
     const uniq = [...new Set(cids)]
     const out = new Map()
     const missing = []
     for (const cid of uniq) {
-      const key = me + ':' + cid
+      const key = viewerKey + ':' + cid
       const cached = this._tallyCache.get(key)
       if (cached && cached.epoch === this._epoch) out.set(cid, cached.val)
       else missing.push(cid)
@@ -847,7 +860,7 @@ export class Data {
         const cid = missing[i]
         const votes = lists[i].map(r => r.value).filter(Boolean)
         const val = tallyVotes(votes, me, weightOf)
-        this._tallyCache.set(me + ':' + cid, { val, epoch: this._epoch })
+        this._tallyCache.set(viewerKey + ':' + cid, { val, epoch: this._epoch })
         out.set(cid, val)
       }
     }
@@ -1024,6 +1037,10 @@ export class Data {
   // flag is only set when every edge landed, so a partial run retries next boot.
   async migrateLocalGraph ({ follows = [], subs = [], storage } = {}) {
     const me = this.me().pubkey
+    // Lurker (lazy web identity): nothing to migrate INTO yet — running would
+    // trigger ensureWriter and mint at boot. app.js re-kicks this after the
+    // first write's mint; the flag key stays per-pubkey (never 'null').
+    if (!me) return { migrated: 0, skipped: true }
     const flagKey = 'peerit:graph-migrated:' + me
     try { if (storage && storage.getItem(flagKey)) return { migrated: 0, skipped: true } } catch {}
     let migrated = 0; let failed = 0

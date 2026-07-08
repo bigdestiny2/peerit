@@ -33,22 +33,45 @@ class DevIdentity {
     this.storage = storage
     this.session = session
     this.persistSeed = opts.persistSeed === true
+    // lazy: do NOT mint a keypair at ready() — web visitors are LURKERS until
+    // their first write. A reader needs no identity, and eager minting is what
+    // turned every refresh into a new "user" plus a ghost outbox and a permanent
+    // swarm descriptor on the relay (the request amplification behind the per-IP
+    // 429 starvation). ensureActive() mints on the first write instead.
+    this.lazy = opts.lazy === true
     this.ROSTER = 'peerit:dev:users'
     // In-memory roster + seed store, used whenever persistSeed is false so that no
     // seed (and, to avoid unusable ghost entries, no roster) is written to disk.
     this._memRoster = null
+    this._ensuring = null
   }
 
   async ready () {
     let roster = this._roster()
-    if (!roster.length) { roster = [await this._mint('anon')]; this._saveRoster(roster) }
+    if (!roster.length && !this.lazy) { roster = [await this._mint('anon')]; this._saveRoster(roster) }
     let active = this.session && this.session.getItem('peerit:dev:active')
     if (!active || !roster.find(u => u.pubkey === active)) {
-      active = roster[0].pubkey
-      if (this.session) this.session.setItem('peerit:dev:active', active)
+      // Lazy + empty roster → stay identity-less (me().pubkey === null). The
+      // sessionStorage pointer may name a pubkey from a previous page's in-memory
+      // roster; without its seed it is unusable, so it never becomes active.
+      active = roster.length ? roster[0].pubkey : null
+      if (this.session && active) this.session.setItem('peerit:dev:active', active)
     }
     this._active = active
     return this
+  }
+
+  // Mint-on-first-write: idempotent and SINGLE-FLIGHT — two concurrent writes
+  // must not mint two identities (that would recreate the churn this exists to
+  // kill). Callers check read-only mode BEFORE calling (fail-closed: a read-only
+  // deployment never mints). Returns me().
+  async ensureActive (label = 'anon') {
+    if (this._meEntry()) return this.me()
+    if (!this._ensuring) {
+      this._ensuring = this.createUser(label).finally(() => { this._ensuring = null })
+    }
+    await this._ensuring
+    return this.me()
   }
 
   _roster () {
@@ -158,6 +181,9 @@ class BridgeIdentity {
   listUsers () { return [this.me()] }
   switchUser () { return false }
   async createUser () { return this.me() }
+  // The bridge identity always exists (PearBrowser provisions it); ensureActive is
+  // a no-op for API parity with DevIdentity's lazy mint-on-first-write.
+  async ensureActive () { return this.me() }
 }
 
 export function createIdentity (opts = {}) {
@@ -171,7 +197,8 @@ export function createIdentity (opts = {}) {
   // persistSeed is OFF unless a caller explicitly opts in (local dev fallback). The
   // web/production path (forceDev) must never enable it: a persisted cleartext seed
   // is a permanent, unrevocable sign-as-victim key on same-origin read/XSS.
-  return new DevIdentity(storage, session, { persistSeed: opts.persistSeed === true })
+  // lazy (web mode): no keypair until the first write — see DevIdentity.ensureActive.
+  return new DevIdentity(storage, session, { persistSeed: opts.persistSeed === true, lazy: opts.lazy === true })
 }
 
 function memShim () {

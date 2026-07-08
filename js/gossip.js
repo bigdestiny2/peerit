@@ -632,6 +632,10 @@ class BridgeGossipSync {
 
   async _openMyOutbox () {
     const appId = this._myAppId()
+    // Defensive: callers gate on identity presence (_ensureMyOutbox), but creating
+    // a relay group keyed "null" would mint exactly the ghost outbox the lazy
+    // lurker tier exists to prevent — fail loudly if a new call path slips through.
+    if (!appId) throw new Error('no writer identity yet')
     let key = null
     key = this._getOutboxKey(appId)
     try {
@@ -650,6 +654,11 @@ class BridgeGossipSync {
   // the relay comes back.
   async _ensureMyOutbox () {
     const appId = this._myAppId()
+    // Lurker (lazy web identity, pre-first-write): no identity → no outbox to
+    // open. Quiet false, NOT a warning — this is the designed steady state for
+    // readers. The first write mints an identity and the very next call (append
+    // does one inline) opens the outbox.
+    if (!appId) return false
     if (this._myInvite && this._myInviteAppId === appId) return true
     try {
       const r = await this._openMyOutbox()
@@ -666,10 +675,14 @@ class BridgeGossipSync {
     await cryptoReady()
     // Register our own outbox FIRST (with the locally-remembered key) so a reload
     // renders our content from cache even if the relay is unreachable at boot.
+    // Skipped for lurkers (lazy web identity, me() === null): a null appId in
+    // _peers would ride into the heads-poll payload and the persisted peer cache.
     const appId = this._myAppId()
-    const myKey = this._getOutboxKey(appId)
-    this._peers.set(appId, { appId, inviteKey: myKey || null, self: true })
-    if (HEX64.test(myKey || '')) this._rememberOutbox(appId, myKey)
+    if (appId) {
+      const myKey = this._getOutboxKey(appId)
+      this._peers.set(appId, { appId, inviteKey: myKey || null, self: true })
+      if (HEX64.test(myKey || '')) this._rememberOutbox(appId, myKey)
+    }
     // Restore last session's verified view (+ discovered peers + heads) so the
     // first list()/get() paints instantly instead of blanking; the poll then
     // re-reads only what changed and a periodic reconcile re-verifies everything.
@@ -696,10 +709,17 @@ class BridgeGossipSync {
     // is non-fatal — reads + the cached render still work, and the poll retries.
     await this._ensureMyOutbox()
     // Re-join EVERY outbox we've ever owned, so a changed identity key can't
-    // strand earlier posts. (Best-effort; offline-tolerant.)
-    for (const o of this._knownOutboxes()) {
-      if (this._peers.has(o.appId)) continue
-      try { await this.pear.sync.join(o.appId, o.inviteKey); this._peers.set(o.appId, { appId: o.appId, inviteKey: o.inviteKey, self: true }) } catch {}
+    // strand earlier posts. (Best-effort; offline-tolerant.) Gated on identity
+    // PRESENCE only — never on pubkey match, because recovering outboxes owned
+    // under a DIFFERENT prior key is this loop's whole purpose (PearBrowser can
+    // hand back a new per-app key on reopen). Lurkers skip it: with no writer
+    // identity there is nothing of "mine" to recover, and web devices from the
+    // churn era carry long ghost lists that would burn one join each per boot.
+    if (this.getMe()) {
+      for (const o of this._knownOutboxes()) {
+        if (this._peers.has(o.appId)) continue
+        try { await this.pear.sync.join(o.appId, o.inviteKey); this._peers.set(o.appId, { appId: o.appId, inviteKey: o.inviteKey, self: true }) } catch {}
+      }
     }
     // Pinned/seed outboxes (curated launch content baked into the build): join them as
     // regular CONTENT peers (NOT self) so a fresh visitor renders them immediately,
@@ -831,6 +851,13 @@ class BridgeGossipSync {
   async _descBytes () {
     if (!this._channel) return null
     const pub = this.getMe(), appId = this._myAppId(), inviteKey = this._myInvite
+    // LURKERS ARE SILENT: no identity (lazy web mode, pre-first-write) or no open
+    // outbox → there is nothing announceable. Returning null here no-ops EVERY
+    // announce path at once (_announce, _announceTo, scheduled + post-refresh
+    // announces) — a null descriptor would be rejected by receivers anyway, but
+    // sending it still burns one /api/swarm/send per replayed peer against the
+    // relay's per-IP budget.
+    if (!pub || !inviteKey) return null
     let sig = null
     try { sig = await this.identity.sign(`peerit-desc|${pub}|${appId}|${inviteKey}`) } catch {}
     const desc = JSON.stringify({ t: 'outbox-desc', pub, appId, inviteKey, sig: sig && sig.signature, dk: sig && sig.driveKey, ns: sig && sig.namespace })

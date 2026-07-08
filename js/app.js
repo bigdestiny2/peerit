@@ -140,6 +140,11 @@ async function boot () {
     dispersal: !!shardCohort,
     shardRelays: shardCohort ? shardCohort.relays : [],
     fetch: globalThis.fetch && globalThis.fetch.bind(globalThis),
+    // Mint-on-first-write (lazy web identity): every data.js write path calls this
+    // before signing anything. Order is load-bearing: read-only check FIRST (a
+    // read-only deployment must never mint), then vault-unlock-before-mint, then
+    // the single-flight mint.
+    ensureWriter: ensureWriterIdentity,
     // Device durability floor (ADR-2026-07-07): the author keeps key+iv+ciphertext
     // for their own dispersed bodies device-local, never synced.
     deviceStore: typeof localStorage !== 'undefined' ? localStorage : null
@@ -149,7 +154,11 @@ async function boot () {
   // One-time per identity: promote device-local follows/subs into signed follow!/
   // member! records so the graph replicates and survives localStorage loss.
   // Fire-and-forget — boot never blocks on it; a partial run retries next boot.
-  if (!isReadOnly()) {
+  // Gated on an EXISTING identity: it writes signed records, so for a lurker
+  // (lazy web identity) it would otherwise trigger ensureWriter and mint at boot —
+  // silently defeating the whole lurker tier. It runs after the first write's
+  // mint instead (ensureWriterIdentity re-kicks it).
+  if (!isReadOnly() && identity.me().pubkey) {
     data.migrateLocalGraph({
       follows: prefs.follows(), subs: prefs.subs(),
       storage: typeof localStorage !== 'undefined' ? localStorage : null
@@ -218,6 +227,62 @@ async function boot () {
 
 function refreshPrefs () {
   prefs = new Prefs(typeof localStorage !== 'undefined' ? localStorage : null, identity.me().pubkey)
+}
+
+// Lurker prefs (subs/follows/theme saved while browsing identity-less) live under
+// 'peerit:prefs:anon'. At mint, copy them to the new identity's key so nothing the
+// user did before their first write silently vanishes. Never overwrites existing
+// prefs for the pubkey (re-import/vault-unlock case).
+function migrateAnonPrefs (pubkey) {
+  try {
+    if (typeof localStorage === 'undefined' || !pubkey) return
+    const anon = localStorage.getItem('peerit:prefs:anon')
+    if (anon && !localStorage.getItem('peerit:prefs:' + pubkey)) {
+      localStorage.setItem('peerit:prefs:' + pubkey, anon)
+    }
+  } catch {}
+}
+
+// Mint-on-first-write (lazy web identity). Injected into data.js as ensureWriter —
+// every write path runs it BEFORE signing anything. Single-flight: two concurrent
+// writes (double-tap upvote) must not race the modal or the mint.
+let _ensuringWriter = null
+async function ensureWriterIdentity () {
+  // 1. FAIL-CLOSED ORDER: read-only mode never mints, never prompts, never
+  //    creates relay state — checked before anything else.
+  if (isReadOnly()) throw new Error('This peerit is read-only.')
+  if (identity.me().pubkey) return
+  if (_ensuringWriter) return _ensuringWriter
+  _ensuringWriter = (async () => {
+    // 2. Vault-unlock BEFORE mint: a saved identity exists (possibly created in
+    //    another tab) but is locked — the user must choose "unlock" or "start
+    //    fresh", or their first write would silently fork a brand-new pubkey.
+    if (identity.isDev && typeof localStorage !== 'undefined' && hasVault(localStorage)) {
+      await unlockVaultAtBoot()
+    }
+    // 3. Mint (idempotent + single-flight inside DevIdentity). Vault unlock may
+    //    already have populated the roster — ensureActive() is a no-op then.
+    await identity.ensureActive('anon')
+    const pub = identity.me().pubkey
+    if (!pub) throw new Error('Could not create an identity on this device.')
+    // 4. Carry the lurker's device prefs over, re-key prefs, and let the world
+    //    know the new writer exists (descriptor + outbox happen on the append's
+    //    own _ensureMyOutbox; announce is best-effort acceleration).
+    migrateAnonPrefs(pub)
+    refreshPrefs()
+    try { if (sync && sync.announce) sync.announce().catch(() => {}) } catch {}
+    // 5. The boot-time local-graph promotion was skipped for lurkers — run it now
+    //    that an identity exists (fire-and-forget, same as boot).
+    try {
+      if (data) {
+        data.migrateLocalGraph({
+          follows: prefs.follows(), subs: prefs.subs(),
+          storage: typeof localStorage !== 'undefined' ? localStorage : null
+        }).catch(() => {})
+      }
+    } catch {}
+  })().finally(() => { _ensuringWriter = null })
+  return _ensuringWriter
 }
 
 function isBridgeMode () {
@@ -391,13 +456,13 @@ async function updateNetStatus () {
     const me = identity.me()
     const secure = s.secure !== false
     el.className = 'netstatus ' + (s.mode && s.mode.includes('bridge') ? 'bridge' : (secure ? 'ok' : 'warn'))
-    el.innerHTML = `<b>${esc(s.mode || 'sync')}</b> · ${s.peers != null ? s.peers : 1}p · ${s.viewLength || 0} recs · <span class="mono">${esc((me.pubkey || '').slice(0, 6))}…</span>${secure ? '' : ' · ⚠ insecure'}${isReadOnly() ? ' · read-only' : ''}${isDispersalActive() ? ' · dispersed' : ''}`
+    el.innerHTML = `<b>${esc(s.mode || 'sync')}</b> · ${s.peers != null ? s.peers : 1}p · ${s.viewLength || 0} recs · <span class="mono">${me.pubkey ? esc(me.pubkey.slice(0, 6)) + '…' : 'lurking'}</span>${secure ? '' : ' · ⚠ insecure'}${isReadOnly() ? ' · read-only' : ''}${isDispersalActive() ? ' · dispersed' : ''}`
   } catch (e) { el.textContent = 'sync: ' + (e.message || 'error') }
 }
 
 async function renderUserMenu () {
   const me = identity.me()
-  await primeNames([me.pubkey])
+  if (me.pubkey) await primeNames([me.pubkey])
   const el = $('#usermenu')
   if (!el) return
   const modeBadge = (runtime && runtime.mode === 'web')
@@ -412,18 +477,20 @@ async function renderUserMenu () {
     ${modeBadge}${dispersalBadge}
     <button class="user-pill" data-act="toggle-usermenu" aria-haspopup="menu" aria-label="Account menu">
       <span class="avatar" style="background:${colorFor(me.pubkey)}"></span>
-      <span class="uname">${esc(nameOf(me.pubkey))}</span>
+      <span class="uname">${me.pubkey ? esc(nameOf(me.pubkey)) : 'browsing'}</span>
     </button>
     <div class="dropdown" id="userdrop" role="menu" hidden>
       <a role="menuitem" href="#/submit">＋ Create post</a>
       <a role="menuitem" href="#/create">＋ Create community</a>
       <a role="menuitem" href="#/communities">Communities</a>
       <div class="dd-sep"></div>
-      <a role="menuitem" href="#/u/${esc(me.pubkey)}">My profile</a>
+      ${me.pubkey
+        ? `<a role="menuitem" href="#/u/${esc(me.pubkey)}">My profile</a>`
+        : '<span class="dd-label" title="You are browsing without an identity — one is created the first time you post, comment, or vote">Browsing — no identity yet</span>'}
       <a role="menuitem" href="#/following">Following</a>
       <a role="menuitem" href="#/saved">Saved</a>
       <a role="menuitem" href="#/settings">Settings</a>
-      ${identity.isDev ? '<div class="dd-sep"></div>' + devUserSwitcher() : ''}
+      ${identity.isDev && me.pubkey ? '<div class="dd-sep"></div>' + devUserSwitcher() : ''}
     </div>`
 }
 
@@ -2071,8 +2138,10 @@ async function unlockVaultAtBoot () {
     })
     overlay.querySelector('[data-role="vault-fresh"]').addEventListener('click', () => {
       if (!confirm('Forget the saved identity on this device and start with a new one? The encrypted vault will be deleted. If you have not exported this identity, it is gone for good.')) return
-      // Drop the vault; the already-minted fresh in-memory identity (from ready())
-      // becomes the active one — exactly A1's no-vault behavior.
+      // Drop the vault. Under lazy web identity nothing was minted at ready() —
+      // the visitor continues as a lurker and a fresh identity is minted on their
+      // next write (ensureWriterIdentity); in eager modes the ready()-minted
+      // identity stays active. Either way: A1's no-vault behavior.
       clearVault(localStorage)
       toast('Started fresh — set a new passphrase in Settings to keep this identity.')
       finish()
@@ -2086,6 +2155,8 @@ async function unlockVaultAtBoot () {
 function openRememberIdentityModal () {
   const root = $('#modal-root'); if (!root) { toast('This needs the in-app modal', 'error'); return }
   const me = identity.me()
+  // Lurker: nothing to remember yet (identity is created on the first write).
+  if (!me.pubkey) { toast('No identity on this device yet — it is created the first time you post, comment, or vote.'); return }
   const has = typeof localStorage !== 'undefined' && hasVault(localStorage)
   root.innerHTML = `<div class="modal-backdrop">
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="vault-set-title">
@@ -2129,6 +2200,9 @@ let _identityScanStop = null
 function openExportIdentityModal () {
   const root = $('#modal-root'); if (!root) { toast('Export needs the in-app modal', 'error'); return }
   const me = identity.me()
+  // Lurker (lazy web identity): there is no key to export yet — one is created
+  // the first time they post/comment/vote.
+  if (!me.pubkey) { toast('No identity on this device yet — it is created the first time you post, comment, or vote.'); return }
   _identityExport = null
   root.innerHTML = `<div class="modal-backdrop">
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="idexport-title">

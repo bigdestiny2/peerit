@@ -21,6 +21,8 @@ import { buildCommentTree, sortCommentTree, annotateDescendants, countDescendant
 import { COPY as RECOVERY_COPY, buildRecoveryBundle, cleanOutboxes, peeritSeederCommand, recoveryBundleFilename, recoveryBundleJson } from './recovery.js'
 import { exportIdentity, importIdentity, looksLikeIdentityExport, identityExportJson, identityExportFilename, passphraseStrength, MIN_PASSPHRASE } from './identity-export.js'
 import { hasVault, vaultPubkey, saveVault, unlockVault, clearVault } from './identity-vault.js'
+import { createIdentityStore } from './identity-store.js'
+import { isSecure } from './crypto.js'
 import { encodeQR, qrToSvg, isScanSupported, scanQR } from './qr.js'
 import {
   escapeHtml as esc, timeAgo, fmtCount, parseRoute, buildRoute,
@@ -30,6 +32,9 @@ import {
 // ---- app singletons ---------------------------------------------------------
 let sync, identity, data, prefs
 let runtime = null                 // { mode, identityOpts, syncOpts, readOnly } from resolveRuntime
+// Device tier of identity durability (identity-store.js): silent restore at boot,
+// persist at first-write mint. No-ops cleanly where IndexedDB/WebCrypto is absent.
+const deviceIdStore = createIdentityStore()
 let renderToken = 0
 let _lastHash = ''
 const openReplies = new Set()      // comment cids with an open reply box
@@ -64,13 +69,31 @@ async function boot () {
   identity = createIdentity(runtime.identityOpts)
   await identity.ready()
 
-  // Durable identity (passphrase vault): A1 keeps the web/production seed in memory
-  // only, so a plain reload mints a fresh identity. If the user previously opted into
-  // durability, an encrypted vault sits in localStorage — unlock it here, BEFORE sync
-  // starts, so the restored key is the one signing this session. Only the DevIdentity
-  // (browser-local) path has a vault; the PearBrowser bridge holds its own key.
-  if (identity.isDev && typeof localStorage !== 'undefined' && hasVault(localStorage)) {
-    await unlockVaultAtBoot()
+  // Durable identity, two tiers (both DevIdentity/web-only; the PearBrowser
+  // bridge holds its own key):
+  //  DEVICE tier (identity-store.js) — the identity minted on first write,
+  //  restored SILENTLY here: seed stored as AES-GCM ciphertext under a
+  //  non-extractable CryptoKey in IndexedDB (API-level protection, not disk
+  //  encryption — see identity-store.js's honest threat model).
+  //  VAULT tier (identity-vault.js) — the passphrase envelope: portable/backup.
+  // Precedence: when both exist for the SAME identity, the silent device restore
+  // wins (the vault is the backup the user made of it, not a request to be
+  // prompted every boot). A vault for a DIFFERENT identity (or vault-only) gets
+  // the explicit unlock modal, exactly as before.
+  if (identity.isDev && typeof localStorage !== 'undefined') {
+    let deviceEntry = null
+    try { deviceEntry = await deviceIdStore.load() } catch {}
+    const vaultPub = hasVault(localStorage) ? vaultPubkey(localStorage) : null
+    let deviceRestored = false
+    if (deviceEntry && (!vaultPub || vaultPub === deviceEntry.pubkey)) {
+      try { await identity.addUser(deviceEntry); deviceRestored = true } catch (e) { console.warn('[peerit] device identity restore failed:', e && e.message) }
+    }
+    // The unlock modal shows exactly when it did before this tier existed (any
+    // vault present), EXCEPT when the silent device restore already produced the
+    // very identity the vault protects — then prompting adds friction, not auth.
+    if (vaultPub && !(deviceRestored && deviceEntry && deviceEntry.pubkey === vaultPub)) {
+      await unlockVaultAtBoot()
+    }
   }
 
   // BlindShard dispersal: if a shard cohort is configured (inline meta or roster
@@ -262,9 +285,30 @@ async function ensureWriterIdentity () {
     }
     // 3. Mint (idempotent + single-flight inside DevIdentity). Vault unlock may
     //    already have populated the roster — ensureActive() is a no-op then.
+    const mintedFresh = !identity.me().pubkey
     await identity.ensureActive('anon')
-    const pub = identity.me().pubkey
+    let pub = identity.me().pubkey
     if (!pub) throw new Error('Could not create an identity on this device.')
+    // 3.5 DEVICE-PERSIST the fresh mint, AWAITED before the write proceeds — a
+    //     tab closed right after the first post must not leave a relay outbox
+    //     whose key was never durably stored (a one-off ghost). LOAD-OR-ADOPT:
+    //     if another tab won the first-write race, we ADOPT its identity NOW —
+    //     still strictly before anything is signed. Gated on a secure crypto
+    //     backend (a 'none'-backend placeholder identity must stay ephemeral),
+    //     and degrades to today's in-memory behavior where the store is
+    //     unavailable (e.g. degraded private browsing) — NEVER to localStorage.
+    if (mintedFresh && identity.isDev && isSecure() && await deviceIdStore.available()) {
+      try {
+        const entry = identity.currentSeedEntry && identity.currentSeedEntry()
+        if (entry) {
+          const res = await deviceIdStore.saveOrAdopt(entry)
+          if (res.adopted) {
+            await identity.addUser(res.entry) // the racing tab's identity wins; ours is discarded unused
+            pub = identity.me().pubkey
+          }
+        }
+      } catch (e) { console.warn('[peerit] device identity persist failed (identity is session-only):', e && e.message) }
+    }
     // 4. Carry the lurker's device prefs over, re-key prefs, and let the world
     //    know the new writer exists (descriptor + outbox happen on the append's
     //    own _ensureMyOutbox; announce is best-effort acceleration).
@@ -1471,6 +1515,12 @@ async function viewSettings ({ guard, token }) {
   const hasOutbox = !!(currentOutbox && currentOutbox.inviteKey && seederCommand)
   const modeLabel = isBridgeMode() ? 'PearBrowser P2P bridge' : 'Local dev fallback'
   const vaultActive = typeof localStorage !== 'undefined' && hasVault(localStorage)
+  // Device tier state: the silently-restored identity (identity-store.js) is
+  // "active" when the store holds the CURRENT pubkey.
+  let deviceActive = false
+  if (identity.isDev && me.pubkey) {
+    try { const d = await deviceIdStore.load(); deviceActive = !!(d && d.pubkey === me.pubkey) } catch {}
+  }
   const backup = await pearBackupStatus()
   if (token !== renderToken) return
   guard(`<div class="panel settings-panel">
@@ -1492,13 +1542,19 @@ async function viewSettings ({ guard, token }) {
       <li><span>Body dispersal</span><b>${isDispersalActive() ? 'BlindShard active' : 'off'}</b></li>
     </ul>
     ${identity.isDev ? `<h2>Stay logged in on this device</h2>
-      <p class="dim small settings-copy">${vaultActive
-        ? `This browser remembers u/${esc(shortKey(me.pubkey, 6))} across reloads. Only a <b>passphrase-encrypted</b> copy is stored locally — the raw key never touches disk. You'll be asked for the passphrase each time this browser is reopened.`
-        : `By default this identity lives only until you reload. Set an unlock passphrase to keep posting as u/${esc(shortKey(me.pubkey, 6))} across reloads. Only a <b>passphrase-encrypted</b> copy is stored locally — the raw key never touches disk, and peerit can't reset the passphrase.`}</p>
-      <div class="form-actions wrap">
-        <button class="btn ${vaultActive ? 'btn-ghost' : 'btn-primary'}" type="button" data-act="remember-identity">${vaultActive ? 'Change unlock passphrase' : 'Remember this identity'}</button>
-        ${vaultActive ? '<button class="btn btn-ghost danger" type="button" data-act="forget-identity">Forget on this device</button>' : ''}
-      </div>
+      <p class="dim small settings-copy">${!me.pubkey
+        ? 'You are browsing without an identity. One is created automatically the first time you post, comment, or vote, and this device will remember it across reloads.'
+        : deviceActive && vaultActive
+          ? `This device remembers u/${esc(shortKey(me.pubkey, 6))} across reloads — no passphrase needed — and a <b>passphrase-encrypted</b> backup vault is also set. Honest limits: the device copy is encrypted in this browser's storage but usable by anyone on this browser profile (protect it with your OS login / disk encryption), and the browser may purge it after long inactivity — the vault and an exported file are the real recovery.`
+          : deviceActive
+            ? `This device remembers u/${esc(shortKey(me.pubkey, 6))} across reloads — no passphrase needed. Honest limits: the key is stored encrypted in this browser's storage, but anyone who can use this browser profile can post as you, and the browser may purge it after long inactivity (iOS: ~7 days unvisited). Set an unlock passphrase and keep an export to make it recoverable.`
+            : vaultActive
+              ? `This browser remembers u/${esc(shortKey(me.pubkey, 6))} across reloads. Only a <b>passphrase-encrypted</b> copy is stored locally — the raw key never touches disk. You'll be asked for the passphrase each time this browser is reopened.`
+              : `This identity lives only until you reload (device storage is unavailable here). Set an unlock passphrase to keep posting as u/${esc(shortKey(me.pubkey, 6))} across reloads — only a <b>passphrase-encrypted</b> copy is stored locally, and peerit can't reset the passphrase.`}</p>
+      ${me.pubkey ? `<div class="form-actions wrap">
+        <button class="btn ${vaultActive ? 'btn-ghost' : 'btn-primary'}" type="button" data-act="remember-identity">${vaultActive ? 'Change unlock passphrase' : (deviceActive ? 'Set a backup passphrase' : 'Remember this identity')}</button>
+        ${(vaultActive || deviceActive) ? '<button class="btn btn-ghost danger" type="button" data-act="forget-identity">Forget on this device</button>' : ''}
+      </div>` : ''}
       <h2>Move this identity to another device</h2>
       <p class="dim small settings-copy">Export your posting key as a <b>passphrase-encrypted</b> file, then import it in another browser or on your phone to post as the same u/${esc(shortKey(me.pubkey, 6))}. Anyone who gets both the file and the passphrase can post as you — treat it like a password.</p>
       <div class="form-actions wrap">
@@ -2138,11 +2194,13 @@ async function unlockVaultAtBoot () {
     })
     overlay.querySelector('[data-role="vault-fresh"]').addEventListener('click', () => {
       if (!confirm('Forget the saved identity on this device and start with a new one? The encrypted vault will be deleted. If you have not exported this identity, it is gone for good.')) return
-      // Drop the vault. Under lazy web identity nothing was minted at ready() —
-      // the visitor continues as a lurker and a fresh identity is minted on their
-      // next write (ensureWriterIdentity); in eager modes the ready()-minted
-      // identity stays active. Either way: A1's no-vault behavior.
+      // Drop BOTH tiers (a surviving device record would resurrect the identity).
+      // Under lazy web identity nothing was minted at ready() — the visitor
+      // continues as a lurker and a fresh identity is minted on their next write
+      // (ensureWriterIdentity); in eager modes the ready()-minted identity stays
+      // active. Either way: A1's no-vault behavior.
       clearVault(localStorage)
+      deviceIdStore.clear().catch(() => {})
       toast('Started fresh — set a new passphrase in Settings to keep this identity.')
       finish()
     })
@@ -2185,10 +2243,16 @@ async function runRememberIdentity (passphrase, confirm) {
   route()
 }
 
-function forgetVault () {
-  if (typeof localStorage === 'undefined' || !hasVault(localStorage)) { toast('Nothing to forget on this device.'); return }
-  if (!confirm('Forget the saved identity on this device? Your current identity keeps working until you reload; after that, this browser mints a new one unless you export it first.')) return
-  clearVault(localStorage)
+async function forgetVault () {
+  // Clears BOTH durability tiers — a device record surviving a vault clear (or
+  // vice versa) would silently resurrect the identity on the next boot.
+  const hasV = typeof localStorage !== 'undefined' && hasVault(localStorage)
+  let hasD = false
+  try { hasD = !!(await deviceIdStore.load()) } catch {}
+  if (!hasV && !hasD) { toast('Nothing to forget on this device.'); return }
+  if (!confirm('Forget the saved identity on this device? Your current identity keeps working until you reload; after that, you browse without an identity until your next post/comment/vote creates a new one — unless you export this one first.')) return
+  if (hasV) clearVault(localStorage)
+  await deviceIdStore.clear()
   toast('Forgotten — this identity will not survive the next reload on this device.')
   route()
 }

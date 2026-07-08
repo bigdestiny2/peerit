@@ -107,7 +107,7 @@ async function loadHiveRelayClient () {
 export const SITE_FILES = [
   'index.html', 'styles.css', 'icon.svg',
   'js/app.js', 'js/blob-store.js', 'js/box.js', 'js/canon.js', 'js/crypto.js', 'js/data.js', 'js/dht-bundle.js', 'js/gossip.js',
-  'js/identity.js', 'js/identity-export.js', 'js/identity-vault.js', 'js/lazy-pool.js', 'js/markdown.js', 'js/model.js', 'js/onboarding.js', 'js/pear-api.js', 'js/qr.js',
+  'js/identity.js', 'js/identity-export.js', 'js/identity-store.js', 'js/identity-vault.js', 'js/lazy-pool.js', 'js/markdown.js', 'js/model.js', 'js/onboarding.js', 'js/pear-api.js', 'js/qr.js',
   'js/prefs.js', 'js/pow.js', 'js/ranking.js', 'js/reader-bundle.js', 'js/recovery.js', 'js/relay-pool.js', 'js/relay-roster.js', 'js/release-verify.js',
   'js/runtime.js', 'js/seal.js', 'js/shard-roster.js', 'js/sync.js', 'js/util.js', 'js/verify.js',
   'config/shard-roster.public.json'

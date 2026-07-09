@@ -5,7 +5,9 @@
 
 import assert from 'node:assert'
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 
@@ -13,7 +15,23 @@ let passed = 0
 const ok = (c, m) => { assert.ok(c, m); passed++; console.log('  ✓ ' + m) }
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex')
 
-async function main () {
+function treeFingerprint (root) {
+  if (!existsSync(root)) return null
+  const files = {}
+  const walk = (dir, prefix = '') => {
+    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) walk(path, rel)
+      else if (entry.isFile()) files[rel] = sha256(readFileSync(path))
+      else throw new Error(`unexpected non-file in web fixture: ${rel}`)
+    }
+  }
+  walk(root)
+  return files
+}
+
+async function runBuildChecks () {
   console.log('\n— build-web DHT bundle smoke —')
   const relay = 'wss://dht-smoke.invalid/socket'
   const res = spawnSync(process.execPath, [
@@ -50,7 +68,25 @@ async function main () {
 
   const manifest = JSON.parse(readFileSync('web/asset-manifest.json', 'utf8'))
   ok(manifest.files['js/dht-bundle.js'] === sha256(bundle), 'asset manifest hashes the generated DHT bundle')
+}
 
+async function main () {
+  // build-web intentionally replaces web/. The release resume gate also runs the
+  // full suite, so this smoke test must never destroy a frozen signed candidate.
+  // Preserve and restore the complete directory even when an assertion fails.
+  const backupRoot = mkdtempSync(join(tmpdir(), 'peerit-dht-build-'))
+  const backupWeb = join(backupRoot, 'web')
+  const hadWeb = existsSync('web')
+  const originalWeb = treeFingerprint('web')
+  if (hadWeb) cpSync('web', backupWeb, { recursive: true })
+  try {
+    await runBuildChecks()
+  } finally {
+    rmSync('web', { recursive: true, force: true })
+    if (hadWeb) cpSync(backupWeb, 'web', { recursive: true })
+    rmSync(backupRoot, { recursive: true, force: true })
+  }
+  ok(JSON.stringify(treeFingerprint('web')) === JSON.stringify(originalWeb), 'DHT smoke restores a pre-existing frozen web artifact byte-for-byte')
   console.log(`\n✅ all ${passed} dht-build checks passed\n`)
 }
 

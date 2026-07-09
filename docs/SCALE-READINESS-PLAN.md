@@ -1,5 +1,11 @@
 # Scale-Readiness Plan — from "fine for hundreds" to "proven for a spike of thousands"
 
+> **Release-decision notice (2026-07-09):** this document is retained as design
+> background. The canonical live-service sequence and go/no-go gates are now in
+> [`PUBLIC-RELEASE-REMEDIATION-PLAN.md`](PUBLIC-RELEASE-REMEDIATION-PLAN.md).
+> Several findings below (including v2 PoW and pagination) have already been
+> addressed in the current worktree and must not be treated as current status.
+
 **Status:** PLAN · 2026-07-08 · owner-split labelled per the Service Contract (`hiverelay/docs/SERVICE-CONTRACT.md`) — app releases must never require a fleet update.
 **Scope:** the five mass-marketing gates from the readiness report. Closes the availability, spam, capacity, honesty, and liability gates for a marketing spike. Does **not** cover the decentralization/blindness claim, which is blocked on recruiting independent operators (a real-world problem, explicitly deferred — see §9).
 

@@ -83,11 +83,14 @@ async function main () {
   ok(true, 'bob replicates alice and sees version-3 content')
   const floor = JSON.parse(bobStorage.getItem('peerit:head-floor') || '{}')
   ok(floor[alice.pub] && floor[alice.pub].v === 3, 'bob durably records a head floor of v3 for alice (peerit:head-floor)')
+  ok(/^[0-9a-f]{64}$/i.test(String(floor[alice.pub] && floor[alice.pub].root || '')), 'the durable floor pins the signed root as well as the version')
 
   console.log('\n— the relay ROLLS BACK to an old, validly-signed state; bob catches it —')
   g.rows = new Map(snapshotV1); g.version += 5 // serve the old v1 head + subset, and report a change so bob re-reads
   const flagged = await until(async () => (await bob.sync.status()).withholding.includes(alice.pub), { tries: 80 })
   ok(flagged, 'bob FLAGS the rollback: the relay serves v1 but bob durably knows v3 existed (all-relays-collude has nothing newer to hide behind)')
+  const retained = await bob.data.listPostsIn('p2p')
+  ok(retained.length === 2, 'bob retains the last verified version-3 view instead of replacing it with rolled-back rows')
   // F2: the AUTHOR detects a rollback of their OWN outbox too (self is floored).
   const selfFlagged = await until(async () => (await alice.sync.status()).withholding.includes(alice.pub), { tries: 80 })
   ok(selfFlagged, 'alice detects the rollback of HER OWN outbox (the relay served her back an older head than she durably knows she wrote)')

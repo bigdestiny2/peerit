@@ -4,10 +4,10 @@
 // PearBrowser bridge and the localStorage dev-fallback.
 
 import { createSync } from './sync.js'
-import { cachedViewHasRows } from './gossip.js'
+import { SYNC_INTEGRITY_STATUS_KEY } from './gossip.js'
 import { createIdentity } from './identity.js'
 import { resolveRuntime, fetchShardRoster } from './runtime.js'
-import { verifyReleaseManifest } from './release-verify.js'
+import { verifyReleaseManifestWithFloor } from './release-verify.js'
 import { probeRelayBackend } from './pear-api.js'
 import { resolveRelayCandidates, selectRelaysResilient } from './relay-roster.js'
 import { createRelayPool } from './relay-pool.js'
@@ -41,6 +41,8 @@ const openReplies = new Set()      // comment cids with an open reply box
 const collapsedComments = new Set() // comment cids the user has collapsed (survives re-renders)
 let editing = null                 // { kind:'post'|'comment', ... } inline editor
 const nameCache = new Map()        // pub -> display name (sync-ish for render)
+let integrityWarningActive = false
+let releaseManifestWarning = ''
 
 const $ = (sel, root = document) => root.querySelector(sel)
 const app = () => $('#app')
@@ -109,12 +111,10 @@ async function boot () {
   // bridge), data.js falls back to single-blob boxing automatically.
   const shardCohort = await resolveShardCohort(runtime)
 
-  // Release-signature tripwire: when the build pins a release key
-  // (<meta name="peerit-release-key">), verify asset-manifest.json was signed by
-  // peerit's OFFLINE release key. HONEST CEILING (release-verify.js): a fully
-  // compromised origin can also strip this check — the durable win is EXTERNAL
-  // verification (verify.html / mirrors). In-app it is a tripwire against silent
-  // partial tampering, not a root of trust, so it warns loudly rather than bricking.
+  // Release-manifest tripwire: authenticate the signed manifest and apply the
+  // returning browser's monotonic sequence floor. This does NOT claim to hash the
+  // module graph which necessarily loaded before app.js could run on a first visit;
+  // complete served-byte assurance remains the external deployment proof.
   verifyReleaseAtBoot().catch(() => {})
 
   // Web mode transport selection (PearBrowser/dev use runtime.syncOpts = {}):
@@ -157,8 +157,9 @@ async function boot () {
   // of spreading syncOpts — so thread the pinned outboxes through explicitly on both paths.
   const seedOutboxes = runtime.syncOpts && runtime.syncOpts.seedOutboxes
   const writeHead = !runtime.readOnly
-  // First-ever web visit (no cached view): load the baked seed snapshot so the very
-  // first paint shows real, admit()-verified content instead of an empty feed.
+  // Always load the baked signed snapshot as a recovery baseline. Gossip compares
+  // its per-author heads with the verified cache, upgrading stale cache entries
+  // without ever downgrading a newer returning-client view.
   const seedSnapshot = await fetchSeedSnapshot(runtime)
   sync = pearForSync
     ? createSync({ getMe: () => identity.me().pubkey, identity, pear: pearForSync, writeHead, readOnly: runtime.readOnly, seedOutboxes, instantBoot: runtime.mode === 'web' && !pearOverride, seedSnapshot })
@@ -227,6 +228,8 @@ async function boot () {
   }
   const soft = debounce(flush, 350)
   sync.onChange((changed) => {
+    if (Array.isArray(changed)) changed = changed.filter((k) => k !== SYNC_INTEGRITY_STATUS_KEY)
+    if (Array.isArray(changed) && changed.length === 0) return
     if (!changed) pendingFull = true
     else { if (!pendingKeys) pendingKeys = new Set(); for (const k of changed) pendingKeys.add(k) }
     soft()
@@ -360,11 +363,41 @@ function isReadOnly () { return !!(runtime && runtime.readOnly) }
 // True when BlindShard dispersal is active for this session.
 function isDispersalActive () { return !!(data && data.dispersal) }
 
-// Resolve a shard cohort from runtime config. Inline relay URLs are used as-is;
-// a roster URL is fetched and validated. Returns null if no usable cohort.
-// Boot tripwire for the signed-release trust chain (task: wire release-verify).
-// Reads the pinned key from <meta name="peerit-release-key">, fetches the live
-// asset-manifest.json, and verifies its embedded { signature } against the pin.
+// Browser-local anti-rollback state for signed static releases.
+const RELEASE_FLOOR_PREFIX = 'peerit:web-release-floor:v1:'
+
+function readReleaseFloor (pinnedKey) {
+  try {
+    if (typeof localStorage === 'undefined') return null
+    const value = JSON.parse(localStorage.getItem(RELEASE_FLOOR_PREFIX + pinnedKey) || 'null')
+    return value && typeof value === 'object' ? value : null
+  } catch { return null }
+}
+
+function persistReleaseFloor (pinnedKey, floor) {
+  try {
+    if (typeof localStorage === 'undefined') return false
+    localStorage.setItem(RELEASE_FLOOR_PREFIX + pinnedKey, JSON.stringify(floor))
+    return true
+  } catch { return false }
+}
+
+function showReleaseManifestWarning () {
+  if (typeof document === 'undefined' || !document.body) return
+  const existing = document.getElementById('release-manifest-warning')
+  if (!releaseManifestWarning) { if (existing) existing.remove(); return }
+  const warn = existing || document.createElement('div')
+  warn.id = 'release-manifest-warning'
+  warn.className = 'readonly-banner'
+  warn.style.background = '#7f1d1d'
+  warn.textContent = releaseManifestWarning
+  if (!existing) document.body.insertBefore(warn, document.body.firstChild)
+}
+
+// Authenticate only the RELEASE MANIFEST, then retain a best-effort durable
+// sequence+identity floor for this pinned signing key. On a first load, imported
+// modules have already executed; hashing every asset here would be late as well as
+// expensive. The operator-side proof:web-deploy command performs that full check.
 // Absent pin => no-op (release signing not enabled for this build).
 async function verifyReleaseAtBoot () {
   if (typeof document === 'undefined' || typeof fetch !== 'function') return
@@ -372,6 +405,9 @@ async function verifyReleaseAtBoot () {
   const pinned = el && el.getAttribute('content') ? el.getAttribute('content').trim().toLowerCase() : ''
   if (!pinned) return
   try {
+    const sequenceEl = document.querySelector('meta[name="peerit-release-sequence"]')
+    const expectedSequence = Number(sequenceEl && sequenceEl.getAttribute('content'))
+    if (!Number.isSafeInteger(expectedSequence) || expectedSequence < 1) throw new Error('page has no valid release sequence')
     const [res, sigRes] = await Promise.all([
       fetch('asset-manifest.json', { cache: 'no-store' }),
       fetch('asset-manifest.sig', { cache: 'no-store' })
@@ -380,17 +416,23 @@ async function verifyReleaseAtBoot () {
     if (!sigRes.ok) throw new Error('asset-manifest.sig HTTP ' + sigRes.status + ' (release key pinned but bundle unsigned)')
     const manifest = await res.json()
     const signature = await sigRes.json()
-    await verifyReleaseManifest({ manifest, signature, expectedKey: pinned })
-    console.log('[peerit] release signature OK (key ' + pinned.slice(0, 12) + '…)')
+    const verified = await verifyReleaseManifestWithFloor({
+      manifest,
+      signature,
+      expectedKey: pinned,
+      expectedSequence,
+      floor: readReleaseFloor(pinned)
+    })
+    if (!persistReleaseFloor(pinned, verified.floor)) {
+      console.warn('[peerit] signed release manifest accepted, but the local anti-rollback floor could not be persisted')
+    }
+    releaseManifestWarning = ''
+    showReleaseManifestWarning()
+    console.log('[peerit] signed release manifest accepted (sequence ' + verified.releaseSequence + ', key ' + pinned.slice(0, 12) + '…); full module-byte verification is external')
   } catch (e) {
-    console.error('[peerit] RELEASE VERIFICATION FAILED:', e && e.message)
-    try {
-      const warn = document.createElement('div')
-      warn.className = 'readonly-banner'
-      warn.style.background = '#7f1d1d'
-      warn.textContent = '⚠ This copy of peerit could not be verified against the pinned release key (' + (e && e.message) + '). Treat it as untrusted — verify externally via verify.html or use PearBrowser.'
-      document.body.insertBefore(warn, document.body.firstChild)
-    } catch {}
+    console.error('[peerit] SIGNED RELEASE MANIFEST VALIDATION FAILED:', e && e.message)
+    releaseManifestWarning = '⚠ The signed release manifest failed validation (' + (e && e.message) + '). This check does not prove the module bytes already loaded on a first visit. Treat this page as untrusted — verify the deployment externally via verify.html or use PearBrowser.'
+    try { showReleaseManifestWarning() } catch {}
   }
 }
 
@@ -439,15 +481,13 @@ async function connectRelaysInBackground (lazy) {
   }
 }
 
-// First web visit only (no cached view WITH ROWS in localStorage): fetch the
-// baked, hash-pinned seed snapshot so first paint shows real verified content.
-// Returning visitors skip the fetch entirely (the gossip-view cache is faster and
-// fresher). cachedViewHasRows (gossip.js) treats a rowless cache as NO cache — a
-// poisoned blob (views emptied by a relay wipe) must not suppress the snapshot
-// floor, or the feed renders empty forever.
+// Fetch the small, hash-pinned seed snapshot on every web boot. Gossip still uses
+// a valid cached view for the fast/fresh paint, but cache verification is async
+// (signature + key binding + PoW) and therefore cannot be used as a synchronous
+// prefetch gate. Keeping the snapshot available lets ready() fall back immediately
+// when a rowful cache is forged, tampered, or below the durable head floor.
 async function fetchSeedSnapshot (rt) {
   if (!rt || rt.mode !== 'web' || typeof fetch !== 'function') return null
-  try { if (typeof localStorage !== 'undefined' && cachedViewHasRows(localStorage)) return null } catch {}
   try {
     const res = await fetch('seed-snapshot.json', { cache: 'no-store' })
     if (!res || !res.ok) return null
@@ -455,6 +495,8 @@ async function fetchSeedSnapshot (rt) {
   } catch { return null }
 }
 
+// Resolve a shard cohort from runtime config. Inline relay URLs are used as-is;
+// a roster URL is fetched and validated. Returns null if no usable cohort.
 async function resolveShardCohort (rt) {
   const cfg = rt && rt.shardCohort
   if (!cfg) return null
@@ -507,6 +549,7 @@ function renderChrome () {
     banner.innerHTML = 'Read-only — you\'re viewing peerit over a public relay. Posts and votes are verified here, but to participate, <a href="https://pears.com/" target="_blank" rel="noopener">open peerit in PearBrowser</a>.'
     document.body.insertBefore(banner, document.body.firstChild)
   }
+  showReleaseManifestWarning()
   renderUserMenu()
   updateNetStatus()
 }
@@ -518,8 +561,15 @@ async function updateNetStatus () {
     const s = await sync.status()
     const me = identity.me()
     const secure = s.secure !== false
-    el.className = 'netstatus ' + (s.mode && s.mode.includes('bridge') ? 'bridge' : (secure ? 'ok' : 'warn'))
-    el.innerHTML = `<b>${esc(s.mode || 'sync')}</b> · ${s.peers != null ? s.peers : 1}p · ${s.viewLength || 0} recs · <span class="mono">${me.pubkey ? esc(me.pubkey.slice(0, 6)) + '…' : 'lurking'}</span>${secure ? '' : ' · ⚠ insecure'}${isReadOnly() ? ' · read-only' : ''}${isDispersalActive() ? ' · dispersed' : ''}`
+    const withholding = Array.isArray(s.withholding) ? s.withholding : []
+    const integrityBad = withholding.length > 0
+    el.className = 'netstatus ' + (integrityBad ? 'warn' : (s.mode && s.mode.includes('bridge') ? 'bridge' : (secure ? 'ok' : 'warn')))
+    el.title = integrityBad
+      ? 'Signed outbox integrity warning: newer or complete records are being retained while the relay is withholding or rolled back.'
+      : 'P2P sync status — click to refresh'
+    el.innerHTML = `<b>${esc(s.mode || 'sync')}</b> · ${s.peers != null ? s.peers : 1}p · ${s.viewLength || 0} recs · <span class="mono">${me.pubkey ? esc(me.pubkey.slice(0, 6)) + '…' : 'lurking'}</span>${integrityBad ? ` · ⚠ ${withholding.length} outbox integrity issue${withholding.length === 1 ? '' : 's'}` : ''}${secure ? '' : ' · ⚠ insecure'}${isReadOnly() ? ' · read-only' : ''}${isDispersalActive() ? ' · dispersed' : ''}`
+    if (integrityBad && !integrityWarningActive) toast('Network integrity warning: a relay is withholding or serving a rolled-back outbox. Newer verified content is being retained.', 'error')
+    integrityWarningActive = integrityBad
   } catch (e) { el.textContent = 'sync: ' + (e.message || 'error') }
 }
 
@@ -584,8 +634,8 @@ function route () {
     case 'all': return viewFeed({ scope: 'all', query, guard, token })
     case 'popular': return viewFeed({ scope: 'all', query, guard, token })
     case 'communities': return viewCommunities({ guard, token })
-    case 'submit': return viewSubmit({ query, guard, token })
-    case 'create': return viewCreateCommunity({ guard, token })
+    case 'submit': return isReadOnly() ? viewReadOnlyParticipation({ guard, token }) : viewSubmit({ query, guard, token })
+    case 'create': return isReadOnly() ? viewReadOnlyParticipation({ guard, token }) : viewCreateCommunity({ guard, token })
     case 'bridge-proof': return viewBridgeProof({ session: path[1], query, guard, token })
     case 'search': return viewSearch({ query, guard, token })
     case 'settings': return viewSettings({ guard, token })
@@ -599,6 +649,15 @@ function route () {
       return viewFeed({ scope: 'community', community: path[1], query, guard, token })
     default: return guard(notFound())
   }
+}
+
+function viewReadOnlyParticipation ({ guard, token }) {
+  done(guard, token, `<div class="panel">
+    <h1>Read-only on peerit.site</h1>
+    <p>This public browser release verifies and displays signed content, but it does not publish posts, comments, communities, or votes.</p>
+    <p>To participate, open peerit in <a href="https://pears.com/" target="_blank" rel="noopener">PearBrowser</a>.</p>
+    <a class="btn btn-primary" href="#/">Back to the feed</a>
+  </div>`, renderSidebarHome)
 }
 
 // ---- local PearBrowser bridge proof ----------------------------------------
@@ -984,10 +1043,10 @@ async function countCommentsFor (posts) {
 function emptyFeed (scope, community) {
   if (scope === 'community') {
     return `<div class="empty"><h3>No posts in r/${esc(community)} yet</h3>
-      <p>Be the first to post.</p><a class="btn btn-primary" href="#/submit?to=${esc(community)}">Create a post</a></div>`
+      <p>${isReadOnly() ? 'There are no verified posts here yet.' : 'Be the first to post.'}</p><a class="btn btn-primary" href="#/submit?to=${esc(community)}">Create a post</a></div>`
   }
   return `<div class="empty"><h3>No live posts yet</h3>
-    <p>Start a community, make the first post, or bring back the starter feed.</p>
+    <p>${isReadOnly() ? 'No verified posts are available from the configured relays.' : 'Start a community, make the first post, or bring back the starter feed.'}</p>
     <div class="empty-actions">
       <a class="btn btn-primary" href="#/create">Create a community</a>
       <button class="btn btn-ghost" data-act="show-welcome">Show starter feed</button>
@@ -1030,7 +1089,7 @@ function starterCommunityCard (c) {
     <div>
       <h3>r/${esc(c.slug)}</h3>
       <p>${esc(c.description)}</p>
-      <button class="pa" data-act="start-community" data-slug="${esc(c.slug)}">Open or start</button>
+      <button class="pa" data-act="start-community" data-slug="${esc(c.slug)}">${isReadOnly() ? 'Open' : 'Open or start'}</button>
     </div>
   </article>`
 }
@@ -1669,9 +1728,12 @@ async function sidebarHome () {
   await Promise.all(communities.map(async c => { c._count = await data.postCount(c.slug) }))
   communities.sort((a, b) => (b._count || 0) - (a._count || 0))
   const top = communities.slice(0, 8)
+  const networkCopy = runtime && runtime.mode === 'web'
+    ? 'Signed per-author outboxes carried by relay infrastructure; your browser verifies every record.'
+    : 'Signed per-author outboxes replicate directly between peers; your device verifies every record.'
   return `<div class="card side">
       <h3>peerit</h3>
-      <p class="dim small">A peer-to-peer Reddit. No servers — posts, comments and votes live in a shared Holepunch log and replicate directly between peers.</p>
+      <p class="dim small">${esc(networkCopy)}</p>
       <a class="btn btn-primary block" href="#/submit">Create post</a>
       <a class="btn btn-ghost block" href="#/create">Create community</a>
     </div>

@@ -11,6 +11,8 @@
 //   Legacy proofs (pow.v absent or 1) keep the pre-v2 target shapes so existing
 //   wire records still admit (dual-accept).
 
+import { LEGACY_SEALED_V2_POW_SIGNATURES } from './legacy-v2-pow-allowlist.js'
+
 export const MIN_BITS = {
   post: 16,
   comment: 14,
@@ -143,6 +145,20 @@ export function makeValidator (minBits = MIN_BITS) {
   // gossip admit() rewrites type to the semantic type (val._t) before calling
   // validate(), so we only need to dispatch on that semantic type.
   return async (type, val) => {
+    // A sealed record is the v2 wire form. Legacy v1 proofs are retained only for
+    // legacy plaintext rows; accepting them on v2 would let one proof be replayed
+    // across records whose v1 target fields are intentionally absent.
+    const proofGated = type === 'post' || type === 'comment' || type === 'community' || type === 'blob'
+    if (proofGated && val && val.sealed) {
+      const version = val.pow && Number(val.pow.v)
+      if (!Number.isFinite(version) || version < 2) {
+        // Production carried sealed v2 rows before pow.v=2 existed. Admit only
+        // the exact pre-cutover, release-pinned signatures; a new author cannot
+        // exploit the reusable legacy target by backdating/signing another row.
+        const signature = typeof val._sig === 'string' ? val._sig.toLowerCase() : ''
+        if (!LEGACY_SEALED_V2_POW_SIGNATURES.has(signature)) return false
+      }
+    }
     if (type === 'post') return verify(type, val, minBits.post)
     if (type === 'comment') return verify(type, val, minBits.comment)
     if (type === 'community') return verify(type, val, minBits.community)

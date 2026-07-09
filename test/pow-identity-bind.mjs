@@ -94,6 +94,8 @@ async function main () {
   ok(await validate('post', rec) === true, 'makeValidator admits matching v2 proof')
   ok(await validate('post', stapled) === false, 'makeValidator rejects stapled v2 proof')
   ok(await validate('post', legacyRec) === true, 'makeValidator dual-accepts legacy')
+  ok(await validate('post', { ...legacyRec, sealed: 'opaque-v2-ciphertext' }) === false,
+    'makeValidator rejects a legacy proof replayed onto the sealed v2 wire form')
 
   console.log('\n— shipped data path: two v2 posts, staple fails admit via mergeOutboxes —')
   const sync = new DevSync(memoryStorage(), 'powbind'); await sync.ready()

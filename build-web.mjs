@@ -30,6 +30,7 @@ import { buildDhtBundle } from './scripts/build-dht-bundle.mjs'
 import { buildReaderBundle } from './scripts/build-reader-bundle.mjs'
 import { normalizeRelayRosterPayload, verifyRelayRoster } from './js/relay-roster.js'
 import { patchCspForWeb, cspConnectOrigin } from './scripts/csp.mjs'
+import { serviceWorkerSource } from './scripts/service-worker-source.mjs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const OUT = join(__dir, 'web')
@@ -57,6 +58,10 @@ const SEED_OUTBOXES = process.env.PEERIT_SEED_OUTBOXES || arg('--seed-outboxes')
 // can confirm asset-manifest.sig (produced by scripts/sign-release.mjs) is an authentic
 // release the origin could not self-forge. Empty = unsigned dev build (verify.html says so).
 const RELEASE_KEY = (process.env.PEERIT_RELEASE_KEY || arg('--release-key') || releaseConfig.pinnedReleaseKey || '').toLowerCase()
+const RELEASE_SEQUENCE = Number(process.env.PEERIT_RELEASE_SEQUENCE || arg('--release-sequence') || releaseConfig.releaseSequence || 0)
+if (RELEASE_KEY && (!Number.isSafeInteger(RELEASE_SEQUENCE) || RELEASE_SEQUENCE < 1)) {
+  throw new Error('a signed web build requires --release-sequence to be a positive safe integer')
+}
 const NO_RELAY_ROSTER = hasArg('--no-relay-roster') || process.env.PEERIT_NO_RELAY_ROSTER === '1'
 const RELAY_ROSTER = NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER || arg('--relay-roster') || releaseConfig.relayRoster || '')
 let RELAY_ROSTER_KEY = NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER_KEY || arg('--relay-roster-key') || releaseConfig.pinnedRosterKey || '')
@@ -141,7 +146,7 @@ async function prepareRoster () {
     throw new Error(`relay roster is not valid JSON: ${err.message}`)
   }
 
-  const rosterKey = String(roster.signature && roster.signature.key || '').toLowerCase()
+  const rosterKey = String((roster.signature && roster.signature.key) || '').toLowerCase()
   if (!RELAY_ROSTER_KEY) RELAY_ROSTER_KEY = rosterKey
   RELAY_ROSTER_KEY = String(RELAY_ROSTER_KEY).toLowerCase()
   if (rosterKey !== RELAY_ROSTER_KEY) throw new Error('relay roster signer does not match the pinned roster key')
@@ -203,6 +208,11 @@ const rosterRelease = await prepareRoster()
 const ROSTER_MIRRORS = (process.env.PEERIT_RELAY_ROSTER_MIRRORS || arg('--relay-roster-mirrors') || (releaseConfig.relayRosterMirrors || []).join(',') || '')
 const relayRosterMeta = [rosterRelease.meta, ...ROSTER_MIRRORS.split(',').map((s) => s.trim())].filter(Boolean).join(',')
 let html = files['index.html'].toString('utf8')
+// The source shell carries the development shard-roster hint so local builds can
+// exercise the reader. A production release with no signed shard cohort must not
+// ship that stale placeholder meta: it causes every visitor to fetch an unsigned
+// roster and report a false dispersal warning.
+html = html.replace(/\s*<meta\s+name="peerit-shard-(?:roster|relays|threshold)"[^>]*>/gi, '')
 const head = [
   RELAY ? `<meta name="peerit-relay" content="${attr(RELAY)}">` : '',
   RELAY && RELAY_BACKEND ? `<meta name="peerit-relay-backend" content="${attr(RELAY_BACKEND)}">` : '',
@@ -210,6 +220,7 @@ const head = [
   relayRosterMeta ? `<meta name="peerit-relay-roster" content="${attr(relayRosterMeta)}">` : '',
   RELAY_ROSTER_KEY ? `<meta name="peerit-relay-roster-key" content="${attr(RELAY_ROSTER_KEY)}">` : '',
   RELEASE_KEY ? `<meta name="peerit-release-key" content="${attr(RELEASE_KEY)}">` : '',
+  RELEASE_KEY ? `<meta name="peerit-release-sequence" content="${attr(RELEASE_SEQUENCE)}">` : '',
   DHT_RELAY ? `<meta name="peerit-dht-relay" content="${attr(DHT_RELAY)}">` : '',
   SHARD_ROSTER ? `<meta name="peerit-shard-roster" content="${attr(SHARD_ROSTER)}">` : '',
   SEED_OUTBOXES ? `<meta name="peerit-seed-outboxes" content="${attr(SEED_OUTBOXES)}">` : '',
@@ -272,10 +283,25 @@ const swRegister = `if ('serviceWorker' in navigator) {
 writeFileSync(join(OUT, 'sw-register.js'), swRegister)
 manifest['sw-register.js'] = sha256(Buffer.from(swRegister))
 
+// Generate control files before the signed manifest. Their source reads the
+// manifest at runtime rather than embedding these hashes, so hashing them here
+// has no self-reference/circularity. RELEASE_MSG_VERSION v2 signs `controls`.
+const swSource = serviceWorkerSource(manifest)
+const verifySource = verifyPage(DRIVE_KEY, RELEASE_KEY, RELEASE_SEQUENCE)
+const controls = {
+  'sw.js': sha256(Buffer.from(swSource)),
+  'verify.html': sha256(Buffer.from(verifySource))
+}
+writeFileSync(join(OUT, 'sw.js'), swSource)
+writeFileSync(join(OUT, 'verify.html'), verifySource)
+
 writeFileSync(join(OUT, 'asset-manifest.json'), JSON.stringify({
+  releaseSequence: RELEASE_SEQUENCE,
   files: manifest,
+  controls,
   driveKey: DRIVE_KEY,
   webRelease: {
+    releaseSequence: RELEASE_SEQUENCE,
     relay: RELAY,
     relayBackend: RELAY_BACKEND,
     readonly: READONLY,
@@ -289,11 +315,8 @@ writeFileSync(join(OUT, 'asset-manifest.json'), JSON.stringify({
   note: 'SHA-256 of every served file. Cross-check driveKey against the published hyper:// drive in PearBrowser. If asset-manifest.sig is present, verify it against releaseKey (see verify.html / js/release-verify.js).'
 }, null, 2))
 
-writeFileSync(join(OUT, 'sw.js'), serviceWorker(manifest))
-writeFileSync(join(OUT, 'verify.html'), verifyPage(DRIVE_KEY, RELEASE_KEY))
-
 console.log(`[build-web] wrote ${SITE_FILES.length + 4 + (files['relay-roster.json'] ? 1 : 0)} files to web/`)
-console.log(`           relay=${RELAY || '(none — local-only)'} readonly=${READONLY} driveKey=${DRIVE_KEY || '(unset)'}`)
+console.log(`           relay=${RELAY || '(none — local-only)'} readonly=${READONLY} releaseSequence=${RELEASE_SEQUENCE || '(unsigned)'} driveKey=${DRIVE_KEY || '(unset)'}`)
 console.log(`           relayRoster=${relayRosterMeta || '(none)'} rosterKey=${RELAY_ROSTER_KEY ? RELAY_ROSTER_KEY.slice(0, 12) + '...' : '(unset)'}`)
 if (DHT_RELAY) console.log(`           dhtRelay=${DHT_RELAY} dhtBundle=${files['js/dht-bundle.js'].length} bytes`)
 if (READER_BUNDLE) console.log(`           readerBundle=${files['js/reader-bundle.js'].length} bytes`)
@@ -302,50 +325,13 @@ if (!RELAY) console.log('           NOTE: no --relay → the bundle loads but st
 if (RELAY_ROSTER && !RELAY_ROSTER_KEY) console.log('           NOTE: --relay-roster without --relay-roster-key is ignored by clients (no pinned verification key).')
 
 // ---- generated assets -------------------------------------------------------
-function serviceWorker (man) {
-  return `// peerit service worker — pins the audited bundle by SHA-256.
-// On install it caches every file whose hash matches the manifest (refusing
-// mismatches), then serves same-origin GETs cache-first so the app survives the
-// origin going offline. Cross-origin relay traffic is never intercepted.
-const MANIFEST = ${JSON.stringify(man)};
-const CACHE = 'peerit-' + Object.values(MANIFEST).join('').slice(0, 24);
-async function sha256hex (buf) {
-  const h = await crypto.subtle.digest('SHA-256', buf);
-  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-self.addEventListener('install', (e) => e.waitUntil((async () => {
-  const cache = await caches.open(CACHE);
-  for (const path of Object.keys(MANIFEST)) {
-    try {
-      const res = await fetch(path, { cache: 'no-store' });
-      const buf = await res.clone().arrayBuffer();
-      if (await sha256hex(buf) === MANIFEST[path]) await cache.put(path, res);
-      else console.warn('[peerit-sw] hash mismatch, refusing to cache', path);
-    } catch (err) { console.warn('[peerit-sw] fetch failed', path, err && err.message); }
-  }
-  self.skipWaiting();
-})()));
-self.addEventListener('activate', (e) => e.waitUntil((async () => {
-  for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k);
-  await self.clients.claim();
-})()));
-self.addEventListener('fetch', (e) => {
-  const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin) return; // never touch relay calls
-  let path = url.pathname.replace(/^\\//, '');
-  if (path === '') path = 'index.html';
-  if (!(path in MANIFEST)) return;
-  e.respondWith((async () => { const c = await caches.open(CACHE); return (await c.match(path)) || fetch(e.request); })());
-});
-`
-}
-
-function verifyPage (driveKey, releaseKey) {
+function verifyPage (driveKey, releaseKey, releaseSequence) {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>verify peerit</title>
 <style>body{font-family:system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;line-height:1.6}code{background:#eee;padding:1px 5px;border-radius:4px;word-break:break-all}table{border-collapse:collapse;margin-top:1rem}td{border:1px solid #ccc;padding:4px 8px;font-size:13px}.ok{color:#0a7d24}.bad{color:#c02436}</style></head><body>
 <h1>Verify peerit</h1>
 <p>This recomputes the SHA-256 of every file this site served and compares it to <code>asset-manifest.json</code>, then checks the Ed25519 <b>release signature</b> (<code>asset-manifest.sig</code>) against the pinned release key.</p>
 <p>Pinned release key: <code>${releaseKey || '(unsigned build — no release key pinned)'}</code><br>Compare this to peerit's published release key from a channel you trust — <b>not</b> from this page. An in-page PASS only proves the bundle is internally consistent; a malicious origin can serve a tampered verify page <em>and</em> a matching bundle, so real assurance is (a) an EXTERNAL check of this key + signature, or (b) opening the <code>hyper://</code> drive in PearBrowser.</p>
+<p>Signed release sequence: <code>${releaseSequence || '(unsigned build)'}</code>. Returning browsers retain a best-effort local floor for this signing key and reject lower sequences or a different signed manifest reusing the same sequence.</p>
 <p>Published <code>hyper://</code> drive key: <code>${driveKey || '(set --drive-key at build time)'}</code> — content-addressed; open it in <b>PearBrowser</b> for a trust root the origin does not control.</p>
 <div id="out">checking…</div>
 <script type="module">
@@ -355,7 +341,7 @@ const sha = async (b) => { const h = await crypto.subtle.digest('SHA-256', b); r
   try {
     const m = await (await fetch('asset-manifest.json', { cache: 'no-store' })).json();
     let rows = '', allok = true;
-    for (const [p, want] of Object.entries(m.files)) {
+    for (const [p, want] of Object.entries({ ...(m.files || {}), ...(m.controls || {}) })) {
       const b = await (await fetch(p, { cache: 'no-store' })).arrayBuffer();
       const ok = (await sha(b)) === want; allok = allok && ok;
       rows += '<tr><td>' + p + '</td><td class="' + (ok ? 'ok' : 'bad') + '">' + (ok ? 'ok' : 'MISMATCH') + '</td></tr>';
@@ -366,8 +352,8 @@ const sha = async (b) => { const h = await crypto.subtle.digest('SHA-256', b); r
     if (!sres.ok) sigLine = '<p class="bad"><b>Release signature: UNSIGNED</b> — no asset-manifest.sig (dev build, or the release was not signed with the offline key).</p>';
     else {
       try {
-        const r = await verifyReleaseManifest({ manifest: m, signature: await sres.json(), expectedKey: expected });
-        sigLine = '<p class="ok"><b>Release signature: VALID</b> — signed by ' + r.key.slice(0, 16) + '… (compare to the key above).</p>';
+        const r = await verifyReleaseManifest({ manifest: m, signature: await sres.json(), expectedKey: expected, expectedSequence: ${JSON.stringify(releaseSequence || 0)} });
+        sigLine = '<p class="ok"><b>Release manifest signature: VALID</b> — sequence ' + r.releaseSequence + ', signed by ' + r.key.slice(0, 16) + '… (compare to the key above). This authenticates the manifest; the table below is the separate served-byte check.</p>';
       } catch (e) { sigLine = '<p class="bad"><b>Release signature: INVALID</b> — ' + (e && e.message) + '</p>'; }
     }
     document.getElementById('out').innerHTML = sigLine + '<p class="' + (allok ? 'ok' : 'bad') + '"><b>' + (allok ? 'All files match the manifest.' : 'MISMATCH — served code differs from the manifest.') + '</b></p><table>' + rows + '</table>';

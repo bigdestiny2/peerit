@@ -1,17 +1,16 @@
 # peerit — a peer-to-peer Reddit
 
-No servers. No data center. Communities, posts, threaded comments and votes live
-in a shared **Holepunch** log (Autobase + Hyperbee) and replicate directly between
-peers. peerit ships as a **P2P site** that runs inside **PearBrowser** (kept
-online 24/7 by **HiveRelay**) — and now also in **any normal browser** at
-**[peerit.site](https://peerit.site)** through an untrusted relay.
+Communities, posts, threaded comments and votes live in signed per-author
+outboxes. In **PearBrowser** those outboxes replicate directly between peers;
+normal browsers at **[peerit.site](https://peerit.site)** verify the same signed
+records while using configured relay infrastructure for transport and storage.
 
 > **New here? Read [EXPLAINER.md](EXPLAINER.md)** — what peerit is and how it works,
 > in plain language.
 
 ![How peerit assembles your feed: each user writes a signed outbox; your device verifies every signature and merges them into your feed; forged records are dropped.](docs/how-peerit-works.svg)
 
-**Two ways to run it — same signed data, same guarantees:**
+**Two ways to run it — same signed data, different availability and privacy ceilings:**
 
 | Where | How |
 |---|---|
@@ -231,15 +230,18 @@ gates, see [`TEST-COMMAND-MATRIX-2026-07-01.md`](TEST-COMMAND-MATRIX-2026-07-01.
 registers it in the PearBrowser catalog so it appears in the app's store. It now
 waits for relay byte-replication evidence after seed acceptance; use
 `STRICT_ANCHOR=1` for release publishes that should fail instead of warning when
-the drive is not durably reachable yet. The public web release is tied to the
-same command: `ship:live` rebuilds `web/` from `deploy/web-release.json`,
-validates `relay-roster.json` against the pinned roster key, and embeds the
-freshly published drive key in `asset-manifest.json` and `verify.html`.
+the drive is not durably reachable yet. The guarded `ship:live` flow publishes
+strictly, builds the final web candidate exactly once with the resulting key,
+hands `asset-manifest.json` to an external/offline signer, and continues only
+with build-free verification of the returned `asset-manifest.sig`.
 
 ```bash
-npm run ship:check        # tests + manifest/file/git served-file preflight
-npm run ship:live         # preflight, strict publish, then signed web release build
-npm run web:release       # validate/sign relay-roster.json and rebuild web/ only
+npm run ship:check          # preflight + one build; pause/resume for offline signature
+npm run ship:live           # preflight, strict publish, one build, sign handoff, verify-only
+npm run web:prepare         # build once + deploy/web-signing-request.json
+npm run release:sign        # optional local signer; an HSM/keyvault wrapper may replace it
+npm run web:verify          # hash every artifact + verify signature; NEVER builds
+npm run web:release         # compatibility alias for web:verify
 npm run proof:availability  # local static + availability evidence summary
 npm run publish:local       # local PearBrowser test, not cataloged or seeded
 npm run publish             # alias for the guarded ship:live flow
@@ -254,16 +256,41 @@ STRICT_ANCHOR=1 npm run publish
 `.deploy/last-web-release.json`. If strict anchoring fails after `manifest.json`
 was updated, `publish.mjs` restores the previous manifest so a partial relay
 anchor does not masquerade as the current release. By default the ship check
-blocks when release files are dirty in git; use `node ship.mjs --allow-dirty`
-only for an intentional uncommitted test publish.
+blocks when release files are dirty in git. Live publish rejects `--allow-dirty`,
+`--no-test`, and `--no-web`/`SKIP_WEB_RELEASE`; `--allow-dirty` is available only
+for an intentional non-publishing check. When the release config is read-only,
+the live preflight also runs `proof:production-readonly` and blocks unless the
+production edge rejects create/append while health and existing reads still work;
+it also runs `audit:live-legacy-pow`. Offline `ship:check` runs neither live probe.
+The packaged web commands and live ship are strict: any warning blocks release.
 `KEEP=1` is deliberately ignored by `ship:live`, because the ship process must
-regain control after `publish.mjs` writes the new drive key so it can rebuild and
-verify the web bundle.
+regain control after `publish.mjs` writes the new drive key so it can finish the
+signing handoff and verify the frozen web bundle.
+
+In a terminal, `ship` pauses until the operator returns
+`web/asset-manifest.sig`. In non-interactive use it records a hash-bound pending
+handoff and exits with status 2; after the external signer returns the file, run
+`npm run ship:live -- --resume-signature` (or `ship:check` for a non-public
+candidate). Resume never republishes or rebuilds. `--sign-command '<wrapper>'`
+is available for an explicitly operator-controlled HSM/keyvault wrapper; do not
+put the seed in the command string or on the deployment host.
+The standard scoped signer invocation is
+`keyvault exec --only peerit/release/signing-seed -- npm run release:sign`;
+keyvault injects `PEERIT_RELEASE_SIGNING_SEED` only for that process.
+The pending handoff binds the exact publish-report bytes and resume rechecks
+strict metadata plus full-blob durability evidence before accepting the report.
 
 The web release source of truth is [`deploy/web-release.json`](deploy/web-release.json).
+Its positive `releaseSequence` is signed into the artifact. Increment it for every
+changed signed candidate (including a new published drive key); prepare rejects a
+lower sequence or a different candidate reusing the sequence recorded by the
+committed `deploy/web-signing-request.json`. Returning normal browsers retain a
+best-effort key-scoped local floor, while first-visit full-byte assurance comes
+from `npm run proof:web-deploy -- --url https://peerit.site` rather than an
+expensive fetch of every module on every boot.
 When rotating the relay fleet, edit that file and run
-`PEERIT_ROSTER_SEED=<offline seed> npm run web:release`; without the seed, the
-same command verifies the committed signed roster and fails on any mismatch. A
+`PEERIT_ROSTER_SEED=<offline seed> npm run web:prepare -- --drive-key <key>`;
+without the seed, prepare verifies the committed signed roster and fails on any mismatch. A
 roster signing-key rotation is explicit: update `pinnedRosterKey` and the signed
 roster together.
 
@@ -343,12 +370,12 @@ on `status()`.
 Tests: [`outbox-head.mjs`](test/outbox-head.mjs) (A) · [`relay-pool.mjs`](test/relay-pool.mjs) (B) ·
 [`head-floor.mjs`](test/head-floor.mjs) (C, incl. detection surviving a client restart).
 
-**Live since 2026-07-01:** the signed roster carries **two relays** (a self-hosted VPS +
-a managed host, **both currently run by the same operator**), so the cross-relay checks (B)
-are exercised end-to-end — a single relay that rolls back or strips a head is caught and read
-around. This is **rollback/withholding detection, not yet operator diversity**: true
-anti-collusion (and any "no single origin" claim) needs a second **arms-length** operator
-(see the blindness section below). The durable floor is active too.
+**Current production ceiling:** the signed roster carries **one relay**. Durable
+head floors can detect a rollback below a version a returning browser has already
+seen, but there is no live second relay to recover missing rows or protect a first-time
+visitor from a stale single origin. Writable public launch therefore remains gated on
+at least two failure domains; anti-collusion and any "no single origin" claim require
+independent operators. The durable floor is active.
 Grow the pool by self-hosting another relay with one `docker compose up`
 ([`deploy/peerit-relay/`](deploy/peerit-relay/)); the optional blind in-browser DHT
 transport has its own bundle ([`deploy/dht-relay/`](deploy/dht-relay/)).

@@ -11,8 +11,8 @@
 // THE CONTRACT (stale-never-empty, at the persistence layer):
 //  1. _saveCache never overwrites a non-empty cached view with a rowless one.
 //  2. _loadCache treats a rowless cache as NO cache (so the snapshot floor applies).
-//  3. cachedViewHasRows (used by app.js to gate the snapshot fetch) agrees — which
-//     HEALS devices already poisoned by older builds.
+//  3. cachedViewHasRows agrees on local shape/floor usability; app.js always
+//     prefetches the small pinned snapshot because crypto admission is async.
 
 import assert from 'node:assert'
 import { BridgeGossipSync, cachedViewHasRows } from '../js/gossip.js'
@@ -128,7 +128,7 @@ async function main () {
   // ---- 4. ALREADY-poisoned device (older build wrote the empty blob): heals via snapshot ----
   const poisoned = mem()
   poisoned.setItem(CACHE_KEY, JSON.stringify({ v: 1, peers: [{ pub: authorPub, appId: authorPub, inviteKey: 'a'.repeat(64) }], views: { [authorPub]: {} }, heads: {} }))
-  ok(!cachedViewHasRows(poisoned), 'cachedViewHasRows treats the poisoned (rowless) blob as NO cache — app.js will fetch the snapshot')
+  ok(!cachedViewHasRows(poisoned), 'cachedViewHasRows treats the poisoned (rowless) blob as NO usable cache')
   const snapshot = { authors: [{ pub: authorPub, rows: world.groups.get(authorPub) ? [...world.groups.get(authorPub).rows.entries()].map(([key, value]) => ({ key, value })) : [] }] }
   const victimId = new DevIdentity(mem(), mem()); await victimId.ready(); await victimId.createUser('victim')
   const healed = new BridgeGossipSync({ pear: wiped, getMe: () => victimId.me().pubkey, identity: victimId, storage: poisoned, validate: makeValidator(BITS), pollMs: 0, seedOutboxes, instantBoot: true, seedSnapshot: snapshot })

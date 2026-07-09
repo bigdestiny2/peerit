@@ -33,6 +33,7 @@ async function main () {
 
   const html = readFileSync('web/index.html', 'utf8')
   ok(html.includes(`<meta name="peerit-dht-relay" content="${relay}">`), 'index.html includes peerit-dht-relay meta')
+  ok(!html.includes('name="peerit-shard-roster"'), 'disabled shard roster is absent instead of leaking stale source metadata')
   ok(/script-src[^;]*'wasm-unsafe-eval'/.test(html), 'DHT build CSP allows WASM crypto')
   ok(html.includes('connect-src') && html.includes('wss://dht-smoke.invalid'), 'DHT build CSP allows the exact relay WebSocket origin')
 

@@ -148,8 +148,9 @@ Update `deploy/web-release.json`:
 Then rebuild and ship:
 
 ```sh
-npm run web:release
-npm run ship:check   # or ship:live
+npm run ship:check   # builds once, pauses for the offline signature, then verifies only
+# or, after every public gate passes:
+npm run ship:live
 ```
 
 ---

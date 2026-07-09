@@ -123,6 +123,25 @@ export class Data {
     return rows
   }
 
+  // Read the backend's raw range with a cursor. This is intentionally separate
+  // from _rangeRead: the v2 view itself is built from raw `v2!` rows, so routing
+  // that call through _rangeRead would recurse through _v2v forever.
+  async _rawListPrefix (prefix, { limit = 1000 } = {}) {
+    const rows = []
+    let gt = null
+    const MAX_ROWS = 200000
+    while (rows.length < MAX_ROWS) {
+      const opts = gt ? { gt, lt: prefix + '\xff', limit } : { gte: prefix, lt: prefix + '\xff', limit }
+      const batch = await this.sync.range(opts).catch(() => [])
+      if (!Array.isArray(batch) || !batch.length) break
+      rows.push(...batch)
+      const last = batch[batch.length - 1] && batch[batch.length - 1].key
+      if (!last || last === gt || batch.length < limit) break
+      gt = last
+    }
+    return rows
+  }
+
   // Sign a record's canonical form and attach verification metadata. MUST be
   // called on every create AND every edit/delete — the gossip merge recomputes
   // the canonical form and rejects records whose signature no longer matches
@@ -199,7 +218,7 @@ export class Data {
   // v2 view with any legacy v1 rows (v2 wins a key collision). Built once per write
   // epoch. This is what "aggregation moves into the browser" means in code.
   async _buildV2View () {
-    const rows = await this.sync.list('v2!', { limit: 5000 }).catch(() => [])
+    const rows = await this._rawListPrefix('v2!', { limit: 1000 })
     const view = Object.create(null)
     for (const r of (rows || [])) {
       const s = r && r.value
@@ -233,7 +252,7 @@ export class Data {
     return v[k] != null ? v[k] : this.sync.get(k)
   }
   async _mergedRows (prefix) { // v1 rows + reconstructed v2 rows; v2 wins a key collision
-    const v1 = await this.sync.list(prefix, { limit: 5000 }).catch(() => [])
+    const v1 = await this._rawListPrefix(prefix, { limit: 1000 })
     const m = new Map((v1 || []).map(r => [r.key, r.value]))
     const v = await this._v2v()
     for (const k of Object.keys(v)) if (k.startsWith(prefix)) m.set(k, v[k])
@@ -592,7 +611,7 @@ export class Data {
   async getCommunity (slug) { return this._get(keys.community(slug)) }
 
   async listCommunities () {
-    const rows = await this._list(keys.communityPrefix(), { limit: 1000 })
+    const rows = await this._listPrefix(keys.communityPrefix(), { limit: 1000 })
     return rows.map(r => r.value).filter(Boolean)
   }
 
@@ -652,7 +671,7 @@ export class Data {
   // Body-free callers (karma, activity) pass { hydrate: false } to skip fetching +
   // decrypting every boxed blob they would only discard (review FIX 4).
   async listPostsIn (community, { hydrate = true } = {}) {
-    const rows = await this._list(keys.postsIn(community), { limit: 1000 })
+    const rows = await this._listPrefix(keys.postsIn(community), { limit: 1000 })
     const recs = rows.map(r => r.value).filter(Boolean)
     return hydrate ? Promise.all(recs.map(r => this._hydrate(r))) : recs
   }
@@ -759,7 +778,7 @@ export class Data {
   // Body-free callers (karma) pass { hydrate: false } to skip fetching+decrypting
   // boxed comment bodies they only discard — mirrors listPostsIn (review FIX 4).
   async listComments (community, postCid, { hydrate = true } = {}) {
-    const rows = await this._list(keys.commentsOn(community, postCid), { limit: 1000 })
+    const rows = await this._listPrefix(keys.commentsOn(community, postCid), { limit: 1000 })
     const recs = rows.map(r => r.value).filter(Boolean)
     return hydrate ? Promise.all(recs.map(r => this._hydrate(r))) : recs
   }
@@ -812,7 +831,7 @@ export class Data {
   }
 
   async rawVotes (targetCid) {
-    const rows = await this._list(keys.votesFor(targetCid), { limit: 1000 })
+    const rows = await this._listPrefix(keys.votesFor(targetCid), { limit: 1000 })
     return rows.map(r => r.value).filter(Boolean)
   }
 
@@ -1010,14 +1029,14 @@ export class Data {
 
   // Everyone WHO FOLLOWS pub — cheap prefix read (follow!<pub>!).
   async followersOf (pub) {
-    const rows = await this._list(keys.followersOf(pub), { limit: 5000 })
+    const rows = await this._listPrefix(keys.followersOf(pub), { limit: 1000 })
     return rows.map(r => r.value).filter(v => v && !v.deleted).map(v => v.author)
   }
 
   // Everyone pub FOLLOWS — a scan of the follow! range filtered by author (client-
   // side aggregation, same cost model as karmaFor).
   async followingOf (pub) {
-    const rows = await this._list(keys.followAll(), { limit: 5000 })
+    const rows = await this._listPrefix(keys.followAll(), { limit: 1000 })
     return rows.map(r => r.value).filter(v => v && !v.deleted && v.author === pub).map(v => v.target)
   }
 
@@ -1041,7 +1060,7 @@ export class Data {
   }
 
   async membersOf (community) {
-    const rows = await this._list(keys.membersOf(community), { limit: 5000 })
+    const rows = await this._listPrefix(keys.membersOf(community), { limit: 1000 })
     return rows.map(r => r.value).filter(v => v && !v.deleted).map(v => v.author)
   }
 
@@ -1049,7 +1068,7 @@ export class Data {
 
   async myMemberships () {
     const me = this.me().pubkey
-    const rows = await this._list(keys.memberAll(), { limit: 5000 })
+    const rows = await this._listPrefix(keys.memberAll(), { limit: 1000 })
     return rows.map(r => r.value).filter(v => v && !v.deleted && v.author === me).map(v => v.community)
   }
 
@@ -1140,7 +1159,7 @@ export class Data {
 
   // ---- Moderation -----------------------------------------------------------
   async listModActions (community) {
-    const rows = await this._list(keys.modsIn(community), { limit: 1000 })
+    const rows = await this._listPrefix(keys.modsIn(community), { limit: 1000 })
     return rows.map(r => r.value).filter(Boolean)
   }
 

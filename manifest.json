@@ -1,8 +1,8 @@
 {
   "id": "peerit",
   "name": "peerit",
-  "description": "A peer-to-peer Reddit. No servers, no data center — communities, posts, threaded comments and votes live in a shared Holepunch (Autobase + Hyperbee) log and replicate directly between peers. Runs as a P2P site inside PearBrowser, seeded 24/7 on HiveRelay.",
-  "version": "1.0.0",
+  "description": "A signed-outbox community app. PearBrowser peers replicate directly; normal browsers verify the same records while using configured relay infrastructure.",
+  "version": "1.0.1",
   "author": "defidon",
   "entry": "/index.html",
   "icon": "/icon.svg",

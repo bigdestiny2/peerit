@@ -129,9 +129,10 @@ async function main () {
   // Drop the same post from BOTH relays but keep carol's head (count still claims it):
   for (const base of [A, B]) { const g = storeOf(world, base, carol.pub); const pk = [...g.rows.keys()].find((k) => k.startsWith('post!solo!')); g.rows.delete(pk) }
   const dave = await makeClient(world, [A, B], 'dave', { writeHead: false })
-  await until(async () => (await dave.data.getCommunity('solo'))) // discovered carol
   const flagged = await until(async () => (await dave.sync.status()).withholding.includes(carol.pub), { tries: 80 })
   ok(flagged, 'dave FLAGS carol\'s outbox as withholding when neither relay serves her head-committed set')
+  const carolRows = (await dave.sync.range({ limit: 1000 })).filter((r) => r.value && r.value._k === carol.pub)
+  ok(carolRows.length === 0 && !(await dave.data.getCommunity('solo')), 'dave quarantines carol\'s WHOLE first-read view instead of presenting its partial community')
 
   for (const c of [alice, bob, carol, dave]) c.sync.destroy && c.sync.destroy()
   console.log(`\n✅ all ${passed} relay-pool checks passed\n`)

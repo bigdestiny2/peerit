@@ -49,7 +49,9 @@ curl -s -X POST https://153-75-89-206.sslip.io/api/token | head -c 80           
 seed for the pinned key `f7441ced…` — which only you hold. From `02-apps/peerit`:
 
 ```sh
-PEERIT_ROSTER_SEED=<your 32-byte hex seed> npm run web:release
+PEERIT_ROSTER_SEED=<your 32-byte hex seed> npm run web:prepare -- --drive-key <current-drive-key>
+keyvault exec --only peerit/release/signing-seed -- npm run release:sign
+npm run web:verify -- --drive-key <current-drive-key>
 ```
 
 This signs `relay-roster.json` to match the 2-relay config, rebuilds `web/`, and
@@ -59,7 +61,7 @@ key, set `pinnedRosterKey` in `deploy/web-release.json` to the new public key, a
 re-run — the new key flows into `index.html` automatically.
 
 > Don't have the seed and don't want to rotate? You can also sign from the relay
-> repo: `PEERIT_ROSTER_SEED=<seed> npm run roster:sign -- --relay https://153-75-89-206.sslip.io --relay https://peerit-relay.onrender.com --out ../peerit/relay-roster.json`, then `npm run web:release` (no seed) to verify + build.
+> repo: `PEERIT_ROSTER_SEED=<seed> npm run roster:sign -- --relay https://153-75-89-206.sslip.io --relay https://peerit-relay.onrender.com --out ../peerit/relay-roster.json`, then run the prepare → external sign → verify-only sequence above without the roster seed.
 
 ## 3. Ship
 

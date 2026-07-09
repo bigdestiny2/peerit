@@ -41,12 +41,35 @@ const HEX128 = /^[0-9a-f]{128}$/i
 // only re-reads outboxes that actually changed.
 const CACHE_KEY = 'peerit:gossip-view'
 const MAX_CACHE_BYTES = 3 * 1024 * 1024 // skip persisting if the view is huge (graceful)
+const FLOOR_KEY = 'peerit:head-floor'   // Phase C durable monotonic head floor (author -> max signed head version)
+// Synthetic change key used when transport integrity changes without any accepted
+// content changing. UI listeners can repaint the status warning without treating a
+// rejected rollback/withholding candidate as a real record mutation.
+export const SYNC_INTEGRITY_STATUS_KEY = 'peerit:status:integrity'
+
+// A floor applies to the signed author head INSIDE a candidate view. Missing heads
+// are below every persisted floor; an equal-version candidate must reproduce the
+// pinned root exactly. Keep this predicate shared by the pre-boot cache gate, cache
+// restore, snapshot restore, and live reads so no path can render what another path
+// would quarantine.
+function authorHeadPosition (view, pub) {
+  const head = view && view[keys.head(pub)]
+  const version = head && Number.isFinite(Number(head.version)) ? (head.version | 0) : -1
+  const root = head && typeof head.root === 'string' ? head.root.toLowerCase() : ''
+  return { head, version, root }
+}
+
+function violatesHeadFloor (view, pub, floor) {
+  if (!floor || typeof floor.v !== 'number') return false
+  const { version, root } = authorHeadPosition(view, pub)
+  return version < (floor.v | 0) || (version === (floor.v | 0) && !!floor.root && root !== String(floor.root).toLowerCase())
+}
 
 // True when the persisted gossip view holds at least one row. "Empty cache is NO
 // cache": a blob whose views were all emptied (a relay wipe answered 200-with-
 // empty-rows under builds predating _saveCache's rowCount guard) must not count as
-// a cached view anywhere — app.js uses this to decide whether the seed-snapshot
-// floor still applies, and _loadCache applies the same rule when restoring.
+// a usable cached view. This helper is intentionally shape/floor-only; async
+// `_loadCache` performs the cryptographic admission that a sync helper cannot.
 export function cachedViewHasRows (storage) {
   try {
     const raw = storage && storage.getItem(CACHE_KEY)
@@ -65,15 +88,32 @@ export function cachedViewHasRows (storage) {
         if (p && HEX64.test(p.pub || '') && p.appId === p.pub && typeof p.inviteKey === 'string') restorable.add(p.pub)
       }
     }
+    let floors = {}
+    try {
+      const parsed = JSON.parse(storage.getItem(FLOOR_KEY) || '{}')
+      if (parsed && typeof parsed === 'object') floors = parsed
+    } catch {}
+    let hasRows = false
     for (const pub in views) {
       if (PROTO_KEYS.has(pub) || !restorable.has(pub)) continue
       const v = views[pub]
-      if (v && typeof v === 'object') { for (const k in v) return true } // eslint-disable-line no-unreachable-loop
+      if (!v || typeof v !== 'object') continue
+      let nonEmpty = false
+      for (const k in v) { if (!PROTO_KEYS.has(k)) { nonEmpty = true; break } }
+      if (!nonEmpty) continue
+      const f = floors[pub]
+      const floor = f && typeof f.v === 'number'
+        ? { v: f.v | 0, root: typeof f.root === 'string' && HEX64.test(f.root) ? f.root.toLowerCase() : '' }
+        : null
+      // Report the cache unusable if any rowful author violates its floor. The web
+      // path always fetches the signed snapshot; this helper remains a synchronous
+      // shape/floor diagnostic for callers and tests.
+      if (violatesHeadFloor(v, pub, floor)) return false
+      hasRows = true
     }
-    return false
+    return hasRows
   } catch { return false }
 }
-const FLOOR_KEY = 'peerit:head-floor'   // Phase C durable monotonic head floor (author -> max signed head version)
 const MAX_FLOOR = 5000                  // cap tracked authors (drop lowest-version on overflow)
 const RECONCILE_EVERY = 30 // every N polls, ignore heads + re-verify everything (defends against a stale/lying relay or a tampered local cache)
 
@@ -416,9 +456,9 @@ class BridgeGossipSync {
     // rely on ready() meaning "network attempted". app.js turns it on for web boot.
     this._instantBoot = !!instantBoot
     // seedSnapshot: signed rows baked into the static bundle ({authors:[{pub,rows}]}).
-    // Used ONLY when there is no cached view (true first visit): every row passes the
-    // SAME admit() verification as live gossip (mergeOutboxes), so the snapshot can
-    // go stale but can never forge. Gives a first-ever visitor instant real content.
+    // Used when there is no cached view, or when the durable floor quarantines one
+    // or more cached authors: every row passes the SAME admit() verification as live
+    // gossip (mergeOutboxes), so the snapshot can go stale but can never forge.
     this._seedSnapshot = seedSnapshot
     this.getMe = getMe
     this.identity = identity
@@ -450,6 +490,11 @@ class BridgeGossipSync {
     this._floorTick = 0            // monotonic recency stamp for floor eviction (LRU, not version)
     this._claimed = null          // sticky community owners (slug -> creator), persisted
     this._refreshing = null       // in-flight refresh promise (serialises concurrent merges)
+    this._forceReadPub = null     // explicit stable-state audit; bypasses transport-head gating once
+    this._localWriteTransition = null // narrowly-scoped record -> signed-head two-append window
+    this._unconfirmedLocalHead = null // final audit must quarantine a headless/partial local publication
+    this._unconfirmedRecordAppend = null // ambiguous low-level record ACK; blocks writes until a signed head confirms it
+    this._appendTail = Promise.resolve() // serialize local record/head pairs
     this._destroyed = false
     this._poll = null
     this._pollTimer = null
@@ -523,9 +568,10 @@ class BridgeGossipSync {
   }
 
   // Restore the cached view BEFORE any network, so list()/get() return content on
-  // the very first paint. Discovered peers go back into _peers so the first poll
-  // re-reads them (heads-gated). Returns true if a view was restored.
-  _loadCache () {
+  // the very first paint. The cache is untrusted local input: every row goes back
+  // through mergeOutboxes -> admit (signature, key binding, blob integrity, PoW)
+  // before it can render or capture a claim. Returns true if a view was restored.
+  async _loadCache () {
     try {
       const raw = this._getLocal(CACHE_KEY)
       if (!raw) return false
@@ -537,13 +583,53 @@ class BridgeGossipSync {
         }
       }
       let restoredRows = 0
+      const accepted = []
       if (c.views && typeof c.views === 'object') for (const pub in c.views) {
         if (PROTO_KEYS.has(pub) || !this._peers.has(pub)) continue
         const v = c.views[pub]; if (!v || typeof v !== 'object') continue
-        const view = Object.create(null); const sig = new Map()
-        for (const k in v) { if (PROTO_KEYS.has(k)) continue; view[k] = v[k]; sig.set(k, changeToken(v[k])); restoredRows++ }
-        this._peerViews.set(pub, view)
-        this._peerSigs.set(pub, sig)
+        const view = Object.create(null)
+        let viewRows = 0
+        for (const k in v) { if (PROTO_KEYS.has(k)) continue; view[k] = v[k]; viewRows++ }
+        if (!viewRows) continue
+        if (violatesHeadFloor(view, pub, this._floor.get(pub))) {
+          // Keep peer metadata so the first live pass can recover it, but do not let
+          // a stale cached author become visible or capture a sticky community name.
+          this._withholding.add(pub)
+          continue
+        }
+        // Verify one author at a time with an empty temporary claim map. Live
+        // ingest stores every authentic row in that author's per-peer view even
+        // when a sticky/global community winner hides it from the merged view;
+        // cache restore must preserve the same census symmetry.
+        const verified = await mergeOutboxes([{ pub, view }], {}, this.validate)
+        const admitted = Object.create(null); const sig = new Map()
+        for (const k in verified) { admitted[k] = verified[k]; sig.set(k, changeToken(verified[k])) }
+        const admittedRows = Object.keys(admitted).length
+        if (!admittedRows) continue
+
+        // If an authentic cached head exists, require the re-admitted rows to
+        // reproduce its exact census. A forged/tampered row removed above must not
+        // leave a partial author view that still suppresses the seed fallback.
+        const head = admitted[keys.head(pub)]
+        if (head) {
+          const rows = []; for (const k in admitted) rows.push({ key: k, value: admitted[k] })
+          const audit = await auditOutbox(rows, head, pub)
+          if (audit.hasHead && audit.matches === false) {
+            this._withholding.add(pub)
+            continue
+          }
+          // A fully re-admitted, census-matching cached head is durable evidence in
+          // its own right. Ratchet before comparing the bundled snapshot so a newer
+          // cache can never be downgraded by an older release baseline.
+          const { version, root } = authorHeadPosition(admitted, pub)
+          const floor = this._floor.get(pub)
+          if (!floor || version > floor.v || (version === floor.v && !floor.root && root)) {
+            this._floor.set(pub, { v: version, root, t: ++this._floorTick })
+            this._floorDirty = true
+          }
+        }
+        accepted.push({ pub, view: admitted, sig })
+        restoredRows += admittedRows
       }
       // An empty cache is NO cache: a poisoned blob (all views emptied by a relay
       // wipe — written by builds that predate the rowCount guard in _saveCache)
@@ -558,8 +644,17 @@ class BridgeGossipSync {
       // re-read (and thus re-validate) every cached peer against the live relay;
       // heads-gating then kicks in for subsequent polls.
       if (!this._claimed) { try { this._claimed = JSON.parse(this._getLocal(CLAIMED_KEY) || '{}') } catch { this._claimed = {} } }
-      const boxes = []; for (const [pub, view] of this._peerViews) boxes.push({ pub, view })
-      if (boxes.length) { this._cache = combineAdmitted(boxes, this._claimed); this._sortedFor = null; return true }
+      // Combine through a temporary claim map, then commit it only after every
+      // floor-rejected author has already been removed from `accepted`.
+      const nextClaimed = { ...this._claimed }
+      if (accepted.length) {
+        this._cache = combineAdmitted(accepted, nextClaimed)
+        for (const { pub, view, sig } of accepted) { this._peerViews.set(pub, view); this._peerSigs.set(pub, sig) }
+        this._claimed = nextClaimed
+        if (this._floorDirty) this._saveFloor()
+        this._sortedFor = null
+        return true
+      }
       return false
     } catch { return false }
   }
@@ -569,7 +664,7 @@ class BridgeGossipSync {
   // signed head's version is monotonic and author-controlled, so "I have durably
   // seen version N for this author" is a sound rollback baseline that a relay
   // (even the ephemeral memory core after a wipe, even all relays colluding)
-  // cannot talk us below. Only stores (v, root) — tiny.
+  // cannot talk us below. Stores (v, root) so an equal-version fork is pinned too.
   _loadFloor () {
     try {
       const o = JSON.parse(this._getLocal(FLOOR_KEY) || '{}')
@@ -578,7 +673,8 @@ class BridgeGossipSync {
         if (PROTO_KEYS.has(pub) || !HEX64.test(pub)) continue
         const e = o[pub]; if (!e || typeof e.v !== 'number') continue
         const t = typeof e.t === 'number' ? e.t : 0
-        this._floor.set(pub, { v: e.v | 0, t })
+        const root = typeof e.root === 'string' && HEX64.test(e.root) ? e.root.toLowerCase() : ''
+        this._floor.set(pub, { v: e.v | 0, root, t })
         if (t > this._floorTick) this._floorTick = t
       }
     } catch {}
@@ -590,7 +686,7 @@ class BridgeGossipSync {
     // high-version head must not be able to push a followed author out of the cap.
     if (entries.length > MAX_FLOOR) { entries = entries.sort((a, b) => (b[1].t | 0) - (a[1].t | 0)).slice(0, MAX_FLOOR); this._floor = new Map(entries) }
     const o = {}
-    for (const [pub, e] of entries) o[pub] = { v: e.v, t: e.t | 0 }
+    for (const [pub, e] of entries) o[pub] = { v: e.v, root: e.root || '', t: e.t | 0 }
     let blob; try { blob = JSON.stringify(o) } catch { return }
     try { this._setLocal(FLOOR_KEY, blob); this._floorDirty = false } catch (e) { console.warn('[gossip] head-floor persist failed (rollback protection not durable this round):', e && e.message) }
   }
@@ -623,8 +719,9 @@ class BridgeGossipSync {
         if (!h || h._k !== appId) continue
         if ((await verifyRecord(TYPE.HEAD, h)) !== 'ok') continue // never seed the floor from an unverified head
         const v = h.version | 0
+        const root = typeof h.root === 'string' && HEX64.test(h.root) ? h.root.toLowerCase() : ''
         const fl = this._floor.get(appId)
-        if (!fl || v > fl.v) { this._floor.set(appId, { v, t: ++this._floorTick }); this._floorDirty = true }
+        if (!fl || v > fl.v || (v === fl.v && !fl.root && root)) { this._floor.set(appId, { v, root, t: ++this._floorTick }); this._floorDirty = true }
         // RELIABLE READ DISCOVERY: the relay serves any outbox's rows by appId (range takes
         // no inviteKey — the drive read-cap only gates P2P replication, which the relay does
         // on our behalf). A VERIFIED directory head is therefore enough to READ that author's
@@ -665,6 +762,10 @@ class BridgeGossipSync {
   // failure (returns false) so boot/posting degrade gracefully and self-heal when
   // the relay comes back.
   async _ensureMyOutbox () {
+    // Read-only is a transport capability boundary, not merely an append UI gate.
+    // An existing identity must not cause boot, wake, poll, or announce to create a
+    // writable relay group. Those paths all converge here; reads/discovery continue.
+    if (this._readOnly) return false
     const appId = this._myAppId()
     // Lurker (lazy web identity, pre-first-write): no identity → no outbox to
     // open. Quiet false, NOT a warning — this is the designed steady state for
@@ -695,13 +796,17 @@ class BridgeGossipSync {
       this._peers.set(appId, { appId, inviteKey: myKey || null, self: true })
       if (HEX64.test(myKey || '')) this._rememberOutbox(appId, myKey)
     }
-    // Restore last session's verified view (+ discovered peers + heads) so the
-    // first list()/get() paints instantly instead of blanking; the poll then
-    // re-reads only what changed and a periodic reconcile re-verifies everything.
-    // On a true first visit (no cache) fall back to the baked seed snapshot —
-    // every row admit()-verified, so it renders real content but can't forge.
-    if (!this._loadCache() && this._seedSnapshot) await this._loadSnapshot(this._seedSnapshot)
-    this._loadFloor() // Phase C: restore the durable rollback floor (survives restart by design)
+    // Load the durable monotonic floor BEFORE accepting any cache/snapshot rows.
+    // A previously observed newer head must be able to reject an older bundled
+    // snapshot just as it rejects an older relay response.
+    this._loadFloor()
+    // Restore last session's view after full re-admission so the first list()/get()
+    // paints authenticated content; the poll later reconciles against live relays.
+    await this._loadCache()
+    // The signed bundle is also a recovery baseline for returning clients. Always
+    // compare it with the verified cache: a newer bundled head repairs a stale
+    // cache, while a newer cache remains authoritative and is never downgraded.
+    if (this._seedSnapshot) await this._loadSnapshot(this._seedSnapshot)
     if (this._instantBoot) {
       // Normal-website boot: paint from the local restore NOW; do every network
       // step in the background. Callers that need the network done (seeder,
@@ -793,29 +898,77 @@ class BridgeGossipSync {
       const boxes = []
       for (const a of authors) {
         if (!a || !HEX64.test(a.pub || '') || !Array.isArray(a.rows)) continue
-        if (a.pub === this.getMe()) continue
         const view = Object.create(null)
         for (const r of a.rows) { if (r && typeof r.key === 'string' && !PROTO_KEYS.has(r.key) && r.value) view[r.key] = r.value }
         boxes.push({ pub: a.pub, view })
       }
       if (!boxes.length) return false
       if (!this._claimed) { try { this._claimed = JSON.parse(this._getLocal(CLAIMED_KEY) || '{}') } catch { this._claimed = {} } }
-      const merged = await mergeOutboxes(boxes, this._claimed, this.validate)
-      if (!Object.keys(merged).length) return false
-      // Keep only rows that SURVIVED verification in the per-peer views, and
-      // register each author as a directory-style content peer so the first live
-      // refresh re-reads them straight from the relay by appId.
+      // Re-admit and compare each author independently. This preserves the exact
+      // author census (global sticky-community winners are applied only after the
+      // winning per-author version is selected) and prevents a rejected snapshot
+      // candidate from capturing a claim.
       for (const { pub, view } of boxes) {
+        if (!this._peers.has(pub) && this._peers.size < MAX_PEERS) this._peers.set(pub, { appId: pub, inviteKey: pub, dir: true })
+        const verified = await mergeOutboxes([{ pub, view }], {}, this.validate)
         const admitted = Object.create(null); const sig = new Map()
-        for (const k in view) { if (merged[k] && changeToken(merged[k]) === changeToken(view[k])) { admitted[k] = view[k]; sig.set(k, changeToken(view[k])) } }
+        for (const k in verified) { admitted[k] = verified[k]; sig.set(k, changeToken(verified[k])) }
         if (!Object.keys(admitted).length) continue
+
+        const existing = this._peerViews.get(pub) || null
+        const candidate = authorHeadPosition(admitted, pub)
+        const current = authorHeadPosition(existing, pub)
+
+        // A headed snapshot must be internally complete before it participates in
+        // version selection. Headless legacy snapshots remain row-by-row compatible.
+        if (candidate.head) {
+          const rows = []; for (const k in admitted) rows.push({ key: k, value: admitted[k] })
+          const audit = await auditOutbox(rows, candidate.head, pub)
+          if (audit.hasHead && audit.matches === false) {
+            if (!existing) this._withholding.add(pub)
+            continue
+          }
+        }
+
+        if (existing) {
+          if (current.head && candidate.head) {
+            // Same version with different roots is an author-signed fork. Neither
+            // local source may win by arrival order: quarantine until live recovery
+            // reproduces the durable floor.
+            if (candidate.version === current.version && candidate.root !== current.root) {
+              this._peerViews.delete(pub)
+              this._peerSigs.delete(pub)
+              this._withholding.add(pub)
+              continue
+            }
+            if (candidate.version <= current.version) continue // same root or older snapshot: never downgrade
+          } else if (current.head && !candidate.head) continue // auditable cache beats a headless snapshot
+          else if (!current.head && !candidate.head) continue // no ordering proof: retain the returning client's cache
+          // candidate.head && !current.head falls through: prefer the auditable snapshot
+        }
+
+        const floor = this._floor.get(pub)
+        if (violatesHeadFloor(admitted, pub, floor)) {
+          if (!existing) this._withholding.add(pub)
+          continue
+        }
+        if (candidate.head && (!floor || candidate.version > floor.v || (candidate.version === floor.v && !floor.root && candidate.root))) {
+          this._floor.set(pub, { v: candidate.version, root: candidate.root, t: ++this._floorTick })
+          this._floorDirty = true
+        }
         this._peerViews.set(pub, admitted)
         this._peerSigs.set(pub, sig)
-        if (!this._peers.has(pub) && this._peers.size < MAX_PEERS) this._peers.set(pub, { appId: pub, inviteKey: pub, dir: true })
+        this._withholding.delete(pub)
       }
-      this._cache = merged
+      if (this._floorDirty) this._saveFloor()
+      // Apply global winners/claims only after every author has been authenticated,
+      // audited, and monotonically selected.
+      const allAccepted = []
+      for (const [pub, view] of this._peerViews) allAccepted.push({ pub, view })
+      this._cache = combineAdmitted(allAccepted, this._claimed)
+      if (!Object.keys(this._cache).length) { this._cache = null; return false }
       this._sortedFor = null
-      console.log('[gossip] first visit: rendered ' + Object.keys(merged).length + ' verified rows from the baked seed snapshot')
+      console.log('[gossip] reconciled ' + Object.keys(this._cache).length + ' verified rows with the signed seed snapshot')
       return true
     } catch (e) { console.warn('[gossip] seed snapshot rejected:', e && e.message); return false }
   }
@@ -968,36 +1121,102 @@ class BridgeGossipSync {
     return this._announce()
   }
 
-  async append (op) {
+  append (op) {
+    const run = () => this._appendOne(op)
+    // A record and the signed head that commits it are one local integrity
+    // transition. Serialize those pairs so concurrent UI writes cannot derive two
+    // heads from the same prior version.
+    if (this._writeHead && this.identity && op && op.type !== TYPE.HEAD) {
+      const queued = this._appendTail.then(run, run)
+      this._appendTail = queued.then(() => undefined, () => undefined)
+      return queued
+    }
+    return run()
+  }
+
+  async _appendOne (op) {
     if (this._readOnly) throw new Error('This peerit is read-only.')
     if (!await this._ensureMyOutbox()) throw new Error('Peerit outbox is unavailable; check relay connectivity and try again.')
-    const r = await this.pear.sync.append(this._myAppId(), { type: op.type, data: op.data, timestamp: new Date().toISOString() })
-    const changed = await this._refresh()
-    // Re-commit my signed head so it always reflects my full record set. It's a
-    // low-level append (no re-entry into append()), and we UNION its change set
-    // with the record's so the UI still sees the record it just wrote (the head
-    // key itself is inert to the UI).
-    if (this._writeHead && this.identity && op.type !== TYPE.HEAD) {
-      try {
-        const headChanged = await this._maintainHead()
-        if (headChanged) for (const k of headChanged) if (!changed.includes(k)) changed.push(k)
-      } catch (e) { console.warn('[gossip] head update failed:', e && e.message) }
+    const me = this._myAppId()
+    const maintainsHead = this._writeHead && this.identity && op.type !== TYPE.HEAD
+
+    if (maintainsHead) {
+      // Stable-state preflight: force a fresh self read and census audit even when
+      // `/heads` claims nothing changed. A replayed old self-signed row must be
+      // detected BEFORE this client can sign a new head over it.
+      await this._refreshPeerNow(me)
     }
+    if (this._withholding.has(me) || (this._unconfirmedRecordAppend && this._unconfirmedRecordAppend.pub === me)) throw new Error('Peerit outbox integrity check failed; refusing to append until the relay recovers the newer signed state.')
+
+    let r
+    let recordError = null
+    let headError = null
+    const recordKey = op.type.replace(':', '!') + '!' + op.data.id
+    const transition = maintainsHead ? { pub: me, key: recordKey } : null
+    if (transition) {
+      // While the relay has accepted the record but not its new head, background
+      // polls retain the last audited self view. The producer computes the new
+      // census from that trusted view plus this exact local op; no relay candidate
+      // is trusted during the two-append window.
+      this._localWriteTransition = transition
+    }
+    try {
+      try { r = await this.pear.sync.append(me, { type: op.type, data: op.data, timestamp: new Date().toISOString() }) } catch (error) { recordError = error }
+      // Never derive or append a confirming head after an ambiguous record error:
+      // the relay may have committed the row before losing the response.
+      if (!recordError && maintainsHead) { try { await this._maintainHead(op) } catch (e) { headError = e } }
+    } finally {
+      if (transition && this._localWriteTransition === transition) this._localWriteTransition = null
+    }
+
+    if (recordError) {
+      this._unconfirmedRecordAppend = { pub: me, key: recordKey, token: changeToken(op.data) }
+      this._withholding.add(me)
+    }
+    // A record without its confirming head is an unconfirmed partial publication.
+    // Quarantine before the stable audit so even a first-ever (headless) write
+    // cannot look healthy after both bounded head attempts fail.
+    if (headError) { this._withholding.add(me); this._unconfirmedLocalHead = me }
+    // Audit the now-stable record+head pair. This is forced past transport-head
+    // gating and cannot coalesce into a refresh that began before the head append.
+    let changed = []
+    try { changed = (maintainsHead || recordError) ? await this._refreshPeerNow(me) : await this._refresh() } catch (error) {
+      // If the write itself was ambiguous, preserve that explicit failure instead
+      // of replacing it with a secondary reconciliation/network error.
+      if (!recordError && !headError) throw error
+      console.warn('[gossip] post-write integrity reconciliation failed:', error && error.message)
+      changed = [SYNC_INTEGRITY_STATUS_KEY]
+    } finally {
+      if (this._unconfirmedLocalHead === me) this._unconfirmedLocalHead = null
+    }
+    const unconfirmedHead = !!headError && this._withholding.has(me)
+    if (unconfirmedHead) console.warn('[gossip] head confirmation failed:', headError && headError.message)
     // head! keys are inert to the UI; strip them so a write's change-set doesn't
     // defeat the vote fast-paths (cacheClassForChangedKeys / patchVotesInPlace).
     this._emit(changed.filter((k) => typeFromKey(k) !== TYPE.HEAD))
+    if (recordError) {
+      const unconfirmed = new Error('Peerit publication is unconfirmed: the relay did not acknowledge the record append, so it may have committed without a confirming signed head. No further writes are allowed until integrity recovers.')
+      unconfirmed.cause = recordError
+      throw unconfirmed
+    }
+    if (unconfirmedHead) {
+      const unconfirmed = new Error('Peerit publication is unconfirmed: the record reached the relay, but its signed outbox head could not be confirmed. No further writes are allowed until integrity recovers.')
+      unconfirmed.cause = headError
+      throw unconfirmed
+    }
     return r
   }
 
-  // Compute + sign + append the outbox head (the "merkle root" census over my own
-  // records). Returns the refresh change-set. No PoW (makeValidator passes the
-  // 'head' type); signed with the same Ed25519 envelope as every record, so a
-  // reader verifies it with the identical verifyRecord() path.
-  async _maintainHead () {
+  // Compute + sign + append the outbox head (the "merkle root" census over the
+  // last audited self view plus `pendingOp`). No PoW (makeValidator passes the
+  // 'head' type); signed with the same Ed25519 envelope as every record. The
+  // caller performs one stable-state refresh after both low-level appends.
+  async _maintainHead (pendingOp = null) {
     if (this._destroyed) return null // torn down mid-write — don't append after destroy()
     const me = this.getMe()
     if (!HEX64.test(me || '')) return null // no real key -> no meaningful head
-    const view = this._peerViews.get(me) || {}
+    const view = Object.assign(Object.create(null), this._peerViews.get(me) || {})
+    if (pendingOp) applyOp(view, pendingOp)
     const rows = []
     for (const k in view) rows.push({ key: k, value: view[k] })
     const census = outboxCensus(rows, me)
@@ -1010,8 +1229,16 @@ class BridgeGossipSync {
     }
     const s = await this.identity.sign(canonical(TYPE.HEAD, data))
     data._sig = s.signature; data._k = s.publicKey; data._dk = s.driveKey; data._ns = s.namespace; data._alg = s.algorithm
-    await this.pear.sync.append(this._myAppId(), { type: TYPE.HEAD, data, timestamp: new Date().toISOString() })
-    return this._refresh()
+    // Repeating this exact signed reducer overwrite is idempotent. One bounded
+    // retry covers a transient response loss without deriving another head/version.
+    let lastError = null
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await this.pear.sync.append(this._myAppId(), { type: TYPE.HEAD, data, timestamp: new Date().toISOString() })
+        return data
+      } catch (error) { lastError = error }
+    }
+    throw lastError || new Error('signed outbox head append failed')
   }
 
   // Incremental re-merge. Re-reads each peer's replicated outbox (the bridge has
@@ -1060,14 +1287,28 @@ class BridgeGossipSync {
     } else {
       toRead = [...this._peers.keys()]       // relay has no heads endpoint → read everyone (old/dev fallback)
     }
+    // An integrity-sensitive caller can force one author past the cheap `/heads`
+    // gate (including a transient heads error). Conversely, the only time self is
+    // skipped is the explicit local record -> head transition: that candidate is
+    // intentionally incomplete and the last audited self view remains authoritative.
+    const forcedPub = this._forceReadPub
+    if (forcedPub && this._peers.has(forcedPub) && !toRead.includes(forcedPub)) toRead.push(forcedPub)
+    const transitionPub = this._localWriteTransition && this._localWriteTransition.pub
+    if (transitionPub) toRead = toRead.filter((pub) => pub !== transitionPub)
 
     let anyRowChanged = false
+    const previous = new Map()
     for (const pub of toRead) {
       const info = this._peers.get(pub); if (!info) continue
       let rows
       try { rows = await this._rowsForPeer(info) } catch { continue }
       const prevSig = this._peerSigs.get(pub) || new Map()
-      const view = this._peerViews.get(pub) || Object.create(null)
+      const priorView = this._peerViews.get(pub) || null
+      const priorHead = this._peerHeads.has(pub) ? this._peerHeads.get(pub) : undefined
+      previous.set(pub, { view: priorView, sig: prevSig, head: priorHead })
+      // Stage into a fresh object. Never mutate the last-known-good view in place;
+      // a stale/withheld candidate must be discardable after the signed-head audit.
+      const view = Object.assign(Object.create(null), priorView || {})
       const newSig = new Map()
       for (const r of rows) {
         const key = r.key
@@ -1077,7 +1318,9 @@ class BridgeGossipSync {
         newSig.set(key, tok)
         if (prevSig.get(key) === tok) continue // unchanged since last refresh — verdict still holds
         anyRowChanged = true
-        if (await admit(typeForRow(key, val), val, key, pub, secure, this.validate)) view[key] = val
+        let admitted = false
+        try { admitted = await admit(typeForRow(key, val), val, key, pub, secure, this.validate) } catch { admitted = false }
+        if (admitted) view[key] = val
         else if (key in view) delete view[key] // an edit turned a once-admitted row invalid
       }
       for (const key of prevSig.keys()) { if (!newSig.has(key)) { if (key in view) delete view[key]; anyRowChanged = true } } // key removed (rare)
@@ -1093,7 +1336,6 @@ class BridgeGossipSync {
     // on a shortfall, route the READ around the withholding relay (recoverRows
     // finds a relay serving the head-matching set) and re-admit. Degrades to the
     // primary's own head + detection-only surfacing on a single-relay transport.
-    const localWriter = this._writeHead && typeof this.getMe === 'function' ? this.getMe() : null
     const multi = this.pear.sync && (this.pear._relayCount || 1) > 1
     const crossHeadFn = multi && this.pear.sync.crossHead
     const recoverFn = multi && this.pear.sync.recoverRows
@@ -1111,23 +1353,42 @@ class BridgeGossipSync {
       // minting a high-version head). Floor is only set from a verified head.
       const fl = this._floor.get(pub)
       const hv = head ? (head.version | 0) : -1
-      if (fl && hv < fl.v) {
+      const root = head && typeof head.root === 'string' ? head.root.toLowerCase() : ''
+      const rootConflict = fl && hv === fl.v && fl.root && fl.root !== root
+      if (fl && (hv < fl.v || rootConflict)) {
         if (!this._withholding.has(pub)) console.warn('[gossip] outbox ' + pub.slice(0, 12) + '… ROLLED BACK below the durable head floor (serving v' + (hv < 0 ? '∅' : hv) + ' < known v' + fl.v + ')')
         this._withholding.add(pub)
+        const prior = previous.get(pub)
+        this._restorePeerCandidate(pub, prior)
         continue // no relay has the newer head — can't recover; flag it (detection, not content-recovery)
       }
-      if (head && (!fl || hv > fl.v)) { this._floor.set(pub, { v: hv, t: ++this._floorTick }); this._floorDirty = true }
+      if (head && (!fl || hv > fl.v || (hv === fl.v && !fl.root && root))) { this._floor.set(pub, { v: hv, root, t: ++this._floorTick }); this._floorDirty = true }
       else if (fl) { fl.t = ++this._floorTick } // recently-relevant → survives eviction
-      if (localWriter && pub === localWriter) continue // self: the floor above covers rollback of my own outbox; skip the online count/root audit (it lags append() -> _maintainHead)
-      if (!head) continue
+      if (!head) {
+        if (this._unconfirmedLocalHead === pub || (this._unconfirmedRecordAppend && this._unconfirmedRecordAppend.pub === pub)) {
+          this._withholding.add(pub)
+          this._restorePeerCandidate(pub, previous.get(pub))
+        }
+        continue
+      }
       let rows = []; for (const k in view) rows.push({ key: k, value: view[k] })
-      let a; try { a = await auditOutbox(rows, head, pub) } catch { continue }
+      let a
+      try { a = await auditOutbox(rows, head, pub) } catch {
+        if (this._unconfirmedLocalHead === pub || (this._unconfirmedRecordAppend && this._unconfirmedRecordAppend.pub === pub)) this._restorePeerCandidate(pub, previous.get(pub))
+        continue
+      }
       if (a.hasHead && a.matches === false && recoverFn) {
         try {
           const rec = await this.pear.sync.recoverRows(pub, head)
           if (rec && rec.rows) {
             const view2 = Object.create(null); const newSig = new Map()
-            for (const r of rec.rows) { if (PROTO_KEYS.has(r.key)) continue; if (!(r.value && r.value._k === pub)) continue; if (await admit(typeForRow(r.key, r.value), r.value, r.key, pub, secure, this.validate)) { view2[r.key] = r.value; newSig.set(r.key, changeToken(r.value)) } } // re-admit ONLY pub's own rows (a relay can't smuggle foreign-signed rows through recovery)
+            for (const r of rec.rows) {
+              if (PROTO_KEYS.has(r.key)) continue
+              if (!(r.value && r.value._k === pub)) continue
+              let admitted = false
+              try { admitted = await admit(typeForRow(r.key, r.value), r.value, r.key, pub, secure, this.validate) } catch { admitted = false }
+              if (admitted) { view2[r.key] = r.value; newSig.set(r.key, changeToken(r.value)) }
+            } // re-admit ONLY pub's own rows (a relay can't smuggle foreign-signed rows through recovery)
             this._peerViews.set(pub, view2); this._peerSigs.set(pub, newSig); view = view2; anyRowChanged = true
             if (rec.base) this._readFrom.set(pub, rec.base) // pin future reads of this outbox to the relay that serves it, so the recovery STICKS (re-evaluated at reconcile)
             rows = []; for (const k in view2) rows.push({ key: k, value: view2[k] })
@@ -1136,16 +1397,36 @@ class BridgeGossipSync {
         } catch {}
       }
       const bad = a.hasHead && a.matches === false
-      if (bad) { if (!this._withholding.has(pub)) console.warn('[gossip] outbox ' + pub.slice(0, 12) + '… fails its signed-head audit on every reachable relay (rows withheld/tampered)'); this._withholding.add(pub) } else this._withholding.delete(pub)
+      if (bad) {
+        if (!this._withholding.has(pub)) console.warn('[gossip] outbox ' + pub.slice(0, 12) + '… fails its signed-head audit on every reachable relay (rows withheld/tampered)')
+        this._withholding.add(pub)
+        const prior = previous.get(pub)
+        this._restorePeerCandidate(pub, prior)
+      } else {
+        const pending = this._unconfirmedRecordAppend
+        if (pending && pending.pub === pub) {
+          // Only an exact attempted row covered by a census-matching signed head
+          // resolves an ambiguous append. A healthy alternate relay that simply
+          // lacks the row is not enough to prove the primary never committed it.
+          if (view[pending.key] && changeToken(view[pending.key]) === pending.token) {
+            this._unconfirmedRecordAppend = null
+            this._withholding.delete(pub)
+          } else this._withholding.add(pub)
+        } else this._withholding.delete(pub)
+      }
     }
 
     if (this._floorDirty) this._saveFloor() // persist BEFORE the early return: a crossHead-only ratchet leaves anyRowChanged false
-    if (this._cache && !anyRowChanged) return [] // nothing moved anywhere — keep cache (and its sorted-key cache)
+    const integrityBefore = this._integritySnapshot || ''
+    const integrityAfter = [...this._withholding].sort().join(',')
+    this._integritySnapshot = integrityAfter
+    if (this._cache && !anyRowChanged && integrityAfter === integrityBefore) return [] // nothing moved anywhere — keep cache (and its sorted-key cache)
     const boxes = []
     for (const [pub, view] of this._peerViews) boxes.push({ pub, view })
     const merged = combineAdmitted(boxes, this._claimed)
     this._setLocal(CLAIMED_KEY, JSON.stringify(this._claimed))
     const changed = diffViews(this._cache, merged)
+    if (integrityAfter !== integrityBefore && !changed.includes(SYNC_INTEGRITY_STATUS_KEY)) changed.push(SYNC_INTEGRITY_STATUS_KEY)
     if (this._cache && changed.length === 0) { /* winning view identical — keep object identity */ }
     else { this._cache = merged; this._sortedFor = null }
     if (changed.length || (anyRowChanged && !reconcile)) this._saveCache() // persist the latest verified view for an instant reload
@@ -1156,6 +1437,30 @@ class BridgeGossipSync {
     if (this._refreshing) return this._refreshing
     this._refreshing = (async () => { try { return await this._doRefresh() } finally { this._refreshing = null } })()
     return this._refreshing
+  }
+
+  // Restore the last audited author view after rejecting a staged candidate. On
+  // a first read there is no prior view: delete the stage entirely so a partial
+  // census cannot render, persist, or capture a sticky community claim.
+  _restorePeerCandidate (pub, prior) {
+    if (prior && prior.view !== null) {
+      this._peerViews.set(pub, prior.view)
+      this._peerSigs.set(pub, prior.sig || new Map())
+    } else {
+      this._peerViews.delete(pub)
+      this._peerSigs.delete(pub)
+    }
+    if (prior && prior.head !== undefined) this._peerHeads.set(pub, prior.head)
+    else this._peerHeads.delete(pub)
+  }
+
+  // Force a distinct stable-state audit for one author. Await an existing merge
+  // first so a preflight cannot accidentally coalesce into a pass that selected
+  // `toRead` before the force flag was installed.
+  async _refreshPeerNow (pub) {
+    if (this._refreshing) await this._refreshing
+    this._forceReadPub = pub
+    try { return await this._refresh() } finally { if (this._forceReadPub === pub) this._forceReadPub = null }
   }
 
   async _rowsForPeer (info) {

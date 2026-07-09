@@ -132,8 +132,7 @@ Both should report PASS and write evidence to `reports/`.
 ### Step 6 — build and ship the web release
 
 ```sh
-npm run web:release
-npm run ship:check
+npm run ship:check   # prepare once, external-sign, verify-only
 # if everything is green:
 npm run ship:live
 ```

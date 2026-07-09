@@ -33,12 +33,19 @@ async function main () {
 
   // Feed those exact rows through the REAL client reconstruction via a mock sync.
   const byPrefix = (prefix, limit = 5000) => rows.filter(r => String(r.key).startsWith(prefix)).slice(0, limit)
+  const rawRange = (opts = {}) => {
+    let out = rows.slice().sort((a, b) => a.key.localeCompare(b.key))
+    if (opts.gte != null) out = out.filter(r => r.key >= opts.gte)
+    if (opts.gt != null) out = out.filter(r => r.key > opts.gt)
+    if (opts.lt != null) out = out.filter(r => r.key < opts.lt)
+    return out.slice(0, Math.min(Number(opts.limit) || 100, 1000))
+  }
   const sync = {
     ready: async () => {}, status: async () => ({}), mode: 'mock',
     list: async (prefix, { limit = 5000 } = {}) => byPrefix(prefix, limit),
     get: async (k) => { const r = rows.find(x => x.key === k); return r ? r.value : null },
     count: async (prefix) => byPrefix(prefix).length,
-    range: async () => [], append: async () => {}
+    range: async (opts = {}) => rawRange(opts), append: async () => {}
   }
   const id = new DevIdentity(mem(), mem()); await id.ready()
   const data = createData(sync, id, { v2: true })

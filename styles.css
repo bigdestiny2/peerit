@@ -405,8 +405,8 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
 }
 .readonly-banner a { color: #fff; text-decoration: underline; font-weight: 500; }
 /* Don't offer write controls that the read-only relay will refuse. */
-.web-readonly [href="#/submit"],
-.web-readonly [href="#/create"],
+.web-readonly [href^="#/submit"],
+.web-readonly [href^="#/create"],
 .web-readonly .composer,
 .web-readonly .votes .arrow { display: none !important; }
 .mode-badge.web{background:rgba(79,140,255,.14);color:var(--accent);border:1px solid rgba(79,140,255,.32)}

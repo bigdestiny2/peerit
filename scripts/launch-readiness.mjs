@@ -43,6 +43,26 @@ add('growth spec exists', exists('docs/GROWTH_AUTOMATION_SPEC.md'), 'docs/GROWTH
 const packageJson = loadJson('package.json')
 add('launch scripts registered', packageJson.scripts && packageJson.scripts['launch:readiness'] && packageJson.scripts['launch:seed-plan'] && packageJson.scripts['launch:utm'] && packageJson.scripts['launch:briefs'], 'package.json exposes launch:readiness, launch:seed-plan, launch:utm, and launch:briefs')
 
+try {
+  const release = loadJson('deploy/web-release.json')
+  const relays = Array.isArray(release.roster && release.roster.relays) ? release.roster.relays.filter(Boolean) : []
+  const readonly = release.readonly !== false
+  add('public write topology is redundant', readonly || relays.length >= 2, readonly
+    ? 'single-relay previews are acceptable only in read-only mode'
+    : `${relays.length} signed relay failure domain(s); writable public launch requires at least 2`)
+  add('public release key pinned', /^[0-9a-f]{64}$/i.test(String(release.pinnedReleaseKey || '')), 'deploy/web-release.json must pin the Ed25519 key that signs asset-manifest.json')
+} catch (err) {
+  add('web release config valid', false, err.message)
+}
+
+try {
+  const capacity = loadJson('reports/soak-outboxlog-local-2026-07-09.json')
+  const clients = Number(capacity.clients || capacity.config && capacity.config.clients || 0)
+  add('public capacity target measured', clients >= 2000, `${clients || 0} clients measured; public launch gate requires a documented 2,000-client staging run`)
+} catch (err) {
+  add('public capacity target measured', false, err.message)
+}
+
 let launchConfig = null
 try {
   launchConfig = loadJson('launch/communities.json')

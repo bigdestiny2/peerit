@@ -85,6 +85,7 @@ async function main () {
   console.log('\n— a FRESH visitor bootstraps its floor from the directory (no browsing yet) —')
   const bob = await makeClient(world, [A, B], 'bob')
   ok(floorOf(bob.storage)[alice.pub] && floorOf(bob.storage)[alice.pub].v === 3, 'bob has a durable floor of v3 for alice immediately after boot — from the directory, before reading her outbox')
+  ok(/^[0-9a-f]{64}$/i.test(String(floorOf(bob.storage)[alice.pub] && floorOf(bob.storage)[alice.pub].root || '')), 'the directory bootstrap also pins alice\'s signed head root')
 
   console.log('\n— cross-relay: a stale directory on one relay loses to the current one —')
   storeOf(world, A, alice.pub).rows.set(keys.head(alice.pub), v1Head) // relay A now serves a stale v1 directory; B still v3

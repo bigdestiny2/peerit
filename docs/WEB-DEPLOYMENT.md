@@ -50,13 +50,27 @@ working — the web is additive publishing.
 ## Build & serve the web bundle
 
 ```sh
-# release path: validate/sign relay-roster.json, build web/, then prove that
-# the bundle, pinned roster key, manifest drive key, and docs agree.
-npm run web:release
+# Before changing any signed release field (including source bytes or drive key),
+# increment deploy/web-release.json releaseSequence. Sequence 1 is the first v2
+# signed release; an unchanged candidate may be reproduced idempotently.
 
-# when rotating the relay fleet, edit deploy/web-release.json, then sign + build
-# from the offline roster seed. The private seed is never committed.
-PEERIT_ROSTER_SEED=<32-byte-hex-seed> npm run web:release
+# 1. Build the release candidate exactly once. This writes the non-secret,
+# deterministic deploy/web-signing-request.json for the offline signer.
+npm run web:prepare -- --drive-key <64-hex-hyperdrive-key>
+
+# 2. Sign outside the build/deploy host and return only the signature file.
+# This scoped command injects PEERIT_RELEASE_SIGNING_SEED without shell expansion.
+keyvault exec --only peerit/release/signing-seed -- npm run release:sign
+
+# 3. Verify the frozen bytes. This command NEVER builds or rewrites web/.
+npm run web:verify -- --drive-key <same-64-hex-hyperdrive-key>
+
+# `web:release` is a compatibility alias for the same verify-only command.
+npm run web:release -- --drive-key <same-64-hex-hyperdrive-key>
+
+# Relay-roster rotation happens only during prepare. The private seed is never
+# committed and verify-only refuses it rather than mutating the roster.
+PEERIT_ROSTER_SEED=<32-byte-hex-seed> npm run web:prepare -- --drive-key <key>
 
 # local end-to-end (what the browser test does):
 #   1) relay:  cd ../peerit-relay && PEERIT_RELAY_ORIGINS=http://127.0.0.1:8780 node relay.mjs
@@ -77,6 +91,45 @@ stylesheet, and a Service Worker that pins the audited bundle by SHA-256
 default, validates the local signed roster against the pinned public key, copies
 `relay-roster.json` into `web/`, and records the roster hash/key in
 `asset-manifest.json`.
+
+`web:verify` recomputes SHA-256 for every `asset-manifest.json.files` entry,
+rejects missing files, unsafe or case-colliding paths, symlinks, and unexpected
+unmanifested files, then verifies `asset-manifest.sig`. The signing request also
+freezes the complete artifact. Release message v2 additionally signs the
+`asset-manifest.json.controls` hashes for `sw.js` and `verify.html`, and the
+in-browser verifier recomputes those control hashes alongside normal assets.
+It contains public hashes and keys only, so
+`deploy/web-signing-request.json` is intentionally suitable for source control
+and for a Render verify-only build step.
+The packaged `web:prepare`, `web:verify`, and `web:release` commands all enable
+strict mode: a warning is a failed release, including on Render.
+
+`releaseSequence` is a positive monotonic integer signed into both the manifest
+root and `webRelease`. The committed `deploy/web-signing-request.json` is the
+tracked prior-release record: prepare allows the same sequence only when the v2
+signing-message hash is identical, rejects a lower sequence, and rejects a changed
+signed artifact that reuses a sequence. Because a new Hyperdrive key is signed,
+every normal `ship:live` publication must increment the sequence. Commit the new
+signing request with the frozen artifact so the next release retains that floor.
+
+Normal browsers also retain a best-effort local sequence + manifest-identity floor
+per pinned release key. A returning browser with intact site storage rejects a
+valid older signed release and an equal-sequence/different-manifest fork. This is
+not a universal freshness oracle: a first-time visitor has no prior floor, clearing
+site storage removes it, and key rotation starts a new key-scoped floor.
+
+The boot check authenticates the signed manifest only. On a first visit, the ES
+module graph necessarily loads before `app.js` can perform that check, so the log
+must not be read as proof that already-executed module bytes were hashed. The
+service worker hash-pins assets after a complete successful install; the independent
+operator check for the live first-load artifact is the full-byte command:
+
+```sh
+npm run proof:web-deploy -- --url https://peerit.site
+```
+
+`verify.html` performs a user-invoked full fetch/hash comparison. Peerit does not
+repeat that roughly 40-file transfer on every visitor boot.
 
 ## Signed relay roster
 
@@ -108,10 +161,10 @@ and must be signed by that pinned key.
 Generate or rotate it with the web release command:
 
 ```sh
-PEERIT_ROSTER_SEED=<seed from offline key storage> npm run web:release
+PEERIT_ROSTER_SEED=<seed from offline key storage> npm run web:prepare -- --drive-key <key>
 ```
 
-Without `PEERIT_ROSTER_SEED`, `npm run web:release` verifies the existing
+Without `PEERIT_ROSTER_SEED`, `npm run web:prepare` verifies the existing
 `relay-roster.json` and fails if its signer, payload, expiry, or generated web
 bundle does not match the config. At boot, a normal browser verifies the roster
 key + expiry, tries the signed relays in order, obtains a first-visit token from
@@ -129,13 +182,63 @@ drift outside that explicit config change as a publish blocker.
    than one; put the fleet in `deploy/web-release.json`, and keep
    `bootstrapRelays` as a conservative fallback.
 2. **Seeders:** run `02-apps/peerit-seeder` so outboxes stay available offline.
-3. **Code:** run `npm run ship:live`. It publishes the `hyper://` drive, writes
-   the new key to `manifest.json`, then runs `npm run web:release` with that key
-   so `web/asset-manifest.json` and `web/verify.html` cannot lag behind.
-4. **Host/mirror:** host `web/` on peerit.site; also pin to IPFS (DNSLink),
+3. **Code:** run `npm run ship:live` from a clean release tree. After the strict
+   Hyperdrive publish yields its final key, ship builds `web/` once and pauses for
+   the external signature. In a TTY, return `web/asset-manifest.sig` and press
+   Enter. In non-interactive operation, ship exits with status 2 and resumes with
+   `npm run ship:live -- --resume-signature`; resume verifies the frozen handoff
+   and never republishes or rebuilds. The pending handoff hashes the exact publish
+   report bytes; resume revalidates a ready strict report with durable metadata
+   and full-blob evidence before accepting it. An explicit operator wrapper can instead be
+   invoked with `--sign-command '<command>'`. Never put the seed in that command
+   string or in Render; let the wrapper/HSM own secret retrieval.
+   Increment `deploy/web-release.json.releaseSequence` before this step whenever
+   this publication changes any signed field; the newly published drive key alone
+   makes ordinary releases distinct.
+4. **Commit the exact candidate:** after successful verify-only, review and
+   force-add the ignored static artifact together with its public request and
+   published manifest:
+
+   ```sh
+   git add -f web
+   git add deploy/web-signing-request.json manifest.json
+   ```
+
+   Render must use
+   `node scripts/web-release.mjs --verify-only --strict` as its
+   dependency-install-free verification command and `web` as its publish
+   directory. The verifier imports only tracked local modules and Node builtins;
+   Render must never run dependency installation, `build-web`, `web:prepare`, or
+   receive either signing seed. Verification failure blocks the deploy. The
+   previous immutable candidate commit is the static rollback point. Once Render
+   reports that exact commit live, independently compare every served byte with
+   the signed local artifact:
+
+   ```sh
+   npm run proof:web-deploy -- --url https://peerit.site
+   ```
+5. **Host/mirror:** host that exact `web/` on peerit.site; also pin to IPFS (DNSLink),
    Arweave, and set ENS `peerit.eth` contenthash → CID so the app survives
    DNS/registrar seizure. `peerit.site/verify.html` lets anyone cross-check the
    web bundle against the published drive key.
+
+`ship:live` rejects `--no-web`/`SKIP_WEB_RELEASE`, `--no-test`, and
+`--allow-dirty`; an actually dirty release tree also blocks before public
+publication. For a read-only candidate it also runs the non-destructive live
+`proof:production-readonly` gate and `audit:live-legacy-pow` before publishing;
+offline `ship:check` runs neither live-network probe. With one signed relay,
+`deploy/web-release.json` must remain
+`readonly:true`; writable preparation requires at least two signed relay failure
+domains and separate backend/edge authorization to enable writes.
+Live ship treats every remaining warning as blocking; a `review` result is not a
+publishable result.
+
+The clean-tree gate is derived from the transitive local import closure of the
+build, signing, verification, served-site, and registered test entry points,
+plus string-addressed esbuild inputs and release configs. That includes the
+service-worker source, CSP helper, DHT/reader builders and their browser entry
+modules. Dirty or untracked closure inputs block live publish; unrelated user
+documents and diagrams are intentionally outside this gate.
 
 ## Manual validation still required
 

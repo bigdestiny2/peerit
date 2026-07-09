@@ -1,0 +1,58 @@
+{
+  "kind": "peerit-outboxlog-soak",
+  "version": 1,
+  "generatedAt": "2026-07-08T21:21:46.737Z",
+  "target": "http://127.0.0.1:57242",
+  "mode": "local-hiverelay-relayapi",
+  "clients": 30,
+  "loops": 1,
+  "rampS": 4,
+  "durationMs": 4012.090167,
+  "peakRssBytes": 144211968,
+  "peakRssMb": 137.5,
+  "errors": 0,
+  "staticErrors": 0,
+  "rateLimited429": 0,
+  "successClients": 30,
+  "errorRate": 0,
+  "groups": 30,
+  "directoryTotal": 30,
+  "authorsUntilCapEstimate": 20000,
+  "sampleErrors": [],
+  "latencyMs": {
+    "token": {
+      "count": 30,
+      "p50": 0.6289580000002388,
+      "p99": 13.24716699999999,
+      "max": 13.24716699999999,
+      "mean": 1.0718833999999597
+    },
+    "write": {
+      "count": 30,
+      "p50": 15.52816699999994,
+      "p99": 20.38104100000001,
+      "max": 20.38104100000001,
+      "mean": 15.568383366666675
+    },
+    "directory": {
+      "count": 30,
+      "p50": 0.6040830000001733,
+      "p99": 0.9146250000000009,
+      "max": 0.9146250000000009,
+      "mean": 0.613194466666685
+    },
+    "static": {
+      "count": 0,
+      "p50": null,
+      "p99": null,
+      "max": null,
+      "mean": null
+    }
+  },
+  "thresholds": {
+    "p99WriteMs": 2000,
+    "errorRateMax": 0.01,
+    "note": "Pass when write p99 < 2000ms and errorRate < 1% at the committed client count"
+  },
+  "status": "pass"
+}

@@ -152,10 +152,13 @@ async function startLocalHiveRelayOutboxLog (hiverelayRoot) {
   const node = new EventEmitter()
   Object.assign(node, {
     running: true,
+    // Peerit stamps _ns:'peerit' on every signed record; OutboxLog must register that
+    // namespace or append returns 400 unknown namespace.
     config: {
       storage: null,
       plugins: ['outboxlog'],
-      trustProxy: false
+      trustProxy: false,
+      outboxlog: { namespace: 'peerit' }
     },
     store: null,
     seededApps: new Map(),
@@ -185,7 +188,7 @@ async function startLocalHiveRelayOutboxLog (hiverelayRoot) {
     ]])
   }
 
-  await provider.start({ node })
+  await provider.start({ node, config: node.config })
   const api = new RelayAPI(node, {
     apiPort: 0,
     apiHost: '127.0.0.1',
@@ -223,7 +226,9 @@ async function getToken (base) {
 
 async function makeClient ({ base, name, local = mem(), session = mem(), pollMs, createUser = true }) {
   const token = await getToken(base)
-  const id = new DevIdentity(local, session)
+  // persistSeed:true so a reload with the same storage maps restores the writer
+  // key (production uses the vault path; proofs need durable in-map roster).
+  const id = new DevIdentity(local, session, { persistSeed: true })
   await id.ready()
   if (createUser) await id.createUser(name)
   const sync = createSync({

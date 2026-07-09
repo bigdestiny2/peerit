@@ -6,6 +6,10 @@
 //   4. The browser reader bundle builds and exports recoverBody.
 
 import assert from 'node:assert'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import sodium from 'sodium-universal'
 import b4a from 'b4a'
 import { DevSync } from '../js/sync.js'
@@ -114,34 +118,41 @@ async function main () {
   const post2 = await data2.submitPost({ community: 'p2p', kind: 'text', title: 'Fallback post', body: 'y'.repeat(3000) })
   ok(!post2.dispersal && !!post2.blob, 'falls back to single-blob when publisher seed is unavailable')
 
-  console.log('\n— browser reader bundle builds —')
-  const bundle = await buildReaderBundle({ outfile: 'web/js/reader-bundle.js' })
-  ok(bundle.length > 1000, 'reader bundle is non-trivial (' + bundle.length + ' bytes)')
-  const bundleText = bundle.toString('utf8')
-  ok(bundleText.includes('recoverBody'), 'bundle exports recoverBody')
-  ok(!bundleText.includes('sodium-universal'), 'bundle does not contain a bare sodium-universal import')
-
-  console.log('\n— browser reader bundle verifies custody intent —')
-  const { recoverBody: bundleRecoverBody } = await import('../web/js/reader-bundle.js')
-  const cohortCtBytes = new Uint8Array(shardStore.shards.get(post.dispersal.ciphertextShard))
-  const bundleBody = await bundleRecoverBody(post.dispersal, {
-    relayBaseUrls: relays.map(r => r.url),
-    fetchCiphertext: async () => cohortCtBytes,
-    fetchImpl: shardStore.fetch
-  })
-  ok(bundleBody === body, 'browser bundle recovers body with valid custody intent')
-
-  const tamperedManifest = JSON.parse(JSON.stringify(post.dispersal))
-  tamperedManifest.intent.signature = '0'.repeat(128)
+  const bundleDir = mkdtempSync(join(tmpdir(), 'peerit-reader-bundle-'))
   try {
-    await bundleRecoverBody(tamperedManifest, {
+    const bundlePath = join(bundleDir, 'reader-bundle.mjs')
+
+    console.log('\n— browser reader bundle builds —')
+    const bundle = await buildReaderBundle({ outfile: bundlePath })
+    ok(bundle.length > 1000, 'reader bundle is non-trivial (' + bundle.length + ' bytes)')
+    const bundleText = bundle.toString('utf8')
+    ok(bundleText.includes('recoverBody'), 'bundle exports recoverBody')
+    ok(!bundleText.includes('sodium-universal'), 'bundle does not contain a bare sodium-universal import')
+
+    console.log('\n— browser reader bundle verifies custody intent —')
+    const { recoverBody: bundleRecoverBody } = await import(pathToFileURL(bundlePath).href + `?t=${Date.now()}`)
+    const cohortCtBytes = new Uint8Array(shardStore.shards.get(post.dispersal.ciphertextShard))
+    const bundleBody = await bundleRecoverBody(post.dispersal, {
       relayBaseUrls: relays.map(r => r.url),
       fetchCiphertext: async () => cohortCtBytes,
       fetchImpl: shardStore.fetch
     })
-    assert.fail('browser bundle should reject tampered custody intent')
-  } catch (e) {
-    ok(/custody intent|signature invalid/i.test(e.message), 'browser bundle rejects tampered custody intent')
+    ok(bundleBody === body, 'browser bundle recovers body with valid custody intent')
+
+    const tamperedManifest = JSON.parse(JSON.stringify(post.dispersal))
+    tamperedManifest.intent.signature = '0'.repeat(128)
+    try {
+      await bundleRecoverBody(tamperedManifest, {
+        relayBaseUrls: relays.map(r => r.url),
+        fetchCiphertext: async () => cohortCtBytes,
+        fetchImpl: shardStore.fetch
+      })
+      assert.fail('browser bundle should reject tampered custody intent')
+    } catch (e) {
+      ok(/custody intent|signature invalid/i.test(e.message), 'browser bundle rejects tampered custody intent')
+    }
+  } finally {
+    rmSync(bundleDir, { recursive: true, force: true })
   }
 
   console.log('\n✅ all ' + passed + ' dispersal checks passed')

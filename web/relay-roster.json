@@ -1,0 +1,14 @@
+{
+  "payload": {
+    "version": 1,
+    "expires": "2026-12-31T00:00:00.000Z",
+    "relays": [
+      "https://outbox.peerit.site"
+    ]
+  },
+  "signature": {
+    "alg": "Ed25519",
+    "key": "92caa893720e763de6c87e5397214cbdbd8be8c073ac029e83fa430a58812538",
+    "sig": "554e4b0feacec1b86b92ba0ea432d25791bdde50c5d952a813d75fd72d0fbc013d20e8eb9bc2307a4f3f5eef7c78b4fd7da93ce020faff250ef65c0f2e239f0c"
+  }
+}

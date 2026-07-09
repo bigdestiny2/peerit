@@ -1,0 +1,34 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>verify peerit</title>
+<style>body{font-family:system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;line-height:1.6}code{background:#eee;padding:1px 5px;border-radius:4px;word-break:break-all}table{border-collapse:collapse;margin-top:1rem}td{border:1px solid #ccc;padding:4px 8px;font-size:13px}.ok{color:#0a7d24}.bad{color:#c02436}</style></head><body>
+<h1>Verify peerit</h1>
+<p>This recomputes the SHA-256 of every file this site served and compares it to <code>asset-manifest.json</code>, then checks the Ed25519 <b>release signature</b> (<code>asset-manifest.sig</code>) against the pinned release key.</p>
+<p>Pinned release key: <code>d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b</code><br>Compare this to peerit's published release key from a channel you trust — <b>not</b> from this page. An in-page PASS only proves the bundle is internally consistent; a malicious origin can serve a tampered verify page <em>and</em> a matching bundle, so real assurance is (a) an EXTERNAL check of this key + signature, or (b) opening the <code>hyper://</code> drive in PearBrowser.</p>
+<p>Signed release sequence: <code>1</code>. Returning browsers retain a best-effort local floor for this signing key and reject lower sequences or a different signed manifest reusing the same sequence.</p>
+<p>Published <code>hyper://</code> drive key: <code>ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4</code> — content-addressed; open it in <b>PearBrowser</b> for a trust root the origin does not control.</p>
+<div id="out">checking…</div>
+<script type="module">
+import { verifyReleaseManifest } from './js/release-verify.js';
+const sha = async (b) => { const h = await crypto.subtle.digest('SHA-256', b); return [...new Uint8Array(h)].map((x) => x.toString(16).padStart(2, '0')).join(''); };
+(async () => {
+  try {
+    const m = await (await fetch('asset-manifest.json', { cache: 'no-store' })).json();
+    let rows = '', allok = true;
+    for (const [p, want] of Object.entries({ ...(m.files || {}), ...(m.controls || {}) })) {
+      const b = await (await fetch(p, { cache: 'no-store' })).arrayBuffer();
+      const ok = (await sha(b)) === want; allok = allok && ok;
+      rows += '<tr><td>' + p + '</td><td class="' + (ok ? 'ok' : 'bad') + '">' + (ok ? 'ok' : 'MISMATCH') + '</td></tr>';
+    }
+    let sigLine;
+    const expected = "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b" || (m.webRelease && m.webRelease.releaseKey) || '';
+    const sres = await fetch('asset-manifest.sig', { cache: 'no-store' });
+    if (!sres.ok) sigLine = '<p class="bad"><b>Release signature: UNSIGNED</b> — no asset-manifest.sig (dev build, or the release was not signed with the offline key).</p>';
+    else {
+      try {
+        const r = await verifyReleaseManifest({ manifest: m, signature: await sres.json(), expectedKey: expected, expectedSequence: 1 });
+        sigLine = '<p class="ok"><b>Release manifest signature: VALID</b> — sequence ' + r.releaseSequence + ', signed by ' + r.key.slice(0, 16) + '… (compare to the key above). This authenticates the manifest; the table below is the separate served-byte check.</p>';
+      } catch (e) { sigLine = '<p class="bad"><b>Release signature: INVALID</b> — ' + (e && e.message) + '</p>'; }
+    }
+    document.getElementById('out').innerHTML = sigLine + '<p class="' + (allok ? 'ok' : 'bad') + '"><b>' + (allok ? 'All files match the manifest.' : 'MISMATCH — served code differs from the manifest.') + '</b></p><table>' + rows + '</table>';
+  } catch (e) { document.getElementById('out').textContent = 'verify failed: ' + (e && e.message); }
+})();
+</script></body></html>

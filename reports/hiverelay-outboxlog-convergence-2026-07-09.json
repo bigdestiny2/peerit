@@ -1,0 +1,146 @@
+{
+  "kind": "peerit-hiverelay-outboxlog-convergence",
+  "version": 1,
+  "generatedAt": "2026-07-08T21:23:24.981Z",
+  "peerit": {
+    "modules": "web/js",
+    "unmodifiedWebBuildModules": true
+  },
+  "hiverelay": {
+    "root": "/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay",
+    "mode": "local-hiverelay-relayapi",
+    "relay": "http://127.0.0.1:57423"
+  },
+  "checks": [
+    {
+      "id": "crypto:ed25519",
+      "status": "pass",
+      "message": "Peerit web build has a secure Ed25519 backend"
+    },
+    {
+      "id": "hiverelay:bridge-status",
+      "status": "pass",
+      "message": "HiveRelay OutboxLog bridge reports ready",
+      "detail": {
+        "ready": true,
+        "service": "outboxlog"
+      }
+    },
+    {
+      "id": "peerit:gossip-bridge-mode",
+      "status": "pass",
+      "message": "Both Peerit web clients run in gossip-bridge mode"
+    },
+    {
+      "id": "peerit:distinct-writers",
+      "status": "pass",
+      "message": "Peerit clients use distinct writer keys",
+      "detail": {
+        "alice": "b327d38ec52839e15c44b89f87599c722ddde36c257b6423d7271bf6432e23d1",
+        "bob": "def90f1cd091b02a961cbdc17851fd4d9ba3f790d362d49bb38afa68126d8214"
+      }
+    },
+    {
+      "id": "peerit:peer-discovery",
+      "status": "pass",
+      "message": "Both clients discover at least two OutboxLog-backed outboxes"
+    },
+    {
+      "id": "peerit:community-visible",
+      "status": "pass",
+      "message": "Bob sees Alice-created community through HiveRelay OutboxLog"
+    },
+    {
+      "id": "peerit:alice-post-visible",
+      "status": "pass",
+      "message": "Bob sees Alice post through HiveRelay OutboxLog"
+    },
+    {
+      "id": "peerit:bob-post-visible",
+      "status": "pass",
+      "message": "Alice sees Bob post through HiveRelay OutboxLog"
+    },
+    {
+      "id": "peerit:votes-converge",
+      "status": "pass",
+      "message": "Two writer-local votes aggregate to score 2 through HiveRelay OutboxLog"
+    },
+    {
+      "id": "peerit:comment-visible",
+      "status": "pass",
+      "message": "Alice sees Bob comment through HiveRelay OutboxLog"
+    },
+    {
+      "id": "peerit:edit-visible",
+      "status": "pass",
+      "message": "Bob sees Alice signed edit through HiveRelay OutboxLog"
+    },
+    {
+      "id": "peerit:reload-same-writer",
+      "status": "pass",
+      "message": "Reloaded Bob keeps the same writer key"
+    },
+    {
+      "id": "peerit:reload-sees-thread",
+      "status": "pass",
+      "message": "Reloaded Peerit client recovers community, post, vote tally, and comment through HiveRelay OutboxLog"
+    }
+  ],
+  "status": "pass",
+  "proof": {
+    "community": "hrolcl4eyh",
+    "alice": {
+      "writer": "b327d38ec52839e15c44b89f87599c722ddde36c257b6423d7271bf6432e23d1",
+      "status": {
+        "appId": "peerit",
+        "mode": "gossip-bridge",
+        "secure": true,
+        "peers": 2,
+        "viewLength": 6,
+        "relays": 1,
+        "withholding": [],
+        "inviteKey": "c15258ab3363520ffa2870aa417d3307b494e725532df472756dd502d7ac6e42",
+        "outboxAppId": "b327d38ec52839e15c44b89f87599c722ddde36c257b6423d7271bf6432e23d1",
+        "outboxes": [
+          {
+            "appId": "b327d38ec52839e15c44b89f87599c722ddde36c257b6423d7271bf6432e23d1",
+            "inviteKey": "c15258ab3363520ffa2870aa417d3307b494e725532df472756dd502d7ac6e42",
+            "current": true
+          }
+        ]
+      }
+    },
+    "bob": {
+      "writer": "def90f1cd091b02a961cbdc17851fd4d9ba3f790d362d49bb38afa68126d8214",
+      "status": {
+        "appId": "peerit",
+        "mode": "gossip-bridge",
+        "secure": true,
+        "peers": 2,
+        "viewLength": 6,
+        "relays": 1,
+        "withholding": [],
+        "inviteKey": "a43fe510a4789e9b30485c3ae6f97dc6af4dd65ec312832c6fb7a99a53ba001e",
+        "outboxAppId": "def90f1cd091b02a961cbdc17851fd4d9ba3f790d362d49bb38afa68126d8214",
+        "outboxes": [
+          {
+            "appId": "def90f1cd091b02a961cbdc17851fd4d9ba3f790d362d49bb38afa68126d8214",
+            "inviteKey": "a43fe510a4789e9b30485c3ae6f97dc6af4dd65ec312832c6fb7a99a53ba001e",
+            "current": true
+          }
+        ]
+      }
+    },
+    "records": {
+      "alicePost": "0mrcl4eyolbt60wmj",
+      "bobPost": "0mrcl4f1n08h4kk6z",
+      "comment": "0mrcl4f7nrvjweele"
+    },
+    "outboxlogStats": {
+      "groups": 2,
+      "totalBytes": 5427,
+      "directorySeq": 7,
+      "appendSeq": 14
+    }
+  }
+}

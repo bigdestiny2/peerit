@@ -1,38 +1,34 @@
-# 2026-07-09 Web redeploy status
+# 2026-07-09 Web redeploy status — COMPLETE
 
-## Shipped
-- GitHub `main` @ `48ac977` — identity-bound PoW, soak tooling, audit close-out
-- `npm run web:release` green (roster verified, 41 files in `web/`)
-- **Cloudflare Pages production deploy:** https://peerit-site.pages.dev  
-  - Contains `POW_VERSION = 2` / identity-bound targets  
-  - `proof:availability --url https://peerit-site.pages.dev` → pass=12, warn=1 (ship report)
-- **Bern VPS** (`45.59.123.112`): `/var/www/peerit.site` populated; Caddy `peerit.site` site block added (ready for DNS cutover)
+## Production apex updated
 
-## Not yet cut over
-- Apex **https://peerit.site** still serves the **2026-07-08** Render origin (`peerit-site.onrender.com`, last-modified Wed 08 Jul 2026 13:45:47 UTC) — **no POW_VERSION** in live `js/pow.js`.
-- No Render API token / deploy hook in this environment; GitHub push did not auto-redeploy Render.
-- Cloudflare Pages custom domain `peerit.site` is **pending** (`CNAME record not set`).
+| Item | Status |
+|---|---|
+| **https://peerit.site** | **Live** on Render `peerit-site` (`srv-d91q9sfavr4c73fr611g`) |
+| Deploy | `dep-d97qrvjeo5us73aes36g` — commit `60d7300`, API trigger, clear-cache, **succeeded** |
+| PoW | Live `js/pow.js` includes `POW_VERSION = 2` + identity-bound targets |
+| Outbox | `outbox.peerit.site` healthy (token + directory) |
+| Availability proof | `pass=12` `warn=1` `fail=0` against https://peerit.site |
 
-## One-step cutover (pick one)
+## Single production site
 
-### A. Cloudflare Pages (recommended for this deploy)
-At Namecheap DNS for `peerit.site`:
-1. Remove/override A/CNAME currently pointing at Render (`peerit-site.onrender.com`).
-2. Add **CNAME** (or ALIAS/ANAME for apex): `peerit.site` → `peerit-site.pages.dev`
-3. Wait for SSL on CF Pages domain to leave `pending`.
+- Apex remains **Render** only (no DNS cutover needed).
+- Temporary CF Pages custom-domain bind for `peerit.site` removed (pending CNAME was never cut over).
+- Bern `/var/www/peerit.site` kept offline; Caddy `peerit.site` host block removed so only Render serves the domain.
+- Optional backup URL `https://peerit-site.pages.dev` may still exist but is **not** the marketing origin.
 
-### B. Bern VPS (already staged)
-1. Set **A** record `peerit.site` → `45.59.123.112`
-2. Caddy will mint Let's Encrypt for `peerit.site` (already configured).
+## How it was redeployed
 
-### C. Render dashboard (keep current host)
-1. Open service **peerit-site** on Render.
-2. Connect repo `bigdestiny2/peerit` branch `main` if not connected.
-3. Build: `npm install && npm run web:release` · Publish dir: `web`
-4. Manual deploy / clear cache.
-
-## Verify after cutover
 ```bash
-curl -sS "https://peerit.site/js/pow.js" | grep POW_VERSION
-# expect: export const POW_VERSION = 2
+render login
+render workspace set tea-d5d0ucjuibrs73fg7l90   # My Workspace
+render deploys create srv-d91q9sfavr4c73fr611g \
+  --clear-cache --commit 60d7300 --wait --confirm
+```
+
+## Verify anytime
+
+```bash
+curl -sS https://peerit.site/js/pow.js | grep POW_VERSION
+# export const POW_VERSION = 2
 ```

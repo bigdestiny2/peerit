@@ -11,7 +11,7 @@
 |---|---|---|---|
 | `DEFAULT_MAX_GROUPS` | **20 000** | HiveRelay `outbox-log.js` | Hard ceiling on distinct outboxes (≈ **writing authors**) |
 | Per-record body | 64 KiB | OutboxLog | Append 413 when exceeded |
-| Per-IP rate limit | production fleet config | HiveRelay HTTP | Soak driver widens limits only for the in-process local RelayAPI |
+| Per-IP rate limit | production fleet config | HiveRelay HTTP | Local/staging runs must pass an explicit canonical operator envelope and verify the advertised effective policy |
 
 **authors-until-cap = 20 000** (measured mapping: 1 group per author who has ever written; lurkers create nothing).  
 A marketing spike with projected signups **P** requires `20 000 > P × 1.3` before mass push.  
@@ -121,6 +121,37 @@ npm run soak:atomic-two-relay -- --hiverelay-root /path/to/hiverelay \
 These are local diagnostic results, not the production-equivalent staging M4
 sweep and not mass-marketing clearance.
 
+#### Why the one-process 200-writer p99 is not a production-engine verdict
+
+The 200-writer run is a valid failure of the local 2-second contract, but its
+latency is dominated by closed-loop queueing inside the fixture. It co-locates
+201 Peerit clients, both RelayAPI/OutboxLog engines, telemetry, restart replay,
+and roughly 4,005 synchronous journal fsyncs on one Node event loop and disk.
+
+Evidence from the recorded telemetry:
+
+- 50 writers / 200 commits sustained 58.53 commits/s at p99 952 ms.
+- 200 writers / 2,000 commits sustained essentially the same 58.48 commits/s,
+  while p50 rose to 3,247 ms and p99 to 4,866 ms.
+- With about 200 operations continuously in flight, Little's law predicts
+  `200 / 58.48 = 3.42s` residence time, close to the measured 3.261-second mean.
+- Relay-visible commit handling averaged 6.90/6.87 ms (max 232/231 ms); heads
+  averaged 20.23 ms (max 437 ms). There were no 429s, forks, lost commits, or
+  pending envelopes.
+- Each relay ended at 2,002 commits, below the 4,096-entry checkpoint interval,
+  so no periodic checkpoint ran during the measured writer phase. The journal
+  ownership lease is acquired at construction, not per commit.
+
+This does not waive the latency gate. It means the next decisive measurement
+must isolate load generators, relay A, and relay B in separate processes and,
+for production-equivalent evidence, separate hosts/disks. Instrument client
+preflight/build/leader/mirror phases plus relay request queue, validation/CAS,
+journal write, fsync, apply, event-loop delay, GC, and memory. Only if isolated
+staging still saturates durable sync should the engine change: first a single
+ordered asynchronous commit queue, then (if required) a bounded 2-5 ms group
+commit whose receipts are released only after the shared durable sync. Never
+remove the forced self-audit or acknowledge before fsync.
+
 The 30-writer shared-NAT failure is not an OutboxLog group/storage/commit
 capacity response and not a CAS/census correctness failure. The primary relay
 also serves each client's pre-commit `get`/`heads`/`range` checks, so one public
@@ -142,9 +173,10 @@ local pass. Every signed public relay still needs the reviewed HiveRelay build,
 the chosen explicit operator envelope, and matching status telemetry behind its
 real trusted proxy. Run the shared-NAT profile against production-equivalent
 staging at the supported-office/VPN envelope. Separately, the distributed
-200-writer run fails the written p99 contract (4,866 ms > 2,000 ms), so engine
-latency/queueing at higher concurrency remains a performance blocker even though
-all 2,000 commits, restart recovery, and signed censuses were correct.
+200-writer run fails the written p99 contract (4,866 ms > 2,000 ms), so writable
+release still lacks passing high-concurrency evidence. The one-process result
+does not by itself prove that independently hosted relay engines miss the gate;
+that must be decided by the isolated staging sweep described above.
 
 ### Knee note
 

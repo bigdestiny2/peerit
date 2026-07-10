@@ -12,7 +12,7 @@ import { probeRelayBackend } from './pear-api.js'
 import { resolveRelayCandidates, selectRelaysResilient } from './relay-roster.js'
 import { createRelayPool } from './relay-pool.js'
 import { createLazyPearPool, monitorRelayAvailability } from './lazy-pool.js'
-import { cacheClassForChangedKeys, createData } from './data.js'
+import { createData } from './data.js'
 import { Prefs } from './prefs.js'
 import { STARTER_COMMUNITIES, STARTER_POSTS, WELCOME_COMMUNITY, starterCommunity } from './onboarding.js'
 import { renderMarkdown, excerpt } from './markdown.js'
@@ -213,7 +213,8 @@ async function boot () {
     deviceStore: typeof localStorage !== 'undefined' ? localStorage : null
   })
   refreshPrefs()
-  sync.onChange((changed) => data.invalidateViewCaches(cacheClassForChangedKeys(changed)))
+  // Data owns its sync invalidation subscription so the same cache-coherence
+  // contract also holds for non-app consumers (Pear/DHT adapters and tests).
   // Do not auto-promote local follows/subscriptions at boot. Migration publishes
   // signed records, so doing it merely because a returning device has a writer key
   // would make ordinary browsing mutate the network. Graph edges publish only on

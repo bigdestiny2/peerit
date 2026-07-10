@@ -34,6 +34,12 @@ const PROTO_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
 const MAX_PEERS = 4096
 const MAX_DESCRIPTOR_BYTES = 8192
 const MAX_ROWS_PER_PEER = 50000
+// A batch is capped on both dimensions. `ranges` is only a round-trip
+// optimisation: every returned outbox remains complete-paginated and audited
+// against its owner's signed head below.
+const RANGE_PAGE_ROWS = 1000
+const BATCH_RANGE_OUTBOXES = 32
+const FALLBACK_READ_CONCURRENCY = 6
 const HEX64 = /^[0-9a-f]{64}$/i
 const HEX128 = /^[0-9a-f]{128}$/i
 // Persisted verified view, so a reload renders instantly instead of blanking
@@ -441,6 +447,7 @@ class GossipSync {
     return this._inflight
   }
   _invalidate () { this._cache = null; this._inflight = null; this._epoch++ }
+  get viewEpoch () { return this._epoch }
 
   async get (key) { const v = await this._merged(); return Object.prototype.hasOwnProperty.call(v, key) ? v[key] : null }
   async list (prefix, opts = {}) { const v = await this._merged(); return rangeFromView(v, prefix ? { gte: prefix, lt: prefix + '\xff', limit: opts.limit } : { limit: opts.limit }, cachedSortedKeys(this, v)) }
@@ -492,6 +499,10 @@ class BridgeGossipSync {
     this._listeners = new Set()
     this._peers = new Map() // pub -> { appId, inviteKey }
     this._cache = null            // current merged view (maintained incrementally)
+    // Public, monotonically advancing source revision for consumers that cache
+    // derived views. It also changes when a caller drives _refresh() directly
+    // (without going through onChange), which is useful for embedders/tests.
+    this.viewEpoch = 0
     this._peerViews = new Map()   // pub -> admitted {key:value} view (verified rows only)
     this._peerSigs = new Map()    // pub -> Map(key -> changeToken) seen last refresh
     this._peerHeads = new Map()   // pub -> last-seen outbox version (from /api/sync/heads)
@@ -2072,12 +2083,19 @@ class BridgeGossipSync {
     const transitionPub = this._localWriteTransition && this._localWriteTransition.pub
     if (transitionPub) toRead = toRead.filter((pub) => pub !== transitionPub)
 
+    // Read candidate outboxes with an explicitly advertised batch endpoint when
+    // available. This changes neither the bytes accepted nor the audit below;
+    // it only removes per-outbox HTTP round trips. A malformed/failed batch is
+    // discarded wholesale and re-read through the established range endpoint.
+    const readInfos = toRead.map((pub) => ({ pub, info: this._peers.get(pub) })).filter(({ info }) => !!info)
+    const fetchedRows = await this._rowsForPeers(readInfos)
+
     let anyRowChanged = false
     const previous = new Map()
     for (const pub of toRead) {
       const info = this._peers.get(pub); if (!info) continue
-      let rows
-      try { rows = await this._rowsForPeer(info) } catch { continue }
+      if (!fetchedRows.has(pub)) continue
+      const rows = fetchedRows.get(pub)
       const prevSig = this._peerSigs.get(pub) || new Map()
       const priorView = this._peerViews.get(pub) || null
       const priorHead = this._peerHeads.has(pub) ? this._peerHeads.get(pub) : undefined
@@ -2206,6 +2224,7 @@ class BridgeGossipSync {
     if (this._cache && changed.length === 0) { /* winning view identical — keep object identity */ }
     else { this._cache = merged; this._sortedFor = null }
     if (changed.length || (anyRowChanged && !reconcile)) this._saveCache() // persist the latest verified view for an instant reload
+    if (changed.length) this.viewEpoch++
     return changed
   }
 
@@ -2249,7 +2268,7 @@ class BridgeGossipSync {
       const rows = []
       let gt = ''
       while (rows.length < MAX_ROWS_PER_PEER) {
-        const limit = Math.min(1000, MAX_ROWS_PER_PEER - rows.length)
+        const limit = Math.min(RANGE_PAGE_ROWS, MAX_ROWS_PER_PEER - rows.length)
         const batch = await this.pear.sync.range(info.appId, { gt, limit })
         if (!Array.isArray(batch) || !batch.length) break
         rows.push(...batch)
@@ -2260,6 +2279,88 @@ class BridgeGossipSync {
       return rows
     }
     return this.pear.sync.list(info.appId, '', { limit: 1000 })
+  }
+
+  // Returns `pub -> complete rows`. Failures are isolated per outbox on the
+  // legacy path. On the batch path, any malformed response makes us abandon the
+  // entire optimisation and use the established per-outbox reader instead — it
+  // is never safe to blend a partial batch response into an audited candidate.
+  async _rowsForPeers (entries) {
+    const result = new Map()
+    const pending = []
+    const batchable = []
+    for (const entry of entries || []) {
+      if (!entry || !entry.pub || !entry.info) continue
+      if (this._readFrom.get(entry.info.appId) || !this.pear.sync.ranges) pending.push(entry)
+      else batchable.push(entry)
+    }
+
+    if (batchable.length) {
+      try {
+        const batched = await this._batchRowsForPeers(batchable)
+        for (const [pub, rows] of batched) result.set(pub, rows)
+      } catch {
+        // The capability can disappear while a stale roster is cached, and a
+        // relay can return an invalid page. Both are availability failures, not
+        // grounds to weaken the audited read path.
+        pending.push(...batchable)
+      }
+    }
+
+    // Even unchanged relays benefit from bounded parallel reads on the old
+    // endpoint. Do not fan thousands of cold-start requests at once: the relay
+    // already advertises rate limits and the backoff layer needs room to work.
+    let next = 0
+    const workers = Array.from({ length: Math.min(FALLBACK_READ_CONCURRENCY, pending.length) }, async () => {
+      while (next < pending.length) {
+        const entry = pending[next++]
+        try { result.set(entry.pub, await this._rowsForPeer(entry.info)) } catch {}
+      }
+    })
+    await Promise.all(workers)
+    return result
+  }
+
+  async _batchRowsForPeers (entries) {
+    const state = new Map()
+    for (const entry of entries) {
+      if (state.has(entry.info.appId)) throw new Error('duplicate appId in batched range request')
+      state.set(entry.info.appId, { pub: entry.pub, appId: entry.info.appId, gt: '', rows: [], complete: false })
+    }
+    while (true) {
+      const active = [...state.values()].filter((row) => !row.complete)
+      if (!active.length) break
+      for (let start = 0; start < active.length; start += BATCH_RANGE_OUTBOXES) {
+        const page = active.slice(start, start + BATCH_RANGE_OUTBOXES)
+        if (page.some((row) => row.rows.length >= MAX_ROWS_PER_PEER)) throw new Error('batched range outbox reaches row bound')
+        const requests = page.map((row) => ({ appId: row.appId, gt: row.gt, limit: Math.min(RANGE_PAGE_ROWS, MAX_ROWS_PER_PEER - row.rows.length) }))
+        const response = await this.pear.sync.ranges(requests)
+        const replies = Array.isArray(response) ? response : (response && response.ranges)
+        if (!Array.isArray(replies) || replies.length !== requests.length) throw new Error('invalid batched range response shape')
+        const byApp = new Map()
+        for (const reply of replies) {
+          if (!reply || typeof reply.appId !== 'string' || !Array.isArray(reply.rows) || byApp.has(reply.appId)) throw new Error('invalid batched range response entry')
+          byApp.set(reply.appId, reply.rows)
+        }
+        for (const row of page) {
+          const request = requests.find((item) => item.appId === row.appId)
+          const rows = byApp.get(row.appId)
+          if (!rows || rows.length > request.limit) throw new Error('batched range response exceeds requested page')
+          let previous = row.gt
+          for (const entry of rows) {
+            if (!entry || typeof entry.key !== 'string' || !entry.key || !entry.value || typeof entry.value !== 'object' || entry.key <= previous) throw new Error('batched range pagination is not strictly ordered')
+            previous = entry.key
+            row.rows.push(entry)
+            if (row.rows.length > MAX_ROWS_PER_PEER) throw new Error('batched range outbox exceeds row bound')
+          }
+          if (rows.length < request.limit) row.complete = true
+          else row.gt = previous
+        }
+      }
+    }
+    const out = new Map()
+    for (const row of state.values()) out.set(row.pub, row.rows)
+    return out
   }
   async _merged () {
     if (this._cache) return this._cache

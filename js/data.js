@@ -15,6 +15,7 @@ import { uid, isValidSlug, normalizeSlug, safeUserUrl } from './util.js'
 import { mint, MIN_BITS } from './pow.js'
 import { assertRecoveryBundleMatches, buildRecoveryBundle, isHex64 } from './recovery.js'
 import { boxBody, unboxToBody, shouldBox, canBox } from './blob-store.js'
+import { MaterializedIndex } from './materialized-index.js'
 
 // Decrypted-body cache is keyed by blobId (a content hash), so it is immutable
 // and never goes stale — a bounded FIFO is all it needs.
@@ -83,16 +84,50 @@ export class Data {
     this._repIndex = null          // reputation index (voter age + upvotes received), gated by _epoch
     this._commentCountCache = new Map() // `${community}/${postCid}` -> { val, contentEpoch }
     this._searchIndex = null
+    // A device-local secondary index over the verified/decrypted read view. It is
+    // rebuilt from source records after an epoch change, so it can never become an
+    // authority or make a relay-supplied index hint trustworthy.
+    this._materializedIndex = null
+    this._materializedEpoch = -1
+    this._materializedSourceEpoch = null
+    this._materializedBuild = null
+    this._materializedBuildEpoch = -1
+    this._preserveMaterializedOnInvalidate = false
     this._epoch = 0          // bumped on EVERY write; gates vote tallies
     this._contentEpoch = 0   // bumped only when searchable content changes; gates comment-count + search caches
     this._bodyCache = new Map() // blobId -> decrypted body (content-addressed → never stale)
     this._writeIntents = 0
     this._writeSessionTail = Promise.resolve()
     this._writerSession = null
+    this._localSyncWrites = 0
+    this._localSyncKeys = new Set()
     this._trackWriteIntents()
+    // Keep every Data consumer coherent even when it is used outside app.js
+    // (Pear/DHT adapters and tests do this). Previously app.js supplied this
+    // invalidation hook, leaving local derived views stale for other consumers.
+    this._unsubscribeSync = typeof this.sync.onChange === 'function'
+      ? this.sync.onChange((changed) => this._onSyncChange(changed))
+      : null
   }
 
   me () { return this.id.me() }
+
+  _onSyncChange (changed) {
+    // Every public write below performs its own semantic invalidation after the
+    // publication promise resolves. Ignore the synchronous echo from that exact
+    // append so an opaque v2 wire key cannot be conservatively misclassified as
+    // content and unnecessarily discard the search cache after a local vote. A
+    // remote change racing that append is never ignored.
+    const onlyLocalEcho = this._localSyncWrites > 0 && Array.isArray(changed) && changed.length > 0 &&
+      changed.every(key => this._localSyncKeys.has(String(key)))
+    if (onlyLocalEcho || (this._localSyncWrites > 0 && !Array.isArray(changed))) return
+    this.invalidateViewCaches(cacheClassForChangedKeys(changed))
+  }
+
+  _sourceViewEpoch () {
+    const epoch = this.sync && this.sync.viewEpoch
+    return Number.isSafeInteger(epoch) && epoch >= 0 ? epoch : null
+  }
 
   _trackWriteIntents () {
     for (const name of WRITE_INTENT_METHODS) {
@@ -177,7 +212,16 @@ export class Data {
   // full search-index rebuild on the next search.
   invalidateViewCaches (opClass) {
     if (opClass === 'none') return
+    const preserveMaterialized = this._preserveMaterializedOnInvalidate &&
+      this._materializedIndex && this._materializedEpoch === this._epoch
+    this._preserveMaterializedOnInvalidate = false
     this._epoch++
+    if (preserveMaterialized) this._materializedEpoch = this._epoch
+    else {
+      this._materializedIndex = null
+      this._materializedEpoch = -1
+      this._materializedSourceEpoch = null
+    }
     this._tallyCache.clear()
     this._repIndex = null // voter reputation shifts as content/votes change; rebuild lazily
     if (opClass !== 'vote') {
@@ -215,12 +259,16 @@ export class Data {
   // Read the backend's raw range with a cursor. This is intentionally separate
   // from _rangeRead: the v2 view itself is built from raw `v2!` rows, so routing
   // that call through _rangeRead would recurse through _v2v forever.
-  async _rawListPrefix (prefix, { limit = 1000 } = {}) {
+  async _rawRange (base = {}, { limit = 1000 } = {}) {
     const rows = []
-    let gt = null
+    let gt = base.gt != null ? base.gt : null
     const MAX_ROWS = 200000
     while (rows.length < MAX_ROWS) {
-      const opts = gt ? { gt, lt: prefix + '\xff', limit } : { gte: prefix, lt: prefix + '\xff', limit }
+      const opts = { ...base, limit }
+      if (gt != null) {
+        delete opts.gte
+        opts.gt = gt
+      }
       const batch = await this.sync.range(opts).catch(() => [])
       if (!Array.isArray(batch) || !batch.length) break
       rows.push(...batch)
@@ -229,6 +277,10 @@ export class Data {
       gt = last
     }
     return rows
+  }
+
+  async _rawListPrefix (prefix, { limit = 1000 } = {}) {
+    return this._rawRange({ gte: prefix, lt: prefix + '\xff' }, { limit })
   }
 
   // Sign a record's canonical form and attach verification metadata. MUST be
@@ -317,16 +369,39 @@ export class Data {
     if (this.ensureWriter) await this.ensureWriter()
     this._assertCurrentOwner(expectedOwner, 'immediately before publication')
     this._assertSignedOpsOwner(ops, expectedOwner)
-    if (staged.length && typeof this.sync.appendBatch === 'function') await this.sync.appendBatch(ops, this._writerSession)
-    else {
-      // DevSync and old PearBrowser transports retain their historical sequential
-      // compatibility. Writable web exposes appendBatch and takes the atomic path.
-      for (const pending of staged) {
-        this._assertCurrentOwner(expectedOwner, 'between publication batch records')
-        await this.sync.append(pending, this._writerSession)
+    const localWireKeys = ops
+      .map(item => item && item.type && item.data && item.data.id != null ? item.type.replace(':', '!') + '!' + item.data.id : null)
+      .filter(Boolean)
+    this._localSyncWrites++
+    for (const key of localWireKeys) this._localSyncKeys.add(key)
+    try {
+      if (staged.length && typeof this.sync.appendBatch === 'function') await this.sync.appendBatch(ops, this._writerSession)
+      else {
+        // DevSync and old PearBrowser transports retain their historical sequential
+        // compatibility. Writable web exposes appendBatch and takes the atomic path.
+        for (const pending of staged) {
+          this._assertCurrentOwner(expectedOwner, 'between publication batch records')
+          await this.sync.append(pending, this._writerSession)
+        }
+        this._assertCurrentOwner(expectedOwner, 'immediately before publication')
+        await this.sync.append(op, this._writerSession)
       }
-      this._assertCurrentOwner(expectedOwner, 'immediately before publication')
-      await this.sync.append(op, this._writerSession)
+    } finally {
+      this._localSyncWrites--
+      for (const key of localWireKeys) this._localSyncKeys.delete(key)
+    }
+    // Optimistic rendering already receives `data`; keeping an existing derived
+    // index in step here extends that same local-write fast path to later feed,
+    // graph, tally and thread reads. The following public method's invalidation
+    // advances the index epoch without rebuilding it. Remote records never take
+    // this path and therefore always rebuild from the verified merged source.
+    if (this._materializedIndex && this._materializedEpoch === this._epoch) {
+      const key = expectedKey(semType, data)
+      if (key) {
+        this._materializedIndex.upsert(key, data)
+        this._materializedSourceEpoch = this._sourceViewEpoch()
+        this._preserveMaterializedOnInvalidate = true
+      }
     }
     return data
   }
@@ -401,6 +476,60 @@ export class Data {
     out.sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
     if (reverse) out.reverse()
     return out.slice(0, limit)
+  }
+
+  // Build local graph/feed adjacency maps from the same merged source records
+  // every existing read path trusts. V2 rows are reconstructed first; legacy rows
+  // are then added only when no v2 row occupies the same semantic slot. This is
+  // intentionally an implementation cache, not a protocol object: dropping it is
+  // safe and the next query rebuilds it from signed records.
+  async _index () {
+    const epoch = this._epoch
+    const sourceEpoch = this._sourceViewEpoch()
+    if (this._materializedIndex && this._materializedEpoch === epoch &&
+      (sourceEpoch == null || sourceEpoch === this._materializedSourceEpoch)) return this._materializedIndex
+    // A low-level consumer can drive BridgeGossipSync._refresh() directly. Its
+    // public source revision catches that path even without an onChange callback.
+    if (sourceEpoch != null && sourceEpoch !== this._materializedSourceEpoch) this._v2Epoch = -1
+    if (this._materializedBuild && this._materializedBuildEpoch === epoch) return this._materializedBuild
+
+    const build = (async () => {
+      const index = new MaterializedIndex()
+      // Read legacy rows without downloading the potentially much larger opaque
+      // v2 range a second time. `vote!` sorts after `v2!`, hence its separate range.
+      // V2 rows are then overlaid to retain documented dual-read precedence.
+      const [legacyEarly, legacyVotes, v2] = await Promise.all([
+        this._rawRange({ gte: '', lt: 'v2!' }, { limit: 1000 }),
+        this._rawListPrefix(keys.voteAll(), { limit: 1000 }),
+        this.v2 ? this._v2v() : Promise.resolve(null)
+      ])
+      for (const row of [...legacyEarly, ...legacyVotes]) {
+        if (!row || !row.key) continue
+        index.upsert(row.key, row.value)
+      }
+      if (v2) {
+        for (const key of Object.keys(v2)) index.upsert(key, v2[key])
+      }
+      // A sync callback may have advanced the view while an async range was in
+      // flight. Never publish a mixed-epoch index; retry against the newer view.
+      if (epoch !== this._epoch || sourceEpoch !== this._sourceViewEpoch()) return null
+      this._materializedIndex = index
+      this._materializedEpoch = epoch
+      this._materializedSourceEpoch = sourceEpoch
+      return index
+    })()
+    this._materializedBuild = build
+    this._materializedBuildEpoch = epoch
+    let index = null
+    try {
+      index = await build
+    } finally {
+      if (this._materializedBuild === build) {
+        this._materializedBuild = null
+        this._materializedBuildEpoch = -1
+      }
+    }
+    return index || this._index()
   }
 
   // ---- BlindShard Phase 2/3: box-before-store + dispersal ------------------
@@ -754,8 +883,7 @@ export class Data {
   async getCommunity (slug) { return this._get(keys.community(slug)) }
 
   async listCommunities () {
-    const rows = await this._listPrefix(keys.communityPrefix(), { limit: 1000 })
-    return rows.map(r => r.value).filter(Boolean)
+    return (await this._index()).listCommunities()
   }
 
   async updateCommunity (slug, patch) {
@@ -821,15 +949,14 @@ export class Data {
   // Body-free callers (karma, activity) pass { hydrate: false } to skip fetching +
   // decrypting every boxed blob they would only discard (review FIX 4).
   async listPostsIn (community, { hydrate = true } = {}) {
-    const rows = await this._listPrefix(keys.postsIn(community), { limit: 1000 })
-    const recs = rows.map(r => r.value).filter(Boolean)
+    const recs = (await this._index()).listPostsIn(community)
     return hydrate ? Promise.all(recs.map(r => this._hydrate(r))) : recs
   }
 
   // Post count for a community sidebar/card. Routes through _count so it works for
   // both v1 (relay prefix count) and v2 (the client-reconstructed view) — the UI must
   // never call sync.count directly, since v2 keys are opaque.
-  async postCount (community) { return this._count(keys.postsIn(community)) }
+  async postCount (community) { return (await this._index()).postCount(community) }
 
   async editPost (community, cid, body) { return this._editPost(community, cid, body) }
 
@@ -864,10 +991,11 @@ export class Data {
 
   // Aggregate posts across communities (for home/all feeds).
   async listAllPosts (communities, { hydrate = true } = {}) {
+    const index = await this._index()
     let slugs = communities
-    if (!slugs) slugs = (await this.listCommunities()).map(c => c.slug)
-    const lists = await Promise.all(slugs.map(s => this.listPostsIn(s, { hydrate }).catch(() => [])))
-    return lists.flat()
+    if (!slugs) slugs = index.listCommunities().map(c => c.slug)
+    const recs = slugs.flatMap(slug => index.listPostsIn(slug))
+    return hydrate ? Promise.all(recs.map(r => this._hydrate(r))) : recs
   }
 
   // ---- inbox: replies to your posts + comments (Slice 2) ----------------------
@@ -876,10 +1004,9 @@ export class Data {
   // comment (parentCid null) on YOUR post, or a nested reply whose parentCid is one
   // of YOUR comment cids. Read state lives device-local (prefs.notifSeen).
   async notificationsFor (pub = this.me().pubkey, { limit = 100, hydrate = true } = {}) {
-    const [allPosts, allComments] = await Promise.all([
-      this.listAllPosts(undefined, { hydrate: false }), // titles + author only; bodies not needed
-      this._listPrefix(keys.commentPrefix()).then(rows => rows.map(r => r.value).filter(Boolean))
-    ])
+    const index = await this._index()
+    const allPosts = await this.listAllPosts(undefined, { hydrate: false }) // titles + author only; bodies not needed
+    const allComments = index.listAllComments()
     const postTitle = new Map(allPosts.map(p => [p.cid, p.title]))
     const myPostCids = new Set(allPosts.filter(p => p.author === pub && !p.deleted).map(p => p.cid))
     const myCommentCids = new Set(allComments.filter(c => c.author === pub && !c.deleted).map(c => c.cid))
@@ -952,8 +1079,7 @@ export class Data {
   // Body-free callers (karma) pass { hydrate: false } to skip fetching+decrypting
   // boxed comment bodies they only discard — mirrors listPostsIn (review FIX 4).
   async listComments (community, postCid, { hydrate = true } = {}) {
-    const rows = await this._listPrefix(keys.commentsOn(community, postCid), { limit: 1000 })
-    const recs = rows.map(r => r.value).filter(Boolean)
+    const recs = (await this._index()).listComments(community, postCid)
     return hydrate ? Promise.all(recs.map(r => this._hydrate(r))) : recs
   }
 
@@ -1032,8 +1158,7 @@ export class Data {
         // Backwards-compatible API fallback for older callers that omitted the
         // enclosing post. The globally author-bound v3 CID prevents redirection,
         // but this scan is intentionally not the normal browser path.
-        const rows = await this._listPrefix(keys.commentPrefix(), { limit: 1000 })
-        const candidates = rows.map(r => r.value).filter(c => c && c.community === community && c.cid === targetCid)
+        const candidates = (await this._index()).listAllComments().filter(c => c && c.community === community && c.cid === targetCid)
         for (const candidate of candidates) if (await hasValidContentId(TYPE.COMMENT, candidate)) { valid = candidate; break }
       }
       if (!valid) throw new Error('Legacy comments are read-only after the protocol v3 identity cutover')
@@ -1056,8 +1181,7 @@ export class Data {
   }
 
   async rawVotes (targetCid) {
-    const rows = await this._listPrefix(keys.votesFor(targetCid), { limit: 1000 })
-    return rows.map(r => r.value).filter(Boolean)
+    return (await this._index()).listVotesFor(targetCid)
   }
 
   // ---- reputation index (Slice 3) -------------------------------------------
@@ -1066,16 +1190,17 @@ export class Data {
   // class as the search index) and reused by every weighted tally on a feed render.
   async _reputation () {
     if (this._repIndex && this._repIndex.epoch === this._epoch) return this._repIndex
+    const index = await this._index()
     const earliest = new Map() // pub -> earliest activity ms
     const received = new Map() // pub -> upvotes received on their content
     const cidAuthor = new Map() // cid -> author (to attribute an upvote to a content owner)
     const seen = (pub, ts) => { if (!pub) return; const e = earliest.get(pub); if (e == null || ts < e) earliest.set(pub, ts) }
     const posts = await this.listAllPosts(undefined, { hydrate: false })
     for (const p of posts) { cidAuthor.set(p.cid, p.author); seen(p.author, p.createdAt || 0) }
-    const comments = (await this._listPrefix(keys.commentPrefix())).map(r => r.value).filter(Boolean)
+    const comments = index.listAllComments()
     for (const c of comments) { cidAuthor.set(c.cid, c.author); seen(c.author, c.createdAt || 0) }
-    const allVotes = await this._listPrefix(keys.voteAll())
-    for (const { value: v } of allVotes) {
+    const allVotes = index.listAllVotes()
+    for (const v of allVotes) {
       if (v && v.value === 1) { const a = cidAuthor.get(v.targetCid); if (a) received.set(a, (received.get(a) || 0) + 1) }
     }
     this._repIndex = { epoch: this._epoch, earliest, received, cidAuthor }
@@ -1118,13 +1243,13 @@ export class Data {
     if (missing.length) {
       const idx = await this._reputation()
       const weightOf = (pub) => { const e = idx.earliest.get(pub); return [e ? Math.max(0, (Date.now() - e) / 86400000) : 0, idx.received.get(pub) || 0] }
-      // Scan only the votes for each missing target (vote!<cid>!…) instead of the
-      // whole vote table — turns a feed render from O(all votes) into O(votes on
-      // the visible posts). Same prefix scheme rawVotes uses.
-      const lists = await Promise.all(missing.map(cid => this._listPrefix(keys.votesFor(cid))))
+      // The materialized target adjacency keeps a feed render bounded by votes on
+      // visible posts rather than scanning the global vote table.
+      const index = await this._index()
+      const lists = missing.map(cid => index.listVotesFor(cid))
       for (let i = 0; i < missing.length; i++) {
         const cid = missing[i]
-        const votes = lists[i].map(r => r.value).filter(Boolean)
+        const votes = lists[i]
         const val = tallyVotes(votes, me, weightOf)
         this._tallyCache.set(viewerKey + ':' + cid, { val, epoch: this._epoch })
         out.set(cid, val)
@@ -1149,14 +1274,15 @@ export class Data {
       else missing.push(p)
     }
     if (missing.length) {
-      // Count per post via the comment!<community>!<postCid>! prefix instead of
-      // scanning the entire comment table on every feed render. Deleted comments
-      // are still counted (truthy value), matching the prior behaviour.
-      const lists = await Promise.all(missing.map(p => this._listPrefix(keys.commentsOn(p.community, p.cid))))
+      // Count from the materialized thread adjacency rather than scanning the
+      // entire comment table. Deleted comments remain counted, matching the
+      // previous prefix-query behaviour.
+      const index = await this._index()
+      const lists = missing.map(p => index.listComments(p.community, p.cid))
       for (let i = 0; i < missing.length; i++) {
         const p = missing[i]
         const key = p.community + '/' + p.cid
-        const val = lists[i].reduce((n, r) => n + (r.value ? 1 : 0), 0)
+        const val = lists[i].reduce((n, comment) => n + (comment ? 1 : 0), 0)
         this._commentCountCache.set(key, { val, epoch: this._contentEpoch })
         out.set(p.cid, val)
       }
@@ -1250,21 +1376,18 @@ export class Data {
   }
 
   async isFollowing (targetPub, viewer = this.me().pubkey) {
-    const r = await this._get(keys.follow(targetPub, viewer))
-    return !!(r && !r.deleted)
+    return (await this._index()).followingOf(viewer).includes(targetPub)
   }
 
   // Everyone WHO FOLLOWS pub — cheap prefix read (follow!<pub>!).
   async followersOf (pub) {
-    const rows = await this._listPrefix(keys.followersOf(pub), { limit: 1000 })
-    return rows.map(r => r.value).filter(v => v && !v.deleted).map(v => v.author)
+    return (await this._index()).followersOf(pub)
   }
 
   // Everyone pub FOLLOWS — a scan of the follow! range filtered by author (client-
   // side aggregation, same cost model as karmaFor).
   async followingOf (pub) {
-    const rows = await this._listPrefix(keys.followAll(), { limit: 1000 })
-    return rows.map(r => r.value).filter(v => v && !v.deleted && v.author === pub).map(v => v.target)
+    return (await this._index()).followingOf(pub)
   }
 
   async followCounts (pub) {
@@ -1289,16 +1412,14 @@ export class Data {
   }
 
   async membersOf (community) {
-    const rows = await this._listPrefix(keys.membersOf(community), { limit: 1000 })
-    return rows.map(r => r.value).filter(v => v && !v.deleted).map(v => v.author)
+    return (await this._index()).membersOf(community)
   }
 
   async memberCount (community) { return (await this.membersOf(community)).length }
 
   async myMemberships () {
     const me = this.me().pubkey
-    const rows = await this._listPrefix(keys.memberAll(), { limit: 1000 })
-    return rows.map(r => r.value).filter(v => v && !v.deleted && v.author === me).map(v => v.community)
+    return (await this._index()).membershipsOf(me)
   }
 
   // One-time migration: device-local prefs (which die with localStorage and are
@@ -1348,12 +1469,13 @@ export class Data {
 
   async _ensureSearchIndex () {
     if (this._searchIndex && this._searchIndex.epoch === this._contentEpoch) return this._searchIndex
+    const materialized = await this._index()
     const communities = await this.listCommunities()
     const posts = await this.listAllPosts(communities.map(c => c.slug))
     const postTitle = new Map(posts.map(p => [p.community + '/' + p.cid, p.title]))
     // Hydrate boxed comment bodies so they remain searchable (the client can
     // decrypt; only the relay can't). Content-addressed body cache amortizes it.
-    const rawComments = (await this._listPrefix(keys.commentPrefix())).map(r => r.value).filter(c => c && !c.deleted)
+    const rawComments = materialized.listAllComments().filter(c => c && !c.deleted)
     const comments = (await Promise.all(rawComments.map(c => this._hydrate(c))))
       .map(c => ({ ...c, postTitle: postTitle.get(c.community + '/' + c.postCid) || '' }))
     const index = {
@@ -1388,8 +1510,7 @@ export class Data {
 
   // ---- Moderation -----------------------------------------------------------
   async listModActions (community) {
-    const rows = await this._listPrefix(keys.modsIn(community), { limit: 1000 })
-    return rows.map(r => r.value).filter(Boolean)
+    return (await this._index()).listModActions(community)
   }
 
   async getMods (community) {

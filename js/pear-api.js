@@ -408,6 +408,13 @@ export function createPearApi (opts = {}) {
         reverse: rangeOpts.reverse ? 1 : undefined,
         limit: rangeOpts.limit
       })),
+      // Optional scale capability. It deliberately is NOT probed optimistically:
+      // an older relay receives no extra 404 request on every refresh. An exact
+      // relay-status capability enables it in relay-pool.js; each returned row
+      // still goes through normal admission and the complete signed-head audit.
+      ...(opts.batchRanges === true
+        ? { ranges: (requests, requestOpts = {}) => apiPost('/api/sync/ranges', { requests }, requestOpts) }
+        : {}),
       count: (appId, prefix) => apiGet(pathWithParams('/api/sync/count', { appId, prefix })),
       status: (appId) => apiGet(pathWithParams('/api/sync/status', { appId })),
       // Batched change-markers: one request returns a version per outbox so the

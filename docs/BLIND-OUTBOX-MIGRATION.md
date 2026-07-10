@@ -139,7 +139,7 @@ The relay caps a value at 64 KiB. A `{okey(64) + tag}` entry sealed+base64 is ~2
 1. **The O(authors) cold-pull ceiling is PRE-EXISTING, not created by v2.** Today a fresh visitor to r/x already must pull every outbox in `/api/directory` and filter client-side — the relay has no cross-author `postsIn` index. v2 changes the key string and adds a manifest decrypt; it does **not** change this shape. v2 is a **liability win, NEUTRAL on scalability** — state this, do not imply v2 improves cold-load.
 2. **Manifest indices are exactly as complete as `_peers` is today.** They add **no new blindness**: a feature only sees authors the client has discovered, identical to today.
 
-**The bounding mechanism (ships WITH v2, not deferred — see §9-D5):** a **cross-author, author-INDEPENDENT community member roster**, keyed like `community!<slug>` so it is one directly-fetchable relay slot:
+**The required bounding mechanism (a future relay slice, not current v2):** a **cross-author, author-INDEPENDENT community member roster**, keyed like `community!<slug>` so it is one directly-fetchable relay slot:
 
 ```
 okey_members = HMAC(RK, 'members' ‖ 0x00 ‖ normalizeSlug(slug))   (author-INDEPENDENT, ONE slot)
@@ -148,6 +148,15 @@ okey_members = HMAC(RK, 'members' ‖ 0x00 ‖ normalizeSlug(slug))   (author-IN
 sealed under crk, each member LWW-appends their own pubkey to a merged set (self-signed entry, owner-bound). A fresh r/x visitor then does: **1 relay get(okey_members) → decrypt → author list → pull ONLY those N outboxes**, bounding discovery to O(members-of-x) instead of O(all-authors). Residual leak: member **count** per opaque slot, and the roster is **relay-enumerable by recomputation** (the operator holds RK) — so do **not** claim membership indistinguishability (fixes stress-test S7). For public communities, membership is relay-enumerable; document it as another metadata leak.
 
 **Supporting relay change (content-blind, additive):** add `POST /api/sync/ranges` (N appIds → rows) to collapse thousands of round-trips into a few. It stays content-blind (the relay already serves these per-outbox; batching leaks nothing new). Without batching, a 5000-author cold boot is thousands of sequential HTTP requests.
+
+> **Implementation status (2026-07-10).** The app currently has signed,
+> per-author `member!` edges and a client for capability-gated batched outbox
+> reads, documented in [`BATCH-RANGES-PROTOCOL.md`](BATCH-RANGES-PROTOCOL.md).
+> A shared member-roster CRDT and relay endpoint do **not** exist yet. The
+> per-author edge cannot safely stand in for the shared slot above, so this is a
+> design target rather than a current scalability claim. Directory discovery
+> remains the correctness fallback until that relay protocol ships and is
+> adversarially tested.
 
 **Moderation pull is a DEPENDENCY CLOSURE, not best-effort (fixes stress-test feature H "moderation"):** before rendering a community, always pull the founder's outbox (referenced by the community record) **and** every currently-resolved mod's outbox transitively. Have the community record / founder manifest list the current mod-set appIds so they are prioritized. Surface a "moderation may be incomplete" state when a resolved mod's outbox is unpulled, rather than silently under-enforcing bans.
 

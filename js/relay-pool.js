@@ -28,6 +28,15 @@ export const COMMIT_EVIDENCE_TIMEOUT_MS = 8000
 const MAX_EVIDENCE_ROWS = 50000
 const EVIDENCE_PAGE_SIZE = 1000
 
+// A batch range response is only a transport optimisation, never an authority.
+// Keep its contract exact and capability-gated so an old relay is not pummelled
+// with failing probes during every gossip refresh.
+function hasBatchRanges (relay) {
+  const cap = relay && relay.capabilities && relay.capabilities.batchRanges
+  return !!(relay && relay.ready === true && cap && cap.schema === 1 &&
+    cap.method === 'POST' && cap.route === '/api/sync/ranges' && cap.enabled === true)
+}
+
 function topologyFromEntries (entries) {
   const first = entries.find((entry) => entry.relay && entry.relay.rosterVerified === true && entry.relay.rosterStable === true && entry.relay.topologyId)
   if (!first) return null
@@ -92,6 +101,7 @@ export function createRelayPool ({ relays = [], topology = null, fetch, EventSou
       apiBase: r.apiBase,
       apiToken: r.apiToken,
       atomicCommit: exactAtomic,
+      batchRanges: hasBatchRanges(r),
       requestTimeoutMs: commitTimeoutMs,
       fetch,
       EventSource,

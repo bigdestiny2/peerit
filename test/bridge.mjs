@@ -89,6 +89,16 @@ function makeApiHost () {
         }
         return response(rows.slice(0, limit))
       }
+      if (u.pathname === '/api/sync/ranges') {
+        const requests = Array.isArray(body && body.requests) ? body.requests : []
+        const ranges = requests.map((request) => {
+          const g = ensure(request.appId)
+          let rows = sortedRows(g)
+          if (request.gt) rows = rows.filter((row) => row.key > request.gt)
+          return { appId: request.appId, rows: rows.slice(0, Number(request.limit) || 100) }
+        })
+        return response({ ranges })
+      }
       if (u.pathname === '/api/sync/count') {
         const g = ensure(u.searchParams.get('appId'))
         return response({ count: sortedRows(g).length })
@@ -135,6 +145,10 @@ async function main () {
   const host = makeApiHost()
   const pear = createPearApi({ apiToken: 'token-1', apiBase: host.base, fetch: host.fetch, EventSource: FakeEventSource })
   ok(hasGossipPearSurface(pear), 'token-gated /api wrapper exposes sync, identity, and swarm.v1')
+  ok(typeof pear.sync.ranges === 'undefined', 'batch ranges are absent until a relay explicitly advertises them')
+  const batchPear = createPearApi({ apiToken: 'token-1', apiBase: host.base, fetch: host.fetch, EventSource: FakeEventSource, batchRanges: true })
+  const batchRows = await batchPear.sync.ranges([{ appId: PUB, gt: '', limit: 10 }])
+  ok(Array.isArray(batchRows.ranges) && batchRows.ranges[0].appId === PUB, 'advertised batch ranges use one authenticated POST request')
   const metaPear = createPearApi({
     document: { querySelector: () => ({ getAttribute: () => 'token-1' }) },
     apiBase: host.base,

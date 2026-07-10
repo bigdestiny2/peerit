@@ -457,7 +457,11 @@ export async function selectRelays (relays, { apiToken = '', tokenCache = null, 
     const rosterVerified = !!(topology && topology.verified === true && topology.stable === true && topology.validWriterTopology === true && entry)
     const capabilities = {
       atomicCommit: status.atomicCommit || null,
-      legacyWrites: status.legacyWrites || null
+      legacyWrites: status.legacyWrites || null,
+      // Additive, read-only transport capability. It must be explicitly
+      // advertised by the relay; clients otherwise retain one-outbox-at-a-time
+      // range reads with the same signed-head audit.
+      batchRanges: status.batchRanges || null
     }
     out.push({
       apiBase,

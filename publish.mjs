@@ -106,7 +106,7 @@ async function loadHiveRelayClient () {
 // Files that make up the served site (everything the browser needs, nothing else).
 export const SITE_FILES = [
   'index.html', 'styles.css', 'icon.svg',
-  'js/app.js', 'js/blob-store.js', 'js/box.js', 'js/canon.js', 'js/crypto.js', 'js/data.js', 'js/dht-bundle.js', 'js/gossip.js',
+  'js/app.js', 'js/blob-store.js', 'js/box.js', 'js/canon.js', 'js/crypto.js', 'js/data.js', 'js/dht-bundle.js', 'js/gossip.js', 'js/materialized-index.js',
   'js/identity.js', 'js/identity-export.js', 'js/identity-store.js', 'js/identity-vault.js', 'js/lazy-pool.js', 'js/live-refresh.js', 'js/markdown.js', 'js/model.js', 'js/onboarding.js', 'js/pear-api.js', 'js/qr.js',
   'js/prefs.js', 'js/pow.js', 'js/legacy-v2-pow-allowlist.js', 'js/legacy-action-allowlist.js', 'js/ranking.js', 'js/reader-bundle.js', 'js/recovery.js', 'js/relay-pool.js', 'js/relay-roster.js', 'js/release-verify.js',
   'js/runtime.js', 'js/seal.js', 'js/shard-roster.js', 'js/sync.js', 'js/util.js', 'js/verify.js',

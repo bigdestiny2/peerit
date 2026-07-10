@@ -26,6 +26,8 @@ async function until (fn, { tries = 200, gap = 60 } = {}) { for (let i = 0; i < 
 
 function makeMultiWorld (bases) {
   const relays = new Map(bases.map((b) => [new URL(b).host, { groups: new Map() }]))
+  const counts = { ranges: 0, range: 0 }
+  let malformedRanges = false
   const channels = new Map(); let chanSeq = 0
   const ensureGroup = (store, appId) => { if (!store.has(appId)) store.set(appId, { inviteKey: randomBytes(32).toString('hex'), rows: new Map(), version: 0, commits: new Map() }); return store.get(appId) }
   const sortedRows = (g) => [...g.rows.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => ({ key, value }))
@@ -56,7 +58,19 @@ function makeMultiWorld (bases) {
     }
     if (p === '/api/sync/heads') { const out = {}; for (const a of (body.appIds || [])) { const g = store.get(a); out[a] = g ? g.version : 0 }; return resp({ heads: out }) }
     if (p === '/api/sync/get') { const g = ensureGroup(store, u.searchParams.get('appId')); return resp(g.rows.get(u.searchParams.get('key')) || null) }
+    if (p === '/api/sync/ranges') {
+      counts.ranges++
+      if (malformedRanges) return resp({ ranges: [] })
+      const requests = Array.isArray(body && body.requests) ? body.requests : []
+      const ranges = requests.map((request) => {
+        const g = ensureGroup(store, request.appId); let rows = sortedRows(g)
+        if (request.gt) rows = rows.filter((row) => row.key > request.gt)
+        return { appId: request.appId, rows: rows.slice(0, Number(request.limit) || 100) }
+      })
+      return resp({ ranges })
+    }
     if (p === '/api/sync/list' || p === '/api/sync/range') {
+      if (p === '/api/sync/range') counts.range++
       const g = ensureGroup(store, u.searchParams.get('appId')); let rows = sortedRows(g)
       const pre = u.searchParams.get('prefix'); if (pre) rows = rows.filter((r) => r.key >= pre && r.key < pre + '\xff')
       for (const [b, cmp] of [['gte', (k, v) => k >= v], ['gt', (k, v) => k > v], ['lte', (k, v) => k <= v], ['lt', (k, v) => k < v]]) { const v = u.searchParams.get(b); if (v != null && v !== '') rows = rows.filter((r) => cmp(r.key, v)) }
@@ -71,14 +85,14 @@ function makeMultiWorld (bases) {
     return resp({ error: 'nf' }, 404)
   }
   class ES { constructor (url) { this.url = String(url); this.onmessage = null; this.onerror = null; const id = new URL(this.url).searchParams.get('channelId'); const c = channels.get(id); if (c) { c.es = this; setTimeout(() => linkPeers(id), 0) } } close () {} }
-  return { fetch, EventSource: ES, relays }
+  return { fetch, EventSource: ES, relays, counts, setMalformedRanges: (value) => { malformedRanges = !!value } }
 }
 const storeOf = (world, base, pub) => world.relays.get(new URL(base).host).groups.get(pub)
 
 async function makeClient (world, bases, name, { writeHead = false, storage = mem(), pollMs = 250 } = {}) {
   const id = new DevIdentity(mem(), mem()); await id.ready(); await id.createUser(name)
   const origins = bases.map((base) => new URL(base).origin)
-  const capabilities = { atomicCommit: { schema: 1, method: 'POST', route: '/api/sync/commit', enabled: true, durable: true, cas: true, idempotent: true, idempotency: { mode: 'bounded', latestPerOutbox: true, hotReceiptsPerOutbox: 16, tombstonesPerOutbox: 64, aggregateEntries: 1024, extraHistoryEntries: 1000 } }, legacyWrites: { create: false, append: false } }
+  const capabilities = { atomicCommit: { schema: 1, method: 'POST', route: '/api/sync/commit', enabled: true, durable: true, cas: true, idempotent: true, idempotency: { mode: 'bounded', latestPerOutbox: true, hotReceiptsPerOutbox: 16, tombstonesPerOutbox: 64, aggregateEntries: 1024, extraHistoryEntries: 1000 } }, legacyWrites: { create: false, append: false }, batchRanges: { schema: 1, method: 'POST', route: '/api/sync/ranges', enabled: true } }
   const relays = bases.map((apiBase, rosterIndex) => ({ apiBase, apiToken: 't', ready: true, atomicCommit: true, capabilities, canonicalOrigin: origins[rosterIndex], rosterVerified: true, rosterStable: true, rosterIndex, topologyId: 'test-directory-roster', rosterOrigins: origins, rosterSize: origins.length }))
   const pool = createRelayPool({ relays, fetch: world.fetch, EventSource: world.EventSource })
   const sync = createSync({ getMe: () => id.me().pubkey, identity: id, pear: pool, validate: makeValidator(BITS), pollMs, writeHead, storage })
@@ -107,6 +121,15 @@ async function main () {
   ok(floorOf(bob.storage)[alice.pub] && floorOf(bob.storage)[alice.pub].v === 3, 'bob has a durable floor of v3 for alice immediately after boot — from the directory, before reading her outbox')
   const bobFloor = floorOf(bob.storage)[alice.pub]
   ok(/^[0-9a-f]{64}$/i.test(String((bobFloor && bobFloor.root) || '')), 'the directory bootstrap also pins alice\'s signed head root')
+  ok(world.counts.ranges > 0, 'the advertised batch endpoint delivers a complete outbox before signed-head admission')
+
+  console.log('\n— a malformed advertised batch response falls back, never bypasses audit —')
+  const rangesBeforeFallback = world.counts.range
+  world.setMalformedRanges(true)
+  const fallback = await makeClient(world, [A, B], 'fallback')
+  ok((await fallback.data.getCommunity('p2p'))?.title === 'P2P', 'fallback per-outbox range read still admits the signed community')
+  ok(world.counts.range > rangesBeforeFallback, 'an invalid batch response is discarded and uses the legacy paginated reader')
+  world.setMalformedRanges(false)
 
   console.log('\n— cross-relay: a stale mirror cannot override the roster leader —')
   const aliceLeader = alice.pool._leaderFor(alice.pub).origin
@@ -122,7 +145,7 @@ async function main () {
   const flagged = await until(async () => (await dave.sync.status()).withholding.includes(alice.pub), { tries: 80 })
   ok(flagged, 'a fresh visitor whose floor was directory-seeded to v3 FLAGS the all-relays rollback to v1 on first read')
 
-  for (const c of [alice, bob, carol, dave]) c.sync.destroy && c.sync.destroy()
+  for (const c of [alice, bob, fallback, carol, dave]) c.sync.destroy && c.sync.destroy()
   console.log(`\n✅ all ${passed} directory checks passed\n`)
 }
 main().catch((e) => { console.error('❌', (e && e.stack) || e); process.exit(1) })

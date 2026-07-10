@@ -22,6 +22,7 @@
     "audit:live-legacy-pow": "node scripts/audit-live-legacy-pow.mjs",
     "audit:live-legacy-actions": "node scripts/audit-live-legacy-actions.mjs",
     "proof:production-readonly": "node scripts/verify-production-readonly.mjs",
+    "recover:outboxlog-seed": "node scripts/recover-outboxlog-seed-state.mjs",
     "proof:writable-candidate": "node scripts/verify-writable-candidate.mjs",
     "proof:web-deploy": "node scripts/verify-deployed-web.mjs",
     "soak:outboxlog": "node scripts/soak-outboxlog.mjs",

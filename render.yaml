@@ -1,0 +1,30 @@
+# Link this Blueprint to the existing `peerit-site` Render static service. It
+# intentionally omits domains, routes, plans, and build filters so attaching it
+# does not replace unrelated live service settings.
+services:
+  - type: web
+    name: peerit-site
+    runtime: static
+    branch: main
+    autoDeployTrigger: checksPass
+    buildCommand: "node scripts/web-release.mjs --verify-only --strict"
+    staticPublishPath: web
+    envVars:
+      - key: SKIP_INSTALL_DEPS
+        value: "true"
+    headers:
+      - path: "/*"
+        name: "Content-Security-Policy"
+        value: "default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: hyper: pear:; connect-src 'self' hyper: pear: https://outbox.peerit.site; frame-ancestors 'none'; form-action 'none'"
+      - path: "/*"
+        name: "X-Content-Type-Options"
+        value: "nosniff"
+      - path: "/*"
+        name: "X-Frame-Options"
+        value: "DENY"
+      - path: "/*"
+        name: "Referrer-Policy"
+        value: "strict-origin-when-cross-origin"
+      - path: "/*"
+        name: "Permissions-Policy"
+        value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()"

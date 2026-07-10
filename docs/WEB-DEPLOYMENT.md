@@ -243,6 +243,14 @@ drift outside that explicit config change as a publish blocker.
    ```sh
    npm run configure:render-headers -- --service <render-static-service-id> --apply
    ```
+
+   The repository also carries [`render.yaml`](../render.yaml), which pins the
+   `peerit-site` static service to `main`, deploys only after CI checks pass,
+   verifies the already-signed `web/` artifact, and declares the same headers.
+   In Render, link that Blueprint to the existing service—review the matched
+   service before applying it so a duplicate static site is not created. The
+   CI gate `npm run verify:render-blueprint` keeps its header declarations in
+   sync with `deploy/render-security-headers.json`.
 5. **Host/mirror:** host that exact `web/` on peerit.site; also pin to IPFS (DNSLink),
    Arweave, and set ENS `peerit.eth` contenthash → CID so the app survives
    DNS/registrar seizure. `peerit.site/verify.html` lets anyone cross-check the

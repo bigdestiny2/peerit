@@ -34,6 +34,12 @@ const PROTO_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
 const MAX_PEERS = 4096
 const MAX_DESCRIPTOR_BYTES = 8192
 const MAX_ROWS_PER_PEER = 50000
+// A batch is capped on both dimensions. `ranges` is only a round-trip
+// optimisation: every returned outbox remains complete-paginated and audited
+// against its owner's signed head below.
+const RANGE_PAGE_ROWS = 1000
+const BATCH_RANGE_OUTBOXES = 32
+const FALLBACK_READ_CONCURRENCY = 6
 const HEX64 = /^[0-9a-f]{64}$/i
 const HEX128 = /^[0-9a-f]{128}$/i
 // Persisted verified view, so a reload renders instantly instead of blanking
@@ -42,6 +48,14 @@ const HEX128 = /^[0-9a-f]{128}$/i
 const CACHE_KEY = 'peerit:gossip-view'
 const MAX_CACHE_BYTES = 3 * 1024 * 1024 // skip persisting if the view is huge (graceful)
 const FLOOR_KEY = 'peerit:head-floor'   // Phase C durable monotonic head floor (author -> max signed head version)
+// Exactly one owner-signed atomic commit may be in flight per device. Persisting
+// the complete envelope before the first network call makes response-loss retry
+// byte-for-byte idempotent across wake/reload; later writes remain blocked until
+// two relays return matching durable receipts.
+const PENDING_COMMIT_KEY = 'peerit:pending-commit:v1'
+const ATOMIC_LOCKS = new Map() // same-realm fallback for Node/tests; browsers use Web Locks
+const PENDING_RETRY_MIN_MS = 1000
+const PENDING_RETRY_MAX_MS = 30000
 // Synthetic change key used when transport integrity changes without any accepted
 // content changing. UI listeners can repaint the status warning without treating a
 // rejected rollback/withholding candidate as a real record mutation.
@@ -433,6 +447,7 @@ class GossipSync {
     return this._inflight
   }
   _invalidate () { this._cache = null; this._inflight = null; this._epoch++ }
+  get viewEpoch () { return this._epoch }
 
   async get (key) { const v = await this._merged(); return Object.prototype.hasOwnProperty.call(v, key) ? v[key] : null }
   async list (prefix, opts = {}) { const v = await this._merged(); return rangeFromView(v, prefix ? { gte: prefix, lt: prefix + '\xff', limit: opts.limit } : { limit: opts.limit }, cachedSortedKeys(this, v)) }
@@ -446,7 +461,7 @@ class GossipSync {
 
 // ---- real PearBrowser gossip ------------------------------------------------
 class BridgeGossipSync {
-  constructor ({ pear, getMe, identity, storage, validate = makeValidator(), pollMs = 4000, writeHead = false, readOnly = false, discover = true, seedOutboxes = [], instantBoot = false, seedSnapshot = null }) {
+  constructor ({ pear, getMe, identity, storage, validate = makeValidator(), pollMs = 4000, writeHead = false, readOnly = false, requireAtomicWrites = false, discover = true, seedOutboxes = [], instantBoot = false, seedSnapshot = null }) {
     this.mode = 'gossip-bridge'
     this.pear = pear
     // instantBoot: ready() returns after the LOCAL restore (cached view / verified
@@ -468,6 +483,10 @@ class BridgeGossipSync {
     // chokepoint) can't be bypassed by a UI handler that forgot an isReadOnly()
     // check, and it also prevents a stray head! append.
     this._readOnly = readOnly
+    // Normal-browser writable releases must never silently downgrade to the
+    // legacy record/head append sequence. PearBrowser retains that legacy/P2P
+    // path; web writer mode sets this fail-closed requirement in app.js.
+    this._requireAtomicWrites = !!requireAtomicWrites
     // When on, maintain a signed head!<me> record after each of my writes (the
     // outbox "merkle root": a census of my own records so a reader can detect a
     // relay withholding rows). Off by default so existing count-based tests are
@@ -480,6 +499,10 @@ class BridgeGossipSync {
     this._listeners = new Set()
     this._peers = new Map() // pub -> { appId, inviteKey }
     this._cache = null            // current merged view (maintained incrementally)
+    // Public, monotonically advancing source revision for consumers that cache
+    // derived views. It also changes when a caller drives _refresh() directly
+    // (without going through onChange), which is useful for embedders/tests.
+    this.viewEpoch = 0
     this._peerViews = new Map()   // pub -> admitted {key:value} view (verified rows only)
     this._peerSigs = new Map()    // pub -> Map(key -> changeToken) seen last refresh
     this._peerHeads = new Map()   // pub -> last-seen outbox version (from /api/sync/heads)
@@ -494,6 +517,12 @@ class BridgeGossipSync {
     this._localWriteTransition = null // narrowly-scoped record -> signed-head two-append window
     this._unconfirmedLocalHead = null // final audit must quarantine a headless/partial local publication
     this._unconfirmedRecordAppend = null // ambiguous low-level record ACK; blocks writes until a signed head confirms it
+    this._pendingCommit = null // persisted atomic HTTP commit awaiting quorum
+    this._retryingPending = null // single-flight boot/wake retry of that exact commit
+    this._pendingRetryAt = 0
+    this._pendingRetryDelay = PENDING_RETRY_MIN_MS
+    this._pendingRecoveryNeeded = false
+    this._activeAtomicWriterSessions = new WeakSet()
     this._appendTail = Promise.resolve() // serialize local record/head pairs
     this._destroyed = false
     this._poll = null
@@ -515,6 +544,200 @@ class BridgeGossipSync {
   _store () { return this.storage || (typeof localStorage !== 'undefined' ? localStorage : null) }
   _getLocal (key) { try { const s = this._store(); return s ? s.getItem(key) : null } catch { return null } }
   _setLocal (key, value) { try { const s = this._store(); if (s) s.setItem(key, value) } catch {} }
+  _atomicCommitEnabled () {
+    if (this._requireAtomicWrites && (!this.pear || this.pear._atomicCommit !== true)) return false
+    return !!(this.pear && this.pear.sync && typeof this.pear.sync.commit === 'function' && this.identity)
+  }
+
+  _loadPendingCommit () {
+    const store = this._store()
+    if (!store || typeof store.getItem !== 'function') {
+      // Legacy PearBrowser/P2P transports historically run without localStorage
+      // and do not use the HTTP atomic marker at all. Preserve that compatibility;
+      // an atomic-capable writer still fails closed because safe response-loss
+      // recovery is impossible without durable marker storage.
+      if (!this._requireAtomicWrites && !this._atomicCommitEnabled()) {
+        this._pendingCommit = null
+        this._pendingRecoveryNeeded = false
+        return null
+      }
+      this._pendingCommit = { invalid: true, unreadable: true }
+      return this._pendingCommit
+    }
+    try {
+      const raw = store.getItem(PENDING_COMMIT_KEY)
+      if (!raw) {
+        this._pendingCommit = null
+        this._pendingRecoveryNeeded = false
+        this._pendingRetryAt = 0
+        this._pendingRetryDelay = PENDING_RETRY_MIN_MS
+        return null
+      }
+      const pending = JSON.parse(raw)
+      if (!pending || pending.v !== 1 || !HEX64.test(pending.appId || '') || !pending.commit || pending.commit.schema !== 1 || !HEX64.test(pending.commit.commitId || '')) {
+        // Never overwrite an unrecognized durable marker. It might be a newer
+        // client schema or local corruption that needs operator recovery.
+        this._pendingCommit = { invalid: true }
+        return this._pendingCommit
+      }
+      const previousId = this._pendingCommit && this._pendingCommit.commit && this._pendingCommit.commit.commitId
+      if (previousId !== pending.commit.commitId) {
+        this._pendingRecoveryNeeded = false
+        this._pendingRetryAt = 0
+        this._pendingRetryDelay = PENDING_RETRY_MIN_MS
+      }
+      this._pendingCommit = pending
+      // A pending commit is a writer state even if the in-memory identity has not
+      // yet been restored from its encrypted vault. Its signed envelope is enough
+      // to retry; never mint a replacement identity or allocate an empty outbox.
+      this._peers.set(pending.appId, { appId: pending.appId, inviteKey: pending.appId, self: true, dir: true })
+      return pending
+    } catch {
+      // A read/parse failure is not evidence that the marker is absent. Preserve a
+      // fail-closed sentinel so a transient storage fault can never authorize a
+      // second publication over an unknown in-flight commit.
+      this._pendingCommit = { invalid: true, unreadable: true }
+      return this._pendingCommit
+    }
+  }
+
+  _persistPendingCommit (pending) {
+    const store = this._store()
+    if (!store || typeof store.setItem !== 'function' || typeof store.getItem !== 'function') throw new Error('Cannot publish safely: durable pending-commit storage is unavailable.')
+    const blob = JSON.stringify(pending)
+    const existing = store.getItem(PENDING_COMMIT_KEY)
+    if (existing) {
+      let existingId = null
+      try { existingId = JSON.parse(existing).commit.commitId } catch {}
+      if (existingId !== pending.commit.commitId) throw new Error('Another tab already has a different pending Peerit commit; refusing to overwrite it.')
+    }
+    store.setItem(PENDING_COMMIT_KEY, blob)
+    if (store.getItem(PENDING_COMMIT_KEY) !== blob) throw new Error('Cannot publish safely: the pending commit was not durably persisted.')
+    this._pendingCommit = pending
+  }
+
+  _replacePendingCommit (previous, pending) {
+    const store = this._store()
+    if (!store || typeof store.setItem !== 'function' || typeof store.getItem !== 'function') throw new Error('Cannot rebase safely: durable pending-commit storage is unavailable.')
+    const raw = store.getItem(PENDING_COMMIT_KEY)
+    let storedId = null
+    try { storedId = raw && JSON.parse(raw).commit.commitId } catch {}
+    if (!previous || storedId !== previous.commit.commitId) throw new Error('Cannot rebase safely: another tab changed the pending Peerit commit.')
+    const blob = JSON.stringify(pending)
+    store.setItem(PENDING_COMMIT_KEY, blob)
+    if (store.getItem(PENDING_COMMIT_KEY) !== blob) throw new Error('Cannot rebase safely: the replacement pending commit was not durably persisted.')
+    this._pendingCommit = pending
+    this._pendingRecoveryNeeded = false
+    this._pendingRetryAt = 0
+    this._pendingRetryDelay = PENDING_RETRY_MIN_MS
+  }
+
+  _pendingMarkerMatches (pending) {
+    const store = this._store()
+    if (!store || typeof store.getItem !== 'function' || !pending || !pending.commit) return false
+    try {
+      const raw = store.getItem(PENDING_COMMIT_KEY)
+      return !!raw && JSON.parse(raw).commit.commitId === pending.commit.commitId
+    } catch { return false }
+  }
+
+  _clearPendingCommit (pending) {
+    const store = this._store()
+    if (!store || typeof store.getItem !== 'function') throw new Error('Commit reached quorum, but local pending-commit storage is unavailable.')
+    const raw = store.getItem(PENDING_COMMIT_KEY)
+    let storedId = null
+    try { storedId = raw && JSON.parse(raw).commit.commitId } catch {}
+    if (!pending || storedId !== pending.commit.commitId) throw new Error('Commit reached quorum, but another tab owns or cleared the current pending marker; it was not cleared.')
+    if (typeof store.removeItem === 'function') store.removeItem(PENDING_COMMIT_KEY)
+    else if (typeof store.setItem === 'function') store.setItem(PENDING_COMMIT_KEY, '')
+    if (typeof store.getItem === 'function' && store.getItem(PENDING_COMMIT_KEY)) throw new Error('Commit reached quorum, but its local pending marker could not be cleared.')
+    this._pendingCommit = null
+    this._pendingRecoveryNeeded = false
+    this._pendingRetryAt = 0
+    this._pendingRetryDelay = PENDING_RETRY_MIN_MS
+  }
+
+  async _withCrossTabLock (name, fn) {
+    const locks = typeof navigator !== 'undefined' && navigator && navigator.locks
+    if (locks && typeof locks.request === 'function') {
+      // The pending marker is intentionally device-global, so the lock must be
+      // global too: two tabs using different identities must not race separate
+      // per-author locks and overwrite the same durable slot.
+      return locks.request(name, { mode: 'exclusive' }, fn)
+    }
+    // A web page without Web Locks cannot make refresh→persist atomic across
+    // tabs. Refuse explicitly instead of relying on a racy localStorage lease.
+    // Node/test environments have no `window`; serialize instances in-realm.
+    if (typeof window !== 'undefined') throw new Error('This browser cannot safely coordinate Peerit publishing across tabs (Web Locks unavailable).')
+    const key = name
+    const previous = ATOMIC_LOCKS.get(key) || Promise.resolve()
+    let release
+    const held = new Promise((resolve) => { release = resolve })
+    const tail = previous.catch(() => {}).then(() => held)
+    ATOMIC_LOCKS.set(key, tail)
+    await previous.catch(() => {})
+    try { return await fn() } finally {
+      release()
+      if (ATOMIC_LOCKS.get(key) === tail) ATOMIC_LOCKS.delete(key)
+    }
+  }
+
+  async _withAtomicWriterLock (fn) {
+    if (typeof fn !== 'function') throw new TypeError('Atomic writer session requires a function.')
+    return this._withCrossTabLock('peerit:atomic-commit', async () => {
+      // Reentrancy is an explicit unforgeable capability passed only to the same
+      // Data write stack. An instance-global depth counter is unsafe: unrelated
+      // async work (including poll retry) can observe it and enter concurrently.
+      const session = Object.freeze({})
+      this._activeAtomicWriterSessions.add(session)
+      try { return await fn(session) } finally { this._activeAtomicWriterSessions.delete(session) }
+    })
+  }
+
+  // Public lifecycle/write-intent hook. Identity import/forget and Data's
+  // outermost write both use the same lock as pending-commit creation. Reload the
+  // device-global marker only after acquiring it: no tab may replace an identity
+  // while another tab has an ambiguous publication, and no writer can mint/sign
+  // across an import or forget transition.
+  withAtomicWriterSession (fn) {
+    return this._withAtomicWriterLock(async (session) => {
+      const pending = this._loadPendingCommit()
+      if (pending || this._pendingRecoveryNeeded) {
+        const error = new Error('Peerit identity/write state is locked while a publication is awaiting durable quorum recovery.')
+        error.code = 'PEERIT_PENDING_WRITER_LOCK'
+        throw error
+      }
+      return fn(session)
+    })
+  }
+
+  // Narrow recovery escape hatch for a vault/device key that matches the author of
+  // the ALREADY-SIGNED pending envelope. Ordinary withAtomicWriterSession remains
+  // closed, so import/forget/arbitrary identity switches cannot cross a pending
+  // publication. This callback may only activate the exact pending appId; while the
+  // same cross-tab lock is held we retry/rebase that envelope before returning.
+  recoverPendingWithIdentity (expectedAppId, activateMatchingIdentity) {
+    if (!HEX64.test(String(expectedAppId || '')) || typeof activateMatchingIdentity !== 'function') {
+      return Promise.reject(new Error('Pending publication recovery requires its exact writer identity.'))
+    }
+    expectedAppId = String(expectedAppId).toLowerCase()
+    return this._withAtomicWriterLock(async () => {
+      const pending = this._loadPendingCommit()
+      if (!pending) return null // another tab completed it before this lock was acquired
+      if (pending.invalid || !pending.commit) throw new Error('The durable Peerit pending marker is unreadable and cannot activate an identity automatically.')
+      if (pending.appId !== expectedAppId) throw new Error('The available identity does not match the pending publication author.')
+      await activateMatchingIdentity({ appId: pending.appId, commitId: pending.commit.commitId })
+      if (this._myAppId() !== pending.appId) throw new Error('Pending publication recovery refused an identity that does not match its signed author.')
+      if (!this._pendingMarkerMatches(pending)) throw new Error('The pending publication changed while its writer identity was being unlocked.')
+      try {
+        return await this._sendPendingCommitLocked(pending)
+      } catch (error) {
+        this._notePendingFailure(error)
+        throw error
+      }
+    })
+  }
+
   _outboxKeyName (appId) { return `peerit:my-outbox-key:${appId}` }
   _getOutboxKey (appId) {
     if (!HEX64.test(appId || '')) return null
@@ -651,7 +874,7 @@ class BridgeGossipSync {
         this._cache = combineAdmitted(accepted, nextClaimed)
         for (const { pub, view, sig } of accepted) { this._peerViews.set(pub, view); this._peerSigs.set(pub, sig) }
         this._claimed = nextClaimed
-        if (this._floorDirty) this._saveFloor()
+        if (this._floorDirty) await this._saveFloor()
         this._sortedFor = null
         return true
       }
@@ -680,15 +903,69 @@ class BridgeGossipSync {
     } catch {}
   }
 
-  _saveFloor () {
-    let entries = [...this._floor.entries()]
-    // Evict by RECENCY (tick), not author-controlled version — a Sybil minting a
-    // high-version head must not be able to push a followed author out of the cap.
-    if (entries.length > MAX_FLOOR) { entries = entries.sort((a, b) => (b[1].t | 0) - (a[1].t | 0)).slice(0, MAX_FLOOR); this._floor = new Map(entries) }
-    const o = {}
-    for (const [pub, e] of entries) o[pub] = { v: e.v, root: e.root || '', t: e.t | 0 }
-    let blob; try { blob = JSON.stringify(o) } catch { return }
-    try { this._setLocal(FLOOR_KEY, blob); this._floorDirty = false } catch (e) { console.warn('[gossip] head-floor persist failed (rollback protection not durable this round):', e && e.message) }
+  async _saveFloor ({ required = false, requiredHead = null } = {}) {
+    const persist = async () => {
+      const store = this._store()
+      if (!store || typeof store.getItem !== 'function' || typeof store.setItem !== 'function') throw new Error('head-floor storage unavailable')
+      let disk = {}
+      const raw = store.getItem(FLOOR_KEY)
+      if (raw) {
+        disk = JSON.parse(raw)
+        if (!disk || typeof disk !== 'object' || Array.isArray(disk)) throw new Error('head-floor storage is corrupt')
+      }
+
+      const merged = new Map()
+      const add = (pub, value) => {
+        if (PROTO_KEYS.has(pub) || !HEX64.test(pub) || !value || !Number.isInteger(Number(value.v)) || Number(value.v) < 0) return
+        const next = {
+          v: Number(value.v),
+          root: typeof value.root === 'string' && HEX64.test(value.root) ? value.root.toLowerCase() : '',
+          t: Number.isFinite(Number(value.t)) ? Number(value.t) : 0
+        }
+        // A different tab may have advanced the recency clock since this instance
+        // loaded. Merge that clock before allocating a required publication tick so
+        // the new floor cannot look older and become the first entry evicted.
+        if (next.t > this._floorTick) this._floorTick = next.t
+        const prior = merged.get(pub)
+        if (!prior || next.v > prior.v) { merged.set(pub, next); return }
+        if (next.v < prior.v) return
+        if (prior.root && next.root && prior.root !== next.root) throw new Error('equal-version signed head fork for ' + pub)
+        merged.set(pub, { v: prior.v, root: prior.root || next.root, t: Math.max(prior.t, next.t) })
+      }
+      for (const pub in disk) add(pub, disk[pub])
+      for (const [pub, value] of this._floor) add(pub, value)
+      if (requiredHead) {
+        const pub = requiredHead.appId
+        const next = { v: Number(requiredHead.version), root: String(requiredHead.root || '').toLowerCase(), t: ++this._floorTick }
+        if (!HEX64.test(pub || '') || !Number.isInteger(next.v) || next.v < 0 || !HEX64.test(next.root)) throw new Error('invalid required head floor')
+        add(pub, next)
+      }
+
+      let entries = [...merged.entries()]
+      // Evict by RECENCY (tick), not author-controlled version — a Sybil minting a
+      // high-version head must not be able to push a followed author out of the cap.
+      if (entries.length > MAX_FLOOR) entries = entries.sort((a, b) => b[1].t - a[1].t).slice(0, MAX_FLOOR)
+      const o = {}
+      for (const [pub, e] of entries) o[pub] = { v: e.v, root: e.root || '', t: Math.trunc(e.t) }
+      const blob = JSON.stringify(o)
+      store.setItem(FLOOR_KEY, blob)
+      if (store.getItem(FLOOR_KEY) !== blob) throw new Error('head-floor write did not survive read-back')
+      if (requiredHead) {
+        const saved = o[requiredHead.appId]
+        if (!saved || saved.v !== Number(requiredHead.version) || saved.root !== String(requiredHead.root).toLowerCase()) throw new Error('required head floor was not persisted')
+      }
+      this._floor = new Map(entries)
+      this._floorDirty = false
+      return true
+    }
+    try {
+      return await this._withCrossTabLock('peerit:head-floor', persist)
+    } catch (error) {
+      this._floorDirty = true
+      if (required) throw error
+      console.warn('[gossip] head-floor persist failed (rollback protection not durable this round):', error && error.message)
+      return false
+    }
   }
 
   // Phase D: seed the durable floor from the relay directory at boot. One call
@@ -736,7 +1013,7 @@ class BridgeGossipSync {
       if (!dir.hasMore || !dir.nextCursor || this._peers.size >= MAX_PEERS) break
       after = dir.nextCursor
     }
-    if (this._floorDirty) this._saveFloor()
+    if (this._floorDirty) await this._saveFloor()
   }
 
   async _openMyOutbox () {
@@ -772,6 +1049,15 @@ class BridgeGossipSync {
     // readers. The first write mints an identity and the very next call (append
     // does one inline) opens the outbox.
     if (!appId) return false
+    if (this._requireAtomicWrites && !this._atomicCommitEnabled()) return false
+    // Atomic HTTP relays allocate writer state only inside the first valid,
+    // owner-signed commit. Register the public appId as a read/self placeholder,
+    // but make ZERO unsigned create/join calls. A durable quorum receipt later
+    // supplies the invite key (or appId remains the public read handle).
+    if (this._atomicCommitEnabled()) {
+      if (!this._peers.has(appId)) this._peers.set(appId, { appId, inviteKey: appId, self: true, dir: true })
+      return true
+    }
     if (this._myInvite && this._myInviteAppId === appId) return true
     try {
       const r = await this._openMyOutbox()
@@ -800,6 +1086,7 @@ class BridgeGossipSync {
     // A previously observed newer head must be able to reject an older bundled
     // snapshot just as it rejects an older relay response.
     this._loadFloor()
+    this._loadPendingCommit()
     // Restore last session's view after full re-admission so the first list()/get()
     // paints authenticated content; the poll later reconciles against live relays.
     await this._loadCache()
@@ -825,6 +1112,12 @@ class BridgeGossipSync {
     // Open (or create) the WRITABLE outbox so we can post. A network failure here
     // is non-fatal — reads + the cached render still work, and the poll retries.
     await this._ensureMyOutbox()
+    // A crash/refresh after transmit but before receipt must replay the exact
+    // persisted commitId and signatures. Read-only deployments deliberately keep
+    // the marker without transmitting it; re-enabling writes resumes the retry.
+    if (!this._readOnly) {
+      try { await this._retryPendingCommit({ force: true }) } catch (e) { console.warn('[gossip] pending atomic commit still awaiting quorum:', e && e.message) }
+    }
     // Re-join EVERY outbox we've ever owned, so a changed identity key can't
     // strand earlier posts. (Best-effort; offline-tolerant.) Gated on identity
     // PRESENCE only — never on pubkey match, because recovering outboxes owned
@@ -869,6 +1162,9 @@ class BridgeGossipSync {
     try { if (this._netReady) await this._netReady } catch {}
     if (this._destroyed) return
     await this._ensureMyOutbox()
+    if (!this._readOnly) {
+      try { await this._retryPendingCommit({ force: true }) } catch (e) { console.warn('[gossip] pending atomic commit still awaiting quorum:', e && e.message) }
+    }
     for (const o of this._seedOutboxes) {
       if (this._peers.has(o.appId) || o.appId === this.getMe()) continue
       try { await this.pear.sync.join(o.appId, o.inviteKey); this._peers.set(o.appId, { appId: o.appId, inviteKey: o.inviteKey }) } catch {}
@@ -960,7 +1256,7 @@ class BridgeGossipSync {
         this._peerSigs.set(pub, sig)
         this._withholding.delete(pub)
       }
-      if (this._floorDirty) this._saveFloor()
+      if (this._floorDirty) await this._saveFloor()
       // Apply global winners/claims only after every author has been authenticated,
       // audited, and monotonically selected.
       const allAccepted = []
@@ -989,6 +1285,7 @@ class BridgeGossipSync {
         // discovered (adds them to _peers; the next refresh reads their content by appId).
         try { if ((this._refreshCount % 5) === 0) await this._bootstrapFloor() } catch {}
         try { const changed = await this._refresh(); if (changed.length) this._emit(changed) } catch (e) { console.warn('[gossip poll]', e && e.message) }
+        try { await this._maybeRetryPendingCommit() } catch (e) { console.warn('[gossip] pending atomic commit retry deferred:', e && e.message) }
         if (this._destroyed) return
         this._pollTimer = setTimeout(tick, jittered())
         if (this._pollTimer && this._pollTimer.unref) this._pollTimer.unref()
@@ -1121,7 +1418,15 @@ class BridgeGossipSync {
     return this._announce()
   }
 
-  append (op) {
+  append (op, writerSession = null) {
+    // Required-atomic web mode has no legal standalone head operation: the head
+    // must be derived and committed in the same transaction as one or more
+    // owner-signed mutations. Reject before any legacy endpoint can be touched.
+    if (this._requireAtomicWrites) {
+      if (!op || op.type === TYPE.HEAD) return Promise.reject(new Error('Peerit web publishing rejects standalone heads and legacy append fallthrough.'))
+      return this.appendBatch([op], writerSession)
+    }
+    if (this._atomicCommitEnabled() && op && op.type !== TYPE.HEAD) return this._appendAtomic([op], writerSession)
     const run = () => this._appendOne(op)
     // A record and the signed head that commits it are one local integrity
     // transition. Serialize those pairs so concurrent UI writes cannot derive two
@@ -1134,8 +1439,29 @@ class BridgeGossipSync {
     return run()
   }
 
+  appendBatch (ops, writerSession = null) {
+    if (!Array.isArray(ops) || !ops.length) return Promise.reject(new Error('Peerit publication batch must contain at least one mutation.'))
+    const list = ops.slice()
+    if (list.some(op => !op || typeof op.type !== 'string' || op.type === TYPE.HEAD)) {
+      return Promise.reject(new Error('Peerit publication batches accept owner mutations only; the signed head is derived atomically.'))
+    }
+    if (!this._atomicCommitEnabled()) {
+      if (this._requireAtomicWrites) return Promise.reject(new Error('Peerit web publishing requires two relays advertising durable atomic commits; the current relay pool is read-only.'))
+      // Compatibility for legacy/PearBrowser transports: preserve the historical
+      // sequential record+head behavior when atomic commit is not advertised.
+      return list.reduce((tail, op) => tail.then(() => this.append(op)), Promise.resolve()).then(() => ({ ok: true, sequential: true }))
+    }
+    // The atomic writer lock itself serializes refresh→sign→persist→quorum. Do
+    // not put this behind _appendTail: a Data stack already holding the writer
+    // lock could otherwise wait on a direct append that is queued waiting for
+    // that same lock.
+    return this._appendAtomic(list, writerSession)
+  }
+
   async _appendOne (op) {
     if (this._readOnly) throw new Error('This peerit is read-only.')
+    if (this._pendingCommit) throw new Error('A previous Peerit publication is still awaiting two durable relay receipts. No later writes are allowed until it reaches quorum or is reconciled.')
+    if (this._requireAtomicWrites) throw new Error('Peerit web publishing refuses every legacy append path.')
     if (!await this._ensureMyOutbox()) throw new Error('Peerit outbox is unavailable; check relay connectivity and try again.')
     const me = this._myAppId()
     const maintainsHead = this._writeHead && this.identity && op.type !== TYPE.HEAD
@@ -1205,6 +1531,467 @@ class BridgeGossipSync {
       throw unconfirmed
     }
     return r
+  }
+
+  async _buildAtomicCommit (ops) {
+    const appId = this._myAppId()
+    if (!HEX64.test(appId || '')) throw new Error('Cannot publish without a valid writer identity.')
+    if (!Array.isArray(ops) || !ops.length) throw new Error('Cannot publish an empty atomic mutation batch.')
+    for (const op of ops) {
+      if (!op || typeof op.type !== 'string' || op.type === TYPE.HEAD || !op.data || op.data._k !== appId || !HEX128.test(op.data._sig || '')) throw new Error('Cannot publish an unsigned, standalone-head, or cross-owner mutation.')
+    }
+
+    const current = Object.assign(Object.create(null), this._peerViews.get(appId) || {})
+    const previousHead = current[keys.head(appId)]
+    const expected = previousHead
+      ? { version: previousHead.version | 0, root: String(previousHead.root || '').toLowerCase() }
+      : { version: 0, root: await hashHex('') }
+    if (!Number.isInteger(expected.version) || expected.version < 0 || !HEX64.test(expected.root)) throw new Error('Cannot derive a valid prior outbox head for atomic commit.')
+
+    const now = Date.now()
+    const timestamp = new Date(now).toISOString()
+    const mutations = ops.map(op => ({ type: op.type, data: op.data, timestamp }))
+    for (const mutation of mutations) applyOp(current, mutation)
+    const rows = []
+    for (const key in current) rows.push({ key, value: current[key] })
+    const census = outboxCensus(rows, appId)
+    const headData = {
+      id: appId,
+      author: appId,
+      version: expected.version + 1,
+      count: census.length,
+      root: await hashHex(censusString(census)),
+      updatedAt: now
+    }
+    const headSig = await this.identity.sign(canonical(TYPE.HEAD, headData))
+    if (!headSig || headSig.publicKey !== appId || !HEX128.test(headSig.signature || '')) throw new Error('Cannot sign the next atomic outbox head with the active writer.')
+    Object.assign(headData, { _sig: headSig.signature, _k: headSig.publicKey, _dk: headSig.driveKey, _ns: headSig.namespace, _alg: headSig.algorithm })
+    const head = { type: TYPE.HEAD, data: headData, timestamp }
+
+    const authFields = {
+      appId,
+      expectedVersion: expected.version,
+      expectedRoot: expected.root,
+      mutationSigs: mutations.map(mutation => mutation.data._sig),
+      headSig: headData._sig,
+      createdAt: now
+    }
+    // The id is a deterministic digest of every signed object referenced by the
+    // authorization plus its CAS position. Retrying cannot derive a new id, and
+    // changing any mutation/head signature necessarily changes it.
+    const commitId = await hashHex(canonical('commit-id', authFields))
+    const authorization = { id: commitId, ...authFields }
+    const authSig = await this.identity.sign(canonical('commit', authorization))
+    if (!authSig || authSig.publicKey !== appId || !HEX128.test(authSig.signature || '')) throw new Error('Cannot authorize the atomic commit with the active writer.')
+    Object.assign(authorization, { _sig: authSig.signature, _k: authSig.publicKey, _dk: authSig.driveKey, _ns: authSig.namespace, _alg: authSig.algorithm })
+
+    return {
+      v: 1,
+      appId,
+      commit: { schema: 1, commitId, expected, mutations, head, authorization }
+    }
+  }
+
+  async _validatePendingCommit (pending) {
+    const commit = pending && pending.commit
+    const auth = commit && commit.authorization
+    const expected = commit && commit.expected
+    const head = commit && commit.head
+    const mutations = commit && commit.mutations
+    if (!pending || pending.v !== 1 || !HEX64.test(pending.appId || '') || !commit || commit.schema !== 1 || !HEX64.test(commit.commitId || '')) return false
+    if (!expected || !Number.isInteger(expected.version) || expected.version < 0 || !HEX64.test(expected.root || '')) return false
+    if (!Array.isArray(mutations) || mutations.length < 1 || !head || head.type !== TYPE.HEAD || !head.data || !auth) return false
+    const sigs = []
+    for (const mutation of mutations) {
+      if (!mutation || typeof mutation.type !== 'string' || !mutation.data || mutation.data._k !== pending.appId || !HEX128.test(mutation.data._sig || '')) return false
+      const semType = mutation.type === 'v2' ? mutation.data._t : mutation.type
+      if ((await verifyRecord(mutation.type, mutation.data, semType)) !== 'ok') return false
+      sigs.push(mutation.data._sig)
+    }
+    const next = head.data
+    if (next._k !== pending.appId || next.author !== pending.appId || next.version !== expected.version + 1 || !Number.isInteger(next.count) || next.count < 0 || !HEX64.test(next.root || '')) return false
+    if ((await verifyRecord(TYPE.HEAD, next)) !== 'ok') return false
+    if (auth.id !== commit.commitId || auth.appId !== pending.appId || auth.expectedVersion !== expected.version || auth.expectedRoot !== expected.root || auth.headSig !== next._sig) return false
+    if (!Array.isArray(auth.mutationSigs) || JSON.stringify(auth.mutationSigs) !== JSON.stringify(sigs)) return false
+    const authFields = {
+      appId: auth.appId,
+      expectedVersion: auth.expectedVersion,
+      expectedRoot: auth.expectedRoot,
+      mutationSigs: auth.mutationSigs,
+      headSig: auth.headSig,
+      createdAt: auth.createdAt
+    }
+    if ((await hashHex(canonical('commit-id', authFields))) !== commit.commitId) return false
+    if (auth._k !== pending.appId || auth._ns !== 'peerit' || !HEX64.test(auth._dk || '') || !HEX128.test(auth._sig || '')) return false
+    return edVerify(auth._k, `pear.app.${auth._dk}:peerit:` + canonical('commit', auth), auth._sig)
+  }
+
+  _receiptMatchesPending (receipt, pending) {
+    const expectedHead = pending && pending.commit && pending.commit.head && pending.commit.head.data
+    const head = receipt && receipt.head
+    const topMatches = !!(
+      receipt && receipt.ok === true && receipt.durable === true &&
+      receipt.commitId === pending.commit.commitId && receipt.appId === pending.appId &&
+      head && expectedHead && Number(head.version) === Number(expectedHead.version) &&
+      Number(head.count) === Number(expectedHead.count) &&
+      String(head.root || '').toLowerCase() === String(expectedHead.root || '').toLowerCase()
+    )
+    if (!topMatches || Number(receipt.quorum) < 2 || !Array.isArray(receipt.receipts)) return false
+    const origins = new Set()
+    for (const evidence of receipt.receipts) {
+      const evidenceHead = evidence && evidence.head
+      if (!(
+        evidence && evidence.ok === true && evidence.durable === true &&
+        evidence.commitId === pending.commit.commitId && evidence.appId === pending.appId &&
+        evidenceHead && Number(evidenceHead.version) === Number(expectedHead.version) &&
+        Number(evidenceHead.count) === Number(expectedHead.count) &&
+        String(evidenceHead.root || '').toLowerCase() === String(expectedHead.root || '').toLowerCase()
+      )) return false
+      let origin = ''
+      try { origin = new URL(String(evidence.origin || '')).origin } catch { return false }
+      if (origin !== evidence.origin) return false
+      origins.add(origin)
+    }
+    return origins.size >= 2 && origins.size >= Number(receipt.quorum)
+  }
+
+  async _adoptAtomicCommit (pending, receipt) {
+    if (!this._pendingMarkerMatches(pending)) throw new Error('A stale Peerit receipt arrived after the pending marker changed; refusing to adopt it.')
+    const appId = pending.appId
+    const nextHead = pending.commit.head.data
+    // The durable floor is part of publication completion, not best-effort cache.
+    // Persist it before clearing the retry envelope, and refuse an older/equal-fork
+    // receipt even if another tab produced it with a once-valid commitId.
+    await this._saveFloor({
+      required: true,
+      requiredHead: { appId, version: nextHead.version, root: nextHead.root }
+    })
+    const inviteKey = HEX64.test((receipt && receipt.inviteKey) || '') ? receipt.inviteKey : appId
+    this._peers.set(appId, { appId, inviteKey, self: true, dir: inviteKey === appId })
+    this._setOutboxKey(appId, inviteKey)
+    this._rememberOutbox(appId, inviteKey)
+    if (this._myAppId() === appId) { this._myInvite = inviteKey; this._myInviteAppId = appId }
+
+    const view = Object.assign(Object.create(null), this._peerViews.get(appId) || {})
+    for (const mutation of pending.commit.mutations) applyOp(view, mutation)
+    applyOp(view, pending.commit.head)
+    const sig = new Map()
+    for (const key in view) sig.set(key, changeToken(view[key]))
+    this._peerViews.set(appId, view)
+    this._peerSigs.set(appId, sig)
+    if (Number.isFinite(Number(receipt.relayVersion))) this._peerHeads.set(appId, Number(receipt.relayVersion))
+
+    this._withholding.delete(appId)
+    if (!this._claimed) { try { this._claimed = JSON.parse(this._getLocal(CLAIMED_KEY) || '{}') } catch { this._claimed = {} } }
+    const boxes = []
+    for (const [pub, admitted] of this._peerViews) boxes.push({ pub, view: admitted })
+    const merged = combineAdmitted(boxes, this._claimed)
+    const changed = diffViews(this._cache, merged)
+    this._cache = merged
+    this._sortedFor = null
+    this._saveCache()
+    return changed
+  }
+
+  _isStaleCommitError (error) {
+    return !!(error && (error.stale || error.status === 409 || error.code === 'COMMIT_CAS_MISMATCH' || error.code === 'STALE_CAS'))
+  }
+
+  _pendingMutationState (pending) {
+    const view = pending && this._peerViews.get(pending.appId)
+    const mutations = pending && pending.commit && pending.commit.mutations
+    if (!view || !Array.isArray(mutations)) return []
+    return mutations.map((mutation, index) => {
+      const key = mutation.type.replace(':', '!') + '!' + mutation.data.id
+      const value = view[key]
+      const exact = !!(value && value._sig === mutation.data._sig)
+      const semType = value && typeForRow(key, value)
+      const sameType = !!(value && semType && semType === (mutation.type === 'v2' ? mutation.data._t : mutation.type))
+      const dominates = !!(!exact && sameType && winner(semType, value, mutation.data) && !winner(semType, mutation.data, value))
+      return { index, key, value, exact, dominates }
+    })
+  }
+
+  // Turn independently audited relay censuses into per-mutation durability
+  // evidence. A mutation is resolved only when two distinct canonical roster
+  // origins serve the SAME current signature at its exact key and that value is
+  // either the pending record itself or strictly wins under the real reducer.
+  // This lets a later edit/delete/vote supersede an ambiguous older intent without
+  // ever rebasing the old record over it.
+  async _pendingResolutionFromEvidence (pending, transportProof) {
+    const none = { resolved: new Set(), resolutions: [], complete: false, proof: null }
+    if (!transportProof || transportProof.appId !== pending.appId || transportProof.commitId !== pending.commit.commitId) return none
+    const evidence = Array.isArray(transportProof.censusEvidence)
+      ? transportProof.censusEvidence
+      : (Array.isArray(transportProof.evidence) ? transportProof.evidence : [])
+    if (new Set(evidence.map((item) => item && item.origin).filter(Boolean)).size < 2) return none
+
+    const resolved = new Set()
+    const resolutions = []
+    const usedOrigins = new Set()
+    const mutations = pending.commit.mutations
+    for (let index = 0; index < mutations.length; index++) {
+      const mutation = mutations[index]
+      const key = mutation.type.replace(':', '!') + '!' + mutation.data.id
+      const expectedType = mutation.type === 'v2' ? mutation.data._t : mutation.type
+      const groups = new Map()
+      for (const relayEvidence of evidence) {
+        let origin = ''
+        try { origin = new URL(String((relayEvidence && relayEvidence.origin) || '')).origin } catch { continue }
+        if (origin !== relayEvidence.origin || !Array.isArray(relayEvidence.mutations)) continue
+        const state = relayEvidence.mutations.find((item) => item && item.key === key)
+        const value = state && state.value
+        if (!state || state.expectedSignature !== mutation.data._sig || state.currentSignature !== (value && value._sig) || !value || value._k !== pending.appId) continue
+        const semType = typeForRow(key, value)
+        if (!semType || semType !== expectedType || (await verifyRecord(mutation.type, value, semType)) !== 'ok') continue
+        let kind = null
+        if (value._sig === mutation.data._sig) kind = 'exact'
+        else if (winner(semType, value, mutation.data) && !winner(semType, mutation.data, value)) kind = 'superseded'
+        if (!kind) continue
+        const groupKey = kind + '\x00' + value._sig
+        let group = groups.get(groupKey)
+        if (!group) { group = { kind, signature: value._sig, value, origins: new Set() }; groups.set(groupKey, group) }
+        group.origins.add(origin)
+      }
+      const candidates = [...groups.values()].filter((group) => group.origins.size >= 2)
+      candidates.sort((a, b) => (a.kind === 'exact' ? -1 : 1) - (b.kind === 'exact' ? -1 : 1) || String(a.signature).localeCompare(String(b.signature)))
+      const selected = candidates[0]
+      if (!selected) continue
+      resolved.add(index)
+      for (const origin of selected.origins) usedOrigins.add(origin)
+      resolutions.push({ index, key, kind: selected.kind, signature: selected.signature, origins: [...selected.origins] })
+    }
+    const complete = resolved.size === mutations.length
+    const selectedEvidence = evidence.filter((item) => item && usedOrigins.has(item.origin))
+    return {
+      resolved,
+      resolutions,
+      complete,
+      proof: complete
+        ? {
+            ok: true,
+            durable: true,
+            resolved: true,
+            superseded: resolutions.some((item) => item.kind === 'superseded'),
+            appId: pending.appId,
+            commitId: pending.commit.commitId,
+            quorum: Math.min(...resolutions.map((item) => item.origins.length)),
+            evidence: selectedEvidence,
+            resolutions
+          }
+        : null
+    }
+  }
+
+  async _finishReconciledPendingLocked (pending, changed, proof) {
+    if (!this._pendingMarkerMatches(pending)) throw new Error('Pending Peerit commit changed during reconciliation.')
+    const evidence = proof && Array.isArray(proof.evidence) ? proof.evidence : []
+    const origins = new Set(evidence.map((item) => item && item.origin).filter(Boolean))
+    if (!proof || proof.ok !== true || proof.durable !== true || proof.appId !== pending.appId || proof.commitId !== pending.commit.commitId || Number(proof.quorum) < 2 || origins.size < 2) {
+      throw new Error('Reconciliation did not produce two distinct signed-roster relay proofs.')
+    }
+    const position = authorHeadPosition(this._peerViews.get(pending.appId), pending.appId)
+    if (!position.head || position.version < 1 || !HEX64.test(position.root)) throw new Error('Reconciliation found no verified current outbox head.')
+    await this._saveFloor({ required: true, requiredHead: { appId: pending.appId, version: position.version, root: position.root } })
+    this._withholding.delete(pending.appId)
+    this._clearPendingCommit(pending)
+    if (changed && changed.length) this._emit(changed.filter((key) => typeFromKey(key) !== TYPE.HEAD))
+    return {
+      ok: true,
+      durable: true,
+      reconciled: true,
+      commitId: pending.commit.commitId,
+      appId: pending.appId,
+      head: { version: position.version, count: position.head.count, root: position.root },
+      quorum: origins.size,
+      evidence,
+      superseded: proof.superseded === true,
+      resolutions: Array.isArray(proof.resolutions) ? proof.resolutions : []
+    }
+  }
+
+  async _reconcileStalePendingLocked (pending) {
+    if (!this._pendingMarkerMatches(pending)) throw new Error('Pending Peerit commit changed before stale reconciliation.')
+    const changed = await this._refreshPeerNow(pending.appId)
+    if (this._withholding.has(pending.appId)) {
+      this._pendingRecoveryNeeded = true
+      const error = new Error('Peerit stale publication needs recovery: the current signed outbox cannot be audited to one head.')
+      error.code = 'COMMIT_RECOVERY_NEEDED'
+      throw error
+    }
+    let transportProof = null
+    try {
+      if (this.pear && this.pear.sync && typeof this.pear.sync.proveCommitQuorum === 'function') {
+        transportProof = await this.pear.sync.proveCommitQuorum(pending.appId, pending.commit)
+      }
+    } catch {}
+    const resolution = await this._pendingResolutionFromEvidence(pending, transportProof)
+    const currentStates = this._pendingMutationState(pending)
+    const resolutionByIndex = new Map(resolution.resolutions.map((item) => [item.index, item]))
+    const resolutionMissingFromView = currentStates.some((state) => {
+      const item = resolutionByIndex.get(state.index)
+      if (!item) return false
+      return item.kind === 'superseded' ? !state.dominates : (!state.exact && !state.dominates)
+    })
+    if (resolution.complete && !resolutionMissingFromView) return this._finishReconciledPendingLocked(pending, changed, resolution.proof)
+
+    if (resolutionMissingFromView) {
+      this._withholding.add(pending.appId)
+      this._pendingRecoveryNeeded = true
+      const error = new Error('Peerit relay evidence resolved a mutation that is absent from the selected audited view; refusing to derive a new head.')
+      error.code = 'COMMIT_RECOVERY_NEEDED'
+      throw error
+    }
+    const unsafeToReplay = currentStates.some((state) => !resolution.resolved.has(state.index) && (state.exact || state.dominates))
+    if (unsafeToReplay) {
+      // A merged view can still be only one relay's copy. Exact or newer same-key
+      // state is never replayed until it has two-origin proof: exact replay would
+      // invent durability, while replaying a dominated old value would regress a
+      // later edit/delete/vote.
+      this._withholding.add(pending.appId)
+      this._pendingRecoveryNeeded = true
+      const error = new Error('Peerit stale publication still needs two-origin durable relay evidence before same-key state can be completed.')
+      error.code = 'COMMIT_RECOVERY_NEEDED'
+      throw error
+    }
+
+    // Leader advanced first with another valid commit. When this device still has
+    // the matching writer key, retain the exact signed mutations but derive a new
+    // owner-signed head/authorization over the freshly audited position.
+    const position = authorHeadPosition(this._peerViews.get(pending.appId), pending.appId)
+    if (!position.head || position.version < 1 || !HEX64.test(position.root)) {
+      this._pendingRecoveryNeeded = true
+      const error = new Error('Peerit stale publication needs recovery: no verified current signed head is available for a safe rebase.')
+      error.code = 'COMMIT_RECOVERY_NEEDED'
+      throw error
+    }
+    if (this._myAppId() !== pending.appId || !this.identity || typeof this.identity.sign !== 'function') {
+      this._pendingRecoveryNeeded = true
+      const error = new Error('Peerit stale publication needs the matching writer identity before it can be safely rebased.')
+      error.code = 'COMMIT_RECOVERY_NEEDED'
+      throw error
+    }
+    const ops = pending.commit.mutations
+      .filter((mutation, index) => !resolution.resolved.has(index))
+      .map(mutation => ({ type: mutation.type, data: mutation.data }))
+    if (!ops.length) {
+      this._pendingRecoveryNeeded = true
+      const error = new Error('Peerit stale publication has no mutation that is safe to replay without stronger relay evidence.')
+      error.code = 'COMMIT_RECOVERY_NEEDED'
+      throw error
+    }
+    const rebased = await this._buildAtomicCommit(ops)
+    this._replacePendingCommit(pending, rebased)
+    try {
+      return await this._sendPendingCommitLocked(rebased, { reconcileStale: false })
+    } catch (error) {
+      if (this._isStaleCommitError(error)) this._pendingRecoveryNeeded = true
+      throw error
+    }
+  }
+
+  async _sendPendingCommitLocked (pending, { reconcileStale = true } = {}) {
+    if (!(await this._validatePendingCommit(pending))) {
+      this._withholding.add(pending && pending.appId)
+      throw new Error('The persisted Peerit commit failed local signature or schema validation; refusing to transmit it.')
+    }
+    let receipt
+    try {
+      receipt = await this.pear.sync.commit(pending.appId, pending.commit)
+    } catch (error) {
+      if (this._isStaleCommitError(error)) {
+        this._withholding.add(pending.appId)
+        if (reconcileStale) return this._reconcileStalePendingLocked(pending)
+      }
+      throw error
+    }
+    if (!this._receiptMatchesPending(receipt, pending)) {
+      const error = new Error('Peerit relay quorum returned a mismatched or non-durable atomic commit receipt.')
+      error.code = 'INVALID_COMMIT_RECEIPT'
+      throw error
+    }
+    const changed = await this._adoptAtomicCommit(pending, receipt)
+    // This is the only clear site: no receipt, one receipt, or mismatched
+    // receipts leave the exact envelope durable and block every later write.
+    try {
+      this._clearPendingCommit(pending)
+    } catch (error) {
+      // Quorum already made this publication durable. A retained marker is safe
+      // because commitId is idempotent; do not misreport the published record as
+      // failed merely because local cleanup needs a later retry.
+      console.warn('[gossip] atomic commit reached quorum but its local marker remains:', error && error.message)
+    }
+    this._emit(changed.filter((key) => typeFromKey(key) !== TYPE.HEAD))
+    try { await this._announce() } catch {}
+    return receipt
+  }
+
+  _notePendingFailure () {
+    this._pendingRetryAt = Date.now() + this._pendingRetryDelay
+    this._pendingRetryDelay = Math.min(PENDING_RETRY_MAX_MS, this._pendingRetryDelay * 2)
+  }
+
+  async _retryPendingCommit ({ force = false } = {}) {
+    if (this._readOnly || !this._atomicCommitEnabled()) return null
+    if (this._retryingPending) return this._retryingPending
+    if (!force && (this._pendingRecoveryNeeded || Date.now() < this._pendingRetryAt)) return null
+    this._retryingPending = this._withAtomicWriterLock(async () => {
+      const pending = this._loadPendingCommit()
+      if (!pending) return null
+      if (pending.invalid) throw new Error('The durable Peerit pending marker is unreadable or uses an unsupported schema.')
+      return this._sendPendingCommitLocked(pending)
+    }).then((receipt) => {
+      if (receipt) {
+        this._pendingRetryAt = 0
+        this._pendingRetryDelay = PENDING_RETRY_MIN_MS
+      }
+      return receipt
+    }, (error) => {
+      this._notePendingFailure(error)
+      throw error
+    }).finally(() => { this._retryingPending = null })
+    return this._retryingPending
+  }
+
+  _maybeRetryPendingCommit () {
+    // Do not trust the instance-local marker here. Another tab can create or clear
+    // the device-global marker between poll ticks; _retryPendingCommit reloads it
+    // under the writer lock before deciding whether there is work to do.
+    if (this._readOnly || !this._atomicCommitEnabled() || this._pendingRecoveryNeeded || Date.now() < this._pendingRetryAt) return null
+    return this._retryPendingCommit()
+  }
+
+  async _appendAtomic (ops, writerSession = null) {
+    const publishLocked = async () => {
+      const me = this._myAppId()
+      // Re-read the global marker *inside* the cross-tab lock. An instance whose
+      // in-memory state predates another tab's failed publication must block,
+      // never overwrite that tab's durable retry envelope.
+      this._loadPendingCommit()
+      if (this._pendingCommit) throw new Error('A previous Peerit publication is still awaiting two durable relay receipts. No later writes are allowed until it reaches quorum or is reconciled.')
+      // Fresh self replay prevents signing a new CAS position over stale cached
+      // rows. The relay independently rechecks expected version/root and census.
+      await this._refreshPeerNow(me)
+      if (this._withholding.has(me)) throw new Error('Peerit outbox integrity check failed; refusing to commit until the relay recovers the newer signed state.')
+      const pending = await this._buildAtomicCommit(ops)
+      this._persistPendingCommit(pending) // MUST happen before the first POST
+      try {
+        return await this._sendPendingCommitLocked(pending)
+      } catch (cause) {
+        this._notePendingFailure(cause)
+        const error = new Error(this._pendingRecoveryNeeded
+          ? 'Peerit stale publication needs verified recovery before another write can proceed.'
+          : 'Peerit publication is pending: fewer than two relays returned matching durable receipts. It will retry automatically; no later writes are allowed meanwhile.')
+        error.code = cause && cause.code
+        error.cause = cause
+        throw error
+      }
+    }
+    // Only the opaque capability issued to this exact active write stack may
+    // bypass reacquiring the non-reentrant Web Lock. Concurrent same-instance
+    // append/retry calls have no token and therefore queue normally.
+    if (writerSession && this._activeAtomicWriterSessions.has(writerSession)) return publishLocked()
+    return this.withAtomicWriterSession(() => publishLocked())
   }
 
   // Compute + sign + append the outbox head (the "merkle root" census over the
@@ -1296,12 +2083,19 @@ class BridgeGossipSync {
     const transitionPub = this._localWriteTransition && this._localWriteTransition.pub
     if (transitionPub) toRead = toRead.filter((pub) => pub !== transitionPub)
 
+    // Read candidate outboxes with an explicitly advertised batch endpoint when
+    // available. This changes neither the bytes accepted nor the audit below;
+    // it only removes per-outbox HTTP round trips. A malformed/failed batch is
+    // discarded wholesale and re-read through the established range endpoint.
+    const readInfos = toRead.map((pub) => ({ pub, info: this._peers.get(pub) })).filter(({ info }) => !!info)
+    const fetchedRows = await this._rowsForPeers(readInfos)
+
     let anyRowChanged = false
     const previous = new Map()
     for (const pub of toRead) {
       const info = this._peers.get(pub); if (!info) continue
-      let rows
-      try { rows = await this._rowsForPeer(info) } catch { continue }
+      if (!fetchedRows.has(pub)) continue
+      const rows = fetchedRows.get(pub)
       const prevSig = this._peerSigs.get(pub) || new Map()
       const priorView = this._peerViews.get(pub) || null
       const priorHead = this._peerHeads.has(pub) ? this._peerHeads.get(pub) : undefined
@@ -1416,7 +2210,7 @@ class BridgeGossipSync {
       }
     }
 
-    if (this._floorDirty) this._saveFloor() // persist BEFORE the early return: a crossHead-only ratchet leaves anyRowChanged false
+    if (this._floorDirty) await this._saveFloor() // persist BEFORE the early return: a crossHead-only ratchet leaves anyRowChanged false
     const integrityBefore = this._integritySnapshot || ''
     const integrityAfter = [...this._withholding].sort().join(',')
     this._integritySnapshot = integrityAfter
@@ -1430,6 +2224,7 @@ class BridgeGossipSync {
     if (this._cache && changed.length === 0) { /* winning view identical — keep object identity */ }
     else { this._cache = merged; this._sortedFor = null }
     if (changed.length || (anyRowChanged && !reconcile)) this._saveCache() // persist the latest verified view for an instant reload
+    if (changed.length) this.viewEpoch++
     return changed
   }
 
@@ -1473,7 +2268,7 @@ class BridgeGossipSync {
       const rows = []
       let gt = ''
       while (rows.length < MAX_ROWS_PER_PEER) {
-        const limit = Math.min(1000, MAX_ROWS_PER_PEER - rows.length)
+        const limit = Math.min(RANGE_PAGE_ROWS, MAX_ROWS_PER_PEER - rows.length)
         const batch = await this.pear.sync.range(info.appId, { gt, limit })
         if (!Array.isArray(batch) || !batch.length) break
         rows.push(...batch)
@@ -1484,6 +2279,88 @@ class BridgeGossipSync {
       return rows
     }
     return this.pear.sync.list(info.appId, '', { limit: 1000 })
+  }
+
+  // Returns `pub -> complete rows`. Failures are isolated per outbox on the
+  // legacy path. On the batch path, any malformed response makes us abandon the
+  // entire optimisation and use the established per-outbox reader instead — it
+  // is never safe to blend a partial batch response into an audited candidate.
+  async _rowsForPeers (entries) {
+    const result = new Map()
+    const pending = []
+    const batchable = []
+    for (const entry of entries || []) {
+      if (!entry || !entry.pub || !entry.info) continue
+      if (this._readFrom.get(entry.info.appId) || !this.pear.sync.ranges) pending.push(entry)
+      else batchable.push(entry)
+    }
+
+    if (batchable.length) {
+      try {
+        const batched = await this._batchRowsForPeers(batchable)
+        for (const [pub, rows] of batched) result.set(pub, rows)
+      } catch {
+        // The capability can disappear while a stale roster is cached, and a
+        // relay can return an invalid page. Both are availability failures, not
+        // grounds to weaken the audited read path.
+        pending.push(...batchable)
+      }
+    }
+
+    // Even unchanged relays benefit from bounded parallel reads on the old
+    // endpoint. Do not fan thousands of cold-start requests at once: the relay
+    // already advertises rate limits and the backoff layer needs room to work.
+    let next = 0
+    const workers = Array.from({ length: Math.min(FALLBACK_READ_CONCURRENCY, pending.length) }, async () => {
+      while (next < pending.length) {
+        const entry = pending[next++]
+        try { result.set(entry.pub, await this._rowsForPeer(entry.info)) } catch {}
+      }
+    })
+    await Promise.all(workers)
+    return result
+  }
+
+  async _batchRowsForPeers (entries) {
+    const state = new Map()
+    for (const entry of entries) {
+      if (state.has(entry.info.appId)) throw new Error('duplicate appId in batched range request')
+      state.set(entry.info.appId, { pub: entry.pub, appId: entry.info.appId, gt: '', rows: [], complete: false })
+    }
+    while (true) {
+      const active = [...state.values()].filter((row) => !row.complete)
+      if (!active.length) break
+      for (let start = 0; start < active.length; start += BATCH_RANGE_OUTBOXES) {
+        const page = active.slice(start, start + BATCH_RANGE_OUTBOXES)
+        if (page.some((row) => row.rows.length >= MAX_ROWS_PER_PEER)) throw new Error('batched range outbox reaches row bound')
+        const requests = page.map((row) => ({ appId: row.appId, gt: row.gt, limit: Math.min(RANGE_PAGE_ROWS, MAX_ROWS_PER_PEER - row.rows.length) }))
+        const response = await this.pear.sync.ranges(requests)
+        const replies = Array.isArray(response) ? response : (response && response.ranges)
+        if (!Array.isArray(replies) || replies.length !== requests.length) throw new Error('invalid batched range response shape')
+        const byApp = new Map()
+        for (const reply of replies) {
+          if (!reply || typeof reply.appId !== 'string' || !Array.isArray(reply.rows) || byApp.has(reply.appId)) throw new Error('invalid batched range response entry')
+          byApp.set(reply.appId, reply.rows)
+        }
+        for (const row of page) {
+          const request = requests.find((item) => item.appId === row.appId)
+          const rows = byApp.get(row.appId)
+          if (!rows || rows.length > request.limit) throw new Error('batched range response exceeds requested page')
+          let previous = row.gt
+          for (const entry of rows) {
+            if (!entry || typeof entry.key !== 'string' || !entry.key || !entry.value || typeof entry.value !== 'object' || entry.key <= previous) throw new Error('batched range pagination is not strictly ordered')
+            previous = entry.key
+            row.rows.push(entry)
+            if (row.rows.length > MAX_ROWS_PER_PEER) throw new Error('batched range outbox exceeds row bound')
+          }
+          if (rows.length < request.limit) row.complete = true
+          else row.gt = previous
+        }
+      }
+    }
+    const out = new Map()
+    for (const row of state.values()) out.set(row.pub, row.rows)
+    return out
   }
   async _merged () {
     if (this._cache) return this._cache
@@ -1509,6 +2386,7 @@ class BridgeGossipSync {
   }
   async status () {
     const v = await this._merged()
+    if (this._requireAtomicWrites || this._atomicCommitEnabled() || this._pendingCommit) this._loadPendingCommit()
     let viewLength = 0
     for (const k in v) { const t = typeForRow(k, v[k]); if (t !== TYPE.HEAD && t !== TYPE.BLOB) viewLength++ } // head!/blob! are internal (census / opaque body storage), not "records"
     return {
@@ -1518,6 +2396,15 @@ class BridgeGossipSync {
       peers: this._peers.size,
       viewLength,
       relays: (this.pear && this.pear._relayCount) || 1, // Phase B: how many relays writes fan out across + heads are cross-checked on
+      atomicCommit: {
+        required: this._requireAtomicWrites,
+        available: this._atomicCommitEnabled(),
+        pending: !!this._pendingCommit,
+        pendingCommitId: this._pendingCommit && this._pendingCommit.commit ? this._pendingCommit.commit.commitId : null,
+        pendingAppId: this._pendingCommit && this._pendingCommit.appId ? this._pendingCommit.appId : null,
+        recoveryNeeded: this._pendingRecoveryNeeded,
+        nextRetryAt: this._pendingRetryAt || 0
+      },
       withholding: [...this._withholding], // outboxes still failing their signed-head audit after cross-relay recovery
       inviteKey: this._myInvite,
       outboxAppId: this._myAppId(),
@@ -1594,8 +2481,8 @@ function browserBus (name) {
   return { send: (m) => { bc.postMessage(m) }, onMessage: (fn) => { bc.onmessage = (e) => fn(e.data) } }
 }
 
-export function createGossip ({ storage, pear, getMe, identity, channelName, forceDev, bus, validate, pollMs, writeHead, readOnly, discover, seedOutboxes, instantBoot, seedSnapshot } = {}) {
-  if (pear && pear.sync && pear.swarm && !forceDev) return new BridgeGossipSync({ pear, getMe, identity, storage, validate, pollMs, writeHead, readOnly, discover, seedOutboxes, instantBoot, seedSnapshot })
+export function createGossip ({ storage, pear, getMe, identity, channelName, forceDev, bus, validate, pollMs, writeHead, readOnly, requireAtomicWrites, discover, seedOutboxes, instantBoot, seedSnapshot } = {}) {
+  if (pear && pear.sync && pear.swarm && !forceDev) return new BridgeGossipSync({ pear, getMe, identity, storage, validate, pollMs, writeHead, readOnly, requireAtomicWrites, discover, seedOutboxes, instantBoot, seedSnapshot })
   const theBus = bus || (typeof BroadcastChannel !== 'undefined' ? browserBus(channelName || 'peerit-gossip') : null)
   return new GossipSync({ storage, bus: theBus, getMe, validate })
 }

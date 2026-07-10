@@ -49,3 +49,17 @@ export const LEGACY_SEALED_V2_POW_SIGNATURES = new Set([
   "ea0cd5ba0772ca64543f59d4c34d2f97b3095d3ab98086206943b1f102e80f379874aa07144778af274159b5f8f22caf2d50a407744cd4a56ae600948a82230b",
   "f34f2c3d8773aec00fa600cdfd4baf24a2b91e1f5cf9be7036c91067f83e1be36b1e2e8316845fc865dc288f689423a88e7d57658487d8014687f4a353ed6b0c"
 ])
+
+// Protocol-v3 content cutover. Historical posts/comments remain readable only
+// when their exact signed bytes were inventoried before the cutover. The older
+// set above contains every pre-pow-v2 live content signature plus a few other
+// sealed record types (harmless here: this set is consulted for post/comment
+// admission only). One live post was minted with pow.v=2 after that inventory;
+// pin it explicitly as well. A freshly signed legacy-shaped record is therefore
+// rejected even if it carries valid Ed25519 and PoW.
+// Sources: https://outbox.peerit.site + config/seed-snapshot.json; read-only
+// inventory completed 2026-07-10.
+export const LEGACY_CONTENT_SIGNATURES = new Set([
+  ...LEGACY_SEALED_V2_POW_SIGNATURES,
+  '468931344d49255550fcbd5c19fe584fff6ce293fee63d767e96ebcb73853c305668fa578cbfb3ac7a58c726b709631ed60c9e97063bf06a9bf584d44b05c90b'
+])

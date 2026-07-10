@@ -113,6 +113,9 @@ button{font-family:inherit}
 .arrow.down.on{color:var(--down)}
 .score{font-size:13px;font-weight:700;color:var(--text)}
 .score.pos{color:var(--up)} .score.neg{color:var(--down)}
+.votes.historical{justify-content:center;opacity:.72}
+.votes.inline.historical{display:inline-flex;min-width:20px}
+.historical-tag{display:inline-flex;align-items:center;border:1px solid var(--border-2);border-radius:999px;padding:1px 6px;color:var(--faint);font-size:10.5px;font-weight:700;white-space:nowrap}
 .post-main{flex:1;min-width:0}
 .post-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12.5px;color:var(--faint);margin-bottom:5px}
 .post-meta .sub-link{color:var(--text);font-weight:700}
@@ -399,7 +402,10 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
 
 /* ---- web read-only mode (peerit.site over a public relay) ------------------- */
 .readonly-banner {
-  position: sticky; top: 0; z-index: 60;
+  /* The topbar is the sticky element. Keeping this banner in normal flow makes
+     it visible on arrival, then lets it scroll away without covering search or
+     account controls. */
+  position: relative; z-index: 41;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: #fff; padding: 8px 16px; font-size: 13px; line-height: 1.5; text-align: center;
 }
@@ -408,7 +414,10 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
 .web-readonly [href^="#/submit"],
 .web-readonly [href^="#/create"],
 .web-readonly .composer,
-.web-readonly .votes .arrow { display: none !important; }
+.web-readonly .votes .arrow,
+.web-readonly [data-act="reply"],
+.web-readonly [data-act="start-community"],
+.web-readonly [data-act="bridge-proof-write"] { display: none !important; }
 .mode-badge.web{background:rgba(79,140,255,.14);color:var(--accent);border:1px solid rgba(79,140,255,.32)}
 .mode-badge.dispersal{background:rgba(168,85,247,.14);color:#c084fc;border:1px solid rgba(168,85,247,.32)}
 

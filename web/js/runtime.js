@@ -178,8 +178,11 @@ export function resolveRuntime ({ rawPear = null, doc = null } = {}) {
       // deliberately NOT passed to sync — sync runs BridgeGossipSync over the
       // remote /api relay (a real transport), the identity never leaves.
       // lazy: web visitors are LURKERS (no keypair, no outbox, no announce) until
-      // their first write — kills the new-user-per-refresh churn and the ghost
-      // outboxes/descriptors it left on the relay. persistSeed stays unset here.
+      // their first explicit write — kills the new-user-per-refresh churn and the
+      // ghost outboxes/descriptors it left on the relay. persistSeed stays unset
+      // so DevIdentity never writes a cleartext roster; app.js separately requires
+      // the first writer key to be encrypted into the device IdentityStore before
+      // any record is signed or transmitted.
       identityOpts: { forceDev: true, lazy: true, apiBase: relay.apiBase, apiToken: relay.apiToken },
       syncOpts: { apiBase: relay.apiBase, apiToken: relay.apiToken, seedOutboxes: parseSeedOutboxes(metaContent(doc, 'peerit-seed-outboxes')) },
       relays: relay.relays,
@@ -194,6 +197,6 @@ export function resolveRuntime ({ rawPear = null, doc = null } = {}) {
   // Local dev fallback (nothing configured): this is a developer's own machine, so
   // persisting the seed across reloads is a convenience, not a public-exposure risk.
   // persistSeed is scoped to THIS branch only — the web/production path above never
-  // sets it, so peerit.site keeps the seed in memory only (see js/identity.js).
+  // sets it, so DevIdentity itself cannot write the seed to cleartext storage.
   return { mode: 'dev', identityOpts: { persistSeed: true }, syncOpts: {}, readOnly: false, v2, shardCohort }
 }

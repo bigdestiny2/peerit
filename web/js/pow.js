@@ -11,7 +11,18 @@
 //   Legacy proofs (pow.v absent or 1) keep the pre-v2 target shapes so existing
 //   wire records still admit (dual-accept).
 
-import { LEGACY_SEALED_V2_POW_SIGNATURES } from './legacy-v2-pow-allowlist.js'
+import { LEGACY_CONTENT_SIGNATURES, LEGACY_SEALED_V2_POW_SIGNATURES } from './legacy-v2-pow-allowlist.js'
+import { LEGACY_ACTION_SIGNATURES, LEGACY_TARGET_CIDS } from './legacy-action-allowlist.js'
+import {
+  CONTENT_PROTOCOL,
+  TYPE,
+  hasValidContentId,
+  hasValidContentRef,
+  hasValidModAction,
+  validCommunitySlug,
+  validUserTarget
+} from './model.js'
+import { unseal } from './seal.js'
 
 export const MIN_BITS = {
   post: 16,
@@ -141,10 +152,94 @@ export async function verify (type, data, minBits) {
   return leadingZeroBits(h) >= pow.bits
 }
 
-export function makeValidator (minBits = MIN_BITS) {
+function signatureOf (val) {
+  return typeof val?._sig === 'string' ? val._sig.toLowerCase() : ''
+}
+
+function actionSignaturesFor (inventory, type) {
+  if (inventory instanceof Set) return inventory
+  return inventory && inventory[type] instanceof Set ? inventory[type] : new Set()
+}
+
+// v2 seals every graph/target field. Admission's key-binding gate also unseals,
+// but makeValidator must be safe when called directly and must validate the
+// logical fields rather than trusting their absence at the wire top level.
+async function logicalValue (val) {
+  if (!val || !val.sealed) return val
+  let graph
+  try { graph = await unseal(val.sealed) } catch { return null }
+  if (!graph || typeof graph !== 'object' || Array.isArray(graph)) return null
+  return {
+    ...graph,
+    author: val._k,
+    creator: val._k,
+    by: val._k,
+    createdAt: val.createdAt != null ? val.createdAt : graph.createdAt,
+    ts: val.ts != null ? val.ts : graph.ts,
+    editedAt: val.editedAt != null ? val.editedAt : graph.editedAt,
+    deleted: val.deleted != null ? val.deleted : graph.deleted,
+    slug: val.slug != null ? val.slug : graph.slug
+  }
+}
+
+async function validCommentTargets (logical, legacyTargetCids) {
+  if (!logical || !validCommunitySlug(logical.community) || logical.postCid !== logical.targetRef?.cid) return false
+  if (legacyTargetCids.has(logical.postCid)) return false
+  if (!(await hasValidContentRef(logical.targetRef, TYPE.POST))) return false
+
+  if (logical.parentCid === null) return logical.parentRef === null
+  if (typeof logical.parentCid !== 'string') return false
+  if (logical.parentCid !== logical.parentRef?.cid || legacyTargetCids.has(logical.parentCid)) return false
+  return hasValidContentRef(logical.parentRef, TYPE.COMMENT)
+}
+
+async function validVoteTarget (logical, legacyTargetCids) {
+  if (!logical || logical.protocol !== CONTENT_PROTOCOL) return false
+  if (!validCommunitySlug(logical.community) || !validUserTarget(logical.author)) return false
+  if (!Number.isFinite(logical.ts) || logical.ts < 0) return false
+  if (logical.value !== -1 && logical.value !== 0 && logical.value !== 1) return false
+  if (logical.targetType !== TYPE.POST && logical.targetType !== TYPE.COMMENT) return false
+  if (logical.targetCid !== logical.targetRef?.cid || logical.targetType !== logical.targetRef?.type) return false
+  if (legacyTargetCids.has(logical.targetCid)) return false
+  return hasValidContentRef(logical.targetRef, logical.targetType)
+}
+
+export function makeValidator (minBits = MIN_BITS, opts = {}) {
+  // The injectable Set is for isolated historical-fixture tests and migrations.
+  // Production callers omit it and therefore use the frozen live inventory.
+  const legacyContentSignatures = opts.legacyContentSignatures || LEGACY_CONTENT_SIGNATURES
+  const legacyActionSignatures = opts.legacyActionSignatures || LEGACY_ACTION_SIGNATURES
+  const legacyTargetCids = opts.legacyTargetCids || LEGACY_TARGET_CIDS
   // gossip admit() rewrites type to the semantic type (val._t) before calling
   // validate(), so we only need to dispatch on that semantic type.
   return async (type, val) => {
+    const signature = signatureOf(val)
+    const legacyAction = actionSignaturesFor(legacyActionSignatures, type).has(signature)
+    const needsLogical = type === TYPE.POST || type === TYPE.COMMENT || type === TYPE.VOTE || type === TYPE.MOD
+    const logical = needsLogical ? await logicalValue(val) : val
+    if (needsLogical && !logical) return false
+
+    if (type === TYPE.POST) {
+      // No timestamp inference and no shape fallback: a non-grandfathered post
+      // must explicitly be protocol 3 and reproduce its author-bound CID.
+      if (!legacyContentSignatures.has(signature) && !(await hasValidContentId(type, logical))) return false
+    }
+
+    if (type === TYPE.COMMENT && !legacyAction) {
+      // A comment is both content and an action on a thread. Its own identity and
+      // every target identity must independently reproduce protocol-v3 CIDs.
+      if (!(await hasValidContentId(type, logical))) return false
+      if (!(await validCommentTargets(logical, legacyTargetCids))) return false
+    }
+
+    if (type === TYPE.VOTE && !legacyAction) {
+      if (!(await validVoteTarget(logical, legacyTargetCids))) return false
+    }
+
+    if (type === TYPE.MOD && !legacyAction) {
+      if (!(await hasValidModAction(logical))) return false
+      if (logical.targetCid != null && legacyTargetCids.has(logical.targetCid)) return false
+    }
     // A sealed record is the v2 wire form. Legacy v1 proofs are retained only for
     // legacy plaintext rows; accepting them on v2 would let one proof be replayed
     // across records whose v1 target fields are intentionally absent.

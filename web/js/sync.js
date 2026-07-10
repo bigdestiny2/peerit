@@ -63,6 +63,7 @@ class DevSync {
     this._listeners = new Set()
     this._channel = null
     this._channelName = channelName || 'peerit'
+    this.viewEpoch = 0
   }
 
   async ready () {
@@ -94,6 +95,7 @@ class DevSync {
     const meta = this._read(this.META_KEY) || { len: 0 }
     meta.len = (meta.len || 0) + 1
     this._write(this.META_KEY, meta)
+    this.viewEpoch++
     this._broadcast()
     return { ok: true }
   }
@@ -139,6 +141,7 @@ class BridgeSync {
     this._listeners = new Set()
     this._poll = null
     this._lastLen = -1
+    this.viewEpoch = 0
   }
 
   async ready () {
@@ -178,7 +181,7 @@ class BridgeSync {
       try {
         const s = await this.sync.status(APP_ID)
         const len = s && s.viewLength
-        if (len !== this._lastLen) { this._lastLen = len; this._emit() }
+        if (len !== this._lastLen) { this._lastLen = len; this.viewEpoch++; this._emit() }
       } catch {}
     }, 4000)
   }
@@ -188,7 +191,9 @@ class BridgeSync {
   }
 
   async append (op) {
-    return this.sync.append(APP_ID, { type: op.type, data: op.data, timestamp: new Date().toISOString() })
+    const result = await this.sync.append(APP_ID, { type: op.type, data: op.data, timestamp: new Date().toISOString() })
+    this.viewEpoch++
+    return result
   }
   async get (key) { return this.sync.get(APP_ID, key) }
   async list (prefix, opts = {}) { return this.sync.list(APP_ID, prefix, opts) }
@@ -213,7 +218,7 @@ export function createSync (opts = {}) {
     if (!opts.forceDev && hasAnyPearBridgeSurface(pear) && !hasGossipPearSurface(pear)) {
       throw new Error('PearBrowser bridge is present but sync, identity, and swarm.v1 are not all available; refusing to fall back to local dev sync.')
     }
-    return createGossip({ storage, pear, getMe: opts.getMe, identity: opts.identity, channelName: opts.channelName, forceDev: opts.forceDev, bus: opts.bus, validate: opts.validate, pollMs: opts.pollMs, writeHead: opts.writeHead, readOnly: opts.readOnly, discover: opts.discover, seedOutboxes: opts.seedOutboxes, instantBoot: opts.instantBoot, seedSnapshot: opts.seedSnapshot })
+    return createGossip({ storage, pear, getMe: opts.getMe, identity: opts.identity, channelName: opts.channelName, forceDev: opts.forceDev, bus: opts.bus, validate: opts.validate, pollMs: opts.pollMs, writeHead: opts.writeHead, readOnly: opts.readOnly, requireAtomicWrites: opts.requireAtomicWrites, discover: opts.discover, seedOutboxes: opts.seedOutboxes, instantBoot: opts.instantBoot, seedSnapshot: opts.seedSnapshot })
   }
   if (pear && pear.sync && !opts.forceDev) return new BridgeSync(pear.sync, storage)
   return new DevSync(storage, opts.channelName)

@@ -224,6 +224,16 @@ function idbAdapter () {
         done({ swapped: true, value })
       }
     }),
+    compareAndSwapEmpty: (key, value) => withStore('readwrite', (store, done) => {
+      // get() cannot distinguish an absent key from a stored `undefined` value;
+      // getKey() can. Exact-empty means the key itself must not exist.
+      const req = store.getKey(key)
+      req.onsuccess = () => {
+        if (req.result !== undefined) { done({ swapped: false, value: null }); return }
+        store.put(value, key)
+        done({ swapped: true, value })
+      }
+    }),
     compareAndSwapToken: (key, expectedToken, value) => withStore('readwrite', (store, done) => {
       const req = store.get(key)
       req.onsuccess = () => {
@@ -358,10 +368,14 @@ export function createIdentityStore ({ kv } = {}) {
       if (expectedToken != null) {
         if (!backing || typeof backing.compareAndSwapToken !== 'function') throw new Error('device identity store does not support token-bound atomic replacement')
         result = await backing.compareAndSwapToken(RECORD_KEY, expectedToken, candidate)
-      } else {
-        if (expectedPubkey == null && expectedEmpty !== true) throw new Error('device identity replacement requires an exact inspected record or verified empty state')
+      } else if (expectedPubkey != null) {
         if (!backing || typeof backing.compareAndSwap !== 'function') throw new Error('device identity store does not support atomic replacement')
         result = await backing.compareAndSwap(RECORD_KEY, expectedPubkey, candidate)
+      } else if (expectedEmpty === true) {
+        if (!backing || typeof backing.compareAndSwapEmpty !== 'function') throw new Error('device identity store does not support exact empty-state replacement')
+        result = await backing.compareAndSwapEmpty(RECORD_KEY, candidate)
+      } else {
+        throw new Error('device identity replacement requires an exact inspected record or verified empty state')
       }
       if (!result || !result.swapped) throw new Error('device identity changed in another tab; import was not activated')
       const stored = await unwrapRecord(result.value)
@@ -510,6 +524,11 @@ export function memoryKv () {
       const actual = existing && HEX64.test(String(existing.pubkey || '')) ? String(existing.pubkey).toLowerCase() : null
       const expected = expectedPubkey == null ? null : String(expectedPubkey).toLowerCase()
       if (actual !== expected) return { swapped: false, value: existing }
+      m.set(k, v)
+      return { swapped: true, value: v }
+    },
+    compareAndSwapEmpty: async (k, v) => {
+      if (m.has(k)) return { swapped: false, value: m.get(k) }
       m.set(k, v)
       return { swapped: true, value: v }
     },

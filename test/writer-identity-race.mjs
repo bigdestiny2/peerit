@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs'
 import { DevIdentity } from '../js/identity.js'
 import { createData } from '../js/data.js'
 import { ready as cryptoReady } from '../js/crypto.js'
+import { createLiveRefreshController, restoreComposerDraft, snapshotComposerDraft } from '../js/live-refresh.js'
 
 const mem = () => {
   const m = new Map()
@@ -203,6 +204,66 @@ console.log('— cross-instance writer session ordering —')
   assert.equal(identity.me().pubkey, b.pubkey, 'queued identity mutation runs only after publication completes')
 }
 
+console.log('— recovered structural emit preserves the live composer draft —')
+{
+  const field = (tagName, type, name, value, checked = false) => ({ tagName, type, name, value, checked })
+  const community = field('SELECT', 'select-one', 'community', 'p2p')
+  const textKind = field('INPUT', 'radio', 'kind', 'text', true)
+  const linkKind = field('INPUT', 'radio', 'kind', 'link', false)
+  const title = field('INPUT', 'text', 'title', 'byte <exact> & title')
+  const body = field('TEXTAREA', 'textarea', 'body', 'line one\nline two\u0000still here')
+  const url = field('INPUT', 'text', 'url', 'https://example.test/a?b=1&c=2')
+  const recoveryButton = { tagName: 'BUTTON', type: 'button', name: '', value: '', closest: () => form }
+  const submitButton = { tagName: 'BUTTON', type: 'submit', name: '', value: '' }
+  const form = {
+    elements: [recoveryButton, community, textKind, linkKind, title, body, url, submitButton],
+    isConnected: true,
+    requestSubmit: () => { submits++ },
+    submit: () => { submits++ }
+  }
+  const listeners = new Map()
+  const fakeDocument = {
+    activeElement: recoveryButton,
+    hasFocus: () => false,
+    contains: node => node && node.isConnected !== false,
+    addEventListener: (name, fn) => listeners.set(name, fn),
+    removeEventListener: (name, fn) => { if (listeners.get(name) === fn) listeners.delete(name) }
+  }
+  let submits = 0
+  let routes = 0
+  const refresh = createLiveRefreshController({
+    document: fakeDocument,
+    route: () => { routes++ },
+    patchVotesInPlace: async () => false,
+    integrityStatusKey: 'integrity',
+    delay: 15
+  })
+  const snapshot = snapshotComposerDraft(form)
+  const draftToken = refresh.holdDraft(form)
+  refresh.onChange(['post!recovered']) // same structural timing as gossip's recovery _emit
+
+  // applyWriterAvailability replaces the focused recovery button inside the
+  // notice. Model both focus falling to body and the form.elements index shift.
+  form.elements = [community, textKind, linkKind, title, body, url, submitButton]
+  fakeDocument.activeElement = { tagName: 'BODY' }
+  title.value = 'clobbered'
+  body.value = ''
+  restoreComposerDraft(form, snapshot)
+  await new Promise(resolve => setTimeout(resolve, 45))
+  assert.equal(routes, 0, 'the recovered structural onChange cannot route while this composer owns its draft')
+  assert.equal(submits, 0, 'recovery never submits the current composer')
+  assert.equal(title.value, 'byte <exact> & title')
+  assert.equal(body.value, 'line one\nline two\u0000still here')
+  assert.equal(url.value, 'https://example.test/a?b=1&c=2')
+  assert.equal(textKind.checked, true)
+  assert.equal(linkKind.checked, false)
+
+  refresh.releaseDraft(draftToken) // user navigation/submission transfers ownership
+  await new Promise(resolve => setTimeout(resolve, 45))
+  assert.equal(routes, 1, 'the deferred structural refresh remains pending and runs after draft ownership is released')
+  refresh.destroy()
+}
+
 console.log('— public-web UI and recovery gates —')
 {
   const source = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8')
@@ -229,6 +290,7 @@ console.log('— public-web UI and recovery gates —')
   assert.match(source, /return fn\(writerSession\)/)
   assert.match(source, /beginIdentityForget\(localStorage/)
   assert.match(source, /expectedToken = beforeDevice\.status === 'corrupt'/)
+  assert.match(source, /expectedEmpty = beforeDevice\.status === 'empty'/)
   assert.match(source, /beforeDevice\.status === 'unavailable'/)
   assert.match(source, /resetCorruptDurableIdentity\(identity, deviceIdStore/)
 

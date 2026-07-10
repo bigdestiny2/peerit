@@ -33,9 +33,10 @@ import {
 } from './identity-store.js'
 import { isSecure } from './crypto.js'
 import { encodeQR, qrToSvg, isScanSupported, scanQR } from './qr.js'
+import { createLiveRefreshController, restoreComposerDraft, snapshotComposerDraft } from './live-refresh.js'
 import {
   escapeHtml as esc, timeAgo, fmtCount, parseRoute, buildRoute,
-  colorFor, shortKey, debounce, normalizeSlug, safeUserUrl, parsePubkeyInput
+  colorFor, shortKey, normalizeSlug, safeUserUrl, parsePubkeyInput
 } from './util.js'
 
 // ---- app singletons ---------------------------------------------------------
@@ -54,6 +55,7 @@ let integrityWarningActive = false
 let releaseManifestWarning = ''
 let corruptDeviceIdentityState = null
 let identityForgetCleanupError = ''
+let liveRefresh = null
 
 const $ = (sel, root = document) => root.querySelector(sel)
 const app = () => $('#app')
@@ -217,53 +219,27 @@ async function boot () {
   // would make ordinary browsing mutate the network. Graph edges publish only on
   // the user's explicit follow/join actions.
 
-  // Live updates: when peers' data changes, repaint just the affected vote
-  // widgets in place when we can, and only fall back to a full re-render for
-  // structural changes (new/edited/deleted posts & comments, mod actions). The
-  // bridge tells us WHICH keys changed (gossip.js); dev mode reports nothing, so
-  // it always does a full render. Changes accumulate across the debounce window.
-  let pendingKeys = null   // Set of changed storage keys since the last flush
-  let pendingFull = false  // a change we can't patch → must full-render
-  let deferredFlushArmed = false
-  const armDeferredFlush = () => {
-    if (deferredFlushArmed) return
-    deferredFlushArmed = true
-    const retry = () => {
-      deferredFlushArmed = false
-      document.removeEventListener('focusout', retry, true)
-      document.removeEventListener('visibilitychange', retry)
-      soft()
-    }
-    document.addEventListener('focusout', retry, true)
-    document.addEventListener('visibilitychange', retry)
-  }
-  const flush = async () => {
-    const a = document.activeElement
-    // Don't rip focus from text/form editing. Buttons and menus must not starve
-    // structural P2P updates in background tabs.
-    const focusIsActive = typeof document.hasFocus !== 'function' || document.hasFocus()
-    const formControlActive = a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable || (a.tagName === 'BUTTON' && a.closest && a.closest('form[data-form]')))
-    if (focusIsActive && formControlActive) { armDeferredFlush(); return }
-    const full = pendingFull, keys = pendingKeys
-    pendingFull = false; pendingKeys = null
-    if (!full && keys && await patchVotesInPlace(keys)) return // repainted in place; no re-render
-    route()
-  }
-  const soft = debounce(flush, 350)
-  sync.onChange((changed) => {
-    if (Array.isArray(changed)) changed = changed.filter((k) => k !== SYNC_INTEGRITY_STATUS_KEY)
-    if (Array.isArray(changed) && changed.length === 0) return
-    if (!changed) pendingFull = true
-    else { if (!pendingKeys) pendingKeys = new Set(); for (const k of changed) pendingKeys.add(k) }
-    soft()
+  // Live structural changes are debounced and draft-aware. Pending-publication
+  // recovery emits a normal change event, but the composer that launched it owns
+  // its draft until the user submits or navigates away.
+  liveRefresh = createLiveRefreshController({
+    document,
+    route,
+    patchVotesInPlace,
+    integrityStatusKey: SYNC_INTEGRITY_STATUS_KEY,
+    delay: 350
   })
+  sync.onChange(liveRefresh.onChange)
   sync.onChange(() => updateNetStatus())
   sync.onChange(() => refreshNotifBadge()) // throttled; surfaces new replies in the header badge
   // The gossip layer already re-merges + emits onChange on its own poll and on
   // every real event, so a separate status timer here is redundant.
 
-  window.addEventListener('hashchange', route)
-  window.addEventListener('pagehide', () => { try { if (sync && sync.destroy) sync.destroy() } catch {} })
+  window.addEventListener('hashchange', () => { if (liveRefresh) liveRefresh.releaseDraft(null, { schedulePending: false, discardPending: true }); route() })
+  window.addEventListener('pagehide', () => {
+    try { if (liveRefresh) liveRefresh.destroy() } catch {}
+    try { if (sync && sync.destroy) sync.destroy() } catch {}
+  })
   document.addEventListener('click', onClick)
   document.addEventListener('submit', onSubmit)
   document.addEventListener('input', onInput)
@@ -310,7 +286,7 @@ function assertNoIdentityMutationDuringWrite () {
   }
 }
 
-async function recoverPendingWriterForBlockedIntent () {
+async function recoverPendingWriterForBlockedIntentInternal () {
   let status = null
   try { status = sync && typeof sync.status === 'function' ? await sync.status() : null } catch {}
   const atomic = status && status.atomicCommit
@@ -351,6 +327,31 @@ async function recoverPendingWriterForBlockedIntent () {
   return 'recovered'
 }
 
+function protectRecoveryComposerDraft (source = null) {
+  if (typeof document === 'undefined') return null
+  const origin = source || document.activeElement
+  const form = origin && origin.closest ? origin.closest('form[data-form]') : null
+  if (!form || !form.querySelector || !form.querySelector('[data-role="writer-availability"]')) return null
+  const snapshot = snapshotComposerDraft(form)
+  const token = liveRefresh ? liveRefresh.holdDraft(form) : null
+  return { form, snapshot, token }
+}
+
+async function recoverPendingWriterForBlockedIntent (draftSource = null) {
+  const protectedDraft = protectRecoveryComposerDraft(draftSource)
+  let preserve = false
+  try {
+    const result = await recoverPendingWriterForBlockedIntentInternal()
+    preserve = result === 'recovered' || result === 'cleared'
+    return result
+  } finally {
+    if (protectedDraft) {
+      restoreComposerDraft(protectedDraft.form, protectedDraft.snapshot)
+      if (!preserve && liveRefresh) liveRefresh.releaseDraft(protectedDraft.token)
+    }
+  }
+}
+
 // Dedicated recovery control for a disabled composer. It never submits the form
 // or calls route(), so a title/body already typed around it remains byte-for-byte
 // in the DOM. Only the exact active signer or matching local vault can proceed.
@@ -361,7 +362,7 @@ async function recoverPendingPublicationFromControl (button) {
   button.disabled = true
   button.textContent = 'Recovering…'
   try {
-    const result = await recoverPendingWriterForBlockedIntent()
+    const result = await recoverPendingWriterForBlockedIntent(button)
     if (result === 'unavailable') throw new Error('This browser does not have the identity that signed the pending publication.')
     let status = null
     try { status = sync && typeof sync.status === 'function' ? await sync.status() : null } catch {}

@@ -25,8 +25,8 @@ function mem () { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.ge
 async function until (fn, { tries = 200, gap = 60 } = {}) { for (let i = 0; i < tries; i++) { if (await fn()) return true; await delay(gap) } return false }
 
 function makeMultiWorld (bases) {
-  const relays = new Map(bases.map((b) => [new URL(b).host, { groups: new Map() }]))
-  const counts = { ranges: 0, range: 0 }
+  const relays = new Map(bases.map((b) => [new URL(b).host, { groups: new Map(), directorySeq: 0 }]))
+  const counts = { ranges: 0, range: 0, directory: [] }
   let malformedRanges = false
   const channels = new Map(); let chanSeq = 0
   const ensureGroup = (store, appId) => { if (!store.has(appId)) store.set(appId, { inviteKey: randomBytes(32).toString('hex'), rows: new Map(), version: 0, commits: new Map() }); return store.get(appId) }
@@ -52,6 +52,7 @@ function makeMultiWorld (bases) {
       for (const op of commit.mutations) g.rows.set(op.type.replace(':', '!') + '!' + op.data.id, op.data)
       g.rows.set(keys.head(body.appId), commit.head.data)
       g.version++
+      g.directorySeq = ++relay.directorySeq
       const receipt = { ok: true, durable: true, commitId: commit.commitId, appId: body.appId, inviteKey: g.inviteKey, head: { version: commit.head.data.version, count: commit.head.data.count, root: commit.head.data.root }, relayVersion: g.version }
       g.commits.set(commit.commitId, receipt)
       return resp(receipt)
@@ -76,7 +77,21 @@ function makeMultiWorld (bases) {
       for (const [b, cmp] of [['gte', (k, v) => k >= v], ['gt', (k, v) => k > v], ['lte', (k, v) => k <= v], ['lt', (k, v) => k < v]]) { const v = u.searchParams.get(b); if (v != null && v !== '') rows = rows.filter((r) => cmp(r.key, v)) }
       return resp(rows.slice(0, Number(u.searchParams.get('limit')) || 100))
     }
-    if (p === '/api/directory') { const heads = {}; for (const [appId, g] of store) { const h = g.rows.get('head!' + appId); if (h) heads[appId] = h }; return resp({ heads }) }
+    if (p === '/api/directory') {
+      const since = Number(u.searchParams.get('since')) || 0
+      const cursor = u.searchParams.get('cursor') || u.searchParams.get('after') || ''
+      const limit = Number(u.searchParams.get('limit')) || 100
+      counts.directory.push({ origin: u.origin, since: u.searchParams.get('since'), cursor })
+      const rows = []
+      for (const [appId, g] of store) {
+        const head = g.rows.get('head!' + appId)
+        if (head && (since <= 0 || g.directorySeq > since) && (!cursor || appId > cursor)) rows.push({ appId, head })
+      }
+      rows.sort((a, b) => a.appId.localeCompare(b.appId))
+      const page = rows.slice(0, limit)
+      const heads = {}; for (const row of page) heads[row.appId] = row.head
+      return resp({ heads, count: page.length, total: rows.length, nextCursor: rows.length > page.length ? page.at(-1).appId : null, hasMore: rows.length > page.length, watermark: relay.directorySeq })
+    }
     if (p === '/api/sync/status') { const g = ensureGroup(store, u.searchParams.get('appId')); return resp({ appId: u.searchParams.get('appId'), inviteKey: g.inviteKey, writerCount: 1, viewLength: g.rows.size }) }
     if (p === '/api/swarm/join') { const id = 'ch-' + (++chanSeq); channels.set(id, { topic: body.topicHex || 'd', es: null, linked: new Set() }); return resp({ channelId: id, topicHex: body.topicHex || 'd', protocol: body.protocol, version: body.version, tier: 'A' }) }
     if (p === '/api/swarm/send') { deliver(body.peerId, { type: 'message', peerId: body.channelId, data: body.data }); return resp({ ok: true }) }
@@ -85,7 +100,19 @@ function makeMultiWorld (bases) {
     return resp({ error: 'nf' }, 404)
   }
   class ES { constructor (url) { this.url = String(url); this.onmessage = null; this.onerror = null; const id = new URL(this.url).searchParams.get('channelId'); const c = channels.get(id); if (c) { c.es = this; setTimeout(() => linkPeers(id), 0) } } close () {} }
-  return { fetch, EventSource: ES, relays, counts, setMalformedRanges: (value) => { malformedRanges = !!value } }
+  return {
+    fetch,
+    EventSource: ES,
+    relays,
+    counts,
+    setMalformedRanges: (value) => { malformedRanges = !!value },
+    resetDirectoryWatermarks: () => {
+      for (const relay of relays.values()) {
+        relay.directorySeq = 0
+        for (const group of relay.groups.values()) group.directorySeq = 0
+      }
+    }
+  }
 }
 const storeOf = (world, base, pub) => world.relays.get(new URL(base).host).groups.get(pub)
 
@@ -122,6 +149,37 @@ async function main () {
   const bobFloor = floorOf(bob.storage)[alice.pub]
   ok(/^[0-9a-f]{64}$/i.test(String((bobFloor && bobFloor.root) || '')), 'the directory bootstrap also pins alice\'s signed head root')
   ok(world.counts.ranges > 0, 'the advertised batch endpoint delivers a complete outbox before signed-head admission')
+  const initialWatermark = Number(bob.storage.getItem('peerit:directory-watermark:v1'))
+  ok(initialWatermark > 0, 'a complete directory snapshot persists a relay watermark for later delta discovery')
+
+  const erin = await makeClient(world, [A, B], 'erin', { writeHead: true })
+  await erin.data.createCommunity({ slug: 'delta', title: 'Delta', description: 'x' })
+  const directoryBeforeDelta = world.counts.directory.length
+  await bob.sync._bootstrapFloor()
+  const deltaRequests = world.counts.directory.slice(directoryBeforeDelta)
+  ok(deltaRequests.length === 2 && deltaRequests.every((request) => Number(request.since) === initialWatermark), 'later directory discovery requests only heads newer than the persisted watermark')
+  ok(floorOf(bob.storage)[erin.pub], 'a delta directory response discovers a newly written author')
+
+  const watermarkBeforeReset = Number(bob.storage.getItem('peerit:directory-watermark:v1'))
+  world.resetDirectoryWatermarks()
+  const frank = await makeClient(world, [A, B], 'frank', { writeHead: true })
+  await frank.data.createCommunity({ slug: 'reset', title: 'Reset', description: 'x' })
+  const directoryBeforeReset = world.counts.directory.length
+  await bob.sync._bootstrapFloor()
+  const resetRequests = world.counts.directory.slice(directoryBeforeReset)
+  ok(resetRequests.some((request) => Number(request.since) === watermarkBeforeReset) && resetRequests.some((request) => request.since === null), 'a regressed relay watermark forces a full directory rescan')
+  ok(floorOf(bob.storage)[frank.pub], 'the full rescan recovers an author whose low post-reset sequence would miss the old delta')
+
+  const capped = await makeClient(world, [A, B], 'capped')
+  capped.sync._peers.clear()
+  for (let i = 0; i < 4096; i++) {
+    const pub = i.toString(16).padStart(64, '0')
+    capped.sync._peers.set(pub, { appId: pub, inviteKey: pub, dir: true })
+  }
+  capped.storage.removeItem('peerit:directory-watermark:v1')
+  capped.sync._directoryWatermark = 0
+  await capped.sync._bootstrapFloor()
+  ok(capped.storage.getItem('peerit:directory-watermark:v1') === null, 'a peer-capped directory scan never advances the delta watermark past unseen authors')
 
   console.log('\n— a malformed advertised batch response falls back, never bypasses audit —')
   const rangesBeforeFallback = world.counts.range
@@ -145,7 +203,7 @@ async function main () {
   const flagged = await until(async () => (await dave.sync.status()).withholding.includes(alice.pub), { tries: 80 })
   ok(flagged, 'a fresh visitor whose floor was directory-seeded to v3 FLAGS the all-relays rollback to v1 on first read')
 
-  for (const c of [alice, bob, fallback, carol, dave]) c.sync.destroy && c.sync.destroy()
+  for (const c of [alice, bob, erin, frank, capped, fallback, carol, dave]) c.sync.destroy && c.sync.destroy()
   console.log(`\n✅ all ${passed} directory checks passed\n`)
 }
 main().catch((e) => { console.error('❌', (e && e.stack) || e); process.exit(1) })

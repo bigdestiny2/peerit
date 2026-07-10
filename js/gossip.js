@@ -48,6 +48,10 @@ const HEX128 = /^[0-9a-f]{128}$/i
 const CACHE_KEY = 'peerit:gossip-view'
 const MAX_CACHE_BYTES = 3 * 1024 * 1024 // skip persisting if the view is huge (graceful)
 const FLOOR_KEY = 'peerit:head-floor'   // Phase C durable monotonic head floor (author -> max signed head version)
+// A relay-issued directory sequence is only a bandwidth optimization. We advance
+// it after a complete one-page directory read; any relay reset below it forces a
+// full rescan before the value is replaced.
+const DIRECTORY_WATERMARK_KEY = 'peerit:directory-watermark:v1'
 // Exactly one owner-signed atomic commit may be in flight per device. Persisting
 // the complete envelope before the first network call makes response-loss retry
 // byte-for-byte idempotent across wake/reload; later writes remain blocked until
@@ -511,6 +515,7 @@ class BridgeGossipSync {
     this._floor = new Map()        // pub -> {v:maxVersion, t:tick} DURABLE monotonic head floor (Phase C: rollback across restart + all-relays-collude)
     this._floorDirty = false
     this._floorTick = 0            // monotonic recency stamp for floor eviction (LRU, not version)
+    this._directoryWatermark = 0
     this._claimed = null          // sticky community owners (slug -> creator), persisted
     this._refreshing = null       // in-flight refresh promise (serialises concurrent merges)
     this._forceReadPub = null     // explicit stable-state audit; bypasses transport-head gating once
@@ -903,6 +908,17 @@ class BridgeGossipSync {
     } catch {}
   }
 
+  _loadDirectoryWatermark () {
+    const watermark = Number(this._getLocal(DIRECTORY_WATERMARK_KEY))
+    if (Number.isSafeInteger(watermark) && watermark >= 0) this._directoryWatermark = watermark
+  }
+
+  _saveDirectoryWatermark (watermark) {
+    if (!Number.isSafeInteger(watermark) || watermark < 0) return
+    this._directoryWatermark = watermark
+    this._setLocal(DIRECTORY_WATERMARK_KEY, String(watermark))
+  }
+
   async _saveFloor ({ required = false, requiredHead = null } = {}) {
     const persist = async () => {
       const store = this._store()
@@ -983,11 +999,29 @@ class BridgeGossipSync {
     // otherwise a large forum silently truncates. Bounded (MAX_PAGES) so a hostile relay
     // can't spin us forever; the 429/503 backoff in pear-api paces us under the rate limit.
     // Degrades gracefully against an OLD relay that ignores `after` + omits hasMore (one page).
-    const PAGE = 2000, MAX_PAGES = 50
+    const PAGE = 5000, MAX_PAGES = 50
     let after = null
+    let since = this._directoryWatermark || null
+    let complete = false
+    let watermark = null
+    let restartedAfterRegression = false
+    let peerCapBlocked = false
     for (let page = 0; page < MAX_PAGES; page++) {
       let dir
-      try { dir = await dirFn({ limit: PAGE, after }) } catch { break }
+      try { dir = await dirFn({ limit: PAGE, after, since }) } catch { break }
+      const receivedWatermark = Number(dir && dir.watermark)
+      if (since && Number.isSafeInteger(receivedWatermark) && receivedWatermark >= 0 && receivedWatermark < since) {
+        // Relay state was restored/reset below the locally remembered sequence.
+        // A delta could omit authors whose new low sequence is <= the old floor;
+        // discard it and restart once from the complete directory.
+        if (restartedAfterRegression) break
+        since = null
+        after = null
+        watermark = null
+        restartedAfterRegression = true
+        page = -1
+        continue
+      }
       const heads = dir && dir.heads ? dir.heads : dir
       if (!heads || typeof heads !== 'object') break
       for (const appId in heads) {
@@ -1006,13 +1040,22 @@ class BridgeGossipSync {
         // peer (inviteKey unused for relay reads; admit re-verifies every row's signature, so a
         // lying relay still can't forge). Directory is a relay-only surface, so this never runs
         // under PearBrowser's P2P sync (which needs the real read-cap). Skip empties + self.
-        if (this._discover && (h.count | 0) > 0 && !this._peers.has(appId) && this._peers.size < MAX_PEERS) {
-          this._peers.set(appId, { appId, inviteKey: appId, dir: true }) // inviteKey placeholder: relay range is keyed by appId
+        if (this._discover && (h.count | 0) > 0 && !this._peers.has(appId)) {
+          if (this._peers.size < MAX_PEERS) this._peers.set(appId, { appId, inviteKey: appId, dir: true }) // inviteKey placeholder: relay range is keyed by appId
+          else peerCapBlocked = true
         }
       }
-      if (!dir.hasMore || !dir.nextCursor || this._peers.size >= MAX_PEERS) break
+      if (!dir.hasMore && !peerCapBlocked) {
+        complete = true
+        if (Number.isSafeInteger(receivedWatermark) && receivedWatermark >= 0) watermark = receivedWatermark
+        break
+      }
+      if (!dir.nextCursor || peerCapBlocked || this._peers.size >= MAX_PEERS) break
       after = dir.nextCursor
     }
+    // A page is a synchronous relay snapshot. Never advance after a paginated or
+    // peer-capped scan: concurrent head updates could sort before a later cursor.
+    if (complete && watermark !== null) this._saveDirectoryWatermark(watermark)
     if (this._floorDirty) await this._saveFloor()
   }
 
@@ -1086,6 +1129,7 @@ class BridgeGossipSync {
     // A previously observed newer head must be able to reject an older bundled
     // snapshot just as it rejects an older relay response.
     this._loadFloor()
+    this._loadDirectoryWatermark()
     this._loadPendingCommit()
     // Restore last session's view after full re-admission so the first list()/get()
     // paints authenticated content; the poll later reconciles against live relays.

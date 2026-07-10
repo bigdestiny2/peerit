@@ -1,7 +1,7 @@
 {
-  "releaseSequence": 5,
+  "releaseSequence": 6,
   "files": {
-    "index.html": "e76cf94dff7415adb1cb8858d9c142596d4836aa261761fa9f1a894d8805bf45",
+    "index.html": "e3eef6fc23a683bf7245b06951d152bc1a2b4e37532a22dde6d04a8ef129bedf",
     "styles.css": "719335a9a4d8053e9d26def2fb8a95d2289a879fd5afb8258a3485b879e951d3",
     "icon.svg": "7925827f718381ddf887d3c5bea9b5b94e6e80de569d6604e384033767914a1c",
     "js/app.js": "47abf7db629f3bcd4bb5c8e365c2689cd69bf0ddd97e52aa963872d358171827",
@@ -12,7 +12,7 @@
     "js/data.js": "935808186d08a04479228d89936b94af57e8879f0440c29069a3c07650e28c04",
     "js/dht-bundle.js": "ef35ec7ce2c46f1a9f75bd04cf311377c7d41ad10cc6c52d36ff571ca68fafd9",
     "js/feed-window.js": "b6507956f71e1c53123aff3282cca5bf5b65da152050a8a9b5615698e1bc0758",
-    "js/gossip.js": "ae3a838e209ebff940afba6fab2512209db7a4d29100b80922e12f9abd709a74",
+    "js/gossip.js": "1d4e01ef3a93b91ab673e6d603c500a25d81d0a7474fe48929138fe3fd03f574",
     "js/materialized-index.js": "a020f886663f9e543438c716082c5dc31bffa291f25faf7b6ce6a6df482afbc4",
     "js/identity.js": "57a4d7f1a29cd6f7ee420dfeae794b5d486350fd3db2dfcd6bd6bf7869dd9e11",
     "js/identity-export.js": "59551ecaf8cc8ab8bc1f78fec9bf43eedb8bc5595d4963cac054152727ec4fff",
@@ -23,7 +23,7 @@
     "js/markdown.js": "2320179053150c2280507270b8834571c96108456970899f24c37cabebeae8de",
     "js/model.js": "dcde1d1a708d65b9c9b2c9b312a68867e527eb25e4d17a8086975370a4ea984c",
     "js/onboarding.js": "1a3ccc0b46283e4b19b9d0707fa293d5135362cb1feba86159d56ecce5fb7be7",
-    "js/pear-api.js": "da6a3974501137dccae512a8c3f0686b9079b1b7aa60cf97393c2fa3fc69129e",
+    "js/pear-api.js": "6adce1fff60938824fa5a0642e8198976bd6240580bc32fb6f8e1291ae7dcce7",
     "js/qr.js": "4fceabaa0805cba7e55a89291a2a882030fa7d8381b491670faee09aa755002a",
     "js/prefs.js": "f06781e9b30f4e35c1797f1414f6d718aceedc897e8989804dad3ca37753a108",
     "js/pow.js": "cf51679a04ac8d1bf52d4d4acd3d8e122b3cfae6f532cf826b49262a612f56ad",
@@ -32,7 +32,7 @@
     "js/ranking.js": "5cf90c04f8132dd8e388b642bcd303cfd61a882768c1a0277cd0e216d3540221",
     "js/reader-bundle.js": "13ef24fe9b7307d24ef12a3c1376c8f7ffe346fd898a25f153e90ffd980b3a5a",
     "js/recovery.js": "60c940b0c6b40ab46b229b4597c47cff4b14d512eeb616a8ad8222b41405f42c",
-    "js/relay-pool.js": "f4b19b3bfd810813265ed5e504b48496dede18bd8a659ccb12f851e885ef4fcd",
+    "js/relay-pool.js": "8ae2092aecedf9448c41da2e888bd924a2dea14c7b89fdc488687dc320ff2067",
     "js/relay-roster.js": "3593d8be3bb066fe379cec10f06b00f5d5d05b0a0027864aa20cbd060b039d26",
     "js/release-verify.js": "217ae2950e45b8ec1acb7391cfb2dbb40846ef6a3bc468d4a15ebea7dd842d53",
     "js/runtime.js": "97e442c7efcd3070437a710ebf062d67a16fca94aed0fe3f9c3df81d12052ef9",
@@ -47,12 +47,12 @@
     "sw-register.js": "453dcef5e737350700981e105a2834a38debcb7f96182c5b820aef955fc98c84"
   },
   "controls": {
-    "sw.js": "3853e487e84b1b857ebad0b4d2898d28108fe81e51e18ee86458934b64802f06",
-    "verify.html": "5386a5017b54e6e30aaac86921b97d80a7967fe8d38304879d2fba856ad7d201"
+    "sw.js": "c0787d86fce542d52a6a978357f709a5040281254efd82e8aff102b0d16c4162",
+    "verify.html": "70897a8b84c8e0c5610abc149961d6d45fb4a33e12cf3a1c2e2ef6ecf48e71a3"
   },
   "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
   "webRelease": {
-    "releaseSequence": 5,
+    "releaseSequence": 6,
     "relay": "https://outbox.peerit.site",
     "relayBackend": "",
     "readonly": "false",

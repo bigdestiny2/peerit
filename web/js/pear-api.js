@@ -425,7 +425,7 @@ export function createPearApi (opts = {}) {
       // HiveRelay's HTTP adapter calls the pagination cursor `cursor` (older
       // peerit fakes used `after`). Send both during the compatibility window so
       // a large directory never loops over page one forever.
-      directory: (opts = {}) => apiGet(pathWithParams('/api/directory', { limit: opts.limit, cursor: opts.after, after: opts.after }))
+      directory: (opts = {}) => apiGet(pathWithParams('/api/directory', { limit: opts.limit, cursor: opts.after, after: opts.after, since: opts.since }))
     },
     identity: {
       getPublicKey: () => apiGet('/api/identity'),

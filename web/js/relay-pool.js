@@ -411,9 +411,14 @@ export function createRelayPool ({ relays = [], topology = null, fetch, EventSou
     const candidates = new Map()
     let nextCursor = null
     let hasMore = false
+    let watermark = null
+    let allWatermarks = true
     for (const result of results) {
       const r = result.value
-      if (!r) continue
+      if (!r) { allWatermarks = false; continue }
+      const currentWatermark = Number(r.watermark)
+      if (!Number.isSafeInteger(currentWatermark) || currentWatermark < 0) allWatermarks = false
+      else watermark = watermark === null ? currentWatermark : Math.min(watermark, currentWatermark)
       // If any relay has more pages, keep going; take the SMALLEST cursor so a relay that
       // lagged (missing a recent author) is re-covered on the next page rather than skipped.
       if (r.hasMore) { hasMore = true; if (r.nextCursor && (nextCursor === null || r.nextCursor < nextCursor)) nextCursor = r.nextCursor }
@@ -438,7 +443,7 @@ export function createRelayPool ({ relays = [], topology = null, fetch, EventSou
       const selected = consistentHead(appCandidates, leader, leaderReachable)
       if (selected) out[appId] = selected.head
     }
-    return { heads: out, nextCursor, hasMore }
+    return { heads: out, nextCursor, hasMore, watermark: allWatermarks ? watermark : null }
   }
 
   // Legacy append compatibility for PearBrowser-era transports. Atomic HTTP

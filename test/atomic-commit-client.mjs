@@ -259,14 +259,13 @@ async function main () {
   const first = writerSync({ pear: pool(firstWorld, [A, B]), id: firstId, storage: firstStore })
   await first.ready()
   const firstOp = await signedProfile(firstId)
-  const sessionOrder = []
-  const firstReceipt = await first.withAtomicWriterSession(async () => {
-    sessionOrder.push('outer')
-    await first.withAtomicWriterSession(async () => { sessionOrder.push('nested') })
-    return first.append(firstOp)
+  let issuedWriterSession = null
+  const firstReceipt = await first.withAtomicWriterSession(async (writerSession) => {
+    issuedWriterSession = writerSession
+    return first.append(firstOp, writerSession)
   })
   const firstPub = firstId.me().pubkey
-  ok(sessionOrder.join(',') === 'outer,nested', 'the public writer session is reentrant, so a full write intent can call atomic append without reacquiring its Web Lock')
+  ok(issuedWriterSession && firstReceipt.quorum === 2, 'the exact Data write stack can append through its explicit writer-session capability without reacquiring its Web Lock')
   ok(firstReceipt.quorum === 2 && firstWorld.counts.commit === 2, 'two matching durable receipts form the publication quorum')
   ok(firstWorld.counts.create === 0 && firstWorld.counts.append === 0, 'first publication never unsigned-creates an outbox or uses legacy append')
   const firstCommit = firstWorld.relays.get(new URL(A).host).calls[0]
@@ -281,18 +280,82 @@ async function main () {
   ok(firstWorld.counts.commit === sendsBeforeDirectHead && firstWorld.counts.append === 0, 'standalone head rejection cannot fall through to either write endpoint')
   const sessionPeer = writerSync({ pear: pool(firstWorld, [A, B]), id: firstId, storage: firstStore })
   let releaseSession
+  let heldEnteredResolve
   let peerEntered = false
+  let sameInstanceEntered = false
+  const heldEntered = new Promise((resolve) => { heldEnteredResolve = resolve })
   const sessionGate = new Promise((resolve) => { releaseSession = resolve })
-  const heldSession = first.withAtomicWriterSession(async () => sessionGate)
-  await Promise.resolve()
+  const heldSession = first.withAtomicWriterSession(async () => { heldEnteredResolve(); return sessionGate })
+  await heldEntered
+  const sameInstanceSession = first.withAtomicWriterSession(async () => { sameInstanceEntered = true })
   const queuedSession = sessionPeer.withAtomicWriterSession(async () => { peerEntered = true })
   await new Promise((resolve) => setTimeout(resolve, 10))
+  ok(sameInstanceEntered === false, 'a concurrent call on the SAME Bridge instance cannot impersonate reentrant work while another async owner holds the writer lock')
   ok(peerEntered === false, 'another Bridge instance cannot enter identity/write mutation while the shared atomic writer session is held')
   releaseSession()
-  await Promise.all([heldSession, queuedSession])
-  ok(peerEntered === true, 'the queued Bridge instance enters only after the shared writer session releases')
+  await Promise.all([heldSession, sameInstanceSession, queuedSession])
+  ok(sameInstanceEntered === true && peerEntered === true, 'same-instance and cross-instance waiters enter only after the shared writer session releases')
+
+  let retryEntered = false
+  let releaseLiveWrite
+  let liveWriteEnteredResolve
+  const liveWriteEntered = new Promise((resolve) => { liveWriteEnteredResolve = resolve })
+  const liveWriteGate = new Promise((resolve) => { releaseLiveWrite = resolve })
+  const liveWrite = first.withAtomicWriterSession(async () => { liveWriteEnteredResolve(); return liveWriteGate })
+  await liveWriteEntered
+  const originalLoadPending = first._loadPendingCommit.bind(first)
+  first._loadPendingCommit = () => { retryEntered = true; return originalLoadPending() }
+  const pollRetry = first._retryPendingCommit({ force: true })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  ok(retryEntered === false, 'poll retry cannot overlap a live same-instance writer session')
+  releaseLiveWrite()
+  await Promise.all([liveWrite, pollRetry])
+  ok(retryEntered === true, 'poll retry rechecks the marker only after the live writer session releases')
+  first._loadPendingCommit = originalLoadPending
   sessionPeer.destroy()
   first.destroy()
+
+  console.log('\n— browser Web Locks serialize same-instance owners —')
+  const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  const webLockTails = new Map()
+  const fakeLocks = {
+    async request (name, _options, fn) {
+      const previous = webLockTails.get(name) || Promise.resolve()
+      let release
+      const held = new Promise((resolve) => { release = resolve })
+      const tail = previous.catch(() => {}).then(() => held)
+      webLockTails.set(name, tail)
+      await previous.catch(() => {})
+      try { return await fn() } finally {
+        release()
+        if (webLockTails.get(name) === tail) webLockTails.delete(name)
+      }
+    }
+  }
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { locks: fakeLocks } })
+  try {
+    const webLockWorld = makeWorld([A, B])
+    const webLockId = await identity('web-lock-owner')
+    const webLockSync = writerSync({ pear: pool(webLockWorld, [A, B]), id: webLockId, storage: mem() })
+    await webLockSync.ready()
+    let releaseWebLock
+    let webLockEnteredResolve
+    let secondWebLockEntered = false
+    const webLockEntered = new Promise((resolve) => { webLockEnteredResolve = resolve })
+    const webLockGate = new Promise((resolve) => { releaseWebLock = resolve })
+    const firstWebOwner = webLockSync.withAtomicWriterSession(async () => { webLockEnteredResolve(); return webLockGate })
+    await webLockEntered
+    const secondWebOwner = webLockSync.withAtomicWriterSession(async () => { secondWebLockEntered = true })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    ok(secondWebLockEntered === false, 'browser Web Locks do not let a concurrent same-instance call enter as pseudo-reentrant work')
+    releaseWebLock()
+    await Promise.all([firstWebOwner, secondWebOwner])
+    ok(secondWebLockEntered === true, 'browser Web Locks release the queued same-instance owner only after the live owner exits')
+    webLockSync.destroy()
+  } finally {
+    if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor)
+    else delete globalThis.navigator
+  }
 
   console.log('\n— lost response retries exact commit after reload —')
   const retryWorld = makeWorld([A, B])

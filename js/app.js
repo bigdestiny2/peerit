@@ -28,7 +28,8 @@ import {
   ensureDurableIdentityForWrite,
   finishIdentityForget,
   hasIdentityForgetTombstone,
-  replaceDurableIdentity
+  replaceDurableIdentity,
+  resetCorruptDurableIdentity
 } from './identity-store.js'
 import { isSecure } from './crypto.js'
 import { encodeQR, qrToSvg, isScanSupported, scanQR } from './qr.js'
@@ -350,14 +351,41 @@ async function recoverPendingWriterForBlockedIntent () {
   return 'recovered'
 }
 
+// Dedicated recovery control for a disabled composer. It never submits the form
+// or calls route(), so a title/body already typed around it remains byte-for-byte
+// in the DOM. Only the exact active signer or matching local vault can proceed.
+async function recoverPendingPublicationFromControl (button) {
+  if (!button || button.dataset.busy) return
+  button.dataset.busy = '1'
+  const label = button.textContent
+  button.disabled = true
+  button.textContent = 'Recovering…'
+  try {
+    const result = await recoverPendingWriterForBlockedIntent()
+    if (result === 'unavailable') throw new Error('This browser does not have the identity that signed the pending publication.')
+    let status = null
+    try { status = sync && typeof sync.status === 'function' ? await sync.status() : null } catch {}
+    applyWriterAvailability(status)
+    toast(result === 'recovered' ? 'Previous publication recovered. Your current draft was not submitted.' : 'Previous publication was already completed. Your current draft was not submitted.')
+  } catch (error) {
+    toast((error && error.message) || 'Could not recover the previous publication.', 'error')
+  } finally {
+    delete button.dataset.busy
+    if (typeof document !== 'undefined' && document.contains(button)) {
+      button.disabled = false
+      button.textContent = label
+    }
+  }
+}
+
 async function withAtomicDataWriterSession (fn) {
   assertNoIdentityMutationDuringWrite()
   if (!sync || typeof sync.withAtomicWriterSession !== 'function') {
     throw new Error('Publishing is unavailable because this browser cannot serialize writer identity changes safely.')
   }
-  const run = () => sync.withAtomicWriterSession(async () => {
+  const run = () => sync.withAtomicWriterSession(async (writerSession) => {
     assertNoIdentityMutationDuringWrite()
-    return fn()
+    return fn(writerSession)
   })
   try {
     return await run()
@@ -532,10 +560,25 @@ function writerAvailabilityCopy (status) {
   return '<b>Browsing is available; publishing is paused.</b> Peerit is waiting for two verified durable relays. Your draft stays on this page and no identity is created.'
 }
 
+function writerRecoveryActionHtml (status) {
+  const state = atomicWriterState(status)
+  if (state !== 'pending' && state !== 'recovery') return ''
+  const appId = String(status && status.atomicCommit && status.atomicCommit.pendingAppId || '').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(appId)) return ''
+  const active = !!(identity && identity.me && identity.me().pubkey === appId)
+  const matchingVault = typeof localStorage !== 'undefined' && hasVault(localStorage) && vaultPubkey(localStorage) === appId
+  if (!active && !matchingVault) return ''
+  return '<div class="writer-recovery-action"><button class="btn btn-primary" type="button" data-act="recover-pending-publication">Recover previous publication</button><span class="dim small">This only finishes the already-signed publication; it will not submit this form.</span></div>'
+}
+
+function writerAvailabilityContent (status) {
+  return writerAvailabilityCopy(status) + writerRecoveryActionHtml(status)
+}
+
 function writerAvailabilityNoteHtml (status) {
   if (!requiresAtomicWebWriter()) return ''
   const available = atomicWriterAvailable(status)
-  return `<div class="notice ${available ? '' : 'warn'} writer-availability" data-role="writer-availability" data-ready="${available ? 'true' : 'false'}">${writerAvailabilityCopy(status)}</div>`
+  return `<div class="notice ${available ? '' : 'warn'} writer-availability" data-role="writer-availability" data-ready="${available ? 'true' : 'false'}">${writerAvailabilityContent(status)}</div>`
 }
 
 // Update only the status note/button, never route() or replace the form. Typed
@@ -546,7 +589,7 @@ function applyWriterAvailability (status) {
   for (const note of document.querySelectorAll('[data-role="writer-availability"]')) {
     note.dataset.ready = available ? 'true' : 'false'
     note.classList.toggle('warn', !available)
-    note.innerHTML = writerAvailabilityCopy(status)
+    note.innerHTML = writerAvailabilityContent(status)
     const form = note.closest('form')
     if (!form) continue
     form.dataset.writerReady = available ? 'true' : 'false'
@@ -2184,6 +2227,7 @@ async function onClick (e) {
       case 'forget-identity': return void forgetVault()
       case 'retry-identity-forget': return void retryIdentityForget()
       case 'reset-corrupt-identity': return void resetCorruptIdentity()
+      case 'recover-pending-publication': return void recoverPendingPublicationFromControl(t)
       case 'download-identity-file': return void downloadIdentityExport()
       case 'copy-identity-string': return void await copyIdentityExport()
       case 'show-identity-qr': return void showIdentityQr()
@@ -2843,8 +2887,7 @@ async function resetCorruptIdentity () {
       if (current.status !== 'corrupt' || current.token !== observed.token) {
         throw new Error('The device identity changed after this page inspected it; reload Settings before resetting it.')
       }
-      await deviceIdStore.resetCorrupt({ expectedToken: observed.token })
-      if (!vaultKeepsIdentity && identity && identity.me().pubkey === observed.pubkey && typeof identity.deactivate === 'function') identity.deactivate()
+      await resetCorruptDurableIdentity(identity, deviceIdStore, { expectedToken: observed.token })
     })
     corruptDeviceIdentityState = null
     refreshPrefs(); nameCache.clear()
@@ -2979,16 +3022,19 @@ async function importIdentityFromForm (payload, passphrase) {
     const candidate = await importIdentity(payload, passphrase)
     if (hasIdentityForgetTombstone(localStorage)) await finishDurableSignerForget()
     const beforeDevice = await deviceIdStore.inspect()
+    if (beforeDevice.status === 'unavailable') throw new Error('The encrypted device identity cannot be inspected safely; import was not activated.')
     const expectedPubkey = beforeDevice.status === 'valid' ? beforeDevice.pubkey : null
     // A deliberate, authenticated import may atomically replace a corrupt record,
     // but only the exact bytes inspected under this writer lock. It never performs
     // an unsafe delete-then-insert or overwrites a valid cross-tab replacement.
     const expectedToken = beforeDevice.status === 'corrupt' ? beforeDevice.token : null
+    const expectedEmpty = beforeDevice.status === 'empty'
     let previousVault = null
     try { previousVault = localStorage.getItem(VAULT_KEY) } catch {}
     await replaceDurableIdentity(identity, deviceIdStore, candidate, {
       expectedPubkey,
       expectedToken,
+      expectedEmpty,
       // Re-encrypt under the entered passphrase and persist the matching vault
       // before the imported signer can become active.
       persistVault: (verified) => saveVault(localStorage, verified, passphrase),

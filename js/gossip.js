@@ -511,7 +511,7 @@ class BridgeGossipSync {
     this._pendingRetryAt = 0
     this._pendingRetryDelay = PENDING_RETRY_MIN_MS
     this._pendingRecoveryNeeded = false
-    this._atomicWriterSessionDepth = 0
+    this._activeAtomicWriterSessions = new WeakSet()
     this._appendTail = Promise.resolve() // serialize local record/head pairs
     this._destroyed = false
     this._poll = null
@@ -673,17 +673,13 @@ class BridgeGossipSync {
 
   async _withAtomicWriterLock (fn) {
     if (typeof fn !== 'function') throw new TypeError('Atomic writer session requires a function.')
-    // Data holds this session across the whole write intent (identity restore or
-    // mint -> PoW -> sign -> append). `_appendAtomic` then re-enters here instead
-    // of deadlocking on the same Web Lock. The outermost call alone owns the
-    // cross-tab lock; nested calls share its lifetime.
-    if (this._atomicWriterSessionDepth > 0) {
-      this._atomicWriterSessionDepth++
-      try { return await fn() } finally { this._atomicWriterSessionDepth-- }
-    }
     return this._withCrossTabLock('peerit:atomic-commit', async () => {
-      this._atomicWriterSessionDepth = 1
-      try { return await fn() } finally { this._atomicWriterSessionDepth = 0 }
+      // Reentrancy is an explicit unforgeable capability passed only to the same
+      // Data write stack. An instance-global depth counter is unsafe: unrelated
+      // async work (including poll retry) can observe it and enter concurrently.
+      const session = Object.freeze({})
+      this._activeAtomicWriterSessions.add(session)
+      try { return await fn(session) } finally { this._activeAtomicWriterSessions.delete(session) }
     })
   }
 
@@ -693,14 +689,14 @@ class BridgeGossipSync {
   // while another tab has an ambiguous publication, and no writer can mint/sign
   // across an import or forget transition.
   withAtomicWriterSession (fn) {
-    return this._withAtomicWriterLock(async () => {
+    return this._withAtomicWriterLock(async (session) => {
       const pending = this._loadPendingCommit()
       if (pending || this._pendingRecoveryNeeded) {
         const error = new Error('Peerit identity/write state is locked while a publication is awaiting durable quorum recovery.')
         error.code = 'PEERIT_PENDING_WRITER_LOCK'
         throw error
       }
-      return fn()
+      return fn(session)
     })
   }
 
@@ -1411,19 +1407,20 @@ class BridgeGossipSync {
     return this._announce()
   }
 
-  append (op) {
+  append (op, writerSession = null) {
     // Required-atomic web mode has no legal standalone head operation: the head
     // must be derived and committed in the same transaction as one or more
     // owner-signed mutations. Reject before any legacy endpoint can be touched.
     if (this._requireAtomicWrites) {
       if (!op || op.type === TYPE.HEAD) return Promise.reject(new Error('Peerit web publishing rejects standalone heads and legacy append fallthrough.'))
-      return this.appendBatch([op])
+      return this.appendBatch([op], writerSession)
     }
+    if (this._atomicCommitEnabled() && op && op.type !== TYPE.HEAD) return this._appendAtomic([op], writerSession)
     const run = () => this._appendOne(op)
     // A record and the signed head that commits it are one local integrity
     // transition. Serialize those pairs so concurrent UI writes cannot derive two
     // heads from the same prior version.
-    if ((this._atomicCommitEnabled() || (this._writeHead && this.identity)) && op && op.type !== TYPE.HEAD) {
+    if (this._writeHead && this.identity && op && op.type !== TYPE.HEAD) {
       const queued = this._appendTail.then(run, run)
       this._appendTail = queued.then(() => undefined, () => undefined)
       return queued
@@ -1431,7 +1428,7 @@ class BridgeGossipSync {
     return run()
   }
 
-  appendBatch (ops) {
+  appendBatch (ops, writerSession = null) {
     if (!Array.isArray(ops) || !ops.length) return Promise.reject(new Error('Peerit publication batch must contain at least one mutation.'))
     const list = ops.slice()
     if (list.some(op => !op || typeof op.type !== 'string' || op.type === TYPE.HEAD)) {
@@ -1443,10 +1440,11 @@ class BridgeGossipSync {
       // sequential record+head behavior when atomic commit is not advertised.
       return list.reduce((tail, op) => tail.then(() => this.append(op)), Promise.resolve()).then(() => ({ ok: true, sequential: true }))
     }
-    const run = () => this._appendAtomic(list)
-    const queued = this._appendTail.then(run, run)
-    this._appendTail = queued.then(() => undefined, () => undefined)
-    return queued
+    // The atomic writer lock itself serializes refresh→sign→persist→quorum. Do
+    // not put this behind _appendTail: a Data stack already holding the writer
+    // lock could otherwise wait on a direct append that is queued waiting for
+    // that same lock.
+    return this._appendAtomic(list, writerSession)
   }
 
   async _appendOne (op) {
@@ -1454,7 +1452,6 @@ class BridgeGossipSync {
     if (this._pendingCommit) throw new Error('A previous Peerit publication is still awaiting two durable relay receipts. No later writes are allowed until it reaches quorum or is reconciled.')
     if (this._requireAtomicWrites) throw new Error('Peerit web publishing refuses every legacy append path.')
     if (!await this._ensureMyOutbox()) throw new Error('Peerit outbox is unavailable; check relay connectivity and try again.')
-    if (this._atomicCommitEnabled() && op && op.type !== TYPE.HEAD) return this._appendAtomic([op])
     const me = this._myAppId()
     const maintainsHead = this._writeHead && this.identity && op.type !== TYPE.HEAD
 
@@ -1953,9 +1950,9 @@ class BridgeGossipSync {
     return this._retryPendingCommit()
   }
 
-  async _appendAtomic (ops) {
-    const me = this._myAppId()
-    return this.withAtomicWriterSession(async () => {
+  async _appendAtomic (ops, writerSession = null) {
+    const publishLocked = async () => {
+      const me = this._myAppId()
       // Re-read the global marker *inside* the cross-tab lock. An instance whose
       // in-memory state predates another tab's failed publication must block,
       // never overwrite that tab's durable retry envelope.
@@ -1978,7 +1975,12 @@ class BridgeGossipSync {
         error.cause = cause
         throw error
       }
-    })
+    }
+    // Only the opaque capability issued to this exact active write stack may
+    // bypass reacquiring the non-reentrant Web Lock. Concurrent same-instance
+    // append/retry calls have no token and therefore queue normally.
+    if (writerSession && this._activeAtomicWriterSessions.has(writerSession)) return publishLocked()
+    return this.withAtomicWriterSession(() => publishLocked())
   }
 
   // Compute + sign + append the outbox head (the "merkle root" census over the

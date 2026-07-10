@@ -18,7 +18,8 @@ import {
   ensureDurableIdentityForWrite,
   finishIdentityForget,
   hasIdentityForgetTombstone,
-  memoryKv
+  memoryKv,
+  resetCorruptDurableIdentity
 } from '../js/identity-store.js'
 import { DevIdentity } from '../js/identity.js'
 import { genKeyPair, ready as cryptoReady } from '../js/crypto.js'
@@ -160,6 +161,44 @@ async function main () {
   await assert.rejects(() => importStore.replace({ pubkey: pub2, seed: seed2, driveKey: pub2 }, { expectedToken: importCorrupt.token }), /changed in another tab/, 'the consumed corrupt token cannot overwrite the imported valid identity')
   passed++; console.log('  ✓ the consumed corrupt token cannot overwrite the imported valid identity')
 
+  console.log('\n— arbitrary legacy corruption receives an exact generation token —')
+  const collisionKv = memoryKv()
+  const normalizedCollisionA = { v: 1, key: { broken: 'key-a' }, iv: { malformed: 'iv-a' }, ct: { malformed: 'ct-a' }, createdAt: 0, extra: 'generation-a' }
+  const normalizedCollisionB = { v: 1, key: { broken: 'key-b' }, iv: { malformed: 'iv-b' }, ct: { malformed: 'ct-b' }, createdAt: 0, extra: 'generation-b' }
+  await collisionKv.putIfAbsent('identity:v1', normalizedCollisionA)
+  const collisionStore = createIdentityStore({ kv: collisionKv })
+  const collisionA = await collisionStore.inspect()
+  ok(collisionA.status === 'corrupt' && !!collisionA.token, 'first arbitrary structured-clone corruption is atomically tagged for exact observation')
+  await collisionKv.delete('identity:v1')
+  await collisionKv.putIfAbsent('identity:v1', normalizedCollisionB)
+  const collisionB = await collisionStore.inspect()
+  ok(collisionB.status === 'corrupt' && collisionB.token !== collisionA.token, 'a distinct corrupt replacement gets a distinct token even when old normalized fields would collide')
+  await assert.rejects(() => collisionStore.resetCorrupt({ expectedToken: collisionA.token }), /changed in another tab/, 'stale corrupt observation cannot delete the distinct replacement')
+  passed++; console.log('  ✓ stale corrupt observation cannot delete the distinct replacement')
+  await assert.rejects(() => collisionStore.replace(entry, { expectedToken: collisionA.token }), /changed in another tab/, 'stale corrupt observation cannot replace the distinct replacement during import')
+  passed++; console.log('  ✓ stale corrupt observation cannot replace the distinct replacement during import')
+
+  const unavailableInspectKv = { ...memoryKv(), getOrTag: async () => { throw new Error('idb temporarily unreadable') } }
+  const unavailableInspectStore = createIdentityStore({ kv: unavailableInspectKv })
+  ok((await unavailableInspectStore.inspect()).status === 'unavailable', 'inspect distinguishes unavailable storage from an empty device tier')
+  await assert.rejects(() => unavailableInspectStore.resetCorrupt({ expectedToken: collisionB.token }), /no longer corrupt|unavailable/i, 'reset fails closed when the exact device generation cannot be inspected')
+  passed++; console.log('  ✓ reset fails closed when the exact device generation cannot be inspected')
+  await assert.rejects(() => unavailableInspectStore.replace(entry), /exact inspected record|verified empty state/i, 'import replacement cannot treat unavailable inspection as verified empty storage')
+  passed++; console.log('  ✓ import replacement cannot treat unavailable inspection as verified empty storage')
+
+  console.log('\n— corrupt reset always discards the active session signer —')
+  const resetKv = memoryKv()
+  await resetKv.putIfAbsent('identity:v1', { v: 1, key: { broken: true }, iv: { malformed: true }, ct: { malformed: true }, pubkey: null })
+  const resetStore = createIdentityStore({ kv: resetKv })
+  const resetObserved = await resetStore.inspect()
+  const resetIdentity = new DevIdentity(mem(), mem(), { lazy: true }); await resetIdentity.ready(); await resetIdentity.ensureActive('session-only-before-reset')
+  const sessionSigner = resetIdentity.me().pubkey
+  ok(HEX64.test(sessionSigner) && resetObserved.pubkey === null, 'adversarial reset starts with an active signer that the corrupt header cannot identify')
+  await resetCorruptDurableIdentity(resetIdentity, resetStore, { expectedToken: resetObserved.token })
+  ok(resetIdentity.me().pubkey === null && (await resetStore.inspect()).status === 'empty', 'reset deactivates every in-memory signer while deleting the exact corrupt generation')
+  await ensureDurableIdentityForWrite(resetIdentity, resetStore)
+  ok(resetIdentity.me().pubkey !== sessionSigner && (await resetStore.load()).pubkey === resetIdentity.me().pubkey, 'the next write gate mints and persists a new signer instead of retaining the session-only key')
+
   console.log('\n— clear() kills the tier, FAIL-CLOSED (review fix 2026-07-08) —')
   ok(await store.clear() === true, 'clear() returns true only after a read-back confirms deletion')
   ok(await store.load() === null, 'after clear(), load() is null (next boot is a lurker)')
@@ -173,6 +212,32 @@ async function main () {
   ok(await lying.clear() === false, 'clear() read-back catches a delete that lied')
 
   console.log('\n— forget tombstone survives every cross-store failure window —')
+  let unreadableDeactivated = false
+  let unreadableDeviceDeletes = 0
+  let unreadableWrites = 0
+  const unreadableStorage = {
+    getItem: () => { throw new Error('localStorage read denied') },
+    setItem: () => { unreadableWrites++ },
+    removeItem: () => {}
+  }
+  ok(hasIdentityForgetTombstone(unreadableStorage), 'an unreadable tombstone store is fail-closed, never mistaken for an absent marker')
+  await assert.rejects(
+    () => finishIdentityForget({
+      storage: unreadableStorage,
+      deviceStore: { clear: async () => { unreadableDeviceDeletes++; return true } },
+      deactivate: () => { unreadableDeactivated = true },
+      vaultPresent: () => false,
+      removeVault: () => {}
+    }),
+    /cannot verify.*forget marker/i,
+    'cleanup cannot declare success while marker storage is unreadable'
+  )
+  passed++; console.log('  ✓ cleanup cannot declare success while marker storage is unreadable')
+  ok(unreadableDeactivated && unreadableDeviceDeletes === 0, 'unreadable marker storage deactivates the session but performs no unverifiable key deletion')
+  await assert.rejects(async () => beginIdentityForget(unreadableStorage, pubHex), /cannot verify durable identity-forget storage/i, 'a new forget transaction refuses before deleting when its marker cannot be read')
+  passed++; console.log('  ✓ a new forget transaction refuses before deleting when its marker cannot be read')
+  ok(unreadableWrites === 0, 'unreadable-marker refusal does not overwrite unknown durable state')
+
   const forgetStorage = mem()
   let devicePresent = true
   let vaultPresent = true

@@ -56,29 +56,39 @@ function bytesToHex (buf) {
   return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
-function tokenBytes (value) {
-  try { return bytesToHex(value) } catch { return String(value == null ? '' : value) }
+function randomRecordId () {
+  if (!globalThis.crypto || typeof globalThis.crypto.getRandomValues !== 'function') throw new Error('secure identity record tokens are unavailable')
+  return bytesToHex(globalThis.crypto.getRandomValues(new Uint8Array(32)))
 }
 
 // Exact, synchronous identity-record token used inside IndexedDB transactions.
-// CryptoKey objects cannot be compared after structured cloning, so bind the CAS
-// to every stable record field plus the complete IV/ciphertext. This is not an
-// authentication token and never leaves the browser; it only prevents a deliberate
-// reset/import from deleting a different record that another tab installed first.
+// Every record written by this module receives a fresh 256-bit generation id.
+// Legacy/corrupt records are atomically tagged by getOrTag() before inspect()
+// exposes a token, so two observations of two different stored generations cannot
+// collapse merely because malformed iv/ct values stringify the same way.
 function deviceRecordToken (rec) {
-  if (!rec || typeof rec !== 'object') return 'none'
-  return JSON.stringify({
-    v: rec.v,
-    pubkey: String(rec.pubkey || '').toLowerCase(),
-    driveKey: String(rec.driveKey || '').toLowerCase(),
-    createdAt: Number(rec.createdAt) || 0,
-    iv: tokenBytes(rec.iv),
-    ct: tokenBytes(rec.ct)
-  })
+  if (!rec || typeof rec !== 'object') return null
+  if (rec.recordVersion !== 1 || !HEX64.test(String(rec.recordId || ''))) return null
+  return `identity-record:v1:${String(rec.recordId).toLowerCase()}`
 }
 
-function storageValue (storage, key) {
-  try { return storage && typeof storage.getItem === 'function' ? storage.getItem(key) : null } catch { return null }
+function tagIdentityRecord (rec, recordId) {
+  const plain = rec && typeof rec === 'object' && Object.prototype.toString.call(rec) === '[object Object]'
+  if (plain) return { ...rec, recordVersion: 1, recordId }
+  // IndexedDB can contain arbitrary structured-clone values after old builds or
+  // corruption. Preserve that value for diagnosis while wrapping it in a record
+  // whose generation can be compared exactly in the later reset/import txn.
+  return { v: 0, legacyCorruptRecord: rec, recordVersion: 1, recordId }
+}
+
+function identityForgetTombstoneState (storage) {
+  if (!storage || typeof storage.getItem !== 'function') return { status: 'unreadable', value: null }
+  try {
+    const value = storage.getItem(IDENTITY_FORGET_TOMBSTONE_KEY)
+    return value == null ? { status: 'absent', value: null } : { status: 'present', value }
+  } catch (error) {
+    return { status: 'unreadable', value: null, error }
+  }
 }
 
 // Forget is a two-store transaction (IndexedDB device key + localStorage vault),
@@ -86,15 +96,18 @@ function storageValue (storage, key) {
 // tombstone is therefore written BEFORE either delete. Boot and every write honor
 // any value at this key, including a malformed one, until both tiers are gone.
 export function hasIdentityForgetTombstone (storage) {
-  return storageValue(storage, IDENTITY_FORGET_TOMBSTONE_KEY) != null
+  // Unknown is deliberately treated as present. A storage read failure must not
+  // let boot restore an IDB signer that may still be under a forget transaction.
+  return identityForgetTombstoneState(storage).status !== 'absent'
 }
 
 export function beginIdentityForget (storage, pubkey = null) {
   if (!storage || typeof storage.setItem !== 'function' || typeof storage.getItem !== 'function') {
     throw new Error('Cannot forget this identity safely because durable browser storage is unavailable.')
   }
-  const existing = storageValue(storage, IDENTITY_FORGET_TOMBSTONE_KEY)
-  if (existing != null) return existing
+  const state = identityForgetTombstoneState(storage)
+  if (state.status === 'unreadable') throw new Error('Cannot verify durable identity-forget storage; nothing was deleted.')
+  if (state.status === 'present') return state.value
   const marker = JSON.stringify({
     v: 1,
     pubkey: HEX64.test(String(pubkey || '')) ? String(pubkey).toLowerCase() : null,
@@ -122,8 +135,12 @@ export function clearIdentityForgetTombstone (storage) {
 // tombstone clear. Any throw leaves the tombstone in place, which boot treats as a
 // hard do-not-restore instruction.
 export async function finishIdentityForget ({ storage, deviceStore, deactivate, vaultPresent, removeVault } = {}) {
-  if (!hasIdentityForgetTombstone(storage)) return true
+  const state = identityForgetTombstoneState(storage)
+  if (state.status === 'absent') return true
   try { if (typeof deactivate === 'function') deactivate() } catch {}
+  if (state.status === 'unreadable') {
+    throw new Error('Cannot verify the durable identity-forget marker. Publishing and identity restore remain disabled until browser storage is readable again.')
+  }
   if (!deviceStore || typeof deviceStore.clear !== 'function' || !(await deviceStore.clear())) {
     throw new Error('Could not remove the encrypted device identity from this browser.')
   }
@@ -166,6 +183,19 @@ function idbAdapter () {
     get: (key) => withStore('readonly', (store, done) => {
       const req = store.get(key)
       req.onsuccess = () => done(req.result === undefined ? null : req.result)
+    }),
+    // Atomically give an untagged legacy/corrupt generation a collision-resistant
+    // observation id. Concurrent inspectors serialize in IDB: the first stores
+    // the tag and every later inspector receives that same exact generation.
+    getOrTag: (key, recordId) => withStore('readwrite', (store, done) => {
+      const req = store.get(key)
+      req.onsuccess = () => {
+        const existing = (req.result === undefined) ? null : req.result
+        if (existing == null || deviceRecordToken(existing)) { done(existing); return }
+        const tagged = tagIdentityRecord(existing, recordId)
+        store.put(tagged, key)
+        done(tagged)
+      }
     }),
     // Atomic: the get and the conditional put run in the SAME readwrite
     // transaction — IDB serializes readwrite txns on a store, so two tabs racing
@@ -240,6 +270,8 @@ export function createIdentityStore ({ kv } = {}) {
     const ct = new Uint8Array(await sub.encrypt({ name: 'AES-GCM', iv }, key, hexToBytes(seed)))
     return {
       v: 1,
+      recordVersion: 1,
+      recordId: randomRecordId(),
       pubkey,
       driveKey,
       label,
@@ -268,10 +300,14 @@ export function createIdentityStore ({ kv } = {}) {
     async inspect () {
       if (!await available()) return { status: 'unavailable', pubkey: null, token: null, entry: null }
       let rec
-      try { rec = await backing.get(RECORD_KEY) } catch { return { status: 'unavailable', pubkey: null, token: null, entry: null } }
-      if (rec == null) return { status: 'empty', pubkey: null, token: deviceRecordToken(null), entry: null }
+      try {
+        if (!backing || typeof backing.getOrTag !== 'function') return { status: 'unavailable', pubkey: null, token: null, entry: null }
+        rec = await backing.getOrTag(RECORD_KEY, randomRecordId())
+      } catch { return { status: 'unavailable', pubkey: null, token: null, entry: null } }
+      if (rec == null) return { status: 'empty', pubkey: null, token: null, entry: null }
       const pubkey = HEX64.test(String(rec.pubkey || '')) ? String(rec.pubkey).toLowerCase() : null
       const token = deviceRecordToken(rec)
+      if (!token) return { status: 'unavailable', pubkey: null, token: null, entry: null }
       if (!usableRecord(rec)) return { status: 'corrupt', reason: 'malformed', pubkey, token, entry: null }
       try {
         const entry = await unwrapRecord(rec)
@@ -315,7 +351,7 @@ export function createIdentityStore ({ kv } = {}) {
 
     // Deliberate durable switch/import. Replace exactly the pubkey observed by
     // the caller; another tab changing it first makes this CAS fail closed.
-    async replace (entry, { expectedPubkey = null, expectedToken = null } = {}) {
+    async replace (entry, { expectedPubkey = null, expectedToken = null, expectedEmpty = false } = {}) {
       if (!await available()) throw new Error('device identity store unavailable')
       const candidate = await wrapEntry(entry)
       let result
@@ -323,6 +359,7 @@ export function createIdentityStore ({ kv } = {}) {
         if (!backing || typeof backing.compareAndSwapToken !== 'function') throw new Error('device identity store does not support token-bound atomic replacement')
         result = await backing.compareAndSwapToken(RECORD_KEY, expectedToken, candidate)
       } else {
+        if (expectedPubkey == null && expectedEmpty !== true) throw new Error('device identity replacement requires an exact inspected record or verified empty state')
         if (!backing || typeof backing.compareAndSwap !== 'function') throw new Error('device identity store does not support atomic replacement')
         result = await backing.compareAndSwap(RECORD_KEY, expectedPubkey, candidate)
       }
@@ -413,14 +450,14 @@ export async function ensureDurableIdentityForWrite (identity, store, { vaultPub
 // device tier is replaced with an atomic pubkey CAS, and only then is the new
 // signer activated. If the CAS loses a multi-tab race, restore the prior vault
 // bytes so the two durability tiers never intentionally diverge.
-export async function replaceDurableIdentity (identity, store, entry, { expectedPubkey = null, expectedToken = null, persistVault, rollbackVault } = {}) {
+export async function replaceDurableIdentity (identity, store, entry, { expectedPubkey = null, expectedToken = null, expectedEmpty = false, persistVault, rollbackVault } = {}) {
   if (!identity || typeof identity.restoreFromDurableImport !== 'function') throw new Error('durable identity import is unsupported')
   if (typeof persistVault !== 'function') throw new Error('durable identity import requires a matching vault')
   const verified = await verifiedIdentityEntry(entry, 'identity import')
   await persistVault(verified)
   let replaced
   try {
-    replaced = await store.replace(verified, { expectedPubkey, expectedToken })
+    replaced = await store.replace(verified, { expectedPubkey, expectedToken, expectedEmpty })
   } catch (error) {
     try { if (typeof rollbackVault === 'function') await rollbackVault() } catch {}
     throw error
@@ -430,6 +467,24 @@ export async function replaceDurableIdentity (identity, store, entry, { expected
   return replaced
 }
 
+// Coordinator for the Settings recovery action. Once the exact corrupt
+// generation has been re-observed, discard every in-memory dev signer BEFORE the
+// CAS delete. Even a null/lying corrupt header cannot leave a session-only key
+// capable of signing after its purported durable tier is reset.
+export async function resetCorruptDurableIdentity (identity, store, { expectedToken } = {}) {
+  if (!identity || typeof identity.deactivate !== 'function') throw new Error('durable identity reset is unsupported')
+  if (!store || typeof store.inspect !== 'function' || typeof store.resetCorrupt !== 'function') throw new Error('device identity store unavailable')
+  const state = await store.inspect()
+  if (state.status === 'unavailable') throw new Error('The device identity cannot be inspected safely; it was not reset.')
+  if (state.status !== 'corrupt' || !state.token || state.token !== expectedToken) {
+    throw new Error('The device identity changed in another tab; it was not reset.')
+  }
+  identity.deactivate()
+  await store.resetCorrupt({ expectedToken })
+  if (identity.me && identity.me().pubkey) throw new Error('The in-memory writer identity could not be deactivated safely.')
+  return true
+}
+
 // Map-backed kv for Node tests (Node ≥20 has webcrypto but no IndexedDB). Kept
 // here so tests and any future runtime share one reference implementation —
 // including the isUsable replace-in-place semantics of the IDB adapter.
@@ -437,6 +492,13 @@ export function memoryKv () {
   const m = new Map()
   return {
     get: async (k) => (m.has(k) ? m.get(k) : null),
+    getOrTag: async (k, recordId) => {
+      const existing = m.has(k) ? m.get(k) : null
+      if (existing == null || deviceRecordToken(existing)) return existing
+      const tagged = tagIdentityRecord(existing, recordId)
+      m.set(k, tagged)
+      return tagged
+    },
     putIfAbsent: async (k, v, isUsable) => {
       const existing = m.has(k) ? m.get(k) : null
       if (existing != null && (!isUsable || isUsable(existing))) return { value: existing, inserted: false }

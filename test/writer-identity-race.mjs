@@ -23,8 +23,8 @@ function syncSpy () {
     calls,
     async get () { return null },
     async range () { return [] },
-    async append (op) { calls.push({ method: 'append', ops: [op] }); return { ok: true } },
-    async appendBatch (ops) { calls.push({ method: 'appendBatch', ops }); return { ok: true } },
+    async append (op, writerSession) { calls.push({ method: 'append', ops: [op], writerSession }); return { ok: true } },
+    async appendBatch (ops, writerSession) { calls.push({ method: 'appendBatch', ops, writerSession }); return { ok: true } },
     async status () { return { atomicCommit: { available: true, pending: false, recoveryNeeded: false } } }
   }
 }
@@ -45,11 +45,17 @@ function stubThreadReads (data) {
 
 function sharedWriterSession () {
   let tail = Promise.resolve()
-  return (fn) => {
-    const run = tail.then(fn, fn)
+  const sessions = []
+  const withSession = (fn) => {
+    const session = Object.freeze({})
+    sessions.push(session)
+    const invoke = () => fn(session)
+    const run = tail.then(invoke, invoke)
     tail = run.then(() => undefined, () => undefined)
     return run
   }
+  withSession.sessions = sessions
+  return withSession
 }
 
 await cryptoReady()
@@ -192,6 +198,7 @@ console.log('— cross-instance writer session ordering —')
   assert.equal(post.author, a.pubkey)
   assert.equal(sync.calls.length, 1)
   assert.equal(sync.calls[0].ops[0].data._k, a.pubkey, 'publication commits under its captured owner before identity mutation enters')
+  assert.equal(sync.calls[0].writerSession, withWriterSession.sessions[0], 'Data threads only its exact outer writer-session capability into sync.appendBatch')
   assert.deepEqual(order, ['pow-start', 'pow-finish', 'import'])
   assert.equal(identity.me().pubkey, b.pubkey, 'queued identity mutation runs only after publication completes')
 }
@@ -218,8 +225,22 @@ console.log('— public-web UI and recovery gates —')
   assert.match(source, /recoverPendingWithIdentity\(appId, async \(\) =>/)
   assert.match(source, /recoveryOnly: true, expectedPubkey: appId/)
   assert.match(source, /error\.code !== 'PEERIT_PENDING_WRITER_LOCK'/)
+  assert.match(source, /sync\.withAtomicWriterSession\(async \(writerSession\) =>/)
+  assert.match(source, /return fn\(writerSession\)/)
   assert.match(source, /beginIdentityForget\(localStorage/)
   assert.match(source, /expectedToken = beforeDevice\.status === 'corrupt'/)
+  assert.match(source, /beforeDevice\.status === 'unavailable'/)
+  assert.match(source, /resetCorruptDurableIdentity\(identity, deviceIdStore/)
+
+  const recoveryButton = '<button class="btn btn-primary" type="button" data-act="recover-pending-publication">Recover previous publication</button>'
+  assert.ok(source.includes(recoveryButton), 'pending/recovery notice exposes a non-submit recovery control even while the native composer submit is disabled')
+  assert.match(source, /writerAvailabilityContent\(status\)/)
+  assert.match(source, /case 'recover-pending-publication': return void recoverPendingPublicationFromControl\(t\)/)
+  const recoveryControlStart = source.indexOf('async function recoverPendingPublicationFromControl')
+  const atomicSessionStart = source.indexOf('async function withAtomicDataWriterSession', recoveryControlStart)
+  const recoveryControl = source.slice(recoveryControlStart, atomicSessionStart)
+  assert.ok(recoveryControlStart >= 0 && atomicSessionStart > recoveryControlStart, 'test isolates the recovery control handler')
+  assert.ok(!recoveryControl.includes('route()'), 'explicit recovery leaves the current form DOM and its draft untouched')
 }
 
 console.log('writer-identity-race: all checks passed')

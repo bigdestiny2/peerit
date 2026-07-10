@@ -4,11 +4,12 @@
     "expires": "2026-12-31T00:00:00.000Z",
     "relays": [
       "https://outbox.peerit.site"
-    ]
+    ],
+    "singleIngressWriter": true
   },
   "signature": {
     "alg": "Ed25519",
     "key": "92caa893720e763de6c87e5397214cbdbd8be8c073ac029e83fa430a58812538",
-    "sig": "554e4b0feacec1b86b92ba0ea432d25791bdde50c5d952a813d75fd72d0fbc013d20e8eb9bc2307a4f3f5eef7c78b4fd7da93ce020faff250ef65c0f2e239f0c"
+    "sig": "0a806869e706dafa882cac0c6ed27549588283fe7faf074b7b5bde191755031aa5689e3baed503122b08f5647ecf123f68cfa88acd01ce629e6bdab4a90df409"
   }
 }

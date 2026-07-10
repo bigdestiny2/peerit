@@ -16,6 +16,8 @@ export const RELAY_PROBE_TIMEOUT_MS = 5000
 const HEX64 = /^[0-9a-f]{64}$/i
 const HEX128 = /^[0-9a-f]{128}$/i
 const LOCAL_HTTP = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
+export const NETWORK_QUORUM_PROTOCOL = 'hiverelay-outboxlog-federation-v1'
+export const NETWORK_QUORUM_VERSION = 1
 
 function defaultFetch () {
   return typeof fetch === 'function' ? fetch.bind(globalThis) : null
@@ -80,7 +82,7 @@ export function parseRelayList (raw) {
 
 const RELAY_TOPOLOGY_PROPERTY = '__peeritRelayTopology'
 
-function buildRelayTopology (relays, { key = '' } = {}) {
+function buildRelayTopology (relays, { key = '', networkQuorum = null, singleIngressWriter = false } = {}) {
   const entries = relays.map((apiBase, rosterIndex) => ({
     apiBase,
     rosterIndex,
@@ -101,7 +103,9 @@ function buildRelayTopology (relays, { key = '' } = {}) {
     size: entries.length,
     origins,
     entries,
-    validWriterTopology: valid
+    validWriterTopology: valid,
+    networkQuorum: networkQuorum || null,
+    singleIngressWriter: singleIngressWriter === true
   }
 }
 
@@ -149,7 +153,71 @@ export function normalizeRelayRosterPayload (payload = {}) {
   const version = Number(payload.version || ROSTER_VERSION)
   const expires = String(payload.expires || payload.expiresAt || '').trim()
   const relays = dedupeRelayList(payload.relays || [])
-  return { version, expires, relays }
+  const networkQuorum = normalizeNetworkQuorum(payload.networkQuorum)
+  if (payload.singleIngressWriter !== undefined && payload.singleIngressWriter !== true) {
+    throw new Error('relay roster singleIngressWriter must be true when present')
+  }
+  const singleIngressWriter = payload.singleIngressWriter === true
+  return {
+    version,
+    expires,
+    relays,
+    ...(networkQuorum ? { networkQuorum } : {}),
+    ...(singleIngressWriter ? { singleIngressWriter: true } : {})
+  }
+}
+
+// The signed roster can pin a network durability policy without publishing
+// operator transport URLs. `outbox.peerit.site` is the only browser-facing
+// ingress; these public keys identify the independent operators whose signed
+// receipts a browser must verify before calling a write published.
+export function normalizeNetworkQuorum (value) {
+  if (value === undefined || value === null) return null
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('relay roster networkQuorum is invalid')
+  const allowed = ['protocol', 'version', 'requiredRemoteAcks', 'relays']
+  if (Object.keys(value).sort().join(',') !== allowed.slice().sort().join(',')) throw new Error('relay roster networkQuorum is not canonical')
+  if (value.protocol !== NETWORK_QUORUM_PROTOCOL || Number(value.version) !== NETWORK_QUORUM_VERSION) {
+    throw new Error('relay roster networkQuorum protocol is unsupported')
+  }
+  if (!Array.isArray(value.relays) || !value.relays.length || value.relays.length > 32) throw new Error('relay roster networkQuorum relays are invalid')
+  const relays = []
+  const seenKeys = new Set()
+  const seenIds = new Set()
+  for (const item of value.relays) {
+    if (!item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).sort().join(',') !== 'id,publicKey') {
+      throw new Error('relay roster networkQuorum relay is not canonical')
+    }
+    const id = String(item.id || '').trim()
+    const publicKey = String(item.publicKey || '').trim().toLowerCase()
+    if (!id || id.length > 128 || !HEX64.test(publicKey) || seenIds.has(id) || seenKeys.has(publicKey)) {
+      throw new Error('relay roster networkQuorum relay is invalid')
+    }
+    seenIds.add(id)
+    seenKeys.add(publicKey)
+    relays.push({ id, publicKey })
+  }
+  // Canonical key order stops equivalent payloads from acquiring different
+  // signatures through operator-array ordering alone.
+  relays.sort((a, b) => a.publicKey.localeCompare(b.publicKey))
+  const requiredRemoteAcks = Number(value.requiredRemoteAcks)
+  if (!Number.isSafeInteger(requiredRemoteAcks) || requiredRemoteAcks < 1 || requiredRemoteAcks > relays.length) {
+    throw new Error('relay roster networkQuorum requiredRemoteAcks is invalid')
+  }
+  return { protocol: NETWORK_QUORUM_PROTOCOL, version: NETWORK_QUORUM_VERSION, requiredRemoteAcks, relays }
+}
+
+// Status is served by the ingress and therefore untrusted until it exactly
+// matches the separately signed roster policy. Receipt signatures are checked
+// again in relay-pool.js before a write succeeds.
+export function hasPinnedNetworkQuorum (status, policy) {
+  let normalized
+  try {
+    if (!status || status.enabled !== true) return false
+    const { enabled, ...descriptor } = status
+    normalized = normalizeNetworkQuorum(descriptor)
+  } catch { return false }
+  if (!normalized || !policy) return false
+  return JSON.stringify(normalized) === JSON.stringify(policy)
 }
 
 export function rosterSigningMessage (payload) {
@@ -158,12 +226,19 @@ export function rosterSigningMessage (payload) {
 
 function assertCanonicalPayload (raw, payload) {
   const keys = Object.keys(raw || {}).sort().join(',')
-  if (keys !== 'expires,relays,version') throw new Error('relay roster payload is not canonical')
+  const expectedKeys = ['expires', 'relays', 'version']
+  if (payload.networkQuorum) expectedKeys.push('networkQuorum')
+  if (payload.singleIngressWriter) expectedKeys.push('singleIngressWriter')
+  if (keys !== expectedKeys.sort().join(',')) throw new Error('relay roster payload is not canonical')
   if (raw.version !== payload.version || raw.expires !== payload.expires) throw new Error('relay roster payload is not canonical')
   if (!Array.isArray(raw.relays) || raw.relays.length !== payload.relays.length) throw new Error('relay roster payload is not canonical')
   for (let i = 0; i < raw.relays.length; i++) {
     if (String(raw.relays[i]).trim() !== payload.relays[i]) throw new Error('relay roster payload is not canonical')
   }
+  if (payload.networkQuorum && JSON.stringify(raw.networkQuorum) !== JSON.stringify(payload.networkQuorum)) {
+    throw new Error('relay roster networkQuorum is not canonical')
+  }
+  if (payload.singleIngressWriter && raw.singleIngressWriter !== true) throw new Error('relay roster singleIngressWriter is not canonical')
 }
 
 export async function verifyRelayRoster (roster, { expectedKey, now = Date.now() } = {}) {
@@ -195,7 +270,12 @@ export async function verifyRelayRoster (roster, { expectedKey, now = Date.now()
     relays: payload.relays,
     key,
     expires: payload.expires,
-    topology: buildRelayTopology(payload.relays, { key, expires: payload.expires })
+    topology: buildRelayTopology(payload.relays, {
+      key,
+      expires: payload.expires,
+      networkQuorum: payload.networkQuorum || null,
+      singleIngressWriter: payload.singleIngressWriter === true
+    })
   }
 }
 
@@ -454,10 +534,15 @@ export async function selectRelays (relays, { apiToken = '', tokenCache = null, 
     seenOrigins.add(finalOrigin)
 
     const entry = topology && Array.isArray(topology.entries) ? topology.entries.find((candidate) => candidate.apiBase === apiBase) : null
-    const rosterVerified = !!(topology && topology.verified === true && topology.stable === true && topology.validWriterTopology === true && entry)
+    const rosterVerified = !!(topology && topology.verified === true && topology.stable === true && entry)
+    const directWriterTopology = rosterVerified && topology.validWriterTopology === true
+    const networkQuorum = rosterVerified && hasPinnedNetworkQuorum(status.networkQuorum, topology.networkQuorum)
+    const singleIngressWriter = rosterVerified && topology.singleIngressWriter === true &&
+      Number(topology.size) === 1 && Number(entry.rosterIndex) === 0 && topology.origins[0] === finalOrigin
     const capabilities = {
       atomicCommit: status.atomicCommit || null,
       legacyWrites: status.legacyWrites || null,
+      networkQuorum: status.networkQuorum || null,
       // Additive, read-only transport capability. It must be explicitly
       // advertised by the relay; clients otherwise retain one-outbox-at-a-time
       // range reads with the same signed-head audit.
@@ -468,7 +553,9 @@ export async function selectRelays (relays, { apiToken = '', tokenCache = null, 
       apiToken: token,
       tokenExpiresAt,
       ready: status.ready === true,
-      atomicCommit: rosterVerified && hasDurableAtomicCommit(status),
+      atomicCommit: hasDurableAtomicCommit(status) && (directWriterTopology || networkQuorum || singleIngressWriter),
+      networkQuorum: networkQuorum ? topology.networkQuorum : null,
+      singleIngressWriter,
       capabilities,
       canonicalOrigin: finalOrigin,
       rosterVerified,

@@ -42,8 +42,7 @@ async function main () {
   const noKv = createIdentityStore({ kv: null })
   ok(await noKv.available() === false, 'store without a kv backend reports unavailable')
   ok(await noKv.load() === null, 'load() degrades to null (never throws) when unavailable')
-  await noKv.clear() // must not throw
-  passed++; console.log('  ✓ clear() is safe when unavailable')
+  ok(await noKv.clear() === false, 'clear() fails closed when the device tier is unavailable')
   await assert.rejects(() => noKv.saveOrAdopt(entry), /unavailable/, 'saveOrAdopt refuses loudly when unavailable')
   passed++; console.log('  ✓ saveOrAdopt refuses loudly when unavailable')
 
@@ -250,6 +249,33 @@ async function main () {
   await assert.rejects(async () => beginIdentityForget(unreadableStorage, pubHex), /cannot verify durable identity-forget storage/i, 'a new forget transaction refuses before deleting when its marker cannot be read')
   passed++; console.log('  ✓ a new forget transaction refuses before deleting when its marker cannot be read')
   ok(unreadableWrites === 0, 'unreadable-marker refusal does not overwrite unknown durable state')
+
+  const unavailableDeviceStorage = mem()
+  let unavailableDeviceVault = true
+  let unavailableDeviceVaultDeletes = 0
+  beginIdentityForget(unavailableDeviceStorage, pubHex)
+  await assert.rejects(
+    () => finishIdentityForget({
+      storage: unavailableDeviceStorage,
+      deviceStore: noKv,
+      deactivate: () => {},
+      vaultPresent: () => unavailableDeviceVault,
+      removeVault: () => { unavailableDeviceVaultDeletes++; unavailableDeviceVault = false }
+    }),
+    /could not remove the encrypted device identity/i,
+    'cleanup fails closed when the device tier cannot confirm deletion'
+  )
+  passed++; console.log('  ✓ cleanup fails closed when the device tier cannot confirm deletion')
+  ok(unavailableDeviceVault && unavailableDeviceVaultDeletes === 0, 'an unconfirmed device deletion leaves the recovery vault intact')
+  ok(hasIdentityForgetTombstone(unavailableDeviceStorage), 'an unconfirmed device deletion leaves the do-not-restore tombstone intact')
+  await finishIdentityForget({
+    storage: unavailableDeviceStorage,
+    deviceStore: { clear: async () => true },
+    deactivate: () => {},
+    vaultPresent: () => unavailableDeviceVault,
+    removeVault: () => { unavailableDeviceVaultDeletes++; unavailableDeviceVault = false }
+  })
+  ok(!unavailableDeviceVault && unavailableDeviceVaultDeletes === 1 && !hasIdentityForgetTombstone(unavailableDeviceStorage), 'cleanup removes the vault and tombstone only after device deletion is confirmed')
 
   const forgetStorage = mem()
   let devicePresent = true

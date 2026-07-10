@@ -411,7 +411,7 @@ export function createIdentityStore ({ kv } = {}) {
     // swallowed delete failure (the next visitor on a shared machine would be
     // silently signed in as the identity the user explicitly destroyed).
     async clear () {
-      if (!backing) return true
+      if (!backing) return false
       try { await backing.delete(RECORD_KEY) } catch {}
       try { return (await backing.get(RECORD_KEY)) == null } catch { return false }
     }

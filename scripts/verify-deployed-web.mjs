@@ -102,8 +102,8 @@ function repoPath (file, label) {
   return absolute
 }
 
-function releaseConfig (raw) {
-  if (raw.readonly !== true) throw new Error('deploy/web-release.json must explicitly set readonly=true')
+export function releaseConfig (raw) {
+  if (typeof raw.readonly !== 'boolean') throw new Error('deploy/web-release.json must explicitly set readonly=true or readonly=false')
   const releaseSequence = raw.releaseSequence
   if (!Number.isSafeInteger(releaseSequence) || releaseSequence < 1) {
     throw new Error('deploy/web-release.json releaseSequence must be a positive safe integer')
@@ -128,15 +128,31 @@ function releaseConfig (raw) {
   if (!HEX64.test(pinnedRosterKey)) throw new Error('deploy/web-release.json has an invalid pinnedRosterKey')
   if (!HEX64.test(pinnedReleaseKey)) throw new Error('deploy/web-release.json has an invalid pinnedReleaseKey')
 
+  const readonly = raw.readonly ? 'true' : 'false'
   const shardRoster = String(raw.shardRoster || '').trim()
-  if (shardRoster) throw new Error('this public read-only release must not configure a shard roster')
+  if (shardRoster && !safeManifestPath(shardRoster)) {
+    throw new Error('deploy/web-release.json shardRoster must be a safe repository-relative path')
+  }
+  // A read-only mirror must remain the deliberately small, non-custodial
+  // artifact audited for the public preview. Writable candidates may opt into a
+  // signed shard roster, which is then independently byte-checked below.
+  if (readonly === 'true' && shardRoster) throw new Error('a public read-only release must not configure a shard roster')
+
+  const roster = normalizeRelayRosterPayload(raw.roster || {
+    version: 1,
+    expires: raw.expires,
+    relays: raw.relays || bootstrapRelays
+  })
+  if (readonly === 'false' && roster.relays.length < 2) {
+    throw new Error('writable public web releases require at least two signed roster relays')
+  }
 
   return {
     releaseSequence,
     bootstrapRelays,
     relay: bootstrapRelays.join(','),
     relayBackend: String(raw.relayBackend || '').trim(),
-    readonly: 'true',
+    readonly,
     relayRoster,
     relayRosterMirrors: Array.isArray(raw.relayRosterMirrors)
       ? raw.relayRosterMirrors.map((value) => String(value).trim()).filter(Boolean)
@@ -144,13 +160,9 @@ function releaseConfig (raw) {
     pinnedRosterKey,
     pinnedReleaseKey,
     dhtRelay: String(raw.dhtRelay || '').trim(),
-    shardRoster: '',
+    shardRoster,
     seedOutboxes: Array.isArray(raw.seedOutboxes) ? raw.seedOutboxes : [],
-    roster: normalizeRelayRosterPayload(raw.roster || {
-      version: 1,
-      expires: raw.expires,
-      relays: raw.relays || bootstrapRelays
-    })
+    roster
   }
 }
 
@@ -237,10 +249,10 @@ function expectedSeedOutboxes (items) {
     .join(',')
 }
 
-function verifyIndexConfig (html, release) {
+export function verifyIndexConfig (html, release) {
   const metas = metaMap(html)
   requireMeta(metas, 'peerit-relay', release.relay)
-  requireMeta(metas, 'peerit-relay-readonly', 'true')
+  requireMeta(metas, 'peerit-relay-readonly', release.readonly)
   requireMeta(metas, 'peerit-relay-roster', [release.relayRoster, ...release.relayRosterMirrors].join(','))
   requireMeta(metas, 'peerit-relay-roster-key', release.pinnedRosterKey)
   requireMeta(metas, 'peerit-release-key', release.pinnedReleaseKey)
@@ -250,17 +262,21 @@ function verifyIndexConfig (html, release) {
   else forbidMeta(metas, 'peerit-relay-backend')
   if (release.dhtRelay) requireMeta(metas, 'peerit-dht-relay', release.dhtRelay)
   else forbidMeta(metas, 'peerit-dht-relay')
+  if (release.shardRoster) requireMeta(metas, 'peerit-shard-roster', release.shardRoster)
+  else forbidMeta(metas, 'peerit-shard-roster')
 
   const seeds = expectedSeedOutboxes(release.seedOutboxes)
   if (seeds) requireMeta(metas, 'peerit-seed-outboxes', seeds)
   else forbidMeta(metas, 'peerit-seed-outboxes')
 
   for (const name of metas.keys()) {
-    if (name.startsWith('peerit-shard-')) throw new Error(`index.html must not contain production shard meta (${name})`)
+    if (name.startsWith('peerit-shard-') && name !== 'peerit-shard-roster') {
+      throw new Error(`index.html contains unsupported production shard meta (${name})`)
+    }
   }
 }
 
-function verifyManifestConfig (manifest, release, rosterHash, driveKey) {
+export function verifyManifestConfig (manifest, release, rosterHash, shardRosterHash, driveKey) {
   if (manifest.releaseSequence !== release.releaseSequence) {
     throw new Error('asset-manifest.json releaseSequence does not match deploy/web-release.json')
   }
@@ -273,12 +289,12 @@ function verifyManifestConfig (manifest, release, rosterHash, driveKey) {
     releaseSequence: release.releaseSequence,
     relay: release.relay,
     relayBackend: release.relayBackend,
-    readonly: 'true',
+    readonly: release.readonly,
     relayRoster: [release.relayRoster, ...release.relayRosterMirrors].join(','),
     relayRosterKey: release.pinnedRosterKey,
     relayRosterSha256: rosterHash,
-    shardRoster: '',
-    shardRosterSha256: '',
+    shardRoster: release.shardRoster,
+    shardRosterSha256: shardRosterHash,
     releaseKey: release.pinnedReleaseKey
   }
   for (const [field, value] of Object.entries(expected)) {
@@ -288,6 +304,9 @@ function verifyManifestConfig (manifest, release, rosterHash, driveKey) {
   }
   if (manifest.files['relay-roster.json'] !== rosterHash) {
     throw new Error('asset-manifest.json does not pin the configured relay roster bytes')
+  }
+  if (release.shardRoster && manifest.files[release.shardRoster] !== shardRosterHash) {
+    throw new Error('asset-manifest.json does not pin the configured shard roster bytes')
   }
 }
 
@@ -408,6 +427,16 @@ async function main () {
   if (!equalJson(verifiedRoster.payload, release.roster)) {
     throw new Error('signed relay roster payload does not match deploy/web-release.json')
   }
+  if (release.readonly === 'false' && verifiedRoster.relays.length < 2) {
+    throw new Error('writable public web releases require at least two signed roster relays')
+  }
+
+  let shardRosterBytes = null
+  let shardRosterHash = ''
+  if (release.shardRoster) {
+    shardRosterBytes = await readRequired(repoPath(release.shardRoster, 'shardRoster'), release.shardRoster)
+    shardRosterHash = sha256(shardRosterBytes)
+  }
 
   const localManifestBytes = await readRequired(join(WEB, 'asset-manifest.json'), 'web/asset-manifest.json')
   const localSignatureBytes = await readRequired(join(WEB, 'asset-manifest.sig'), 'web/asset-manifest.sig')
@@ -418,7 +447,7 @@ async function main () {
   const signature = parseJson(localSignatureBytes, 'web/asset-manifest.sig')
   const entries = manifestEntries(manifest)
 
-  verifyManifestConfig(manifest, release, rosterHash, driveKey)
+  verifyManifestConfig(manifest, release, rosterHash, shardRosterHash, driveKey)
   await verifyReleaseManifest({
     manifest,
     signature,
@@ -440,6 +469,9 @@ async function main () {
   if (!localAssets.get('sw.js').toString('utf8').includes(`"relay-roster.json":"${rosterHash}"`)) {
     throw new Error('sw.js does not pin the configured relay roster')
   }
+  if (release.shardRoster && !localAssets.get('sw.js').toString('utf8').includes(`"${release.shardRoster}":"${shardRosterHash}"`)) {
+    throw new Error('sw.js does not pin the configured shard roster')
+  }
 
   const [remoteManifestBytes, remoteSignatureBytes] = await Promise.all([
     fetchBytes(baseUrl, 'asset-manifest.json', nonce, MAX_METADATA_BYTES),
@@ -457,11 +489,19 @@ async function main () {
   if (!deployedRoster || !deployedRoster.equals(rosterBytes)) {
     throw new Error('deployed relay-roster.json differs from the configured signed roster')
   }
+  if (release.shardRoster) {
+    const deployedShardRoster = localAssets.get(release.shardRoster)
+    if (!deployedShardRoster || !deployedShardRoster.equals(shardRosterBytes)) {
+      throw new Error(`deployed ${release.shardRoster} differs from the configured shard roster`)
+    }
+  }
 
-  console.log(`[deploy-verify] PASS ${RELEASE_MSG_VERSION}: sequence ${release.releaseSequence}; ${manifest.files && Object.keys(manifest.files).length} files + ${manifest.controls && Object.keys(manifest.controls).length} controls; drive ${driveKey.slice(0, 12)}…; key ${release.pinnedReleaseKey.slice(0, 12)}…`)
+  console.log(`[deploy-verify] PASS ${RELEASE_MSG_VERSION}: sequence ${release.releaseSequence}; readonly=${release.readonly}; ${manifest.files && Object.keys(manifest.files).length} files + ${manifest.controls && Object.keys(manifest.controls).length} controls; drive ${driveKey.slice(0, 12)}…; key ${release.pinnedReleaseKey.slice(0, 12)}…`)
 }
 
-main().catch((err) => {
-  console.error(`[deploy-verify] FAIL ${err.message}`)
-  process.exitCode = 1
-})
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  main().catch((err) => {
+    console.error(`[deploy-verify] FAIL ${err.message}`)
+    process.exitCode = 1
+  })
+}

@@ -96,14 +96,23 @@ const RELEASE_EXPLICIT_INPUTS = [
   'config/shard-roster.public.json',
   'deploy/web-release.json',
   'deploy/web-signing-request.json',
+  'deploy/CAPACITY.md',
+  'deploy/peerit-relay/Caddyfile',
+  'deploy/peerit-relay/README.md',
+  'deploy/peerit-relay/docker-compose.yml',
+  'docs/PROTOCOL-V3-CONTENT-IDENTITY.md',
   'docs/WEB-DEPLOYMENT.md',
+  'scripts/audit-live-legacy-actions.mjs',
   'scripts/audit-live-legacy-pow.mjs',
   'scripts/build-dht-bundle.mjs',
   'scripts/build-reader-bundle.mjs',
   'scripts/csp.mjs',
   'scripts/service-worker-source.mjs',
   'scripts/sign-release.mjs',
+  'scripts/local-writable-two-relay.mjs',
+  'scripts/soak-atomic-two-relay.mjs',
   'scripts/verify-production-readonly.mjs',
+  'scripts/verify-writable-candidate.mjs',
   'scripts/web-release.mjs',
   // esbuild entry points and aliases are strings rather than JS imports.
   'js/dht-transport.js',
@@ -533,24 +542,49 @@ async function runTests () {
   }
 }
 
-export async function runReadonlyLivePreflights ({ publish, readonly, relay, runStep }) {
-  if (!publish || readonly === false) return []
-  if (!relay) throw new Error('read-only release has no production bootstrap relay to probe')
-  if (typeof runStep !== 'function') throw new Error('read-only live preflight runner is required')
-  const steps = [
-    {
-      id: 'production-readonly',
-      cmd: 'node',
-      args: ['scripts/verify-production-readonly.mjs'],
-      env: { PEERIT_RELAY: relay }
-    },
-    {
-      id: 'live-legacy-pow',
-      cmd: 'npm',
-      args: ['run', 'audit:live-legacy-pow'],
-      env: { PEERIT_RELAY: relay }
-    }
-  ]
+export async function runLiveReleasePreflights ({ publish, readonly, relay, runStep }) {
+  if (!publish) return []
+  if (typeof runStep !== 'function') throw new Error('live release preflight runner is required')
+  let steps
+  if (readonly === false) {
+    if (!relay) throw new Error('writable release has no production bootstrap relay to audit')
+    steps = [
+      {
+        id: 'writable-candidate',
+        cmd: 'node',
+        args: ['scripts/verify-writable-candidate.mjs'],
+        env: {}
+      },
+      {
+        id: 'live-legacy-actions',
+        cmd: 'npm',
+        args: ['run', 'audit:live-legacy-actions'],
+        env: { PEERIT_RELAY: relay }
+      }
+    ]
+  } else {
+    if (!relay) throw new Error('read-only release has no production bootstrap relay to probe')
+    steps = [
+      {
+        id: 'production-readonly',
+        cmd: 'node',
+        args: ['scripts/verify-production-readonly.mjs'],
+        env: { PEERIT_RELAY: relay }
+      },
+      {
+        id: 'live-legacy-pow',
+        cmd: 'npm',
+        args: ['run', 'audit:live-legacy-pow'],
+        env: { PEERIT_RELAY: relay }
+      },
+      {
+        id: 'live-legacy-actions',
+        cmd: 'npm',
+        args: ['run', 'audit:live-legacy-actions'],
+        env: { PEERIT_RELAY: relay }
+      }
+    ]
+  }
   for (const step of steps) {
     try {
       await runStep(step)
@@ -563,23 +597,24 @@ export async function runReadonlyLivePreflights ({ publish, readonly, relay, run
   return steps.map((step) => step.id)
 }
 
-async function runProductionReadonlyPreflights () {
+// Backward-compatible export for release workflow consumers. Unlike the old
+// implementation, readonly=false is NOT a skip: it selects the mandatory
+// writable-candidate proof.
+export const runReadonlyLivePreflights = runLiveReleasePreflights
+
+async function runProductionLivePreflights () {
   const release = readJson(join(__dir, 'deploy', 'web-release.json'))
   if (!release) {
-    addCheck('production-readonly:config', 'fail', 'deploy/web-release.json is missing or invalid.')
-    return
-  }
-  if (release.readonly === false) {
-    addCheck('production-readonly:not-applicable', 'info', 'Writable release selected; read-only containment/legacy-PoW live preflights do not apply.')
+    addCheck('production-live:config', 'fail', 'deploy/web-release.json is missing or invalid.')
     return
   }
   const relay = Array.isArray(release.bootstrapRelays) ? String(release.bootstrapRelays[0] || '') : ''
-  if (!relay) {
+  if (release.readonly !== false && !relay) {
     addCheck('production-readonly:relay', 'fail', 'Read-only release has no production bootstrap relay to probe.')
     return
   }
   try {
-    await runReadonlyLivePreflights({
+    await runLiveReleasePreflights({
       publish: opts.publish,
       readonly: release.readonly,
       relay,
@@ -587,14 +622,23 @@ async function runProductionReadonlyPreflights () {
         await run(step.cmd, step.args, { env: { ...process.env, ...step.env } })
         if (step.id === 'production-readonly') {
           addCheck('production-readonly:enforced', 'pass', `Production edge blocks create/append while reads remain healthy at ${relay}.`)
-        } else {
+        } else if (step.id === 'live-legacy-pow') {
           addCheck('live-legacy-pow:clean', 'pass', `Live legacy-PoW audit passed against ${relay}.`)
+        } else if (step.id === 'live-legacy-actions') {
+          addCheck('live-legacy-actions:clean', 'pass', `Live legacy-action inventory matched its exact frozen signatures at ${relay}.`)
+        } else {
+          addCheck('writable-candidate:ready', 'pass', 'Every signed relay passed the durable atomic-commit proof and blocks legacy writer routes.')
         }
       }
     })
   } catch (err) {
-    const id = err.preflightId === 'live-legacy-pow' ? 'live-legacy-pow:clean' : 'production-readonly:enforced'
-    addCheck(id, 'fail', `Read-only live release preflight failed: ${err.message}`, { relay })
+    const failureChecks = {
+      'live-legacy-pow': 'live-legacy-pow:clean',
+      'live-legacy-actions': 'live-legacy-actions:clean',
+      'writable-candidate': 'writable-candidate:ready'
+    }
+    const id = failureChecks[err.preflightId] || 'production-readonly:enforced'
+    addCheck(id, 'fail', `Live release preflight failed: ${err.message}`, relay ? { relay } : undefined)
   }
 }
 
@@ -738,7 +782,7 @@ async function main () {
     allowPreparedArtifacts: opts.resumeSignature
   })
   await runTests()
-  if (opts.publish) await runProductionReadonlyPreflights()
+  if (opts.publish) await runProductionLivePreflights()
 
   finishReport()
   if (report.status === 'blocked') {

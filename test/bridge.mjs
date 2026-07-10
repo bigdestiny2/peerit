@@ -20,8 +20,9 @@ function mem () {
   return { getItem: k => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: k => m.delete(k), clear: () => m.clear() }
 }
 
-function response (value, status = 200) {
+function response (value, status = 200, extra = {}) {
   return {
+    ...extra,
     ok: status >= 200 && status < 300,
     status,
     statusText: status >= 200 && status < 300 ? 'OK' : 'API error',
@@ -125,6 +126,7 @@ class FakeEventSource {
     this.closed = false
     FakeEventSource.instances.push(this)
   }
+
   close () { this.closed = true }
 }
 
@@ -141,6 +143,28 @@ async function main () {
   })
   ok(hasGossipPearSurface(metaPear), 'bridge token can be discovered from injected pear-api-token meta tag')
   ok(createPearApi({ apiBase: host.base, fetch: host.fetch, EventSource: FakeEventSource }) === null, 'missing bridge token does not create an ambient /api surface')
+
+  const redirectedPear = createPearApi({
+    apiToken: 'token-1',
+    apiBase: 'https://front.example',
+    fetch: async () => response({ ok: true }, 200, { redirected: true, url: 'https://backend.example/api/sync/get' }),
+    requestTimeoutMs: 30
+  })
+  await assert.rejects(() => redirectedPear.sync.get(PUB, 'profile!' + PUB), (error) => error && error.code === 'PEAR_API_REDIRECT')
+  ok(true, 'post-admission API calls reject detectable redirects instead of following an alias')
+
+  const hangingPear = createPearApi({ apiToken: 'token-1', apiBase: host.base, fetch: async () => new Promise(() => {}), requestTimeoutMs: 25 })
+  const hangingStarted = Date.now()
+  await assert.rejects(() => hangingPear.sync.get(PUB, 'profile!' + PUB), (error) => error && error.code === 'PEAR_API_TIMEOUT')
+  ok(Date.now() - hangingStarted < 500, 'every token-gated API request has a finite timeout even when fetch ignores abort')
+  const hangingBodyPear = createPearApi({
+    apiToken: 'token-1',
+    apiBase: host.base,
+    requestTimeoutMs: 25,
+    fetch: async () => ({ ok: true, status: 200, statusText: 'OK', text: async () => new Promise(() => {}) })
+  })
+  await assert.rejects(() => hangingBodyPear.sync.get(PUB, 'profile!' + PUB), (error) => error && error.code === 'PEAR_API_TIMEOUT')
+  ok(true, 'request timeout also bounds a relay that sends headers then stalls its JSON body')
 
   const identity = createIdentity({ apiToken: 'token-1', apiBase: host.base, fetch: host.fetch, EventSource: FakeEventSource })
   await identity.ready()

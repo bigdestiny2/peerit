@@ -12,6 +12,7 @@ import { randomBytes } from 'node:crypto'
 import { DevIdentity } from '../js/identity.js'
 import { createData } from '../js/data.js'
 import { createSync } from '../js/sync.js'
+import { createPearApi } from '../js/pear-api.js'
 import { ready as cryptoReady, isSecure } from '../js/crypto.js'
 import { keys } from '../js/model.js'
 import { makeValidator } from '../js/pow.js'
@@ -58,7 +59,11 @@ function makeWorld () {
 
 async function makeClient (world, name, { writeHead = false, storage = mem(), pollMs = 200 } = {}) {
   const id = new DevIdentity(mem(), mem()); await id.ready(); await id.createUser(name)
-  const sync = createSync({ apiToken: 't', apiBase: world.base, fetch: world.fetch, EventSource: world.EventSource, storage, getMe: () => id.me().pubkey, identity: id, validate: makeValidator(BITS), pollMs, writeHead })
+  // Explicit legacy transport: this floor suite covers the separate append/head
+  // compatibility path, while atomic HTTP commits are covered independently.
+  const pear = createPearApi({ apiToken: 't', apiBase: world.base, fetch: world.fetch, EventSource: world.EventSource })
+  delete pear.sync.commit
+  const sync = createSync({ pear, storage, getMe: () => id.me().pubkey, identity: id, validate: makeValidator(BITS), pollMs, writeHead })
   await sync.ready()
   return { id, sync, data: createData(sync, id, { minBits: BITS }), pub: id.me().pubkey, storage }
 }

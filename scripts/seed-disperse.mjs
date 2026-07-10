@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url'
 import sodium from 'sodium-universal'
 import { SEED } from '../test/seed-author.mjs'
 import { disperseBody, recoverBody, makeHiverelayKeypair } from '../js/blind-dealer.mjs'
+import { TYPE, contentId } from '../js/model.js'
 
 // Derive the dealer identity the same way the dealer signs (sodium), so the pinned
 // publisher is stable + self-consistent. peerit's genKeyPair() derives Ed25519 via the
@@ -69,7 +70,7 @@ async function main () {
   // Flatten SEED (all communities) to the list of bodies the seeder writes.
   const items = []
   for (const [community, comm] of Object.entries(SEED))
-    for (const p of comm.posts) items.push({ community, cid: p.cid, title: p.title, body: p.body })
+    for (const p of comm.posts) items.push({ community, cid: await contentId(TYPE.POST, publisher.pubkeyHex, p.seed), seed: p.seed, title: p.title, body: p.body })
 
   console.log(`\n▶ dispersing ${items.length} seed bodies across ${n} relays (k=${k}), dealer ${publisher.pubkeyHex.slice(0, 12)}… (== seed author)\n`)
 

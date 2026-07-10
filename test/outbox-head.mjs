@@ -13,6 +13,7 @@ import { randomBytes } from 'node:crypto'
 import { DevIdentity } from '../js/identity.js'
 import { createData } from '../js/data.js'
 import { createSync } from '../js/sync.js'
+import { createPearApi } from '../js/pear-api.js'
 import { ready as cryptoReady, isSecure, hashHex } from '../js/crypto.js'
 import { verifyRecord } from '../js/verify.js'
 import { auditOutbox } from '../js/gossip.js'
@@ -76,7 +77,11 @@ function makeBridgeWorld () {
 
 async function makeClient (world, token, name, { writeHead = false, pollMs = 300 } = {}) {
   const id = new DevIdentity(mem(), mem()); await id.ready(); await id.createUser(name)
-  const sync = createSync({ apiToken: token, apiBase: world.base, fetch: world.fetch, EventSource: world.EventSource, storage: mem(), getMe: () => id.me().pubkey, identity: id, validate: makeValidator(BITS), pollMs, writeHead })
+  // This suite deliberately pins the pre-atomic PearBrowser-compatible
+  // record-then-head path. Atomic HTTP behavior has its own focused suite.
+  const pear = createPearApi({ apiToken: token, apiBase: world.base, fetch: world.fetch, EventSource: world.EventSource })
+  delete pear.sync.commit
+  const sync = createSync({ pear, storage: mem(), getMe: () => id.me().pubkey, identity: id, validate: makeValidator(BITS), pollMs, writeHead })
   await sync.ready()
   return { id, sync, data: createData(sync, id, { minBits: BITS }), pub: id.me().pubkey, name }
 }

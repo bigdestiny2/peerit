@@ -15,6 +15,8 @@ import { makeValidator, mint, verify as verifyPow } from '../js/pow.js'
 let passed = 0
 const ok = (c, m) => { assert.ok(c, m); passed++; console.log('  ✓ ' + m) }
 const BITS = { community: 7, post: 6, comment: 5 }
+const legacyContentSignatures = new Set()
+const fixtureValidator = () => makeValidator(BITS, { legacyContentSignatures })
 function mem () {
   const m = new Map()
   return { getItem: k => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: k => m.delete(k), clear: () => m.clear() }
@@ -64,6 +66,7 @@ function rememberingPear () {
 // Attach a real signature from `id` to a record (mirrors data._sign).
 async function sign (id, type, data) {
   const s = await id.sign(canonical(type, data))
+  if (type === 'post' || type === 'comment') legacyContentSignatures.add(s.signature)
   return { ...data, _sig: s.signature, _k: s.publicKey, _dk: s.driveKey, _ns: s.namespace, _alg: s.algorithm }
 }
 async function powSign (id, type, data) {
@@ -72,7 +75,7 @@ async function powSign (id, type, data) {
 }
 async function makePeer (hub, name) {
   const id = new DevIdentity(mem(), mem()); await id.ready(); await id.createUser(name)
-  const sync = new GossipSync({ storage: mem(), bus: hub.connect(), getMe: () => id.me().pubkey, validate: makeValidator(BITS) })
+  const sync = new GossipSync({ storage: mem(), bus: hub.connect(), getMe: () => id.me().pubkey, validate: fixtureValidator() })
   await sync.ready()
   return { id, sync, data: createData(sync, id, { minBits: BITS }), pub: id.me().pubkey, name }
 }
@@ -112,7 +115,7 @@ async function main () {
   ok((await mergeOutboxes([{ pub: M, view: { 'community!p2p': comm } }]))['community!p2p'], "a peer relaying A's validly-signed record is honored (transport label is not authority)")
 
   console.log('\n— proof-of-work spam gate —')
-  const validator = makeValidator(BITS)
+  const validator = fixtureValidator()
   const noPow = await sign(aid, 'post', { id: 'p2p!nopow', cid: 'nopow', community: 'p2p', kind: 'text', title: 'No PoW', body: '', url: '', author: A, createdAt: 10, editedAt: 0, deleted: false })
   ok(!(await mergeOutboxes([{ pub: A, view: { 'post!p2p!nopow': noPow } }], {}, validator))['post!p2p!nopow'], 'signed post without proof-of-work is rejected by the validate hook')
   const worked = await powSign(aid, 'post', { id: 'p2p!worked', cid: 'worked', community: 'p2p', kind: 'text', title: 'Worked', body: '', url: '', author: A, createdAt: 11, editedAt: 0, deleted: false })
@@ -222,12 +225,12 @@ async function main () {
   console.log('\n— bridge restart without page-local outbox key —')
   const pear = rememberingPear()
   const rid = new DevIdentity(mem(), mem()); await rid.ready(); await rid.createUser('restart')
-  const restart1 = new BridgeGossipSync({ pear, getMe: () => rid.me().pubkey, identity: rid, validate: makeValidator(BITS) }); await restart1.ready()
+  const restart1 = new BridgeGossipSync({ pear, getMe: () => rid.me().pubkey, identity: rid, validate: fixtureValidator() }); await restart1.ready()
   const d1 = createData(restart1, rid, { minBits: BITS })
   await d1.createCommunity({ slug: 'persist', title: 'Persists', description: '' })
   const persisted = await d1.submitPost({ community: 'persist', kind: 'text', title: 'survives restart', body: 'no localStorage key' })
   ok(await d1.getPost('persist', persisted.cid), 'first bridge launch wrote a signed post')
-  const restart2 = new BridgeGossipSync({ pear, getMe: () => rid.me().pubkey, identity: rid, validate: makeValidator(BITS) }); await restart2.ready()
+  const restart2 = new BridgeGossipSync({ pear, getMe: () => rid.me().pubkey, identity: rid, validate: fixtureValidator() }); await restart2.ready()
   const d2 = createData(restart2, rid, { minBits: BITS })
   ok(await d2.getPost('persist', persisted.cid), 'second bridge launch reopens browser-remembered outbox without localStorage')
   const rst = await restart2.status()
@@ -235,13 +238,13 @@ async function main () {
 
   console.log('\n— bridge lifecycle: configurable poll + destroy —')
   const pid = new DevIdentity(mem(), mem()); await pid.ready(); await pid.createUser('poll')
-  const noPoll = new BridgeGossipSync({ pear: rememberingPear(), getMe: () => pid.me().pubkey, identity: pid, validate: makeValidator(BITS), pollMs: 0 }); await noPoll.ready()
+  const noPoll = new BridgeGossipSync({ pear: rememberingPear(), getMe: () => pid.me().pubkey, identity: pid, validate: fixtureValidator(), pollMs: 0 }); await noPoll.ready()
   ok(noPoll._pollTimer === null, 'pollMs:0 disables the background re-merge timer')
   noPoll.onChange(() => {})
   noPoll.destroy()
   ok(noPoll._pollTimer === null && noPoll._listeners.size === 0, 'destroy() clears timers and listeners')
   ok(noPoll._destroyed === true && (await noPoll._refresh()).length === 0, 'after destroy() a refresh is a no-op (returns [], cannot mutate a discarded instance)')
-  const polled = new BridgeGossipSync({ pear: rememberingPear(), getMe: () => pid.me().pubkey, identity: pid, validate: makeValidator(BITS) }); await polled.ready()
+  const polled = new BridgeGossipSync({ pear: rememberingPear(), getMe: () => pid.me().pubkey, identity: pid, validate: fixtureValidator() }); await polled.ready()
   ok(polled._pollTimer !== null, 'default pollMs starts a jittered re-merge timer')
   polled.destroy()
   ok(polled._pollTimer === null, 'destroy() stops the default re-merge timer')
@@ -249,7 +252,7 @@ async function main () {
   console.log('\n— bridge UX change signals —')
   const uxPear = rememberingPear()
   const uxId = new DevIdentity(mem(), mem()); await uxId.ready(); await uxId.createUser('ux')
-  const uxSync = new BridgeGossipSync({ pear: uxPear, getMe: () => uxId.me().pubkey, identity: uxId, validate: makeValidator(BITS), pollMs: 0 }); await uxSync.ready()
+  const uxSync = new BridgeGossipSync({ pear: uxPear, getMe: () => uxId.me().pubkey, identity: uxId, validate: fixtureValidator(), pollMs: 0 }); await uxSync.ready()
   const uxData = createData(uxSync, uxId, { minBits: BITS })
   const events = []
   uxSync.onChange((changed) => events.push(changed))
@@ -270,12 +273,12 @@ async function main () {
 
   console.log('\n— app recovery bundle import —')
   const recoveryStore = mem()
-  const exportSync = new BridgeGossipSync({ pear, getMe: () => rid.me().pubkey, identity: rid, storage: recoveryStore, validate: makeValidator(BITS) }); await exportSync.ready()
+  const exportSync = new BridgeGossipSync({ pear, getMe: () => rid.me().pubkey, identity: rid, storage: recoveryStore, validate: fixtureValidator() }); await exportSync.ready()
   const exportData = createData(exportSync, rid, { minBits: BITS })
   const bundle = await exportData.recoveryBundle()
   ok(bundle.driveKey === rid.me().driveKey && bundle.publicKey === rid.me().pubkey && bundle.outboxes.length >= 1, 'bridge recovery export includes current drive/public keys and outbox')
   const importStore = mem()
-  const importSync = new BridgeGossipSync({ pear, getMe: () => rid.me().pubkey, identity: rid, storage: importStore, validate: makeValidator(BITS) }); await importSync.ready()
+  const importSync = new BridgeGossipSync({ pear, getMe: () => rid.me().pubkey, identity: rid, storage: importStore, validate: fixtureValidator() }); await importSync.ready()
   const importData = createData(importSync, rid, { minBits: BITS })
   const imported = await importData.importRecoveryBundle(bundle)
   ok(imported.joined === bundle.outboxes.length && imported.failures.length === 0, 'matching recovery bundle imports and joins every outbox')

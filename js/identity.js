@@ -11,11 +11,29 @@
 //   sign(payload, namespace) -> { signature, publicKey, driveKey, namespace, algorithm },
 //   isDev, listUsers(), switchUser(pub), createUser(name)  (createUser is async)
 
-import { genKeyPair, sign as edSign } from './crypto.js'
+import { genKeyPair, sign as edSign, verify as edVerify, ready as cryptoReady, isSecure } from './crypto.js'
 import { hasAnyPearBridgeSurface, hasIdentityPearSurface, resolvePear } from './pear-api.js'
 
 const NS = 'peerit'
 const HEX64 = /^[0-9a-f]{64}$/i
+
+// Normalize and cryptographically authenticate an identity entry before its seed
+// is ever installed as an in-memory signer or wrapped for durable storage.
+// Shape checks alone are insufficient: a mismatched seed/pubkey would create a
+// durable identity that can never produce records accepted as that public key.
+export async function verifiedIdentityEntry (entry, context = 'identity') {
+  const seed = String((entry && entry.seed) || '').toLowerCase()
+  const pubkey = String((entry && entry.pubkey) || '').toLowerCase()
+  const driveKey = String((entry && entry.driveKey) || pubkey).toLowerCase()
+  if (!HEX64.test(seed) || !HEX64.test(pubkey)) throw new Error(`${context}: invalid seed or public key`)
+  if (!HEX64.test(driveKey)) throw new Error(`${context}: invalid drive key`)
+  await cryptoReady()
+  if (!isSecure()) throw new Error(`${context}: secure Ed25519 verification is unavailable`)
+  const probe = `peerit-identity-entry-check:${pubkey}`
+  const signature = await edSign(seed, probe)
+  if (!(await edVerify(pubkey, probe, signature))) throw new Error(`${context}: seed does not match public key`)
+  return { seed, pubkey, driveKey, label: entry && entry.label ? String(entry.label) : 'imported' }
+}
 
 class DevIdentity {
   // persistSeed: whether the raw Ed25519 SEED is allowed to be written to disk
@@ -44,6 +62,7 @@ class DevIdentity {
     // seed (and, to avoid unusable ghost entries, no roster) is written to disk.
     this._memRoster = null
     this._ensuring = null
+    this._durableSource = null
   }
 
   async ready () {
@@ -103,6 +122,7 @@ class DevIdentity {
   }
 
   _meEntry () { return this._roster().find(x => x.pubkey === this._active) || null }
+
   me () {
     const u = this._meEntry() || { pubkey: this._active, driveKey: this._active, label: 'anon' }
     return { pubkey: u.pubkey, driveKey: u.driveKey, label: u.label }
@@ -119,16 +139,19 @@ class DevIdentity {
   listUsers () { return this._roster().map(u => ({ pubkey: u.pubkey, driveKey: u.driveKey, label: u.label })) }
   switchUser (pub) {
     if (this._roster().find(u => u.pubkey === pub)) {
+      if (pub !== this._active) this._durableSource = null
       this._active = pub
       if (this.session) this.session.setItem('peerit:dev:active', pub)
       return true
     }
     return false
   }
+
   async createUser (name) {
     const u = await this._mint(name || 'anon')
     const roster = this._roster(); roster.push(u); this._saveRoster(roster)
     this._active = u.pubkey
+    this._durableSource = null
     if (this.session) this.session.setItem('peerit:dev:active', u.pubkey)
     return { pubkey: u.pubkey, driveKey: u.driveKey, label: u.label }
   }
@@ -146,16 +169,48 @@ class DevIdentity {
   // false, i.e. the web/production case) and never re-touches disk; the ciphertext
   // vault on disk stays the only at-rest copy. Semantically identical to addUser,
   // named separately so the boot/unlock flow reads clearly.
-  async restoreFromVault (entry) { return this.addUser(entry) }
+  async restoreFromVault (entry) { return this.replaceWith(entry, 'vault') }
+
+  // Device-store restore/activation. Kept distinct from addUser so the write gate
+  // can distinguish a cryptographically loaded durable key from a session-only
+  // roster entry that merely happens to share a vault header.
+  async restoreFromDevice (entry) { return this.replaceWith(entry, 'device') }
+
+  // Import after BOTH device + vault tiers have committed.
+  async restoreFromDurableImport (entry) { return this.replaceWith(entry, 'device+vault') }
+
+  durableSource () {
+    return this._durableSource && this._durableSource.pubkey === this._active
+      ? { ...this._durableSource }
+      : null
+  }
+
+  // Replace the in-memory signer set rather than retaining the previous identity
+  // as a session-only switch target. Used by durable restore/import.
+  async replaceWith (entry, source = null) {
+    const normalized = await verifiedIdentityEntry(entry, 'Cannot restore identity')
+    this._saveRoster([normalized])
+    this._active = normalized.pubkey
+    this._durableSource = source ? { kind: source, pubkey: normalized.pubkey } : null
+    if (this.session) this.session.setItem('peerit:dev:active', normalized.pubkey)
+    return this.me()
+  }
+
+  // Forget means the current page loses the signer immediately, not at reload.
+  // Remove every in-memory seed and the session pointer only after callers have
+  // verified both durable tiers were cleared.
+  deactivate () {
+    this._saveRoster([])
+    this._active = null
+    this._durableSource = null
+    try { if (this.session && typeof this.session.removeItem === 'function') this.session.removeItem('peerit:dev:active') } catch {}
+    return this.me()
+  }
 
   // Add an externally-provided identity (from importIdentity) to the roster and
   // switch to it — the "add to roster + switch" import model. Dedupes by pubkey.
   async addUser (entry) {
-    const seed = String(entry && entry.seed || '').toLowerCase()
-    const pubkey = String(entry && entry.pubkey || '').toLowerCase()
-    if (!HEX64.test(seed) || !HEX64.test(pubkey)) throw new Error('Cannot add identity: invalid seed or public key.')
-    const driveKey = String(entry && entry.driveKey || pubkey).toLowerCase()
-    const label = entry && entry.label ? String(entry.label) : 'imported'
+    const { seed, pubkey, driveKey, label } = await verifiedIdentityEntry(entry, 'Cannot add identity')
     const roster = this._roster()
     const existing = roster.find(u => u.pubkey === pubkey)
     if (existing) {
@@ -167,6 +222,7 @@ class DevIdentity {
     }
     this._saveRoster(roster)
     this._active = pubkey
+    this._durableSource = null
     if (this.session) this.session.setItem('peerit:dev:active', pubkey)
     return this.me()
   }

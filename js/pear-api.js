@@ -6,6 +6,7 @@
 // wrapper around those routes when the object is absent or partial.
 
 const TOKEN_META = 'meta[name="pear-api-token"]'
+export const PEAR_API_REQUEST_TIMEOUT_MS = 8000
 
 function tokenFromDocument (doc) {
   try {
@@ -25,7 +26,43 @@ function defaultFetch () {
 }
 
 function defaultEventSource () {
-  return typeof EventSource !== 'undefined' ? EventSource : null
+  return typeof globalThis.EventSource !== 'undefined' ? globalThis.EventSource : null
+}
+
+function transportError (message, code) {
+  const error = new Error(message)
+  error.code = code
+  return error
+}
+
+function responseOrigin (response, requestUrl) {
+  if (response && response.redirected === true) throw transportError('Relay redirect rejected.', 'PEAR_API_REDIRECT')
+  let requested = null
+  let final = null
+  try { requested = new URL(String(requestUrl), globalThis.location && globalThis.location.href).origin } catch {}
+  if (response && response.url) {
+    try { final = new URL(String(response.url)).origin } catch { throw transportError('Relay final URL is invalid.', 'PEAR_API_ORIGIN_MISMATCH') }
+  }
+  if (requested && final && requested !== final) throw transportError('Relay final origin does not match the selected relay.', 'PEAR_API_ORIGIN_MISMATCH')
+  return final || requested
+}
+
+function abortableDelay (ms, signal) {
+  if (signal && signal.aborted) return Promise.reject(transportError('Relay request aborted.', 'PEAR_API_ABORTED'))
+  return new Promise((resolve, reject) => {
+    let onAbort = null
+    const timer = setTimeout(() => {
+      if (onAbort && signal && typeof signal.removeEventListener === 'function') signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    if (signal && typeof signal.addEventListener === 'function') {
+      onAbort = () => {
+        clearTimeout(timer)
+        reject(transportError('Relay request aborted.', 'PEAR_API_ABORTED'))
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+    }
+  })
 }
 
 function pathWithParams (path, params) {
@@ -47,7 +84,17 @@ async function parseJsonResponse (response) {
   }
   if (!response.ok) {
     const message = value && value.error ? value.error : (response.statusText || 'PearBrowser API error')
-    throw new Error(message)
+    const error = new Error(message)
+    // Preserve machine-readable relay failures. Atomic commits need to
+    // distinguish a stale compare-and-swap (409) from a transient mirror
+    // outage so the writer can quarantine the former while retaining the exact
+    // pending commit for either case.
+    error.status = response.status
+    if (value && typeof value === 'object') {
+      if (value.code) error.code = value.code
+      error.response = value
+    }
+    throw error
   }
   return value
 }
@@ -153,19 +200,79 @@ export function createPearApi (opts = {}) {
 
   const base = opts.apiBase || opts.base || ''
   const EventSourceCtor = opts.EventSource || defaultEventSource()
+  const requestTimeoutMs = Number.isFinite(Number(opts.requestTimeoutMs)) && Number(opts.requestTimeoutMs) > 0
+    ? Number(opts.requestTimeoutMs)
+    : PEAR_API_REQUEST_TIMEOUT_MS
+
+  function effectiveTimeout (requestOpts = {}) {
+    return Number.isFinite(Number(requestOpts.timeoutMs)) && Number(requestOpts.timeoutMs) > 0
+      ? Number(requestOpts.timeoutMs)
+      : requestTimeoutMs
+  }
+
+  async function fetchAttempt (url, init = {}, requestOpts = {}) {
+    const timeoutMs = effectiveTimeout(requestOpts)
+    const externalSignal = requestOpts.signal || init.signal || null
+    if (externalSignal && externalSignal.aborted) throw transportError('Relay request aborted.', 'PEAR_API_ABORTED')
+    const controller = typeof AbortController === 'function' ? new AbortController() : null
+    const onAbort = () => { try { if (controller) controller.abort() } catch {} }
+    if (externalSignal && controller && typeof externalSignal.addEventListener === 'function') externalSignal.addEventListener('abort', onAbort, { once: true })
+    const requestInit = {
+      ...init,
+      redirect: 'error',
+      ...((controller && controller.signal) ? { signal: controller.signal } : (externalSignal ? { signal: externalSignal } : {}))
+    }
+    let timer = null
+    const timeout = new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        try { if (controller) controller.abort() } catch {}
+        reject(transportError('Relay request timed out.', 'PEAR_API_TIMEOUT'))
+      }, timeoutMs)
+    })
+    try {
+      const response = await Promise.race([Promise.resolve().then(() => fetchFn(url, requestInit)), timeout])
+      responseOrigin(response, url)
+      return response
+    } finally {
+      if (timer) clearTimeout(timer)
+      if (externalSignal && controller && typeof externalSignal.removeEventListener === 'function') externalSignal.removeEventListener('abort', onAbort)
+    }
+  }
+
+  async function parseResponseBounded (response, requestOpts = {}) {
+    const timeoutMs = effectiveTimeout(requestOpts)
+    const signal = requestOpts.signal || null
+    let timer = null
+    let onAbort = null
+    const timeout = new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(transportError('Relay response body timed out.', 'PEAR_API_TIMEOUT')), timeoutMs)
+    })
+    const aborted = new Promise((resolve, reject) => {
+      if (!signal || typeof signal.addEventListener !== 'function') return
+      onAbort = () => reject(transportError('Relay request aborted.', 'PEAR_API_ABORTED'))
+      if (signal.aborted) onAbort()
+      else signal.addEventListener('abort', onAbort, { once: true })
+    })
+    try {
+      return await Promise.race([parseJsonResponse(response), timeout, aborted])
+    } finally {
+      if (timer) clearTimeout(timer)
+      if (onAbort && signal && typeof signal.removeEventListener === 'function') signal.removeEventListener('abort', onAbort)
+    }
+  }
 
   // Retry 429 (rate limited) / 503 (at capacity) with exponential backoff + jitter,
   // honoring Retry-After. A cold-boot fans out O(authors) reads at once, so without this
   // a busy relay throws mid-boot and the visitor sees a half-empty feed; with it the boot
   // paces itself under the per-IP limit instead of failing.
-  async function fetchWithBackoff (url, init) {
+  async function fetchWithBackoff (url, init, requestOpts = {}) {
     let wait = 500
     for (let attempt = 0; ; attempt++) {
-      const response = await fetchFn(url, init)
+      const response = await fetchAttempt(url, init, requestOpts)
       if ((response.status === 429 || response.status === 503) && attempt < 4) {
         let delay = wait
         try { const ra = Number(response.headers && response.headers.get && response.headers.get('retry-after')); if (ra > 0) delay = ra * 1000 } catch {}
-        await new Promise((r) => setTimeout(r, Math.min(delay * (0.8 + Math.random() * 0.4), 8000)))
+        await abortableDelay(Math.min(delay * (0.8 + Math.random() * 0.4), 8000), requestOpts.signal)
         wait *= 2
         continue
       }
@@ -173,18 +280,18 @@ export function createPearApi (opts = {}) {
     }
   }
 
-  async function apiGet (path) {
-    const response = await fetchWithBackoff(base + path, { headers: { 'X-Pear-Token': token } })
-    return parseJsonResponse(response)
+  async function apiGet (path, requestOpts = {}) {
+    const response = await fetchWithBackoff(base + path, { headers: { 'X-Pear-Token': token } }, requestOpts)
+    return parseResponseBounded(response, requestOpts)
   }
 
-  async function apiPost (path, body) {
+  async function apiPost (path, body, requestOpts = {}) {
     const response = await fetchWithBackoff(base + path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Pear-Token': token },
       body: JSON.stringify(body || {})
-    })
-    return parseJsonResponse(response)
+    }, requestOpts)
+    return parseResponseBounded(response, requestOpts)
   }
 
   function makeSwarmChannel (info) {
@@ -283,6 +390,13 @@ export function createPearApi (opts = {}) {
       create: (appId) => apiPost('/api/sync/create', { appId }),
       join: (appId, inviteKey) => apiPost('/api/sync/join', { appId, inviteKey }),
       append: (appId, op) => apiPost('/api/sync/append', { appId, op }),
+      // Owner-signed, compare-and-swap mutation + head transaction. The relay
+      // validates and durably applies this envelope atomically; relay-pool.js
+      // requires matching durable receipts from at least two independent
+      // relays before the client reports publication success.
+      ...(opts.atomicCommit === true
+        ? { commit: (appId, commit, requestOpts = {}) => apiPost('/api/sync/commit', { appId, commit }, requestOpts) }
+        : {}),
       get: (appId, key) => apiGet(pathWithParams('/api/sync/get', { appId, key })),
       list: (appId, prefix, listOpts = {}) => apiGet(pathWithParams('/api/sync/list', { appId, prefix, limit: listOpts.limit })),
       range: (appId, rangeOpts = {}) => apiGet(pathWithParams('/api/sync/range', {
@@ -327,7 +441,7 @@ export function createPearApi (opts = {}) {
     bridge: {
       status: () => apiGet('/api/bridge/status')
     },
-    navigate: (url) => { if (typeof location !== 'undefined') location.href = url },
+    navigate: (url) => { if (globalThis.location) globalThis.location.href = url },
     share: () => {}
   }
 }
@@ -345,22 +459,36 @@ export async function probeRelayBackend ({ apiBase = '', apiToken = '', fetch, t
   if (typeof fetchFn !== 'function') return miss
   let signal = null
   let timer = null
+  let timeout = null
   if (typeof AbortController === 'function' && timeoutMs > 0) {
     const ac = new AbortController()
     signal = ac.signal
-    timer = setTimeout(() => { try { ac.abort() } catch {} }, timeoutMs)
+    timeout = new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        try { ac.abort() } catch {}
+        reject(transportError('Relay probe timed out.', 'PEAR_API_TIMEOUT'))
+      }, timeoutMs)
+    })
+  } else if (timeoutMs > 0) {
+    timeout = new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(transportError('Relay probe timed out.', 'PEAR_API_TIMEOUT')), timeoutMs)
+    })
   }
   try {
     const headers = apiToken ? { 'X-Pear-Token': apiToken } : {}
-    const init = signal ? { headers, signal } : { headers }
-    const res = await fetchFn(apiBase + '/api/bridge/status', init)
+    const init = signal ? { headers, signal, redirect: 'error' } : { headers, redirect: 'error' }
+    const request = Promise.resolve().then(() => fetchFn(apiBase + '/api/bridge/status', init))
+    const res = await (timeout ? Promise.race([request, timeout]) : request)
+    responseOrigin(res, apiBase + '/api/bridge/status')
     if (!res || !res.ok) return miss
     let body = null
     if (typeof res.text === 'function') {
-      const text = await res.text()
+      const read = Promise.resolve().then(() => res.text())
+      const text = await (timeout ? Promise.race([read, timeout]) : read)
       body = text ? JSON.parse(text) : null
     } else if (typeof res.json === 'function') {
-      body = await res.json()
+      const read = Promise.resolve().then(() => res.json())
+      body = await (timeout ? Promise.race([read, timeout]) : read)
     }
     if (!body || typeof body !== 'object') return miss
     return {

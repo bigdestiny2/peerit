@@ -225,27 +225,64 @@ drift outside that explicit config change as a publish blocker.
 `ship:live` rejects `--no-web`/`SKIP_WEB_RELEASE`, `--no-test`, and
 `--allow-dirty`; an actually dirty release tree also blocks before public
 publication. For a read-only candidate it also runs the non-destructive live
-`proof:production-readonly` gate and `audit:live-legacy-pow` before publishing;
-offline `ship:check` runs neither live-network probe. With one signed relay,
-`deploy/web-release.json` must remain
-`readonly:true`; writable preparation requires at least two signed relay failure
-domains and separate backend/edge authorization to enable writes.
+`proof:production-readonly`, `audit:live-legacy-pow`, and
+`audit:live-legacy-actions` before publishing; for a writable candidate it runs
+`proof:writable-candidate` plus the same exact-signature legacy-action audit.
+That proof
+fails unless the config explicitly says `readonly:false`, the pinned roster
+signature verifies, and at least two signed relays use distinct origins. It then
+checks **every** signed relay's `/api/bridge/status` and
+`/api/sync/capabilities` for the durable, CAS, idempotent
+`POST /api/sync/commit` contract. A safely invalid commit request must reach
+that route and fail validation before allocation, which catches a proxy that
+advertises but does not mount it. The proof issues no sync mutation or valid
+commit. The bounded idempotency descriptor must retain every outbox's newest
+receipt, so cross-author pressure cannot evict a publication still awaiting its
+mirror. It also sends invalid, non-mutating requests to the legacy create/append routes
+and fails unless the public edge or relay policy blocks both paths.
+Offline `ship:check` runs no live-network probe. With one signed relay,
+`deploy/web-release.json` must remain `readonly:true`.
 Live ship treats every remaining warning as blocking; a `review` result is not a
 publishable result.
+
+### Writable-web candidate gate
+
+Do not change the live signed configuration to discover whether a backend is
+writer-capable. Prepare a production-equivalent canary/staging config and signed
+roster first, then run:
+
+```sh
+# Deterministic browser-shaped lifecycle: boot as a lurker, post explicitly,
+# mint/persist one identity, commit to two relays, reload as the same identity.
+npm run test:writable-web
+
+# Non-mutating network proof against every relay in the candidate signed roster.
+PEERIT_WEB_RELEASE_CONFIG=deploy/web-release.staging.json \
+  npm run proof:writable-candidate
+```
+
+The candidate proof never treats read-only mode, a missing capability endpoint,
+one relay, two URLs on one origin, or an old append-only relay as “not
+applicable”; each blocks. Only after this passes should a new release sequence be
+built and signed. The current `deploy/web-release.json` remains the source of
+truth for the live release until that deliberate cutover.
 
 The clean-tree gate is derived from the transitive local import closure of the
 build, signing, verification, served-site, and registered test entry points,
 plus string-addressed esbuild inputs and release configs. That includes the
 service-worker source, CSP helper, DHT/reader builders and their browser entry
-modules. Dirty or untracked closure inputs block live publish; unrelated user
-documents and diagrams are intentionally outside this gate.
+modules, the writable-soak/local-fixture tools, the capacity contract, and the
+protocol-v3 cutover inventory. Dirty or untracked closure inputs block live
+publish; unrelated user documents and diagrams are intentionally outside this
+gate.
 
 ## Manual validation still required
 
-- Failover is boot-time selection: the client chooses the first reachable relay
-  before opening its gossip bridge. If the active relay dies mid-session, the
-  user should reload to re-run selection; live migration of an already-open
-  SSE/swarm channel is intentionally out of this hardening pass.
+- Relay selection is continuously monitored. A lost relay, expired roster, or
+  downgraded capability disables publishing in-session; a surviving relay can
+  continue serving verified reads while the client retries the full topology.
+  Validate long-lived SSE/swarm reconnection separately under real proxy idle
+  timeouts.
 - Validate the production relay fleet behind real TLS/CORS, shared
   `PEERIT_RELAY_SECRET`, and reverse-proxy headers. CI proves the HTTP/SSE
   contract and failover flow against local relays, not public network routing.
@@ -334,13 +371,17 @@ Live-path caveats:
   ICE — none reach PearBrowser parity.
 - **Liveness:** the relay (+ its DNS) is a chokepoint that can be blocked or
   pressured (it can withhold, never forge). Mitigate with multiple relays + a
-  signed roster; boot-time failover selects a reachable relay, while mid-session
-  relay death still requires reconnect/reload.
-- **Key durability:** in web mode the identity is a browser-local Ed25519 seed in
-  `localStorage`; clearing site data destroys it. The **recovery bundle does NOT
-  contain the signing key** (only public keys + outbox invite keys for
-  discovery), so it cannot restore the identity. To move or back up the key,
-  Settings → *Move this identity to another device* exports a passphrase-encrypted
-  file (PBKDF2 → AES-256-GCM) that imports as the same identity on another browser
-  or phone (file, paste, or QR). See
+  signed roster. The browser continuously re-verifies roster expiry and exact
+  relay capabilities: a surviving relay remains usable for verified reads, while
+  publishing immediately fails closed unless every origin in the signed writer
+  topology is reachable and durable. Recovery happens in-session without erasing
+  a typed post/community draft.
+- **Key durability:** a visitor starts without an identity. The first explicit
+  post/comment/vote mints one browser-local Ed25519 seed and, before publishing,
+  stores it as AES-GCM ciphertext under a non-extractable WebCrypto key in
+  IndexedDB. This protects against passive storage reads, not same-origin XSS or
+  disk/profile extraction; clearing site data still destroys it. To move or back
+  up the key, Settings → *Move this identity to another device* exports a
+  passphrase-encrypted file (PBKDF2 → AES-256-GCM) that imports as the same
+  identity on another browser or phone (file, paste, or QR). See
   [`docs/identity-recovery-protocol.md`](identity-recovery-protocol.md#3-web-mode-identity-export).

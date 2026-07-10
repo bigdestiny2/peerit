@@ -20,6 +20,8 @@ let passed = 0
 const ok = (c, m) => { assert.ok(c, m); passed++; console.log('  ✓ ' + m) }
 const delay = (ms) => new Promise((r) => setTimeout(r, ms))
 const BITS = { community: 7, post: 6, comment: 5 }
+const ATOMIC_CAPABILITIES = { atomicCommit: { schema: 1, method: 'POST', route: '/api/sync/commit', enabled: true, durable: true, cas: true, idempotent: true, idempotency: { mode: 'bounded', latestPerOutbox: true, hotReceiptsPerOutbox: 16, tombstonesPerOutbox: 64, aggregateEntries: 1024, extraHistoryEntries: 1000 } }, legacyWrites: { create: false, append: false } }
+function signedWriterRelays (bases) { const origins = bases.map((base) => new URL(base).origin); const topologyId = 'test-signed-roster|' + bases.join('|'); return bases.map((apiBase, rosterIndex) => ({ apiBase, apiToken: 't', ready: true, atomicCommit: true, capabilities: ATOMIC_CAPABILITIES, canonicalOrigin: origins[rosterIndex], rosterVerified: true, rosterStable: true, rosterIndex, topologyId, rosterOrigins: origins, rosterSize: origins.length })) }
 function mem () { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), clear: () => m.clear() } }
 async function until (fn, { tries = 200, gap = 60 } = {}) { for (let i = 0; i < tries; i++) { if (await fn()) return true; await delay(gap) } return false }
 
@@ -29,7 +31,7 @@ async function until (fn, { tries = 200, gap = 60 } = {}) { for (let i = 0; i < 
 function makeMultiWorld (bases) {
   const relays = new Map(bases.map((b) => [new URL(b).host, { groups: new Map() }]))
   const channels = new Map(); let chanSeq = 0
-  const ensureGroup = (store, appId) => { if (!store.has(appId)) store.set(appId, { inviteKey: randomBytes(32).toString('hex'), rows: new Map(), version: 0 }); return store.get(appId) }
+  const ensureGroup = (store, appId) => { if (!store.has(appId)) store.set(appId, { inviteKey: randomBytes(32).toString('hex'), rows: new Map(), version: 0, commits: new Map() }); return store.get(appId) }
   const sortedRows = (g) => [...g.rows.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => ({ key, value }))
   const deliver = (channelId, msg) => { const c = channels.get(channelId); if (!c || !c.es || !c.es.onmessage) return; setTimeout(() => { try { c.es.onmessage({ data: JSON.stringify(msg) }) } catch {} }, 0) }
   const linkPeers = (channelId) => {
@@ -48,6 +50,30 @@ function makeMultiWorld (bases) {
     if (p === '/api/sync/create') { const g = ensureGroup(store, body.appId); return response({ appId: body.appId, inviteKey: g.inviteKey, writerPublicKey: body.appId }) }
     if (p === '/api/sync/join') { const g = ensureGroup(store, body.appId); return response({ appId: body.appId, inviteKey: g.inviteKey, writerPublicKey: body.appId }) }
     if (p === '/api/sync/append') { const g = ensureGroup(store, body.appId); const op = body.op; g.rows.set(op.type.replace(':', '!') + '!' + op.data.id, op.data); g.version++; return response({ ok: true }) }
+    if (p === '/api/sync/commit') {
+      const commit = body.commit
+      const g = ensureGroup(store, body.appId)
+      const duplicate = g.commits.get(commit.commitId)
+      if (duplicate) return response(duplicate)
+      const current = g.rows.get(keys.head(body.appId))
+      const currentVersion = current ? (current.version | 0) : 0
+      const currentRoot = current ? current.root : commit.expected.root
+      if (commit.expected.version !== currentVersion || commit.expected.root !== currentRoot) return response({ error: 'stale compare-and-swap', code: 'COMMIT_CAS_MISMATCH' }, 409)
+      for (const op of commit.mutations) g.rows.set(op.type.replace(':', '!') + '!' + op.data.id, op.data)
+      g.rows.set(keys.head(body.appId), commit.head.data)
+      g.version++
+      const receipt = {
+        ok: true,
+        durable: true,
+        commitId: commit.commitId,
+        appId: body.appId,
+        inviteKey: g.inviteKey,
+        head: { version: commit.head.data.version, count: commit.head.data.count, root: commit.head.data.root },
+        relayVersion: g.version
+      }
+      g.commits.set(commit.commitId, receipt)
+      return response(receipt)
+    }
     if (p === '/api/sync/heads') { const out = {}; for (const a of (body.appIds || [])) { const g = store.get(a); out[a] = g ? g.version : 0 }; return response({ heads: out }) }
     if (p === '/api/sync/get') { const g = ensureGroup(store, u.searchParams.get('appId')); return response(g.rows.get(u.searchParams.get('key')) || null) }
     if (p === '/api/sync/list' || p === '/api/sync/range') {
@@ -57,6 +83,11 @@ function makeMultiWorld (bases) {
       return response(rows.slice(0, Number(u.searchParams.get('limit')) || 100))
     }
     if (p === '/api/sync/status') { const g = ensureGroup(store, u.searchParams.get('appId')); return response({ appId: u.searchParams.get('appId'), inviteKey: g.inviteKey, writerCount: 1, viewLength: g.rows.size }) }
+    if (p === '/api/directory') {
+      const heads = {}
+      for (const [appId, g] of store) { const head = g.rows.get(keys.head(appId)); if (head) heads[appId] = head }
+      return response({ heads, hasMore: false, nextCursor: null })
+    }
     if (p === '/api/swarm/join') { const id = 'ch-' + (++chanSeq); channels.set(id, { topic: body.topicHex || 'default', es: null, linked: new Set() }); return response({ channelId: id, topicHex: body.topicHex || 'default', protocol: body.protocol, version: body.version, tier: 'A' }) }
     if (p === '/api/swarm/send') { deliver(body.peerId, { type: 'message', peerId: body.channelId, data: body.data }); return response({ ok: true }) }
     if (p === '/api/swarm/leave') { channels.delete(body.channelId); return response({ ok: true }) }
@@ -69,7 +100,7 @@ function makeMultiWorld (bases) {
 
 async function makeClient (world, bases, name, { writeHead = false, pollMs = 250 } = {}) {
   const id = new DevIdentity(mem(), mem()); await id.ready(); await id.createUser(name)
-  const pool = createRelayPool({ relays: bases.map((b) => ({ apiBase: b, apiToken: 't' })), fetch: world.fetch, EventSource: world.EventSource })
+  const pool = createRelayPool({ relays: signedWriterRelays(bases), fetch: world.fetch, EventSource: world.EventSource })
   const sync = createSync({ getMe: () => id.me().pubkey, identity: id, pear: pool, validate: makeValidator(BITS), pollMs, writeHead })
   await sync.ready()
   return { id, sync, data: createData(sync, id, { minBits: BITS }), pub: id.me().pubkey, name, pool }

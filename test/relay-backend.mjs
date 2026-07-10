@@ -121,3 +121,15 @@ test('probeRelayBackend: a hanging relay is bounded by timeoutMs (never stalls t
   assert.deepStrictEqual(res, { ok: false, service: null, ready: false })
   assert.ok(Date.now() - started < 2000, 'probe returned promptly via its internal timeout')
 })
+
+test('probeRelayBackend: a hanging response body is also bounded', async () => {
+  const started = Date.now()
+  const res = await probeRelayBackend({
+    apiBase: 'https://relay.example',
+    apiToken: 'tok',
+    timeoutMs: 30,
+    fetch: async () => ({ ok: true, status: 200, text: async () => new Promise(() => {}) })
+  })
+  assert.deepStrictEqual(res, { ok: false, service: null, ready: false })
+  assert.ok(Date.now() - started < 2000, 'probe body timeout returned promptly')
+})

@@ -20,7 +20,11 @@ import { keys } from '../js/model.js'
 let passed = 0
 const ok = (c, m) => { assert.ok(c, m); passed++; console.log('  ✓ ' + m) }
 const BITS = { community: 4, post: 4, vote: 4, comment: 4, profile: 4, modaction: 4, head: 4 }
-const validate = makeValidator(BITS)
+// This suite intentionally exercises historical record shapes. Grandfather
+// only the exact locally signed fixture bytes, mirroring production's frozen set.
+const legacyContentSignatures = new Set()
+const legacyActionSignatures = { comment: new Set(), vote: new Set(), modaction: new Set() }
+const validate = makeValidator(BITS, { legacyContentSignatures, legacyActionSignatures })
 const CLEAR = new Set(['createdAt', 'ts', 'editedAt', 'deleted', 'slug']) // stay cleartext (LWW + name, leak anyway)
 
 // Build a signed SEALED v2 record exactly as data.js's v2 write path will.
@@ -33,6 +37,8 @@ async function mkV2 (t, fields, kp, opts = {}) {
   data.pow = await mint(t, data, BITS[t] || 0)
   data._sig = opts.badSig ? '00'.repeat(32) : await sign(kp.seedHex, `pear.app.${kp.pubHex}:peerit:` + canonical('v2', data))
   data._k = opts.k || kp.pubHex; data._dk = kp.pubHex; data._ns = 'peerit'; data._alg = 'ed25519'
+  if (!opts.badSig && (t === 'post' || t === 'comment')) legacyContentSignatures.add(data._sig)
+  if (!opts.badSig && legacyActionSignatures[t]) legacyActionSignatures[t].add(data._sig)
   return { key: opts.key || wireKey, val: data }
 }
 async function mkV1 (t, fields, kp) { // minimal legacy record for the dual-read check
@@ -40,6 +46,7 @@ async function mkV1 (t, fields, kp) { // minimal legacy record for the dual-read
   data.pow = await mint(t, data, BITS[t] || 0)
   data._sig = await sign(kp.seedHex, `pear.app.${kp.pubHex}:peerit:` + canonical(t, data))
   data._k = kp.pubHex; data._dk = kp.pubHex; data._ns = 'peerit'; data._alg = 'ed25519'
+  if (t === 'post' || t === 'comment') legacyContentSignatures.add(data._sig)
   return { key: t === 'post' ? keys.post(fields.community, fields.cid) : keys.profile(fields.author), val: data }
 }
 const box = (kp, ...recs) => ({ pub: kp.pubHex, view: Object.fromEntries(recs.map(r => [r.key, r.val])) })

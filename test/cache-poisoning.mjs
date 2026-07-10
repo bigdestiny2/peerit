@@ -24,6 +24,8 @@ import { makeValidator, mint } from '../js/pow.js'
 let passed = 0
 const ok = (c, m) => { assert.ok(c, m); passed++; console.log('  ✓ ' + m) }
 const BITS = { community: 6, post: 5 }
+const legacyContentSignatures = new Set()
+const fixtureValidator = () => makeValidator(BITS, { legacyContentSignatures })
 const CACHE_KEY = 'peerit:gossip-view'
 
 function mem () {
@@ -78,6 +80,7 @@ function rememberingPear () {
 async function powSign (id, type, data) {
   data.pow = await mint(type, data, BITS[type] || 0)
   const s = await id.sign(canonical(type, data))
+  if (type === 'post' || type === 'comment') legacyContentSignatures.add(s.signature)
   return { ...data, _sig: s.signature, _k: s.publicKey, _dk: s.driveKey, _ns: s.namespace, _alg: s.algorithm }
 }
 
@@ -88,7 +91,7 @@ async function main () {
   const world = rememberingPear()
   const authorId = new DevIdentity(mem(), mem()); await authorId.ready(); await authorId.createUser('author')
   const authorPub = authorId.me().pubkey
-  const author = new BridgeGossipSync({ pear: world, getMe: () => authorPub, identity: authorId, storage: mem(), validate: makeValidator(BITS), pollMs: 0 })
+  const author = new BridgeGossipSync({ pear: world, getMe: () => authorPub, identity: authorId, storage: mem(), validate: fixtureValidator(), pollMs: 0 })
   await author.ready()
   const comm = await powSign(authorId, 'community', { id: 'p2p', slug: 'p2p', title: 'P2P', description: 'd', creator: authorPub, author: authorPub, createdAt: 1, updatedAt: 1 })
   const post = await powSign(authorId, 'post', { id: 'p2p!hello', cid: 'hello', community: 'p2p', kind: 'text', title: 'hello world', body: 'still here after the wipe', url: '', author: authorPub, createdAt: 2, editedAt: 0, deleted: false })
@@ -99,7 +102,7 @@ async function main () {
   // ---- prime a reader's device cache from the healthy relay ----
   const readerId = new DevIdentity(mem(), mem()); await readerId.ready(); await readerId.createUser('reader')
   const device = mem() // the phone
-  const live = new BridgeGossipSync({ pear: world, getMe: () => readerId.me().pubkey, identity: readerId, storage: device, validate: makeValidator(BITS), pollMs: 0, seedOutboxes })
+  const live = new BridgeGossipSync({ pear: world, getMe: () => readerId.me().pubkey, identity: readerId, storage: device, validate: fixtureValidator(), pollMs: 0, seedOutboxes })
   await live.ready()
   await live._refresh()
   ok((await live.list('post!')).length === 1, 'reader synced the post from the healthy relay')
@@ -108,14 +111,14 @@ async function main () {
 
   // ---- 1. THE WIPE: same device reconciles against a relay that forgot everything ----
   const wiped = rememberingPear() // ensure() serves 200-with-empty-rows for every appId
-  const afterWipe = new BridgeGossipSync({ pear: wiped, getMe: () => readerId.me().pubkey, identity: readerId, storage: device, validate: makeValidator(BITS), pollMs: 0, seedOutboxes })
+  const afterWipe = new BridgeGossipSync({ pear: wiped, getMe: () => readerId.me().pubkey, identity: readerId, storage: device, validate: fixtureValidator(), pollMs: 0, seedOutboxes })
   await afterWipe.ready()
   await afterWipe._refresh()
   ok(cachedViewHasRows(device), 'wipe reconcile did NOT poison the persisted cache (rows kept)')
   ok(device.getItem(CACHE_KEY) === goodBlob, 'persisted blob is byte-identical to the pre-wipe view (empty never overwrites non-empty)')
 
   // ---- 2. next boot on the same device (relay still empty): stale, never empty ----
-  const nextBoot = new BridgeGossipSync({ pear: wiped, getMe: () => readerId.me().pubkey, identity: readerId, storage: device, validate: makeValidator(BITS), pollMs: 0, seedOutboxes, instantBoot: true })
+  const nextBoot = new BridgeGossipSync({ pear: wiped, getMe: () => readerId.me().pubkey, identity: readerId, storage: device, validate: fixtureValidator(), pollMs: 0, seedOutboxes, instantBoot: true })
   await nextBoot.ready()
   const rows = await nextBoot.list('post!')
   ok(rows.length === 1 && rows[0].value.body === 'still here after the wipe', 'next boot renders the STALE view, not an empty feed')
@@ -131,7 +134,7 @@ async function main () {
   ok(!cachedViewHasRows(poisoned), 'cachedViewHasRows treats the poisoned (rowless) blob as NO usable cache')
   const snapshot = { authors: [{ pub: authorPub, rows: world.groups.get(authorPub) ? [...world.groups.get(authorPub).rows.entries()].map(([key, value]) => ({ key, value })) : [] }] }
   const victimId = new DevIdentity(mem(), mem()); await victimId.ready(); await victimId.createUser('victim')
-  const healed = new BridgeGossipSync({ pear: wiped, getMe: () => victimId.me().pubkey, identity: victimId, storage: poisoned, validate: makeValidator(BITS), pollMs: 0, seedOutboxes, instantBoot: true, seedSnapshot: snapshot })
+  const healed = new BridgeGossipSync({ pear: wiped, getMe: () => victimId.me().pubkey, identity: victimId, storage: poisoned, validate: fixtureValidator(), pollMs: 0, seedOutboxes, instantBoot: true, seedSnapshot: snapshot })
   await healed.ready()
   const healedRows = await healed.list('post!')
   ok(healedRows.length === 1 && healedRows[0].value.title === 'hello world', 'poisoned device renders the seed snapshot (empty cache did not suppress the floor)')

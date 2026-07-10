@@ -1,4 +1,21 @@
-# Phase 1 — your VPS as the PRIMARY relay + a real 2-relay signed roster
+# Legacy read-only relay recipe — not a writable Peerit backend
+
+> **STOP before using this for a public writer.** This directory launches the
+> older bespoke `peerit-relay` memory/snapshot service. It does not implement
+> Peerit's durable atomic `POST /api/sync/commit` contract, two-receipt quorum,
+> exclusive JSONL ownership, or the writable-candidate capability descriptor.
+> It is acceptable only as a read-only/legacy reference and must never appear in
+> a writable signed roster.
+
+The live signed release is currently sequence 1, `readonly:true`, with one
+bootstrap relay. The historical notes below do **not** describe current
+production state. Writable cutover instead requires two independently operated
+HiveRelay OutboxLog instances that pass `npm run proof:writable-candidate`, the
+two-relay atomic soak, the shared-NAT rate-limit gate, full signed-census repair,
+and the prepare → external sign → verify-only release flow documented in
+[`../../docs/WEB-DEPLOYMENT.md`](../../docs/WEB-DEPLOYMENT.md).
+
+## Historical Phase 1 notes (read-only only)
 
 This is the smallest, highest-leverage decentralization step from
 [`../../docs/HIVERELAY-OUTBOXLOG-PLAN.md`](../../docs/HIVERELAY-OUTBOXLOG-PLAN.md):
@@ -8,10 +25,9 @@ with your VPS as relay #1. The instant the roster lists two reachable relays,
 so seizing or lying with one relay no longer controls what a client sees. No
 HiveRelay code required; it's a deploy + a re-sign + a rebuild.
 
-The repo side is already done: [`../web-release.json`](../web-release.json) now
-lists `https://153-75-89-206.sslip.io` (your VPS, **primary**) and the Render relay
-(#2). Relay order = pool order = primary, and boot skips an unreachable relay, so
-if the VPS is down at load the client falls back to Render automatically.
+The old experiment expected a VPS plus Render relay. Do not infer that those
+origins are currently reachable, synchronized, signed, or writer-capable from
+this document; [`../web-release.json`](../web-release.json) is the source of truth.
 
 ---
 

@@ -17,6 +17,7 @@ import { DevIdentity } from '../js/identity.js'
 import { createData } from '../js/data.js'
 import { mergeOutboxes } from '../js/gossip.js'
 import { ready as cryptoReady } from '../js/crypto.js'
+import { CONTENT_PROTOCOL, TYPE, contentId } from '../js/model.js'
 
 let passed = 0
 const ok = (c, m) => { assert.ok(c, m); passed++; console.log('  ✓ ' + m) }
@@ -37,8 +38,9 @@ async function main () {
   await cryptoReady()
 
   console.log('\n— v2 target binds to stable id (not only type+time) —')
-  const a = { id: 'okey-aaa', createdAt: 1000, community: 'p2p', cid: 'c1', author: 'aa', body: 'one' }
-  const b = { id: 'okey-bbb', createdAt: 1000, community: 'p2p', cid: 'c2', author: 'aa', body: 'two' }
+  const author = 'aa'.repeat(32)
+  const a = { id: 'okey-aaa', createdAt: 1000, community: 'p2p', protocol: CONTENT_PROTOCOL, contentNonce: 'pow-a', cid: await contentId(TYPE.POST, author, 'pow-a'), author, body: 'one' }
+  const b = { id: 'okey-bbb', createdAt: 1000, community: 'p2p', protocol: CONTENT_PROTOCOL, contentNonce: 'pow-b', cid: await contentId(TYPE.POST, author, 'pow-b'), author, body: 'two' }
   ok(powTargetV2('post', a) !== powTargetV2('post', b),
     'two posts same createdAt ms with different ids get different v2 targets')
   ok(powTargetV2('post', a) === 'v2|okey-aaa|post|1000',
@@ -93,7 +95,7 @@ async function main () {
   const validate = makeValidator(BITS)
   ok(await validate('post', rec) === true, 'makeValidator admits matching v2 proof')
   ok(await validate('post', stapled) === false, 'makeValidator rejects stapled v2 proof')
-  ok(await validate('post', legacyRec) === true, 'makeValidator dual-accepts legacy')
+  ok(await validate('post', legacyRec) === false, 'makeValidator rejects an unpinned legacy shape even when its legacy PoW verifies')
   ok(await validate('post', { ...legacyRec, sealed: 'opaque-v2-ciphertext' }) === false,
     'makeValidator rejects a legacy proof replayed onto the sealed v2 wire form')
 

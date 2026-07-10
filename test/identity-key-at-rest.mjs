@@ -106,11 +106,11 @@ async function main () {
     ok(id.currentSeedEntry() && HEX64.test(id.currentSeedEntry().seed), 'and the persisted dev identity carries a seed')
   }
 
-  console.log('\n— resolveRuntime: web mode NEVER persists the seed; only the local dev fallback opts in —')
+  console.log('\n— resolveRuntime: web mode never enables the cleartext DevIdentity roster; only local dev opts in —')
   {
     const web = resolveRuntime({ rawPear: null, doc: doc({ 'peerit-relay': 'https://relay.peerit.site' }) })
     ok(web.mode === 'web' && web.identityOpts.forceDev === true, 'relay meta with no host bridge → web mode with forceDev identity')
-    ok(web.identityOpts.persistSeed !== true, 'web mode does NOT set persistSeed → the production seed stays in memory')
+    ok(web.identityOpts.persistSeed !== true, 'web mode does NOT enable the cleartext seed roster (app durability uses encrypted IndexedDB separately)')
 
     const dev = resolveRuntime({ rawPear: null, doc: doc({}) })
     ok(dev.mode === 'dev' && dev.identityOpts.persistSeed === true, 'the local dev fallback opts into persistSeed (own-machine convenience)')

@@ -4,7 +4,7 @@
 // instances rebuilt from the SAME file-backed store, and asserts:
 //   • STABLE AUTHOR — a persisted identity store yields the same pubkey every run
 //     (no fresh claimant → no sticky-community-claim churn on r/p2p, r/worldcup);
-//   • IDEMPOTENT POSTS — deterministic cids overwrite in place, so a second run adds
+//   • IDEMPOTENT POSTS — deterministic v3 nonces reproduce author-bound CIDs, so a second run adds
 //     ZERO duplicate post records (the outbox holds exactly the seed set);
 //   • COMMUNITY REUSE — createCommunity's "already exists" is caught, one record each.
 // This is the revert-proof guard for the reseed: run it, then fire seed-author.mjs.
@@ -35,12 +35,12 @@ function fileStore (path) {
 const BITS = { community: 4, post: 4, comment: 4 } // tiny PoW → fast
 const SEED_POSTS = Object.values(SEED).reduce((n, c) => n + c.posts.length, 0)
 const SEED_COMMS = Object.keys(SEED).length
-const allCids = Object.values(SEED).flatMap(c => c.posts.map(p => p.cid))
+const allSeeds = Object.values(SEED).flatMap(c => c.posts.map(p => p.seed))
 
 // One "run" of the repopulate: rebuild the identity from the persisted store and the
 // outbox from the shared storage (exactly what invoking the script twice would do).
 async function run (idStorePath, outboxStorage) {
-  const id = new DevIdentity(fileStore(idStorePath), mem())
+  const id = new DevIdentity(fileStore(idStorePath), mem(), { persistSeed: true })
   await id.ready()
   const sync = new DevSync(outboxStorage, 'seed-idem')
   await sync.ready()
@@ -72,26 +72,27 @@ async function main () {
   const r2 = await run(idStorePath, outboxStorage)
   ok(r2.author === r1.author, 'STABLE AUTHOR — a persisted identity store yields the same pubkey on re-run (no fresh claimant)')
   ok(r2.res.communities === 0, 'run 2 creates NO new community (createCommunity "already exists" is caught)')
-  ok(r2.res.posts === SEED_POSTS, 'run 2 re-submits the same post set (same deterministic cids)')
+  ok(r2.res.posts === SEED_POSTS, 'run 2 re-submits the same post set (same deterministic v3 nonces)')
 
   const p2 = await countPosts(r2.data)
   ok(p2.length === SEED_POSTS, `IDEMPOTENT — outbox STILL holds exactly ${SEED_POSTS} posts after run 2 (zero duplicates)`)
   ok((await r2.data.listCommunities()).length === SEED_COMMS, `still exactly ${SEED_COMMS} communities after run 2 (no duplicate claim)`)
 
-  // every deterministic cid is present exactly once, at its own key
-  for (const cid of allCids) {
-    const slug = Object.keys(SEED).find(s => SEED[s].posts.some(p => p.cid === cid))
-    const hits = p2.filter(p => p.cid === cid)
-    ok(hits.length === 1 && hits[0].id === mkid.post(slug, cid), `cid "${cid}" appears exactly once at its deterministic key (${mkid.post(slug, cid)})`)
+  // every deterministic nonce is present exactly once at its derived CID/key
+  for (const seed of allSeeds) {
+    const slug = Object.keys(SEED).find(s => SEED[s].posts.some(p => p.seed === seed))
+    const hits = p2.filter(p => p.contentNonce === seed)
+    const cid = hits[0] && hits[0].cid
+    ok(hits.length === 1 && hits[0].id === mkid.post(slug, cid), `seed "${seed}" appears exactly once at its derived key (${mkid.post(slug, cid)})`)
   }
 
-  // control: a NON-deterministic post (no cid) WOULD duplicate — proves the guard is real
-  console.log('\n— control: without a fixed cid, a re-submit duplicates —')
+  // control: a random-nonce post WOULD duplicate — proves the guard is real
+  console.log('\n— control: without a fixed nonce, a re-submit duplicates —')
   const before = (await r2.data.listPostsIn('p2p', { hydrate: false })).length
   await r2.data.submitPost({ community: 'p2p', kind: 'text', title: 'ad-hoc', body: 'no fixed cid' })
   await r2.data.submitPost({ community: 'p2p', kind: 'text', title: 'ad-hoc', body: 'no fixed cid' })
   const after = (await r2.data.listPostsIn('p2p', { hydrate: false })).length
-  ok(after === before + 2, 'two cid-less posts create two records — so idempotency above is due to the fixed cids, not a no-op')
+  ok(after === before + 2, 'two random-nonce posts create two records — idempotency above is due to the fixed v3 nonce, not a no-op')
 
   console.log(`\n✅ all ${passed} seed-idempotency checks passed`)
 }

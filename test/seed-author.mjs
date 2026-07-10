@@ -10,7 +10,8 @@
 //  • the author identity is PERSISTED to .seed-author-store.json (gitignored, holds
 //    the secret seed) — so every run is the SAME author, never a fresh claimant. This
 //    kills the sticky-community-claim churn (r/p2p/worldcup always owned by this key).
-//  • each seed post uses a DETERMINISTIC cid, so a re-run overwrites the same post key
+//  • each seed post uses a DETERMINISTIC protocol-v3 nonce, so its author-bound CID
+//    is recomputed identically and a re-run overwrites the same post key
 //    (LWW) instead of creating duplicates. Run it as many times as you like.
 // PREREQUISITE before firing: confirm the relay's PEERIT_RELAY_PERSIST disk actually
 // survives restarts — otherwise the reseed gets wiped on the next recycle.
@@ -27,24 +28,24 @@ import { fileURLToPath } from 'node:url'
 const RELAY = process.env.RELAY || 'https://peerit-relay.onrender.com'
 const STORE_PATH = process.env.SEED_STORE || fileURLToPath(new URL('../.seed-author-store.json', import.meta.url))
 
-// The canonical seed content. Deterministic cids → idempotent re-runs.
+// The canonical seed content. Deterministic nonces → idempotent author-bound CIDs.
 export const SEED = {
   p2p: {
     title: 'P2P',
     description: 'The peer-to-peer stack — apps, browsers, and infrastructure with no servers. Announcements & discussion.',
     posts: [
-      { cid: 'seed-peerit', title: 'Announcing peerit — a peer-to-peer Reddit', body: 'Communities, posts, comments and votes live in per-user signed outboxes that replicate directly between peers — no servers, no database to seize. Run it in PearBrowser for pure P2P, or open peerit.site in any normal browser. Every record is verified in your own browser, so a relay can carry data but can never forge or tamper.' },
-      { cid: 'seed-pearbrowser', title: 'Announcing Pear Browser — the browser for the P2P web', body: 'Browse hyper:// sites, run pear:// apps, and publish your own — no app store gatekeepers. Sites are plain folders served over Hyperdrive and pinned 24/7 by HiveRelay. peerit itself runs as a Pear site inside it.' },
-      { cid: 'seed-hiverelay', title: 'Announcing HiveRelay — always-on availability for P2P apps', body: 'A blind-encrypted seeding + multi-region relay backbone that keeps P2P apps and their data online even when authors are offline. Operators are paid in Lightning sats. This is what keeps peerit.site reachable from a normal browser.' },
-      { cid: 'seed-whatsnew', title: "What's new: encrypted-at-rest bodies + Follow", body: 'Long post/comment bodies are now boxed — stored as opaque ciphertext the relay holds but never reads (a step toward the operator serving nothing). You can also follow authors from their profile and read a Following feed. Push notifications and full erasure-coded dispersal are on the way.' }
+      { seed: 'seed-peerit', title: 'Announcing peerit — a peer-to-peer Reddit', body: 'Communities, posts, comments and votes live in per-user signed outboxes that replicate directly between peers — no servers, no database to seize. Run it in PearBrowser for pure P2P, or open peerit.site in any normal browser. Every record is verified in your own browser, so a relay can carry data but can never forge or tamper.' },
+      { seed: 'seed-pearbrowser', title: 'Announcing Pear Browser — the browser for the P2P web', body: 'Browse hyper:// sites, run pear:// apps, and publish your own — no app store gatekeepers. Sites are plain folders served over Hyperdrive and pinned 24/7 by HiveRelay. peerit itself runs as a Pear site inside it.' },
+      { seed: 'seed-hiverelay', title: 'Announcing HiveRelay — always-on availability for P2P apps', body: 'A blind-encrypted seeding + multi-region relay backbone that keeps P2P apps and their data online even when authors are offline. Operators are paid in Lightning sats. This is what keeps peerit.site reachable from a normal browser.' },
+      { seed: 'seed-whatsnew', title: "What's new: encrypted-at-rest bodies + Follow", body: 'Long post/comment bodies are now boxed — stored as opaque ciphertext the relay holds but never reads (a step toward the operator serving nothing). You can also follow authors from their profile and read a Following feed. Push notifications and full erasure-coded dispersal are on the way.' }
     ]
   },
   worldcup: {
     title: 'World Cup',
     description: 'Match threads, reactions, and debate.',
     posts: [
-      { cid: 'seed-semis', title: 'Semi-finals are set — who reaches the final?', body: 'Both semi-finals of the knockout round are locked in. Drop your predictions: who goes through to the final, and who bows out at the last four? Tactical takes welcome.' },
-      { cid: 'seed-semi2', title: 'Semi-final 2: live match thread', body: 'Reactions for the second semi-final here. Who is looking sharp, who is parking the bus, and is this heading to extra time? Keep it in one thread.' }
+      { seed: 'seed-semis', title: 'Semi-finals are set — who reaches the final?', body: 'Both semi-finals of the knockout round are locked in. Drop your predictions: who goes through to the final, and who bows out at the last four? Tactical takes welcome.' },
+      { seed: 'seed-semi2', title: 'Semi-final 2: live match thread', body: 'Reactions for the second semi-final here. Who is looking sharp, who is parking the bus, and is this heading to extra time? Keep it in one thread.' }
     ]
   }
 }
@@ -71,7 +72,7 @@ export async function seedContent (data, { log = () => {} } = {}) {
     try { await withRetry(() => data.createCommunity({ slug, title: comm.title, description: comm.description }), log); communities++; log('created r/' + slug) }
     catch (e) { if (/already exists/.test(e.message || '')) log('r/' + slug + ' exists — reusing'); else throw e }
     for (const p of comm.posts) {
-      const r = await withRetry(() => data.submitPost({ community: slug, kind: 'text', title: p.title, body: p.body, cid: p.cid }), log)
+      const r = await withRetry(() => data.submitPost({ community: slug, kind: 'text', title: p.title, body: p.body, seed: p.seed }), log)
       posts++; log('  r/' + slug + '/' + r.cid, '—', p.title.slice(0, 42))
     }
   }

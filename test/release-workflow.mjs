@@ -107,7 +107,16 @@ async function main () {
     'js/dht-transport.js',
     'js/crypto.js',
     'config/seed-snapshot.json',
-    'deploy/web-release.json'
+    'deploy/web-release.json',
+    'deploy/CAPACITY.md',
+    'deploy/peerit-relay/Caddyfile',
+    'deploy/peerit-relay/README.md',
+    'deploy/peerit-relay/docker-compose.yml',
+    'docs/PROTOCOL-V3-CONTENT-IDENTITY.md',
+    'scripts/audit-live-legacy-actions.mjs',
+    'scripts/local-writable-two-relay.mjs',
+    'scripts/soak-atomic-two-relay.mjs',
+    'test/seed-idempotency.mjs'
   ]) assert.ok(closure.includes(required), `release input closure includes ${required}`)
   assert.equal(closure.some((file) => file.startsWith('docs/diagrams/')), false, 'unrelated diagrams are outside the release cleanliness gate')
   const buildInputDirty = filterReleaseDirtyLines([
@@ -160,15 +169,16 @@ async function main () {
   assert.throws(() => validatePendingPublishEvidence({ ...pending, publishReportSha256: sha256(weakBytes) }, weakBytes), /durable full-blob evidence/)
   console.log('✓ resume rejects byte-tampered, minimal, or non-durable publish reports')
 
-  console.log('\n— live-only read-only preflights —')
+  console.log('\n— mode-specific live preflights —')
   const offlineCalls = []
   assert.deepEqual(await runReadonlyLivePreflights({ publish: false, readonly: true, relay: 'https://relay.invalid', runStep: async (step) => offlineCalls.push(step) }), [])
   assert.equal(offlineCalls.length, 0, 'offline ship:check runs no live audit')
   const liveCalls = []
-  assert.deepEqual(await runReadonlyLivePreflights({ publish: true, readonly: true, relay: 'https://relay.invalid', runStep: async (step) => liveCalls.push(step) }), ['production-readonly', 'live-legacy-pow'])
+  assert.deepEqual(await runReadonlyLivePreflights({ publish: true, readonly: true, relay: 'https://relay.invalid', runStep: async (step) => liveCalls.push(step) }), ['production-readonly', 'live-legacy-pow', 'live-legacy-actions'])
   assert.deepEqual(liveCalls.map((step) => [step.cmd, ...step.args]), [
     ['node', 'scripts/verify-production-readonly.mjs'],
-    ['npm', 'run', 'audit:live-legacy-pow']
+    ['npm', 'run', 'audit:live-legacy-pow'],
+    ['npm', 'run', 'audit:live-legacy-actions']
   ])
   await assert.rejects(
     runReadonlyLivePreflights({
@@ -179,7 +189,37 @@ async function main () {
     }),
     /live-legacy-pow preflight failed/
   )
-  console.log('✓ ship:live requires the read-only edge proof + legacy-PoW audit; ship:check stays offline')
+  await assert.rejects(
+    runReadonlyLivePreflights({
+      publish: true,
+      readonly: true,
+      relay: 'https://relay.invalid',
+      runStep: async (step) => { if (step.id === 'live-legacy-actions') throw new Error('inventory drift') }
+    }),
+    /live-legacy-actions preflight failed/
+  )
+  const writableCalls = []
+  assert.deepEqual(await runReadonlyLivePreflights({
+    publish: true,
+    readonly: false,
+    relay: 'https://relay.invalid',
+    runStep: async (step) => writableCalls.push(step)
+  }), ['writable-candidate', 'live-legacy-actions'])
+  assert.deepEqual(writableCalls.map((step) => [step.cmd, ...step.args]), [
+    ['node', 'scripts/verify-writable-candidate.mjs'],
+    ['npm', 'run', 'audit:live-legacy-actions']
+  ])
+  assert.equal(writableCalls[1].env.PEERIT_RELAY, 'https://relay.invalid')
+  await assert.rejects(
+    runReadonlyLivePreflights({
+      publish: true,
+      readonly: false,
+      relay: 'https://relay.invalid',
+      runStep: async () => { throw new Error('capability missing') }
+    }),
+    /writable-candidate preflight failed/
+  )
+  console.log('✓ ship:live requires read-only containment or the writable atomic-capability proof; ship:check stays offline')
 
   console.log('\n— build once → external sign → verify only —')
   const { parent, fixture } = copyFixture()

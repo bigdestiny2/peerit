@@ -1,6 +1,7 @@
-# peerit-relay on your VPS as the PRIMARY untrusted relay (Phase 1 of
-# docs/HIVERELAY-OUTBOXLOG-PLAN.md). Caddy terminates TLS (auto Let's Encrypt for
-# the sslip.io host that resolves to this box) and reverse-proxies to peerit-relay.
+# LEGACY READ-ONLY RECIPE. Do not use this bespoke memory/snapshot service in a
+# writable signed roster: it lacks Peerit's durable atomic-commit/quorum contract.
+# See README.md and docs/WEB-DEPLOYMENT.md for the HiveRelay OutboxLog cutover gate.
+# Caddy terminates TLS and reverse-proxies to the legacy peerit-relay service.
 #
 # The relay is UNTRUSTED by construction: it stores author-signed records and
 # re-serves them, but holds NO signing key (POST /api/identity → 410) and every

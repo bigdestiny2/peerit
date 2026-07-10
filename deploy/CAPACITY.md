@@ -194,6 +194,19 @@ load-generator/relay process so the evidence records an explicit resource
 ceiling. Local co-location remains diagnostic only; production clearance still
 requires isolated generators and relay hosts.
 
+`npm run launch:readiness` accepts capacity evidence only from a passing
+`peerit-two-relay-atomic-soak` report at
+`reports/soak-atomic-two-relay-staging.json` (or the explicit
+`PEERIT_CAPACITY_REPORT` path). That report must be labelled
+`--environment staging`, exercise the distributed profile with at least 2,000
+clients and one restart, and record a p99 below its own contract. A local report
+cannot satisfy the public-capacity gate merely by reporting a large client count.
+The label is an **operator attestation**, not a topology detector: the checked-in
+harness creates loopback relays and is diagnostic by itself. Apply the staging
+label only to evidence captured by the external orchestration that isolates load
+generators, relay A, and relay B on the intended hosts/disks; retain that
+orchestration and failure-injection evidence alongside the report for review.
+
 ## Pass thresholds (written contract)
 
 A soak run at committed target **M** is **PASS** only if **all** hold:

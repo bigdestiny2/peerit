@@ -8,11 +8,11 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const checks = []
 
 function read (rel) {
-  return fs.readFileSync(path.join(root, rel), 'utf8')
+  return fs.readFileSync(path.isAbsolute(rel) ? rel : path.join(root, rel), 'utf8')
 }
 
 function exists (rel) {
-  return fs.existsSync(path.join(root, rel))
+  return fs.existsSync(path.isAbsolute(rel) ? rel : path.join(root, rel))
 }
 
 function add (name, ok, detail) {
@@ -80,11 +80,29 @@ try {
 }
 
 try {
-  const capacity = loadJson('reports/soak-outboxlog-local-2026-07-09.json')
-  const clients = Number(capacity.clients || (capacity.config && capacity.config.clients) || 0)
-  add('public capacity target measured', clients >= 2000, `${clients || 0} clients measured; public launch gate requires a documented 2,000-client staging run`)
+  const capacityReport = process.env.PEERIT_CAPACITY_REPORT || 'reports/soak-atomic-two-relay-staging.json'
+  const capacity = loadJson(capacityReport)
+  const clients = Number(capacity.options && capacity.options.clients)
+  const p99 = Number(capacity.metrics && capacity.metrics.latencyMs && capacity.metrics.latencyMs.p99)
+  const p99Limit = Number(capacity.options && capacity.options.maxP99Ms)
+  const isPassingAtomicStagingRun =
+    capacity.kind === 'peerit-two-relay-atomic-soak' &&
+    capacity.status === 'pass' &&
+    capacity.options &&
+    capacity.options.environment === 'staging' &&
+    capacity.options.trafficProfile === 'distributed' &&
+    Number(capacity.options.restarts) >= 1 &&
+    clients >= 2000 &&
+    Number.isFinite(p99) &&
+    Number.isFinite(p99Limit) &&
+    p99 < p99Limit
+  add(
+    'public capacity target measured',
+    isPassingAtomicStagingRun,
+    `${capacityReport}: require a passing atomic two-relay staging run with 2,000+ distributed clients, restart recovery, and p99 below its recorded contract`
+  )
 } catch (err) {
-  add('public capacity target measured', false, err.message)
+  add('public capacity target measured', false, `staging atomic capacity evidence missing or invalid: ${err.message}`)
 }
 
 let launchConfig = null

@@ -42,6 +42,7 @@ Options:
   --max-p99-ms <n>        Required end-to-end write p99 ceiling (default: 2000)
   --max-rss-mb <n>        Optional process RSS ceiling; 0 disables the local check (default: 0)
   --traffic-profile <p>   shared-nat or distributed (default: shared-nat)
+  --environment <name>    local or staging evidence scope (default: local)
   --rate-limit-max <n>    Fixture requests per IP/window (default: 1200)
   --rate-limit-window-ms <n> Fixture rate window (default: 60000)
   --disable-rate-limit    Distributed engine isolation only
@@ -69,6 +70,7 @@ function parseArgs (argv) {
       ? Number(process.env.PEERIT_ATOMIC_SOAK_MAX_RSS_MB)
       : 0,
     trafficProfile: process.env.PEERIT_ATOMIC_SOAK_TRAFFIC_PROFILE || 'shared-nat',
+    environment: process.env.PEERIT_ATOMIC_SOAK_ENVIRONMENT || 'local',
     rateLimitMax: positiveInt(process.env.PEERIT_ATOMIC_SOAK_RATE_LIMIT_MAX, 1200, 10_000_000),
     rateLimitWindowMs: positiveInt(process.env.PEERIT_ATOMIC_SOAK_RATE_LIMIT_WINDOW_MS, 60_000, 24 * 60 * 60 * 1000),
     disableRateLimit: process.env.PEERIT_ATOMIC_SOAK_DISABLE_RATE_LIMIT === '1',
@@ -88,6 +90,7 @@ function parseArgs (argv) {
       opts.maxRssMb = Number.isSafeInteger(value) && value >= 0 ? value : 0
     }
     else if (arg === '--traffic-profile') opts.trafficProfile = argv[++i] || ''
+    else if (arg === '--environment') opts.environment = argv[++i] || ''
     else if (arg === '--rate-limit-max') opts.rateLimitMax = positiveInt(argv[++i], 0, 10_000_000)
     else if (arg === '--rate-limit-window-ms') opts.rateLimitWindowMs = positiveInt(argv[++i], 0, 24 * 60 * 60 * 1000)
     else if (arg === '--disable-rate-limit') opts.disableRateLimit = true
@@ -98,6 +101,7 @@ function parseArgs (argv) {
   }
   if (!opts.clients || !opts.iterations || !opts.restarts || !opts.commitTimeoutMs || !opts.maxP99Ms || !opts.rateLimitMax || !opts.rateLimitWindowMs) usage(2, 'numeric load, timeout, latency, and rate-limit options must be positive integers')
   if (!['shared-nat', 'distributed'].includes(opts.trafficProfile)) usage(2, 'traffic-profile must be shared-nat or distributed')
+  if (!['local', 'staging'].includes(opts.environment)) usage(2, 'environment must be local or staging')
   if (opts.disableRateLimit && opts.trafficProfile !== 'distributed') usage(2, 'disable-rate-limit is permitted only with traffic-profile=distributed')
   opts.hiverelayRoot = resolve(ROOT, opts.hiverelayRoot || DEFAULT_HIVERELAY_ROOT)
   if (opts.out) opts.out = resolve(ROOT, opts.out)
@@ -653,6 +657,7 @@ async function run (opts) {
       maxP99Ms: opts.maxP99Ms,
       maxRssMb: opts.maxRssMb || null,
       trafficProfile: opts.trafficProfile,
+      environment: opts.environment,
       httpRateLimit: advertisedRateLimit,
       hiverelayRoot: opts.hiverelayRoot
     },

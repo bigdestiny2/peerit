@@ -202,7 +202,14 @@ drift outside that explicit config change as a publish blocker.
    ```sh
    git add -f web
    git add deploy/web-signing-request.json manifest.json
+   git commit -m "release: prepare signed web candidate"
+   npm run check:web-commit
    ```
+
+   Run `check:web-commit` only after committing the candidate and before
+   creating the static-host deploy. It reads the committed
+   `web/asset-manifest.json` and fails if any signed byte is present locally but
+   absent from that Git tree (which a host such as Render cannot serve).
 
    Render must use
    `node scripts/web-release.mjs --verify-only --strict` as its

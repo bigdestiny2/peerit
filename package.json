@@ -49,6 +49,7 @@
     "web:prepare": "node scripts/web-release.mjs --prepare --strict",
     "web:verify": "node scripts/web-release.mjs --verify-only --strict",
     "web:release": "node scripts/web-release.mjs --verify-only --strict",
+    "check:web-commit": "node scripts/check-web-commit.mjs",
     "launch:readiness": "node scripts/launch-readiness.mjs",
     "launch:seed-plan": "node scripts/launch-seed-plan.mjs",
     "launch:utm": "node scripts/launch-utm.mjs",

@@ -19,14 +19,31 @@
 import { createPearApi } from './pear-api.js'
 import { verifyRecord } from './verify.js'
 import { outboxCensus, censusString } from './canon.js'
-import { hashHex } from './crypto.js'
+import { hashHex, verify as edVerify } from './crypto.js'
 import { keys, TYPE } from './model.js'
-import { canonicalRelayOrigin, hasDurableAtomicCommit } from './relay-roster.js'
+import { canonicalRelayOrigin, hasDurableAtomicCommit, NETWORK_QUORUM_PROTOCOL, NETWORK_QUORUM_VERSION } from './relay-roster.js'
 
 export const COMMIT_REQUEST_TIMEOUT_MS = 8000
 export const COMMIT_EVIDENCE_TIMEOUT_MS = 8000
 const MAX_EVIDENCE_ROWS = 50000
 const EVIDENCE_PAGE_SIZE = 1000
+const HEX64 = /^[0-9a-f]{64}$/i
+const HEX128 = /^[0-9a-f]{128}$/i
+
+function stable (value) {
+  if (value === null) return 'null'
+  if (typeof value === 'string') return JSON.stringify(value)
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value)
+  if (Array.isArray(value)) return '[' + value.map(stable).join(',') + ']'
+  if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) throw new Error('federation receipt is not JSON')
+  return '{' + Object.keys(value).sort().map((key) => JSON.stringify(key) + ':' + stable(value[key])).join(',') + '}'
+}
+
+function federationReceiptMessage (receipt) {
+  const { signature, ...unsigned } = receipt
+  return NETWORK_QUORUM_PROTOCOL + '|receipt|' + stable(unsigned)
+}
 
 // A batch range response is only a transport optimisation, never an authority.
 // Keep its contract exact and capability-gated so an old relay is not pummelled
@@ -48,7 +65,8 @@ function topologyFromEntries (entries) {
     id: first.relay.topologyId,
     size: first.relay.rosterSize,
     origins,
-    validWriterTopology: origins.length >= 2 && origins.every(Boolean) && new Set(origins).size === origins.length
+    validWriterTopology: origins.length >= 2 && origins.every(Boolean) && new Set(origins).size === origins.length,
+    networkQuorum: first.relay.networkQuorum || null
   }
 }
 
@@ -119,10 +137,16 @@ export function createRelayPool ({ relays = [], topology = null, fetch, EventSou
   const signedTopology = topology || topologyFromEntries(entries)
   const rosterEntries = signedRosterEntries(entries, signedTopology)
   const writerEntries = rosterEntries.filter((entry) => entry.exactAtomic)
+  // A single browser ingress may prove durability through independently run
+  // HiveRelay operators. The signed roster pins their public keys; the ingress
+  // status must match that policy before the entry is even considered here.
+  const networkWriterEntries = entries.filter((entry) => entry.exactAtomic && entry.relay && entry.relay.networkQuorum)
+  const networkWriter = networkWriterEntries.length === 1 ? networkWriterEntries[0] : null
   const topologyOriginCount = signedTopology && Array.isArray(signedTopology.origins) ? signedTopology.origins.length : 0
   // Writer readiness is topology-wide. Otherwise a new random appId can hash to
   // an unselected/unready leader after the UI has already advertised writer mode.
-  const atomicCapable = topologyOriginCount >= 2 && writerEntries.length === topologyOriginCount
+  const directAtomicCapable = topologyOriginCount >= 2 && writerEntries.length === topologyOriginCount
+  const atomicCapable = directAtomicCapable || !!networkWriter
   const topologyConsistentReads = !!(signedTopology && signedTopology.verified === true && signedTopology.stable === true && signedTopology.validWriterTopology === true)
 
   async function verifiedHead (appId, head) {
@@ -446,6 +470,38 @@ export function createRelayPool ({ relays = [], topology = null, fetch, EventSou
     return { ...receipt, head, relayVersion }
   }
 
+  async function verifyNetworkDurability (networkDurability, policy, appId, commitId, expectedHead) {
+    if (!networkDurability || typeof networkDurability !== 'object' || Array.isArray(networkDurability) || !policy) return null
+    if (networkDurability.protocol !== NETWORK_QUORUM_PROTOCOL || Number(networkDurability.version) !== NETWORK_QUORUM_VERSION ||
+      Number(networkDurability.requiredRemoteAcks) !== Number(policy.requiredRemoteAcks) || !Array.isArray(networkDurability.receipts)) return null
+    const allowed = new Set((policy.relays || []).map((relay) => relay.publicKey))
+    const seen = new Set()
+    const receipts = []
+    for (const raw of networkDurability.receipts) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+      const fields = Object.keys(raw).sort().join(',')
+      if (fields !== 'appId,commitId,committedAt,head,protocol,relayPubkey,signature,version') return null
+      const relayPubkey = String(raw.relayPubkey || '').toLowerCase()
+      const signature = String(raw.signature || '').toLowerCase()
+      const head = receiptHead(raw)
+      if (!allowed.has(relayPubkey) || seen.has(relayPubkey) || !HEX128.test(signature) ||
+        raw.protocol !== NETWORK_QUORUM_PROTOCOL || Number(raw.version) !== NETWORK_QUORUM_VERSION ||
+        raw.appId !== appId || raw.commitId !== commitId || !head || !matchingReceipt({ commitId, head }, { commitId, head: expectedHead }) ||
+        !Number.isSafeInteger(raw.committedAt) || raw.committedAt < 0) return null
+      if (!(await edVerify(relayPubkey, federationReceiptMessage(raw), signature))) return null
+      seen.add(relayPubkey)
+      receipts.push({ ...raw, relayPubkey, signature, head })
+    }
+    if (receipts.length < Number(policy.requiredRemoteAcks)) return null
+    return {
+      verified: true,
+      protocol: NETWORK_QUORUM_PROTOCOL,
+      version: NETWORK_QUORUM_VERSION,
+      requiredRemoteAcks: Number(policy.requiredRemoteAcks),
+      receipts
+    }
+  }
+
   function isStaleFailure (reason) {
     return !!(reason && (reason.status === 409 || reason.code === 'STALE_CAS' || reason.code === 'COMMIT_CAS_MISMATCH'))
   }
@@ -593,8 +649,42 @@ export function createRelayPool ({ relays = [], topology = null, fetch, EventSou
     })
   }
 
+  // One public Peerit ingress, but no single-relay durability claim. The relay
+  // returns only after independent configured operators signed the exact head;
+  // we verify those signatures against the roster-pinned policy locally.
+  async function networkQuorumCommit (appId, commit) {
+    const commitId = commit && commit.commitId
+    if (!networkWriter || !networkWriter.relay || !networkWriter.relay.networkQuorum) {
+      throw commitError('Peerit network durability quorum is unavailable.', 'COMMIT_NETWORK_QUORUM_UNAVAILABLE', 503)
+    }
+    if (!HEX64.test(String(commitId || ''))) throw commitError('Peerit commitId is invalid.', 'INVALID_COMMIT_ID', 400)
+    let localReceipt
+    try {
+      const controller = new AbortController()
+      localReceipt = durableReceipt(await boundedRelayCommit(networkWriter, appId, commit, controller), appId, commitId)
+    } catch (reason) {
+      if (isStaleFailure(reason)) throw commitError('Peerit commit compare-and-swap is stale at the network ingress.', 'COMMIT_CAS_MISMATCH', 409, [relayFailure(networkWriter, reason)])
+      throw commitError('Peerit network ingress did not durably acknowledge the commit.', 'COMMIT_NETWORK_INGRESS_FAILED', 503, [relayFailure(networkWriter, reason)])
+    }
+    if (!localReceipt) {
+      throw commitError('Peerit network ingress returned an invalid durable receipt.', 'INVALID_COMMIT_RECEIPT', 503, [relayFailure(networkWriter, null, 'INVALID_COMMIT_RECEIPT')])
+    }
+    const verified = await verifyNetworkDurability(localReceipt.networkDurability, networkWriter.relay.networkQuorum, appId, commitId, localReceipt.head)
+    if (!verified) {
+      throw commitError('Peerit network ingress did not return enough valid independent durability receipts.', 'COMMIT_NETWORK_QUORUM_INVALID', 503, [relayFailure(networkWriter, null, 'INVALID_NETWORK_QUORUM_RECEIPT')])
+    }
+    const ingressEvidence = receiptEvidence(localReceipt, networkWriter)
+    return {
+      ...localReceipt,
+      receipts: [ingressEvidence],
+      quorum: 1 + verified.requiredRemoteAcks,
+      leader: networkWriter.canonicalOrigin,
+      networkDurability: verified
+    }
+  }
+
   const sync = { ...primary.sync, append: fanoutAppend, crossHead, crossRows, recoverRows, directory, proveCommitQuorum }
-  if (atomicCapable) sync.commit = quorumCommit
+  if (atomicCapable) sync.commit = directAtomicCapable ? quorumCommit : networkQuorumCommit
   else delete sync.commit
   return {
     ...primary,
@@ -602,7 +692,8 @@ export function createRelayPool ({ relays = [], topology = null, fetch, EventSou
     _relayBases: bases.slice(),
     _relayCount: apis.length,
     _atomicCommit: atomicCapable,
-    _writerRelayCount: writerEntries.length,
+    _networkQuorum: !!networkWriter && !directAtomicCapable,
+    _writerRelayCount: networkWriter ? 1 : writerEntries.length,
     _leaderFor: (appId) => {
       const selected = leaderFor(appId)
       return selected ? { rosterIndex: selected.rosterIndex, origin: selected.origin, available: !!selected.entry } : null

@@ -185,7 +185,7 @@ export async function monitorRelayAvailability ({
         const exactWriter = !!(
           writerRequired && pool && pool._atomicCommit === true &&
           candidates && candidates.rosterVerified === true &&
-          topology && topology.validWriterTopology === true &&
+          topology && (topology.validWriterTopology === true || pool._networkQuorum === true) &&
           expiresAt > currentTime
         )
 

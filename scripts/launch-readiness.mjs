@@ -46,10 +46,13 @@ add('launch scripts registered', packageJson.scripts && packageJson.scripts['lau
 try {
   const release = loadJson('deploy/web-release.json')
   const relays = Array.isArray(release.roster && release.roster.relays) ? release.roster.relays.filter(Boolean) : []
+  const networkQuorum = release.roster && release.roster.networkQuorum
   const readonly = release.readonly !== false
-  add('public write topology is redundant', readonly || relays.length >= 2, readonly
+  add('public write topology is redundant', readonly || relays.length >= 2 || !!networkQuorum, readonly
     ? 'single-relay previews are acceptable only in read-only mode'
-    : `${relays.length} signed relay failure domain(s); writable public launch requires at least 2`)
+    : networkQuorum
+      ? `${relays.length} browser ingress plus ${networkQuorum.relays && networkQuorum.relays.length || 0} roster-pinned receipt operator(s)`
+      : `${relays.length} signed relay failure domain(s); writable public launch requires at least 2`)
   add('public release key pinned', /^[0-9a-f]{64}$/i.test(String(release.pinnedReleaseKey || '')), 'deploy/web-release.json must pin the Ed25519 key that signs asset-manifest.json')
 } catch (err) {
   add('web release config valid', false, err.message)

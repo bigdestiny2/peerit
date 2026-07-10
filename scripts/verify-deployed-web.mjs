@@ -143,8 +143,8 @@ export function releaseConfig (raw) {
     expires: raw.expires,
     relays: raw.relays || bootstrapRelays
   })
-  if (readonly === 'false' && roster.relays.length < 2) {
-    throw new Error('writable public web releases require at least two signed roster relays')
+  if (readonly === 'false' && roster.relays.length < 2 && !roster.networkQuorum) {
+    throw new Error('writable public web releases require at least two signed roster relays or a signed network-quorum policy')
   }
 
   return {
@@ -427,8 +427,8 @@ async function main () {
   if (!equalJson(verifiedRoster.payload, release.roster)) {
     throw new Error('signed relay roster payload does not match deploy/web-release.json')
   }
-  if (release.readonly === 'false' && verifiedRoster.relays.length < 2) {
-    throw new Error('writable public web releases require at least two signed roster relays')
+  if (release.readonly === 'false' && verifiedRoster.relays.length < 2 && !verifiedRoster.payload.networkQuorum) {
+    throw new Error('writable public web releases require at least two signed roster relays or a signed network-quorum policy')
   }
 
   let shardRosterBytes = null

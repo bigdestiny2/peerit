@@ -14,6 +14,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   dedupeRelayList,
+  hasPinnedNetworkQuorum,
   normalizeRelayRosterPayload,
   verifyRelayRoster
 } from '../js/relay-roster.js'
@@ -289,7 +290,7 @@ async function requireAtomicWriterReachable (fetchFn, relay, headers, timeoutMs)
   }
 }
 
-async function probeRelay (relay, { fetch: fetchFn, timeoutMs, rateLimitPolicy }) {
+async function probeRelay (relay, { fetch: fetchFn, timeoutMs, rateLimitPolicy, networkQuorum = null }) {
   const health = await requestJson(fetchFn, relay + '/health', { method: 'GET' }, timeoutMs)
   if (!positiveHealth(health)) throw new Error('/health did not report a positive status')
 
@@ -302,6 +303,9 @@ async function probeRelay (relay, { fetch: fetchFn, timeoutMs, rateLimitPolicy }
   const status = await requestJson(fetchFn, relay + '/api/bridge/status', { method: 'GET', headers }, timeoutMs)
   if (status.ready !== true) throw new Error('/api/bridge/status did not report ready=true')
   assertAtomicDescriptor(status, '/api/bridge/status')
+  if (networkQuorum && !hasPinnedNetworkQuorum(status.networkQuorum, networkQuorum)) {
+    throw new Error('/api/bridge/status networkQuorum does not exactly match the signed roster policy')
+  }
   const httpRateLimit = assertPublicWriteRateLimit(status, '/api/bridge/status', rateLimitPolicy)
 
   const capabilities = await requestJson(fetchFn, relay + '/api/sync/capabilities', { method: 'GET', headers }, timeoutMs)
@@ -327,7 +331,8 @@ async function probeRelay (relay, { fetch: fetchFn, timeoutMs, rateLimitPolicy }
       idempotent: true,
       idempotency: capabilities.atomicCommit.idempotency
     },
-    httpRateLimit
+    httpRateLimit,
+    networkQuorum: networkQuorum || null
   }
 }
 
@@ -413,14 +418,18 @@ export async function buildWritableCandidateProof ({
   addCheck(report, 'roster:bootstrap', 'pass', 'Signed roster covers every bootstrap relay.')
 
   const origins = new Set(verified.relays.map((relay) => new URL(relay).origin))
-  if (verified.relays.length < 2 || origins.size < 2) {
+  const networkQuorum = verified.payload.networkQuorum || null
+  const directFailureDomains = verified.relays.length >= 2 && origins.size >= 2
+  if (!directFailureDomains && !networkQuorum) {
     addCheck(report, 'roster:failure-domains', 'fail', 'Writable candidates require at least two signed relays on distinct origins.', {
       relays: verified.relays,
       origins: [...origins]
     })
     return finish(report)
   }
-  addCheck(report, 'roster:failure-domains', 'pass', `Signed roster has ${verified.relays.length} relays across ${origins.size} origins.`)
+  addCheck(report, 'roster:failure-domains', 'pass', directFailureDomains
+    ? `Signed roster has ${verified.relays.length} relays across ${origins.size} origins.`
+    : `Single browser ingress is backed by ${networkQuorum.relays.length} roster-pinned independent receipt operator(s), requiring ${networkQuorum.requiredRemoteAcks} remote acknowledgement(s).`)
 
   if (typeof fetchFn !== 'function') {
     addCheck(report, 'candidate:fetch', 'fail', 'Fetch is unavailable; writable relay checks cannot run.')
@@ -429,7 +438,7 @@ export async function buildWritableCandidateProof ({
 
   for (const relay of verified.relays) {
     try {
-      const evidence = await probeRelay(relay, { fetch: fetchFn, timeoutMs, rateLimitPolicy })
+      const evidence = await probeRelay(relay, { fetch: fetchFn, timeoutMs, rateLimitPolicy, networkQuorum })
       report.relays.push(evidence)
       addCheck(report, `relay:${relay}`, 'pass', `${relay} is ready and advertises durable CAS/idempotent atomic commit with an operator-configured public-write envelope.`)
     } catch (err) {

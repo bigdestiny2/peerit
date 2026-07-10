@@ -7,7 +7,7 @@ import {
   writableRateLimitPolicyFromEnv
 } from '../scripts/verify-writable-candidate.mjs'
 import { genKeyPair, ready as cryptoReady, sign } from '../js/crypto.js'
-import { normalizeRelayRosterPayload, rosterSigningMessage } from '../js/relay-roster.js'
+import { NETWORK_QUORUM_PROTOCOL, NETWORK_QUORUM_VERSION, normalizeRelayRosterPayload, rosterSigningMessage } from '../js/relay-roster.js'
 
 const RELAYS = ['https://canary-a.example', 'https://canary-b.example']
 const IDEMPOTENCY = { mode: 'bounded', latestPerOutbox: true, hotReceiptsPerOutbox: 16, tombstonesPerOutbox: 64, aggregateEntries: 1024, extraHistoryEntries: 1000 }
@@ -34,7 +34,8 @@ function relayFetch ({
   unsafeDescriptorRelay = '',
   unsafeIdempotencyRelay = '',
   missingCommitRelay = '',
-  httpRateLimitByRelay = {}
+  httpRateLimitByRelay = {},
+  networkQuorum = null
 } = {}) {
   const calls = []
   const fetch = async (input, options = {}) => {
@@ -60,7 +61,8 @@ function relayFetch ({
           ...(url.origin === unsafeIdempotencyRelay ? {} : { idempotency: IDEMPOTENCY })
         },
         legacyWrites: url.origin === unsafeDescriptorRelay ? { create: true, append: true } : { create: false, append: false },
-        httpRateLimit
+        httpRateLimit,
+        ...(networkQuorum ? { networkQuorum: { enabled: true, ...networkQuorum } } : {})
       })
     }
     if (url.pathname === '/api/sync/capabilities') {
@@ -90,12 +92,13 @@ function relayFetch ({
   return { fetch, calls }
 }
 
-async function fixture (relays = RELAYS) {
+async function fixture (relays = RELAYS, networkQuorum = null) {
   const keypair = await genKeyPair()
   const payload = normalizeRelayRosterPayload({
     version: 1,
     expires: '2030-01-01T00:00:00.000Z',
-    relays
+    relays,
+    ...(networkQuorum ? { networkQuorum } : {})
   })
   const roster = {
     payload,
@@ -153,6 +156,35 @@ const one = await buildWritableCandidateProof({
 assert.equal(one.status, 'blocked')
 assert.ok(one.checks.some((check) => check.id === 'roster:failure-domains' && check.status === 'fail'))
 assert.equal(oneLive.calls.length, 0, 'one-relay topology fails before live probing')
+
+const operator = await genKeyPair()
+const networkPolicy = {
+  protocol: NETWORK_QUORUM_PROTOCOL,
+  version: NETWORK_QUORUM_VERSION,
+  requiredRemoteAcks: 1,
+  relays: [{ id: 'independent-operator', publicKey: operator.pubHex }]
+}
+const networkFixture = await fixture(['https://canary-a.example'], networkPolicy)
+const networkLive = relayFetch({ networkQuorum: networkPolicy })
+const network = await buildWritableCandidateProof({
+  ...networkFixture,
+  fetch: networkLive.fetch,
+  now: Date.parse('2029-01-01T00:00:00.000Z')
+})
+assert.equal(network.status, 'ready')
+assert.ok(network.checks.some((check) => check.id === 'roster:failure-domains' && check.status === 'pass' && /receipt operator/.test(check.message)))
+assert.equal(networkLive.calls.length, 7, 'single ingress preflight checks the full atomic route and legacy guards while pinning network policy')
+
+const spoofedNetworkLive = relayFetch({
+  networkQuorum: { ...networkPolicy, relays: [{ id: 'attacker', publicKey: (await genKeyPair()).pubHex }] }
+})
+const spoofedNetwork = await buildWritableCandidateProof({
+  ...networkFixture,
+  fetch: spoofedNetworkLive.fetch,
+  now: Date.parse('2029-01-01T00:00:00.000Z')
+})
+assert.equal(spoofedNetwork.status, 'blocked')
+assert.ok(spoofedNetwork.checks.some((check) => /networkQuorum does not exactly match/.test(check.message)))
 
 const sameOriginFixture = await fixture(['https://canary.example/a', 'https://canary.example/b'])
 const sameOrigin = await buildWritableCandidateProof({

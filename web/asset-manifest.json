@@ -1,8 +1,8 @@
 {
-  "releaseSequence": 4,
+  "releaseSequence": 5,
   "files": {
-    "index.html": "9b2b1d6da02d7591cfc580e9b6ec814cc230246382dec2315ab47caf61601c26",
-    "styles.css": "c384e2a2b05e2027d2fce1bf6738497b13b8bfe5fb809b2c95c4885c9d2aee6b",
+    "index.html": "e76cf94dff7415adb1cb8858d9c142596d4836aa261761fa9f1a894d8805bf45",
+    "styles.css": "719335a9a4d8053e9d26def2fb8a95d2289a879fd5afb8258a3485b879e951d3",
     "icon.svg": "7925827f718381ddf887d3c5bea9b5b94e6e80de569d6604e384033767914a1c",
     "js/app.js": "47abf7db629f3bcd4bb5c8e365c2689cd69bf0ddd97e52aa963872d358171827",
     "js/blob-store.js": "1a947ca86c25a590a73d8a7808476e4ee659604da1f848d6da57a289392bfbc9",
@@ -47,12 +47,12 @@
     "sw-register.js": "453dcef5e737350700981e105a2834a38debcb7f96182c5b820aef955fc98c84"
   },
   "controls": {
-    "sw.js": "3c7cfd0a7aace7a734e037737e48e84fec90b0721161c9c45878996564aa2cdf",
-    "verify.html": "e93477ccd006cbaac21db65bd6d014db47dae82efdd393958e0e584ffd987431"
+    "sw.js": "3853e487e84b1b857ebad0b4d2898d28108fe81e51e18ee86458934b64802f06",
+    "verify.html": "5386a5017b54e6e30aaac86921b97d80a7967fe8d38304879d2fba856ad7d201"
   },
   "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
   "webRelease": {
-    "releaseSequence": 4,
+    "releaseSequence": 5,
     "relay": "https://outbox.peerit.site",
     "relayBackend": "",
     "readonly": "false",

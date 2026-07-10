@@ -161,7 +161,7 @@ button{font-family:inherit}
 .composer.reply{margin-top:8px}
 .comment-bar{display:flex;align-items:center;gap:14px;margin:16px 0 8px;font-size:13px;color:var(--muted);font-weight:600}
 .csort{margin-left:auto;font-weight:500}
-.csort a{color:var(--faint);padding:0 4px}
+.csort a{color:var(--muted);padding:0 4px}
 .csort a.active{color:var(--accent);font-weight:700}
 .locked-note{background:rgba(255,107,61,.08);border:1px solid rgba(255,107,61,.25);border-radius:10px;padding:11px 14px;color:var(--up);font-size:14px}
 .no-comments{color:var(--faint);padding:20px 0;text-align:center}

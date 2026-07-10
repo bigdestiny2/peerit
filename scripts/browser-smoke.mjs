@@ -5,6 +5,7 @@ import { createServer } from 'node:net'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { AxeBuilder } from '@axe-core/playwright'
 import { genKeyPair, sign as signHostPayload } from '../js/crypto.js'
 
 const DEFAULT_HOST = '127.0.0.1'
@@ -13,10 +14,11 @@ const HOST = process.env.HOST || DEFAULT_HOST
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const MOBILE_HOST_TOKEN = process.env.PEERIT_BROWSER_SMOKE_TOKEN || 'mobile-host-token'
 const BROWSER_ENGINES = new Set(['chromium', 'firefox', 'webkit'])
+const MOBILE_DEVICES = new Set(['ios', 'android'])
 
 function usage (code = 0, message = '') {
   if (message) console.error('error:', message)
-  console.error('usage: node scripts/browser-smoke.mjs [--url <http-url>] [--browser chromium|firefox|webkit] [--headed] [--keep-open] [--mobile-host]')
+  console.error('usage: node scripts/browser-smoke.mjs [--url <http-url>] [--browser chromium|firefox|webkit] [--headed] [--keep-open] [--accessibility] [--mobile-host --mobile-device ios|android]')
   process.exit(code)
 }
 
@@ -26,7 +28,9 @@ function parseArgs (argv) {
     browser: process.env.PEERIT_BROWSER_SMOKE_ENGINE || 'chromium',
     headed: process.env.HEADED === '1',
     keepOpen: false,
-    mobileHost: process.env.PEERIT_BROWSER_SMOKE_MODE === 'mobile-host'
+    mobileHost: process.env.PEERIT_BROWSER_SMOKE_MODE === 'mobile-host',
+    mobileDevice: process.env.PEERIT_BROWSER_SMOKE_MOBILE_DEVICE || 'ios',
+    accessibility: false
   }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
@@ -35,11 +39,15 @@ function parseArgs (argv) {
     else if (arg === '--headed') opts.headed = true
     else if (arg === '--keep-open') opts.keepOpen = true
     else if (arg === '--mobile-host') opts.mobileHost = true
+    else if (arg === '--mobile-device') opts.mobileDevice = argv[++i] || ''
+    else if (arg === '--accessibility') opts.accessibility = true
     else if (arg === '-h' || arg === '--help') usage(0)
     else usage(2, `unknown option: ${arg}`)
   }
   if (!BROWSER_ENGINES.has(opts.browser)) usage(2, `unsupported browser engine: ${opts.browser}`)
   if (opts.mobileHost && opts.browser !== 'chromium') usage(2, 'the mobile-host smoke uses Chromium mobile emulation; use --browser chromium')
+  if (!MOBILE_DEVICES.has(opts.mobileDevice)) usage(2, `unsupported mobile device: ${opts.mobileDevice}`)
+  if (opts.accessibility && opts.mobileHost) usage(2, 'run the accessibility gate separately from the mobile-host smoke')
   return opts
 }
 
@@ -189,6 +197,19 @@ function recordBrowserErrors (page, errors) {
     if (msg.type() !== 'error') return
     errors.push(`console: ${msg.text()}`)
   })
+}
+
+async function assertAccessibility (page, label) {
+  const results = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze()
+  if (!results.violations.length) return
+
+  const detail = results.violations.map((violation) => {
+    const nodes = violation.nodes.slice(0, 3).map((node) => node.target.join(' ')).join(', ')
+    return `${violation.id}: ${violation.help} (${nodes})`
+  }).join('\n')
+  throw new Error(`accessibility violations on ${label}:\n${detail}`)
 }
 
 async function makeMobileHost (token = MOBILE_HOST_TOKEN) {
@@ -464,7 +485,16 @@ function assertHostWrites (host) {
   if (missingToken) throw new Error(`mobile host smoke made an un-tokened API call: ${missingToken.method} ${missingToken.path}`)
 }
 
-function mobileContextOptions () {
+function mobileContextOptions (device) {
+  if (device === 'android') {
+    return {
+      viewport: { width: 412, height: 915 },
+      deviceScaleFactor: 2.625,
+      isMobile: true,
+      hasTouch: true,
+      userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36'
+    }
+  }
   return {
     viewport: { width: 390, height: 844 },
     deviceScaleFactor: 2,
@@ -474,7 +504,7 @@ function mobileContextOptions () {
   }
 }
 
-async function runSmoke ({ browser, url }) {
+async function runSmoke ({ browser, url, accessibility }) {
   const stamp = Date.now().toString(36)
   const community = `codex${stamp.slice(-6)}`
   const title = `Browser smoke post ${stamp}`
@@ -510,6 +540,7 @@ async function runSmoke ({ browser, url }) {
   await fillFirst(pageA, 'form[data-form="comment"] textarea[name="body"]', firstComment)
   await submitFirst(pageA, 'form[data-form="comment"] button[type="submit"]')
   await expectText(pageA, firstComment)
+  if (accessibility) await assertAccessibility(pageA, 'owner post and comment view')
 
   await openPostActions(pageA)
   await acceptDialogFrom(
@@ -550,6 +581,7 @@ async function runSmoke ({ browser, url }) {
   await submitFirst(pageB, 'form[data-form="comment"] button[type="submit"]')
   await expectText(pageB, secondComment)
   await expectText(pageA, secondComment)
+  if (accessibility) await assertAccessibility(pageB, 'second-user comment view')
 
   const secondCommentNode = pageB.locator('.comment').filter({ hasText: secondComment }).first()
   await acceptDialogFrom(
@@ -576,7 +608,7 @@ async function runSmoke ({ browser, url }) {
   return { community, title, editedPostBody, editedFirstComment, secondComment, userName }
 }
 
-async function runMobileHostSmoke ({ browser, url }) {
+async function runMobileHostSmoke ({ browser, url, mobileDevice }) {
   const stamp = Date.now().toString(36)
   const community = `mobile${stamp.slice(-6)}`
   const title = `PearBrowser mobile host-token smoke ${stamp}`
@@ -584,7 +616,7 @@ async function runMobileHostSmoke ({ browser, url }) {
   const host = await makeMobileHost()
   const errors = []
 
-  const context = await browser.newContext(mobileContextOptions())
+  const context = await browser.newContext(mobileContextOptions(mobileDevice))
   await installMobileHost(context, host)
   const page = await context.newPage()
   recordBrowserErrors(page, errors)
@@ -621,7 +653,7 @@ async function runMobileHostSmoke ({ browser, url }) {
     assertHostWrites(host)
 
     const threadUrl = page.url()
-    readerContext = await browser.newContext(mobileContextOptions())
+    readerContext = await browser.newContext(mobileContextOptions(mobileDevice))
     await installMobileHost(readerContext, host)
     const reader = await readerContext.newPage()
     recordBrowserErrors(reader, errors)
@@ -639,6 +671,7 @@ async function runMobileHostSmoke ({ browser, url }) {
 
   return {
     mode: 'mobile-host',
+    mobileDevice,
     community,
     title,
     firstComment,
@@ -657,8 +690,8 @@ async function main () {
   try {
     browser = await playwright[opts.browser].launch({ headless: !opts.headed })
     const result = opts.mobileHost
-      ? await runMobileHostSmoke({ browser, url })
-      : await runSmoke({ browser, url })
+      ? await runMobileHostSmoke({ browser, url, mobileDevice: opts.mobileDevice })
+      : await runSmoke({ browser, url, accessibility: opts.accessibility })
     console.log('[browser-smoke] PASS', JSON.stringify({ url, browser: opts.browser, ...result }))
     if (opts.keepOpen) {
       console.log('[browser-smoke] keeping browser open; Ctrl-C to stop')

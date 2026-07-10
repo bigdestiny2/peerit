@@ -32,9 +32,11 @@
     "seed:dealer": "node scripts/seed-dealer.mjs",
     "test:browser": "node scripts/browser-smoke.mjs",
     "test:browser:mobile": "node scripts/browser-smoke.mjs --mobile-host",
+    "test:browser:android": "node scripts/browser-smoke.mjs --mobile-host --mobile-device android",
+    "test:accessibility": "node scripts/browser-smoke.mjs --accessibility",
     "test:browser:firefox": "node scripts/browser-smoke.mjs --browser firefox",
     "test:browser:webkit": "node scripts/browser-smoke.mjs --browser webkit",
-    "test:ci": "npm test && npm run test:browser && npm run test:browser:mobile && npm run test:browser:firefox && npm run test:browser:webkit",
+    "test:ci": "npm test && npm run test:browser && npm run test:browser:mobile && npm run test:browser:android && npm run test:accessibility && npm run test:browser:firefox && npm run test:browser:webkit",
     "test:writable-web": "node test/writable-web-lurker.mjs",
     "test:dht-live": "node test/dht-live.mjs",
     "dht:deps": "npm install --include=dev",
@@ -67,6 +69,7 @@
     "publish": "node ship.mjs --publish"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
     "@hyperswarm/dht-relay": "0.4.3",
     "@hyperswarm/testnet": "3.1.4",
     "@noble/curves": "^1.9.0",

@@ -199,6 +199,8 @@ npm run proof:hiverelay-outboxlog -- --out reports/hiverelay-outboxlog-convergen
 npx playwright install chromium firefox webkit
 npm run test:browser
 npm run test:browser:mobile
+npm run test:browser:android
+npm run test:accessibility
 npm run test:browser:firefox
 npm run test:browser:webkit
 
@@ -210,6 +212,11 @@ npm run proof:availability:live
 creates a community, creates a post, edits the post body, edits/deletes comments,
 soft-deletes the post, and verifies the cross-tab update path from two
 tabs/users. Playwright is deliberately not a runtime dependency.
+The mobile-host gates exercise the authenticated PearBrowser host API through
+iPhone- and Android Chrome-shaped Chromium contexts. `npm run test:accessibility`
+enforces automated WCAG 2.0/2.1 A and AA checks in the two-user write path;
+these emulations supplement, rather than replace, real-device and human
+assistive-technology release checks.
 `npm run proof:availability` verifies the published file list, static module
 imports, manifest drive key, sibling seeder/mirror tooling, optional HTTP asset
 fetches, live publish durability reports when present, and the checked-in

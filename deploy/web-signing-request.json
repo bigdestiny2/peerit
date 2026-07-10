@@ -2,16 +2,16 @@
   "schema": "peerit-web-signing-request-v2",
   "manifest": "web/asset-manifest.json",
   "signature": "web/asset-manifest.sig",
-  "releaseSequence": 4,
+  "releaseSequence": 5,
   "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
   "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
-  "manifestSha256": "b46c110d2cf2d9ad07488753368d55d2838d3fd2252ecfd2af85d84bd607f94f",
-  "signingMessageSha256": "ec3996a2fb1309ad00441b54416b3d94d88e02df2c33a6b1b95962ee128accb8",
+  "manifestSha256": "a6d76c8eb4ff294dd39fcf33a4779dffd0fdcaf74bff2db56ddc66e3af850882",
+  "signingMessageSha256": "82cf5a539e3afff8b7f59ceef1e7fbee3859c47d6b71e0949dbbc61407159d1e",
   "artifactFiles": {
-    "asset-manifest.json": "b46c110d2cf2d9ad07488753368d55d2838d3fd2252ecfd2af85d84bd607f94f",
+    "asset-manifest.json": "a6d76c8eb4ff294dd39fcf33a4779dffd0fdcaf74bff2db56ddc66e3af850882",
     "config/shard-roster.public.json": "c52ec812e673f3e032e6e22ec196cdc5623260c501e07f4eb8f363ceb9923bad",
     "icon.svg": "7925827f718381ddf887d3c5bea9b5b94e6e80de569d6604e384033767914a1c",
-    "index.html": "9b2b1d6da02d7591cfc580e9b6ec814cc230246382dec2315ab47caf61601c26",
+    "index.html": "e76cf94dff7415adb1cb8858d9c142596d4836aa261761fa9f1a894d8805bf45",
     "js/app.js": "47abf7db629f3bcd4bb5c8e365c2689cd69bf0ddd97e52aa963872d358171827",
     "js/blob-store.js": "1a947ca86c25a590a73d8a7808476e4ee659604da1f848d6da57a289392bfbc9",
     "js/box.js": "7d4460772ef79358bc57c7cc7bcb820af1a6aa96638f1a98b44e4d00fd5fe947",
@@ -51,9 +51,9 @@
     "js/verify.js": "9a838a0576d52b03c43f793726522e0a6932e82284a5e9e3fc0450610f3400ea",
     "relay-roster.json": "ee116d647df5b316e06da184f872c969724ed856712bba8bde775cebb090b551",
     "seed-snapshot.json": "c6488226fd120959493141012ae289f11c5ec971106b920cf40c555f6683ab0b",
-    "styles.css": "c384e2a2b05e2027d2fce1bf6738497b13b8bfe5fb809b2c95c4885c9d2aee6b",
+    "styles.css": "719335a9a4d8053e9d26def2fb8a95d2289a879fd5afb8258a3485b879e951d3",
     "sw-register.js": "453dcef5e737350700981e105a2834a38debcb7f96182c5b820aef955fc98c84",
-    "sw.js": "3c7cfd0a7aace7a734e037737e48e84fec90b0721161c9c45878996564aa2cdf",
-    "verify.html": "e93477ccd006cbaac21db65bd6d014db47dae82efdd393958e0e584ffd987431"
+    "sw.js": "3853e487e84b1b857ebad0b4d2898d28108fe81e51e18ee86458934b64802f06",
+    "verify.html": "5386a5017b54e6e30aaac86921b97d80a7967fe8d38304879d2fba856ad7d201"
   }
 }

@@ -195,10 +195,12 @@ npm run proof:outbox-availability:report
 # generated Peerit web build through local HiveRelay OutboxLog:
 npm run proof:hiverelay-outboxlog -- --out reports/hiverelay-outboxlog-convergence-2026-07-01.json
 
-# optional browser UI gate; install Playwright only in the operator/dev checkout
-npm install --no-save playwright
-npx playwright install chromium
+# browser UI gates (pinned in devDependencies and required in CI)
+npx playwright install chromium firefox webkit
 npm run test:browser
+npm run test:browser:mobile
+npm run test:browser:firefox
+npm run test:browser:webkit
 
 # strict live evidence gate; expects fresh .deploy publish/ship reports
 npm run proof:availability:live

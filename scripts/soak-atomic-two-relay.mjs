@@ -39,6 +39,8 @@ Options:
   --iterations <n>        Posts per writer (default: 3)
   --restarts <n>          Unflushed relay recreation cycles (default: 2)
   --commit-timeout-ms <n> Per-relay atomic commit deadline (default: 5000)
+  --max-p99-ms <n>        Required end-to-end write p99 ceiling (default: 2000)
+  --max-rss-mb <n>        Optional process RSS ceiling; 0 disables the local check (default: 0)
   --traffic-profile <p>   shared-nat or distributed (default: shared-nat)
   --rate-limit-max <n>    Fixture requests per IP/window (default: 1200)
   --rate-limit-window-ms <n> Fixture rate window (default: 60000)
@@ -58,10 +60,14 @@ function positiveInt (value, fallback, max = 1000) {
 function parseArgs (argv) {
   const opts = {
     hiverelayRoot: process.env.HIVERELAY_ROOT || DEFAULT_HIVERELAY_ROOT,
-    clients: positiveInt(process.env.PEERIT_ATOMIC_SOAK_CLIENTS, 6, 200),
+    clients: positiveInt(process.env.PEERIT_ATOMIC_SOAK_CLIENTS, 6, 2000),
     iterations: positiveInt(process.env.PEERIT_ATOMIC_SOAK_ITERATIONS, 3, 1000),
     restarts: positiveInt(process.env.PEERIT_ATOMIC_SOAK_RESTARTS, 2, 100),
     commitTimeoutMs: positiveInt(process.env.PEERIT_ATOMIC_SOAK_COMMIT_TIMEOUT_MS, 5000, 120000),
+    maxP99Ms: positiveInt(process.env.PEERIT_ATOMIC_SOAK_MAX_P99_MS, 2000, 120000),
+    maxRssMb: Number.isSafeInteger(Number(process.env.PEERIT_ATOMIC_SOAK_MAX_RSS_MB)) && Number(process.env.PEERIT_ATOMIC_SOAK_MAX_RSS_MB) >= 0
+      ? Number(process.env.PEERIT_ATOMIC_SOAK_MAX_RSS_MB)
+      : 0,
     trafficProfile: process.env.PEERIT_ATOMIC_SOAK_TRAFFIC_PROFILE || 'shared-nat',
     rateLimitMax: positiveInt(process.env.PEERIT_ATOMIC_SOAK_RATE_LIMIT_MAX, 1200, 10_000_000),
     rateLimitWindowMs: positiveInt(process.env.PEERIT_ATOMIC_SOAK_RATE_LIMIT_WINDOW_MS, 60_000, 24 * 60 * 60 * 1000),
@@ -72,10 +78,15 @@ function parseArgs (argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--hiverelay-root') opts.hiverelayRoot = argv[++i] || ''
-    else if (arg === '--clients') opts.clients = positiveInt(argv[++i], 0, 200)
+    else if (arg === '--clients') opts.clients = positiveInt(argv[++i], 0, 2000)
     else if (arg === '--iterations') opts.iterations = positiveInt(argv[++i], 0, 1000)
     else if (arg === '--restarts') opts.restarts = positiveInt(argv[++i], 0, 100)
     else if (arg === '--commit-timeout-ms') opts.commitTimeoutMs = positiveInt(argv[++i], 0, 120000)
+    else if (arg === '--max-p99-ms') opts.maxP99Ms = positiveInt(argv[++i], 0, 120000)
+    else if (arg === '--max-rss-mb') {
+      const value = Number(argv[++i])
+      opts.maxRssMb = Number.isSafeInteger(value) && value >= 0 ? value : 0
+    }
     else if (arg === '--traffic-profile') opts.trafficProfile = argv[++i] || ''
     else if (arg === '--rate-limit-max') opts.rateLimitMax = positiveInt(argv[++i], 0, 10_000_000)
     else if (arg === '--rate-limit-window-ms') opts.rateLimitWindowMs = positiveInt(argv[++i], 0, 24 * 60 * 60 * 1000)
@@ -85,7 +96,7 @@ function parseArgs (argv) {
     else if (arg === '-h' || arg === '--help') usage(0)
     else usage(2, `unknown option: ${arg}`)
   }
-  if (!opts.clients || !opts.iterations || !opts.restarts || !opts.commitTimeoutMs || !opts.rateLimitMax || !opts.rateLimitWindowMs) usage(2, 'numeric load, timeout, and rate-limit options must be positive integers')
+  if (!opts.clients || !opts.iterations || !opts.restarts || !opts.commitTimeoutMs || !opts.maxP99Ms || !opts.rateLimitMax || !opts.rateLimitWindowMs) usage(2, 'numeric load, timeout, latency, and rate-limit options must be positive integers')
   if (!['shared-nat', 'distributed'].includes(opts.trafficProfile)) usage(2, 'traffic-profile must be shared-nat or distributed')
   if (opts.disableRateLimit && opts.trafficProfile !== 'distributed') usage(2, 'disable-rate-limit is permitted only with traffic-profile=distributed')
   opts.hiverelayRoot = resolve(ROOT, opts.hiverelayRoot || DEFAULT_HIVERELAY_ROOT)
@@ -639,6 +650,8 @@ async function run (opts) {
       iterations: opts.iterations,
       restarts: opts.restarts,
       commitTimeoutMs: opts.commitTimeoutMs,
+      maxP99Ms: opts.maxP99Ms,
+      maxRssMb: opts.maxRssMb || null,
       trafficProfile: opts.trafficProfile,
       httpRateLimit: advertisedRateLimit,
       hiverelayRoot: opts.hiverelayRoot
@@ -806,6 +819,16 @@ async function run (opts) {
       },
       relays: relays.map(relay => ({ label: relay.label, stats: relay.stats() })),
       resources: resourceSummary(resourceSamples)
+    }
+    check('write p99 remains within the configured capacity contract', report.metrics.latencyMs.p99 < opts.maxP99Ms, {
+      measuredP99Ms: report.metrics.latencyMs.p99,
+      requiredBelowMs: opts.maxP99Ms
+    })
+    if (opts.maxRssMb > 0) {
+      check('process RSS remains within the configured capacity contract', report.metrics.resources.peakObservedRssBytes < opts.maxRssMb * 1024 * 1024, {
+        measuredBytes: report.metrics.resources.peakObservedRssBytes,
+        maximumBytes: opts.maxRssMb * 1024 * 1024
+      })
     }
     report.phase = 'final-census-audit'
     report.finalAudit = await auditFleet(fleet, authors, auditFetch)

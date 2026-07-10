@@ -102,6 +102,9 @@ button{font-family:inherit}
 
 /* posts */
 .feed{display:flex;flex-direction:column;gap:12px}
+.feed-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0 2px}
+.feed-page-status{color:var(--muted);font-size:13px;text-align:center}
+.feed-page-disabled{opacity:.45;cursor:default;user-select:none}
 .post{display:flex;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px 10px}
 .post.card:hover{border-color:var(--border-2)}
 .post.full{background:var(--surface)}
@@ -348,6 +351,9 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
   .topbar-right .btn-ghost{padding:8px 12px}
   .post-title{font-size:16px}
   .layout{padding:0 10px;margin-top:14px}
+  .feed-pager{align-items:stretch;flex-wrap:wrap}
+  .feed-pager .btn{flex:1;text-align:center}
+  .feed-page-status{order:-1;flex:0 0 100%}
 }
 
 /* ── Phase 3 polish ──────────────────────────────────────────────────────── */

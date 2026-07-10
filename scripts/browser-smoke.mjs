@@ -12,16 +12,18 @@ const DEFAULT_TIMEOUT_MS = Number(process.env.BROWSER_SMOKE_TIMEOUT_MS) || 45000
 const HOST = process.env.HOST || DEFAULT_HOST
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const MOBILE_HOST_TOKEN = process.env.PEERIT_BROWSER_SMOKE_TOKEN || 'mobile-host-token'
+const BROWSER_ENGINES = new Set(['chromium', 'firefox', 'webkit'])
 
 function usage (code = 0, message = '') {
   if (message) console.error('error:', message)
-  console.error('usage: node scripts/browser-smoke.mjs [--url <http-url>] [--headed] [--keep-open] [--mobile-host]')
+  console.error('usage: node scripts/browser-smoke.mjs [--url <http-url>] [--browser chromium|firefox|webkit] [--headed] [--keep-open] [--mobile-host]')
   process.exit(code)
 }
 
 function parseArgs (argv) {
   const opts = {
     url: process.env.PEERIT_BROWSER_SMOKE_URL || '',
+    browser: process.env.PEERIT_BROWSER_SMOKE_ENGINE || 'chromium',
     headed: process.env.HEADED === '1',
     keepOpen: false,
     mobileHost: process.env.PEERIT_BROWSER_SMOKE_MODE === 'mobile-host'
@@ -29,12 +31,15 @@ function parseArgs (argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--url') opts.url = argv[++i] || ''
+    else if (arg === '--browser') opts.browser = argv[++i] || ''
     else if (arg === '--headed') opts.headed = true
     else if (arg === '--keep-open') opts.keepOpen = true
     else if (arg === '--mobile-host') opts.mobileHost = true
     else if (arg === '-h' || arg === '--help') usage(0)
     else usage(2, `unknown option: ${arg}`)
   }
+  if (!BROWSER_ENGINES.has(opts.browser)) usage(2, `unsupported browser engine: ${opts.browser}`)
+  if (opts.mobileHost && opts.browser !== 'chromium') usage(2, 'the mobile-host smoke uses Chromium mobile emulation; use --browser chromium')
   return opts
 }
 
@@ -178,17 +183,11 @@ async function openPostActions (page) {
   })
 }
 
-function isExpectedConsoleError (text) {
-  return text.includes("Content Security Policy directive 'frame-ancestors' is ignored when delivered via a <meta> element.")
-}
-
 function recordBrowserErrors (page, errors) {
   page.on('pageerror', err => errors.push(`pageerror: ${err.message}`))
   page.on('console', msg => {
     if (msg.type() !== 'error') return
-    const text = msg.text()
-    if (isExpectedConsoleError(text)) return
-    errors.push(`console: ${text}`)
+    errors.push(`console: ${msg.text()}`)
   })
 }
 
@@ -205,7 +204,8 @@ async function makeMobileHost (token = MOBILE_HOST_TOKEN) {
       groups.set(appId, {
         inviteKey: randomBytes(32).toString('hex'),
         rows: new Map(),
-        version: 0
+        version: 0,
+        commits: new Map()
       })
     }
     return groups.get(appId)
@@ -275,6 +275,39 @@ async function makeMobileHost (token = MOBILE_HOST_TOKEN) {
         g.version++
         return response({ ok: true, key })
       }
+      if (p === '/api/sync/commit') {
+        const g = ensureGroup(body.appId)
+        const commit = body.commit
+        const duplicate = g.commits.get(commit && commit.commitId)
+        if (duplicate) return response(duplicate)
+        const current = g.rows.get('head!' + body.appId)
+        const currentVersion = current ? (current.version | 0) : 0
+        const currentRoot = current ? current.root : commit.expected.root
+        if (commit.expected.version !== currentVersion || commit.expected.root !== currentRoot) {
+          return response({ error: 'stale compare-and-swap', code: 'COMMIT_CAS_MISMATCH' }, 409)
+        }
+        for (const op of commit.mutations) {
+          const key = op.type.replace(':', '!') + '!' + op.data.id
+          g.rows.set(key, op.data)
+        }
+        g.rows.set('head!' + body.appId, commit.head.data)
+        g.version++
+        const receipt = {
+          ok: true,
+          durable: true,
+          commitId: commit.commitId,
+          appId: body.appId,
+          inviteKey: g.inviteKey,
+          head: {
+            version: commit.head.data.version,
+            count: commit.head.data.count,
+            root: commit.head.data.root
+          },
+          relayVersion: g.version
+        }
+        g.commits.set(commit.commitId, receipt)
+        return response(receipt)
+      }
       if (p === '/api/sync/heads') {
         const heads = {}
         for (const appId of (body && body.appIds) || []) {
@@ -341,7 +374,14 @@ async function makeMobileHost (token = MOBILE_HOST_TOKEN) {
     groups,
     handle,
     rows () { return groups.get(publicKey) ? groups.get(publicKey).rows : new Map() },
-    appendCalls () { return calls.filter((c) => c.path.startsWith('/api/sync/append')) }
+    writeCalls () { return calls.filter((c) => c.path.startsWith('/api/sync/append') || c.path.startsWith('/api/sync/commit')) },
+    mutations () {
+      return calls.flatMap((call) => {
+        if (call.path.startsWith('/api/sync/append') && call.body && call.body.op) return [call.body.op]
+        if (call.path.startsWith('/api/sync/commit') && call.body && call.body.commit && Array.isArray(call.body.commit.mutations)) return call.body.commit.mutations
+        return []
+      })
+    }
   }
 }
 
@@ -401,21 +441,25 @@ async function assertMobileHostPath (page, host) {
   if (!state.eventSourceHasToken) throw new Error('mobile host smoke did not open tokenized /api/swarm/events')
 }
 
-function assertHostWrites (host, { community, title, firstComment }) {
+function assertHostWrites (host) {
   const rows = host.rows()
   const keys = [...rows.keys()]
-  if (!rows.has('community!' + community)) throw new Error('mobile host smoke did not write the community to /api sync')
-  if (!keys.some((k) => k.startsWith(`post!${community}!`) && rows.get(k).title === title)) {
-    throw new Error('mobile host smoke did not write the post to /api sync')
+  const mutations = host.mutations()
+  const semanticTypes = new Set(mutations.map((op) => op.type === 'v2' ? op.data && op.data._t : op.type))
+  for (const type of ['community', 'post', 'comment']) {
+    if (!semanticTypes.has(type)) throw new Error(`mobile host smoke did not write a ${type} mutation to /api sync`)
   }
-  if (!keys.some((k) => k.startsWith(`comment!${community}!`) && rows.get(k).body === firstComment)) {
-    throw new Error('mobile host smoke did not write the comment to /api sync')
+  if (keys.some((key) => /^(community|post|comment)!/.test(key))) {
+    throw new Error('mobile host smoke regressed to plaintext semantic relay keys')
+  }
+  if (!keys.some((key) => /^v2![0-9a-f]{64}$/i.test(key))) {
+    throw new Error('mobile host smoke did not persist opaque v2 records')
   }
   const head = rows.get('head!' + host.publicKey)
   if (!head || head.author !== host.publicKey || (head.count | 0) < 3) {
     throw new Error('mobile host smoke did not maintain a signed outbox head after writes')
   }
-  if (host.appendCalls().length < 3) throw new Error('mobile host smoke made too few /api append calls')
+  if (host.writeCalls().length < 3) throw new Error('mobile host smoke made too few durable relay write calls')
   const missingToken = host.calls.find((c) => c.token !== host.token)
   if (missingToken) throw new Error(`mobile host smoke made an un-tokened API call: ${missingToken.method} ${missingToken.path}`)
 }
@@ -574,7 +618,7 @@ async function runMobileHostSmoke ({ browser, url }) {
     await expectText(page, firstComment)
     await assertMobileHostPath(page, host)
 
-    assertHostWrites(host, { community, title, firstComment })
+    assertHostWrites(host)
 
     const threadUrl = page.url()
     readerContext = await browser.newContext(mobileContextOptions())
@@ -599,7 +643,7 @@ async function runMobileHostSmoke ({ browser, url }) {
     title,
     firstComment,
     apiCalls: host.calls.length,
-    appendCalls: host.appendCalls().length,
+    writeCalls: host.writeCalls().length,
     writer: host.publicKey.slice(0, 12)
   }
 }
@@ -611,11 +655,11 @@ async function main () {
   const url = opts.url || (dev = await startDevServer()).url
   let browser = null
   try {
-    browser = await playwright.chromium.launch({ headless: !opts.headed })
+    browser = await playwright[opts.browser].launch({ headless: !opts.headed })
     const result = opts.mobileHost
       ? await runMobileHostSmoke({ browser, url })
       : await runSmoke({ browser, url })
-    console.log('[browser-smoke] PASS', JSON.stringify({ url, ...result }))
+    console.log('[browser-smoke] PASS', JSON.stringify({ url, browser: opts.browser, ...result }))
     if (opts.keepOpen) {
       console.log('[browser-smoke] keeping browser open; Ctrl-C to stop')
       await new Promise(() => {})

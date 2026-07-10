@@ -115,7 +115,8 @@ npm run soak:atomic-two-relay -- --hiverelay-root /path/to/hiverelay \
 npm run soak:atomic-two-relay -- --hiverelay-root /path/to/hiverelay \
   --traffic-profile distributed --rate-limit-max 1200 \
   --rate-limit-window-ms 60000 --clients 200 --iterations 7 \
-  --restarts 1 --commit-timeout-ms 5000 --out /tmp/distributed.json
+  --restarts 1 --commit-timeout-ms 5000 --max-p99-ms 2000 \
+  --out /tmp/distributed.json
 ```
 
 These are local diagnostic results, not the production-equivalent staging M4
@@ -185,6 +186,13 @@ bounded durable two-relay path is below the 2-second latency gate. A full sweep
 `M ∈ {100, 500, 1000, 2000}` against a **staging** clone (not production) remains  
 required before mass-marketing clearance (SCALE-READINESS M4). This document  
 records the **instrument + numeric contract**, not marketing go.
+
+The instrument accepts the full 2,000-client target and exits non-zero whenever
+the measured end-to-end write p99 is not below `--max-p99-ms` (2,000 by
+default). Set `--max-rss-mb` to the reviewed memory budget of each staging
+load-generator/relay process so the evidence records an explicit resource
+ceiling. Local co-location remains diagnostic only; production clearance still
+requires isolated generators and relay hosts.
 
 ## Pass thresholds (written contract)
 

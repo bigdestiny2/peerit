@@ -224,6 +224,25 @@ drift outside that explicit config change as a publish blocker.
    ```sh
    npm run proof:web-deploy -- --url https://peerit.site
    ```
+
+   A portable CSP meta cannot enforce `frame-ancestors`; browsers ignore that
+   directive outside an HTTP response header. Apply every rule in
+   [`deploy/render-security-headers.json`](../deploy/render-security-headers.json)
+   to `/*` in the Render static-site header settings (or the equivalent edge
+   host configuration). The CSP's `connect-src` must contain every exact origin
+   carried by the signed `web/index.html` artifact. This is a release gate, not
+   a best-effort hardening step:
+
+   ```sh
+   npm run proof:http-headers -- --url https://peerit.site
+   ```
+
+   With the Render API key injected by KeyVault, the reviewed policy can be
+   reconciled without copying credentials into a terminal history:
+
+   ```sh
+   npm run configure:render-headers -- --service <render-static-service-id> --apply
+   ```
 5. **Host/mirror:** host that exact `web/` on peerit.site; also pin to IPFS (DNSLink),
    Arweave, and set ENS `peerit.eth` contenthash → CID so the app survives
    DNS/registrar seizure. `peerit.site/verify.html` lets anyone cross-check the

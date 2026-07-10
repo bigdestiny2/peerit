@@ -38,6 +38,22 @@ function runNodeCheck (rel) {
   }
 }
 
+function dataMintsPoWBeforeSigning () {
+  if (!exists('js/data.js')) return false
+  const source = read('js/data.js')
+  const legacyStart = source.indexOf('async _powSign (')
+  const opaqueStart = source.indexOf('async _emit (')
+  const opaqueEnd = source.indexOf('// Public web\'s ensureWriter', opaqueStart)
+  if (legacyStart < 0 || opaqueStart < 0 || opaqueEnd < opaqueStart) return false
+  const legacy = source.slice(legacyStart, opaqueStart)
+  const opaque = source.slice(opaqueStart, opaqueEnd)
+  const legacyMint = legacy.indexOf('data.pow = await this.mintProof(')
+  const legacySign = legacy.indexOf('await this._sign(type, data, expectedOwner)')
+  const opaqueMint = opaque.indexOf('stored.pow = await this.mintProof(')
+  const opaqueSign = opaque.indexOf("await this._sign('v2', stored, expectedOwner)")
+  return legacyMint >= 0 && legacySign > legacyMint && opaqueMint >= 0 && opaqueSign > opaqueMint
+}
+
 add('growth spec exists', exists('docs/GROWTH_AUTOMATION_SPEC.md'), 'docs/GROWTH_AUTOMATION_SPEC.md')
 
 const packageJson = loadJson('package.json')
@@ -57,7 +73,7 @@ try {
       : singleIngressWriter
         ? `${relays.length} signed durable single-ingress writer; federation quorum is deferred`
         : `${relays.length} signed relay failure domain(s); writable public launch requires at least 2`
-  add('public write topology is redundant', readonly || relays.length >= 2 || !!networkQuorum || singleIngressWriter, topologyDetail)
+  add('public writer topology is explicitly authorized', readonly || relays.length >= 2 || !!networkQuorum || singleIngressWriter, topologyDetail)
   add('public release key pinned', /^[0-9a-f]{64}$/i.test(String(release.pinnedReleaseKey || '')), 'deploy/web-release.json must pin the Ed25519 key that signs asset-manifest.json')
 } catch (err) {
   add('web release config valid', false, err.message)
@@ -87,7 +103,7 @@ try {
 const poWSyntax = exists('js/pow.js') ? runNodeCheck('js/pow.js') : { ok: false, output: 'js/pow.js missing' }
 add('PoW module exists and parses', poWSyntax.ok, poWSyntax.output || 'js/pow.js')
 add('gossip has app validate hook', includes('js/gossip.js', 'validate(type') || includes('js/gossip.js', 'validate)') || includes('js/gossip.js', 'opts.validate'), 'gossip ingest must reject no-PoW records before cache')
-add('data mints PoW before signing', includes('js/data.js', '_powSign') && includes('js/data.js', 'mint('), 'posts/comments/communities must mint before signature')
+add('data mints PoW before signing', dataMintsPoWBeforeSigning(), 'both opaque-v2 and legacy emit paths must mint proof-of-work before their record signature')
 add('PoW tests present', includes('test/gossip.mjs', 'proof-of-work') || includes('test/smoke.mjs', 'proof-of-work') || includes('test/gossip.mjs', 'no-PoW'), 'tests should reject signed records without PoW')
 add('read-only gateway tracked', exists('docs/GROWTH_AUTOMATION_SPEC.md') && read('docs/GROWTH_AUTOMATION_SPEC.md').includes('Read-Only Gateway'), 'gateway preview remains a required launch workstream')
 

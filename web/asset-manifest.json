@@ -1,16 +1,17 @@
 {
-  "releaseSequence": 3,
+  "releaseSequence": 4,
   "files": {
-    "index.html": "6c8ca236f7d4c56266aaf25a00fbb1501b52a427d52d4871f80f187c0a2ff97d",
-    "styles.css": "9b0fdcfae45d144f57922d25863b67155328170bbb2a7f2886d191e852c19efe",
+    "index.html": "9b2b1d6da02d7591cfc580e9b6ec814cc230246382dec2315ab47caf61601c26",
+    "styles.css": "c384e2a2b05e2027d2fce1bf6738497b13b8bfe5fb809b2c95c4885c9d2aee6b",
     "icon.svg": "7925827f718381ddf887d3c5bea9b5b94e6e80de569d6604e384033767914a1c",
-    "js/app.js": "863354007bc3b7a9d2fc848cfe4fa3786a15284d7692482b68a4758f1831f598",
+    "js/app.js": "47abf7db629f3bcd4bb5c8e365c2689cd69bf0ddd97e52aa963872d358171827",
     "js/blob-store.js": "1a947ca86c25a590a73d8a7808476e4ee659604da1f848d6da57a289392bfbc9",
     "js/box.js": "7d4460772ef79358bc57c7cc7bcb820af1a6aa96638f1a98b44e4d00fd5fe947",
     "js/canon.js": "8488f17f6d6965449325543a1d69f8e12ee08c3c37e49f4f344ff6217deb3e9b",
     "js/crypto.js": "a0640977c3334363fcbb9831d209f444254093cc607afff32addc2447cb7cb68",
     "js/data.js": "935808186d08a04479228d89936b94af57e8879f0440c29069a3c07650e28c04",
     "js/dht-bundle.js": "ef35ec7ce2c46f1a9f75bd04cf311377c7d41ad10cc6c52d36ff571ca68fafd9",
+    "js/feed-window.js": "b6507956f71e1c53123aff3282cca5bf5b65da152050a8a9b5615698e1bc0758",
     "js/gossip.js": "ae3a838e209ebff940afba6fab2512209db7a4d29100b80922e12f9abd709a74",
     "js/materialized-index.js": "a020f886663f9e543438c716082c5dc31bffa291f25faf7b6ce6a6df482afbc4",
     "js/identity.js": "57a4d7f1a29cd6f7ee420dfeae794b5d486350fd3db2dfcd6bd6bf7869dd9e11",
@@ -46,12 +47,12 @@
     "sw-register.js": "453dcef5e737350700981e105a2834a38debcb7f96182c5b820aef955fc98c84"
   },
   "controls": {
-    "sw.js": "b67ae851ee60a064ce96f243ee41fe8189ec42fbc5a4cc3f32660ed23e6dfd3a",
-    "verify.html": "72b22f6825891092e547f7d79943a66adbf76b27f4da1160147d5decc73a2425"
+    "sw.js": "3c7cfd0a7aace7a734e037737e48e84fec90b0721161c9c45878996564aa2cdf",
+    "verify.html": "e93477ccd006cbaac21db65bd6d014db47dae82efdd393958e0e584ffd987431"
   },
   "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
   "webRelease": {
-    "releaseSequence": 3,
+    "releaseSequence": 4,
     "relay": "https://outbox.peerit.site",
     "relayBackend": "",
     "readonly": "false",

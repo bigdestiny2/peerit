@@ -17,6 +17,7 @@ import { Prefs } from './prefs.js'
 import { STARTER_COMMUNITIES, STARTER_POSTS, WELCOME_COMMUNITY, starterCommunity } from './onboarding.js'
 import { renderMarkdown, excerpt } from './markdown.js'
 import { sortPosts, sortComments, weight as voteWeight, POST_SORTS, COMMENT_SORTS, TIME_WINDOW_KEYS } from './ranking.js'
+import { windowFeed } from './feed-window.js'
 import { buildCommentTree, sortCommentTree, annotateDescendants, countDescendants, MOD, TYPE } from './model.js'
 import { COPY as RECOVERY_COPY, buildRecoveryBundle, cleanOutboxes, peeritSeederCommand, recoveryBundleFilename, recoveryBundleJson } from './recovery.js'
 import { exportIdentity, importIdentity, looksLikeIdentityExport, identityExportJson, identityExportFilename, passphraseStrength, MIN_PASSPHRASE } from './identity-export.js'
@@ -1176,13 +1177,25 @@ async function viewBridgeProof ({ session, query, guard, token }) {
 // ---- shared building blocks -------------------------------------------------
 function sortTabs (active, base, query) {
   return `<div class="sorttabs">` + POST_SORTS.map(s =>
-    `<a class="tab ${s === active ? 'active' : ''}" href="${buildRoute(base, { ...query, sort: s, t: undefined })}">${s}</a>`
+    `<a class="tab ${s === active ? 'active' : ''}" href="${buildRoute(base, { ...query, sort: s, t: undefined, page: undefined })}">${s}</a>`
   ).join('') +
   ((active === 'top' || active === 'controversial')
     ? `<select class="timewin" data-act="timewindow" aria-label="Top time window">` + TIME_WINDOW_KEYS.map(t =>
         `<option value="${t}" ${query.t === t ? 'selected' : ''}>${t}</option>`).join('') + `</select>`
     : '') +
   `</div>`
+}
+
+function feedPager ({ page, totalPages, totalItems, hasPrevious, hasNext }, base, query) {
+  if (totalItems <= 25) return ''
+  const route = (target) => buildRoute(base, { ...query, page: target > 1 ? target : undefined })
+  const previous = hasPrevious
+    ? `<a class="btn btn-ghost" rel="prev" href="${route(page - 1)}">← Previous</a>`
+    : '<span class="btn btn-ghost feed-page-disabled" aria-disabled="true">← Previous</span>'
+  const next = hasNext
+    ? `<a class="btn btn-ghost" rel="next" href="${route(page + 1)}">Next →</a>`
+    : '<span class="btn btn-ghost feed-page-disabled" aria-disabled="true">Next →</span>'
+  return `<nav class="feed-pager" aria-label="Feed pages">${previous}<span class="feed-page-status">Page ${page} of ${totalPages} · ${fmtCount(totalItems)} posts</span>${next}</nav>`
 }
 
 function postSort (sort) {
@@ -1322,23 +1335,23 @@ async function viewFeed ({ scope, community, query, guard, token }) {
     }
     ov = await data.overlay(community)
     mods = ov.mods
-    posts = await data.listPostsIn(community)
+    posts = await data.listPostsIn(community, { hydrate: false })
   } else if (scope === 'home') {
     followedSlugs = prefs.subs()
     if (!followedSlugs.length) {
       // No subscriptions yet -> behave like "all" but nudge onboarding.
-      posts = await data.listAllPosts()
+      posts = await data.listAllPosts(undefined, { hydrate: false })
     } else {
-      posts = await data.listAllPosts(followedSlugs)
+      posts = await data.listAllPosts(followedSlugs, { hydrate: false })
     }
   } else if (scope === 'following') {
     // Posts by the authors you follow: the union of the device-local pref list and
     // your signed follow! records (so follows made on another device show up here).
     const follows = new Set(prefs.follows())
     try { for (const tgt of await data.followingOf(identity.me().pubkey)) follows.add(tgt) } catch {}
-    posts = follows.size ? (await data.listAllPosts()).filter(p => follows.has(p.author)) : []
+    posts = follows.size ? (await data.listAllPosts(undefined, { hydrate: false })).filter(p => follows.has(p.author)) : []
   } else {
-    posts = await data.listAllPosts()
+    posts = await data.listAllPosts(undefined, { hydrate: false })
   }
 
   // hide locally-hidden, enrich with tallies, compute overlays per community.
@@ -1350,10 +1363,18 @@ async function viewFeed ({ scope, community, query, guard, token }) {
     posts.forEach(p => { p.stickied = ov.stickied.has(p.cid) })
   }
   const ranked = sortPosts(posts, sort, tw)
+  const page = windowFeed(ranked, query.page)
+  // Ranking used the complete verified record set above. Keep expensive body
+  // hydration, author/profile lookups, comment counts, and DOM construction to
+  // the visible window only; this is the practical low-memory-device boundary.
+  const visible = await Promise.all(page.items.map(async (post) => ({
+    ...post,
+    ...(await data.getPost(post.community, post.cid))
+  })))
 
   // comment counts + author names
-  await primeNames([...ranked.map(p => p.author), ...(scope === 'community' && mods ? [...mods] : [])]) // mods ride along: the sidebar's Moderators card names them
-  const commentCounts = await countCommentsFor(ranked)
+  await primeNames([...visible.map(p => p.author), ...(scope === 'community' && mods ? [...mods] : [])]) // mods ride along: the sidebar's Moderators card names them
+  const commentCounts = await countCommentsFor(visible)
 
   if (token !== renderToken) return
   prefs.setSort(sort)
@@ -1370,9 +1391,9 @@ async function viewFeed ({ scope, community, query, guard, token }) {
   if (!ranked.length) {
     body = showWelcome ? starterFeed() : emptyFeed(scope, community)
   } else {
-    body = (showWelcome ? welcomePanel(true) : '') + ranked.map(p => postCard(p, scope === 'community' ? ov : null, {
+    body = (showWelcome ? welcomePanel(true) : '') + visible.map(p => postCard(p, scope === 'community' ? ov : null, {
       mods: scope === 'community' ? mods : null, commentCounts
-    })).join('')
+    })).join('') + feedPager(page, base, query)
   }
 
   guard(`${title}${sortTabs(sort, base, query)}<div class="feed">${body}</div>`)

@@ -10,7 +10,16 @@
 // ~30-line IDB adapter itself (covered by browser smoke).
 
 import assert from 'node:assert'
-import { createIdentityStore, memoryKv } from '../js/identity-store.js'
+import {
+  activateDurableIdentity,
+  assertDurableIdentity,
+  beginIdentityForget,
+  createIdentityStore,
+  ensureDurableIdentityForWrite,
+  finishIdentityForget,
+  hasIdentityForgetTombstone,
+  memoryKv
+} from '../js/identity-store.js'
 import { DevIdentity } from '../js/identity.js'
 import { genKeyPair, ready as cryptoReady } from '../js/crypto.js'
 
@@ -37,6 +46,16 @@ async function main () {
   await assert.rejects(() => noKv.saveOrAdopt(entry), /unavailable/, 'saveOrAdopt refuses loudly when unavailable')
   passed++; console.log('  ✓ saveOrAdopt refuses loudly when unavailable')
 
+  const unavailableId = new DevIdentity(mem(), mem(), { lazy: true }); await unavailableId.ready()
+  await assert.rejects(() => activateDurableIdentity(unavailableId, noKv), /unavailable/, 'public writer activation fails closed without durable storage')
+  ok(unavailableId.me().pubkey === null, 'failed durable activation remains a lurker (no session-only key)')
+
+  const failingKv = { ...memoryKv(), putIfAbsent: async () => { throw new Error('quota exceeded') } }
+  const failingStore = createIdentityStore({ kv: failingKv })
+  const failingId = new DevIdentity(mem(), mem(), { lazy: true }); await failingId.ready()
+  await assert.rejects(() => activateDurableIdentity(failingId, failingStore), /quota exceeded/, 'public writer activation propagates persistence failure')
+  ok(failingId.me().pubkey === null, 'persistence failure never activates the unpersisted candidate')
+
   console.log('\n— wrap → persist → reload round-trip —')
   const kv = memoryKv()
   const store = createIdentityStore({ kv })
@@ -46,6 +65,27 @@ async function main () {
   const reloaded = await createIdentityStore({ kv }).load() // fresh store instance = a page reload
   ok(reloaded && reloaded.pubkey === pubHex && reloaded.seed === seedHex, 'reload restores the SAME identity (seed round-trips)')
   ok(reloaded.driveKey === pubHex && reloaded.label === 'anon', 'driveKey + label survive')
+
+  console.log('\n— decrypted entry integrity is cryptographic, not shape-only —')
+  const other = await genKeyPair()
+  await assert.rejects(
+    () => createIdentityStore({ kv: memoryKv() }).saveOrAdopt({ ...entry, pubkey: other.pubHex }),
+    /seed does not match public key/,
+    'store refuses a seed paired with another public key')
+  passed++; console.log('  ✓ store refuses a seed paired with another public key')
+  await assert.rejects(
+    () => createIdentityStore({ kv: memoryKv() }).saveOrAdopt({ ...entry, driveKey: 'not-a-drive-key' }),
+    /invalid drive key/,
+    'store refuses a malformed drive key')
+  passed++; console.log('  ✓ store refuses a malformed drive key')
+  const tamperKv = memoryKv(); const tamperStore = createIdentityStore({ kv: tamperKv })
+  await tamperStore.saveOrAdopt(entry)
+  const tamperedHeader = await tamperKv.get('identity:v1'); tamperedHeader.pubkey = other.pubHex
+  ok(await tamperStore.load() === null, 'load rejects decrypted seed when the durable pubkey header was swapped')
+  const driveKv = memoryKv(); const driveStore = createIdentityStore({ kv: driveKv })
+  await driveStore.saveOrAdopt(entry)
+  const malformedDrive = await driveKv.get('identity:v1'); malformedDrive.driveKey = 'bad'
+  ok(await driveStore.load() === null, 'load rejects a decrypted record with malformed driveKey')
 
   console.log('\n— at-rest hygiene: no cleartext seed, non-extractable key —')
   const rec = await kv.get('identity:v1')
@@ -64,6 +104,17 @@ async function main () {
   const raced = await store.saveOrAdopt({ pubkey: pub2, seed: seed2, driveKey: pub2, label: 'anon' })
   ok(raced.adopted === true && raced.entry.pubkey === pubHex, 'second tab ADOPTS the first identity (its own mint is discarded)')
   ok(raced.entry.seed === seedHex, 'adopted entry carries the WINNING seed (usable for signing immediately)')
+
+  console.log('\n— deliberate replacement is an atomic pubkey CAS —')
+  const replaced = await store.replace({ pubkey: pub2, seed: seed2, driveKey: pub2, label: 'imported B' }, { expectedPubkey: pubHex })
+  ok(replaced.replaced && (await store.load()).pubkey === pub2, 'import B atomically replaces the observed durable A record')
+  const third = await genKeyPair()
+  await assert.rejects(
+    () => store.replace({ pubkey: third.pubHex, seed: third.seedHex, driveKey: third.pubHex }, { expectedPubkey: pubHex }),
+    /changed in another tab/,
+    'stale A→C CAS cannot overwrite B')
+  passed++; console.log('  ✓ stale A→C CAS cannot overwrite B')
+  ok((await store.load()).pubkey === pub2, 'failed stale CAS leaves B durable')
 
   console.log('\n— corrupt record self-heals (ATOMICALLY, review fix 2026-07-08) —')
   const kv2 = memoryKv()
@@ -86,6 +137,29 @@ async function main () {
   await assert.rejects(() => storeBad.saveOrAdopt(entry), /undecryptable/, 'shape-valid-but-undecryptable record is refused, never racily replaced')
   passed++; console.log('  ✓ shape-valid-but-undecryptable record is refused, never racily replaced')
 
+  console.log('\n— explicit corrupt-record recovery is exact-token CAS —')
+  const corruptState = await storeBad.inspect()
+  ok(corruptState.status === 'corrupt' && corruptState.reason === 'undecryptable' && !!corruptState.token, 'inspection surfaces hidden undecryptable state with an exact reset token')
+  const alien2 = { ...alien, createdAt: Date.now() + 1, iv: globalThis.crypto.getRandomValues(new Uint8Array(12)) }
+  await kvBad.delete('identity:v1')
+  await kvBad.putIfAbsent('identity:v1', alien2)
+  await assert.rejects(() => storeBad.resetCorrupt({ expectedToken: corruptState.token }), /changed in another tab/, 'a stale corrupt-state token cannot delete a replacement')
+  passed++; console.log('  ✓ a stale corrupt-state token cannot delete a replacement')
+  const currentCorrupt = await storeBad.inspect()
+  ok(await storeBad.resetCorrupt({ expectedToken: currentCorrupt.token }), 'explicit reset deletes exactly the currently inspected corrupt record')
+  ok((await storeBad.inspect()).status === 'empty', 'reset leaves an empty device tier that can mint again')
+  await storeBad.saveOrAdopt(entry)
+  ok((await storeBad.load()).pubkey === pubHex, 'a new durable writer can be saved after explicit corrupt reset')
+
+  const importKv = memoryKv()
+  await importKv.putIfAbsent('identity:v1', alien)
+  const importStore = createIdentityStore({ kv: importKv })
+  const importCorrupt = await importStore.inspect()
+  const importedOverCorrupt = await importStore.replace(entry, { expectedToken: importCorrupt.token })
+  ok(importedOverCorrupt.replaced && (await importStore.load()).pubkey === pubHex, 'deliberate import atomically replaces the exact corrupt record without delete+insert')
+  await assert.rejects(() => importStore.replace({ pubkey: pub2, seed: seed2, driveKey: pub2 }, { expectedToken: importCorrupt.token }), /changed in another tab/, 'the consumed corrupt token cannot overwrite the imported valid identity')
+  passed++; console.log('  ✓ the consumed corrupt token cannot overwrite the imported valid identity')
+
   console.log('\n— clear() kills the tier, FAIL-CLOSED (review fix 2026-07-08) —')
   ok(await store.clear() === true, 'clear() returns true only after a read-back confirms deletion')
   ok(await store.load() === null, 'after clear(), load() is null (next boot is a lurker)')
@@ -98,12 +172,57 @@ async function main () {
   const lying = createIdentityStore({ kv: { ...kvStuck, delete: async () => true } }) // resolves but does not delete
   ok(await lying.clear() === false, 'clear() read-back catches a delete that lied')
 
+  console.log('\n— forget tombstone survives every cross-store failure window —')
+  const forgetStorage = mem()
+  let devicePresent = true
+  let vaultPresent = true
+  let active = true
+  const order = []
+  beginIdentityForget(forgetStorage, pubHex)
+  ok(hasIdentityForgetTombstone(forgetStorage), 'forget intent is durable before either identity tier is deleted')
+  // A crash at this point leaves both tiers intact, but boot sees the marker and
+  // must not restore either one. Resume the exact same transaction below.
+  await finishIdentityForget({
+    storage: forgetStorage,
+    deviceStore: { clear: async () => { order.push('device'); devicePresent = false; return true } },
+    deactivate: () => { order.push('deactivate'); active = false },
+    vaultPresent: () => vaultPresent,
+    removeVault: () => { order.push('vault'); vaultPresent = false }
+  })
+  ok(order.join(',') === 'deactivate,device,vault', 'resume deactivates, deletes the device tier first, then deletes the vault')
+  ok(!active && !devicePresent && !vaultPresent && !hasIdentityForgetTombstone(forgetStorage), 'tombstone clears only after both tiers are confirmed absent')
+
+  const interruptedStorage = mem()
+  let interruptedDevice = true
+  let interruptedVault = true
+  beginIdentityForget(interruptedStorage, pubHex)
+  await assert.rejects(
+    () => finishIdentityForget({
+      storage: interruptedStorage,
+      deviceStore: { clear: async () => { interruptedDevice = false; return true } },
+      deactivate: () => {},
+      vaultPresent: () => interruptedVault,
+      removeVault: () => { throw new Error('simulated tab death before vault delete') }
+    }),
+    /simulated tab death/,
+    'failure after device deletion leaves the do-not-restore tombstone durable'
+  )
+  passed++; console.log('  ✓ failure after device deletion leaves the do-not-restore tombstone durable')
+  ok(!interruptedDevice && interruptedVault && hasIdentityForgetTombstone(interruptedStorage), 'interrupted state cannot silently restore the remaining vault/device combination')
+  await finishIdentityForget({
+    storage: interruptedStorage,
+    deviceStore: { clear: async () => true },
+    deactivate: () => {},
+    vaultPresent: () => interruptedVault,
+    removeVault: () => { interruptedVault = false }
+  })
+  ok(!interruptedVault && !hasIdentityForgetTombstone(interruptedStorage), 'later boot/retry finishes an interrupted forget and clears its marker')
+
   console.log('\n— end-to-end with DevIdentity (the ensureWriterIdentity flow) —')
   const kv3 = memoryKv()
   const store3 = createIdentityStore({ kv: kv3 })
   const idA = new DevIdentity(mem(), mem(), { lazy: true }); await idA.ready()
-  await idA.ensureActive('anon') // first write mints…
-  const resA = await store3.saveOrAdopt(idA.currentSeedEntry()) // …app.js persists
+  const resA = await activateDurableIdentity(idA, store3) // mint -> persist/adopt -> activate
   ok(resA.adopted === false, 'tab A persisted its fresh mint')
   // "reload": a new lazy identity boots, restores from the device store
   const idB = new DevIdentity(mem(), mem(), { lazy: true }); await idB.ready()
@@ -113,6 +232,22 @@ async function main () {
   ok(idB.me().pubkey === idA.me().pubkey, 'reload restores the SAME pseudonym (the "new user every refresh" bug is dead)')
   const sig = await idB.sign('peerit-test')
   ok(HEX64.test(idB.me().pubkey) && sig && sig.publicKey === idA.me().pubkey, 'restored identity SIGNS as the original')
+
+  console.log('\n— every public write requires a matching durable tier —')
+  ok((await assertDurableIdentity(idB, store3)).pubkey === idB.me().pubkey, 'active restored signer matches its verified device record')
+  const sessionOnly = new DevIdentity(mem(), mem(), { lazy: true }); await sessionOnly.ready(); await sessionOnly.ensureActive('session-only')
+  await assert.rejects(
+    () => ensureDurableIdentityForWrite(sessionOnly, createIdentityStore({ kv: memoryKv() })),
+    /not backed|session-only/,
+    'an already-active session-only signer is refused instead of silently persisted after signing')
+  passed++; console.log('  ✓ an already-active session-only signer is refused instead of silently persisted after signing')
+  const oldPub = idB.me().pubkey
+  ok(await store3.clear(), 'forget clears the durable device tier')
+  idB.deactivate()
+  ok(idB.me().pubkey === null, 'forget removes the in-memory signer immediately')
+  await ensureDurableIdentityForWrite(idB, store3)
+  ok(idB.me().pubkey && idB.me().pubkey !== oldPub, 'the next write gate creates a new durable identity, never reuses the forgotten signer')
+  ok((await store3.load()).pubkey === idB.me().pubkey, 'new post identity is durable before signing resumes')
 
   console.log(`\nidentity-device-store: ${passed} checks passed.`)
 }

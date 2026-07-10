@@ -11,17 +11,25 @@ import { verifyReleaseManifestWithFloor } from './release-verify.js'
 import { probeRelayBackend } from './pear-api.js'
 import { resolveRelayCandidates, selectRelaysResilient } from './relay-roster.js'
 import { createRelayPool } from './relay-pool.js'
-import { createLazyPearPool } from './lazy-pool.js'
+import { createLazyPearPool, monitorRelayAvailability } from './lazy-pool.js'
 import { cacheClassForChangedKeys, createData } from './data.js'
 import { Prefs } from './prefs.js'
 import { STARTER_COMMUNITIES, STARTER_POSTS, WELCOME_COMMUNITY, starterCommunity } from './onboarding.js'
 import { renderMarkdown, excerpt } from './markdown.js'
 import { sortPosts, sortComments, weight as voteWeight, POST_SORTS, COMMENT_SORTS, TIME_WINDOW_KEYS } from './ranking.js'
-import { buildCommentTree, sortCommentTree, annotateDescendants, countDescendants, MOD } from './model.js'
+import { buildCommentTree, sortCommentTree, annotateDescendants, countDescendants, MOD, TYPE } from './model.js'
 import { COPY as RECOVERY_COPY, buildRecoveryBundle, cleanOutboxes, peeritSeederCommand, recoveryBundleFilename, recoveryBundleJson } from './recovery.js'
 import { exportIdentity, importIdentity, looksLikeIdentityExport, identityExportJson, identityExportFilename, passphraseStrength, MIN_PASSPHRASE } from './identity-export.js'
-import { hasVault, vaultPubkey, saveVault, unlockVault, clearVault } from './identity-vault.js'
-import { createIdentityStore } from './identity-store.js'
+import { VAULT_KEY, hasVault, vaultPubkey, saveVault, unlockVault, clearVault } from './identity-vault.js'
+import {
+  assertDurableIdentity,
+  beginIdentityForget,
+  createIdentityStore,
+  ensureDurableIdentityForWrite,
+  finishIdentityForget,
+  hasIdentityForgetTombstone,
+  replaceDurableIdentity
+} from './identity-store.js'
 import { isSecure } from './crypto.js'
 import { encodeQR, qrToSvg, isScanSupported, scanQR } from './qr.js'
 import {
@@ -43,6 +51,8 @@ let editing = null                 // { kind:'post'|'comment', ... } inline edit
 const nameCache = new Map()        // pub -> display name (sync-ish for render)
 let integrityWarningActive = false
 let releaseManifestWarning = ''
+let corruptDeviceIdentityState = null
+let identityForgetCleanupError = ''
 
 const $ = (sel, root = document) => root.querySelector(sel)
 const app = () => $('#app')
@@ -71,6 +81,20 @@ async function boot () {
   identity = createIdentity(runtime.identityOpts)
   await identity.ready()
 
+  // A previous Forget may have been interrupted between the IndexedDB and vault
+  // deletes. The synchronous tombstone is authoritative: finish cleanup before
+  // even looking at either signer tier, and never silently restore while it remains.
+  if (identity.isDev && typeof localStorage !== 'undefined' && hasIdentityForgetTombstone(localStorage)) {
+    try {
+      await finishDurableSignerForget()
+      identityForgetCleanupError = ''
+    } catch (error) {
+      identityForgetCleanupError = (error && error.message) || 'Identity forget cleanup is incomplete.'
+      try { if (typeof identity.deactivate === 'function') identity.deactivate() } catch {}
+      console.warn('[peerit] identity forget cleanup remains pending:', identityForgetCleanupError)
+    }
+  }
+
   // Durable identity, two tiers (both DevIdentity/web-only; the PearBrowser
   // bridge holds its own key):
   //  DEVICE tier (identity-store.js) — the identity minted on first write,
@@ -80,9 +104,10 @@ async function boot () {
   //  VAULT tier (identity-vault.js) — the passphrase envelope: portable/backup.
   // Precedence: when both exist for the SAME identity, the silent device restore
   // wins (the vault is the backup the user made of it, not a request to be
-  // prompted every boot). A vault for a DIFFERENT identity (or vault-only) gets
-  // the explicit unlock modal, exactly as before.
-  if (identity.isDev && typeof localStorage !== 'undefined') {
+  // prompted every boot). A vault for a DIFFERENT identity (or vault-only) is
+  // deferred until an explicit writer action, except for exact-author recovery
+  // of a publication that was already pending before this boot.
+  if (identity.isDev && typeof localStorage !== 'undefined' && !hasIdentityForgetTombstone(localStorage)) {
     // Device-tier restore is LAZY-WEB ONLY: in the eager dev fallback
     // (persistSeed:true) addUser would write the restored seed CLEARTEXT into
     // the localStorage roster — the exact downgrade the device tier exists to
@@ -94,13 +119,13 @@ async function boot () {
     const vaultPub = hasVault(localStorage) ? vaultPubkey(localStorage) : null
     let deviceRestored = false
     if (deviceEntry && (!vaultPub || vaultPub === deviceEntry.pubkey)) {
-      try { await identity.addUser(deviceEntry); deviceRestored = true } catch (e) { console.warn('[peerit] device identity restore failed:', e && e.message) }
+      try { await identity.restoreFromDevice(deviceEntry); deviceRestored = true } catch (e) { console.warn('[peerit] device identity restore failed:', e && e.message) }
     }
-    // The unlock modal shows exactly when it did before this tier existed (any
-    // vault present), EXCEPT when the silent device restore already produced the
-    // very identity the vault protects — then prompting adds friction, not auth.
+    // A vault-only returning visitor stays a lurker and can browse immediately.
+    // Unlock is deferred to the first EXPLICIT write in ensureWriterIdentity();
+    // merely opening peerit must never force an unlock-or-delete decision.
     if (vaultPub && !(deviceRestored && deviceEntry && deviceEntry.pubkey === vaultPub)) {
-      await unlockVaultAtBoot()
+      console.log('[peerit] encrypted writer identity available; unlock deferred until an explicit write')
     }
   }
 
@@ -162,7 +187,7 @@ async function boot () {
   // without ever downgrading a newer returning-client view.
   const seedSnapshot = await fetchSeedSnapshot(runtime)
   sync = pearForSync
-    ? createSync({ getMe: () => identity.me().pubkey, identity, pear: pearForSync, writeHead, readOnly: runtime.readOnly, seedOutboxes, instantBoot: runtime.mode === 'web' && !pearOverride, seedSnapshot })
+    ? createSync({ getMe: () => identity.me().pubkey, identity, pear: pearForSync, writeHead, readOnly: runtime.readOnly, requireAtomicWrites: runtime.mode === 'web' && !runtime.readOnly, seedOutboxes, instantBoot: runtime.mode === 'web' && !pearOverride, seedSnapshot })
     : createSync({ getMe: () => identity.me().pubkey, identity, ...runtime.syncOpts, writeHead, readOnly: runtime.readOnly })
   await sync.ready()
   data = createData(sync, identity, {
@@ -175,25 +200,21 @@ async function boot () {
     // read-only deployment must never mint), then vault-unlock-before-mint, then
     // the single-flight mint.
     ensureWriter: ensureWriterIdentity,
+    // Hold the same cross-tab atomic-writer session from the first writer gate
+    // through target reads, PoW, signing, pending persistence, and durable ACKs.
+    // Import/forget take this session too, so neither can cross a publication.
+    withWriterSession: requiresAtomicWebWriter() ? withAtomicDataWriterSession : null,
+    assertWriterStart: requiresAtomicWebWriter() ? assertNoIdentityMutationDuringWrite : null,
     // Device durability floor (ADR-2026-07-07): the author keeps key+iv+ciphertext
     // for their own dispersed bodies device-local, never synced.
     deviceStore: typeof localStorage !== 'undefined' ? localStorage : null
   })
   refreshPrefs()
   sync.onChange((changed) => data.invalidateViewCaches(cacheClassForChangedKeys(changed)))
-  // One-time per identity: promote device-local follows/subs into signed follow!/
-  // member! records so the graph replicates and survives localStorage loss.
-  // Fire-and-forget — boot never blocks on it; a partial run retries next boot.
-  // Gated on an EXISTING identity: it writes signed records, so for a lurker
-  // (lazy web identity) it would otherwise trigger ensureWriter and mint at boot —
-  // silently defeating the whole lurker tier. It runs after the first write's
-  // mint instead (ensureWriterIdentity re-kicks it).
-  if (!isReadOnly() && identity.me().pubkey) {
-    data.migrateLocalGraph({
-      follows: prefs.follows(), subs: prefs.subs(),
-      storage: typeof localStorage !== 'undefined' ? localStorage : null
-    }).catch(() => {})
-  }
+  // Do not auto-promote local follows/subscriptions at boot. Migration publishes
+  // signed records, so doing it merely because a returning device has a writer key
+  // would make ordinary browsing mutate the network. Graph edges publish only on
+  // the user's explicit follow/join actions.
 
   // Live updates: when peers' data changes, repaint just the affected vote
   // widgets in place when we can, and only fall back to a full re-render for
@@ -220,7 +241,8 @@ async function boot () {
     // Don't rip focus from text/form editing. Buttons and menus must not starve
     // structural P2P updates in background tabs.
     const focusIsActive = typeof document.hasFocus !== 'function' || document.hasFocus()
-    if (focusIsActive && a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable)) { armDeferredFlush(); return }
+    const formControlActive = a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable || (a.tagName === 'BUTTON' && a.closest && a.closest('form[data-form]')))
+    if (focusIsActive && formControlActive) { armDeferredFlush(); return }
     const full = pendingFull, keys = pendingKeys
     pendingFull = false; pendingKeys = null
     if (!full && keys && await patchVotesInPlace(keys)) return // repainted in place; no re-render
@@ -279,11 +301,110 @@ function migrateAnonPrefs (pubkey) {
 // every write path runs it BEFORE signing anything. Single-flight: two concurrent
 // writes (double-tap upvote) must not race the modal or the mint.
 let _ensuringWriter = null
+let _identityMutationInFlight = false
+
+function assertNoIdentityMutationDuringWrite () {
+  if (_identityMutationInFlight) {
+    throw new Error('Publishing paused because this browser is importing or forgetting a writer identity. Finish that identity change, then submit again.')
+  }
+}
+
+async function recoverPendingWriterForBlockedIntent () {
+  let status = null
+  try { status = sync && typeof sync.status === 'function' ? await sync.status() : null } catch {}
+  const atomic = status && status.atomicCommit
+  if (!atomic || atomic.pending !== true) return 'cleared'
+  const appId = String(atomic.pendingAppId || '').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(appId)) return 'unavailable'
+  if (!sync || typeof sync.recoverPendingWithIdentity !== 'function') return 'unavailable'
+  if (typeof localStorage !== 'undefined' && hasIdentityForgetTombstone(localStorage)) return 'unavailable'
+
+  const active = identity.me().pubkey
+  const savedVaultPub = typeof localStorage !== 'undefined' && hasVault(localStorage) ? vaultPubkey(localStorage) : null
+  // This is deliberately NOT an import/switch escape hatch. Only an identity
+  // already active as the pending author, or its exact locally-saved vault, may
+  // enter the transport's matching-appId recovery session.
+  if (active !== appId && savedVaultPub !== appId) return 'unavailable'
+
+  const receipt = await sync.recoverPendingWithIdentity(appId, async () => {
+    if (identity.me().pubkey !== appId) {
+      await unlockVaultAtBoot({ allowCancel: true, recoveryOnly: true, expectedPubkey: appId })
+    }
+    if (identity.me().pubkey !== appId) throw new Error('The unlocked identity does not match the pending publication author.')
+    const durability = () => assertDurableIdentity(identity, deviceIdStore, {
+      vaultPubkey: typeof localStorage !== 'undefined' && hasVault(localStorage) ? vaultPubkey(localStorage) : null
+    })
+    try {
+      await durability()
+    } catch (error) {
+      // A tab may still hold a key restored from a device record that was later
+      // evicted. A matching vault HEADER alone is not durability proof; actually
+      // decrypt it before allowing this key to sign a replacement head.
+      if (savedVaultPub !== appId) throw error
+      await unlockVaultAtBoot({ allowCancel: true, recoveryOnly: true, expectedPubkey: appId })
+      await durability()
+    }
+  })
+  if (!receipt) return 'cleared' // another tab recovered it while we waited for the lock
+  try { await renderUserMenu(); await updateNetStatus() } catch {}
+  return 'recovered'
+}
+
+async function withAtomicDataWriterSession (fn) {
+  assertNoIdentityMutationDuringWrite()
+  if (!sync || typeof sync.withAtomicWriterSession !== 'function') {
+    throw new Error('Publishing is unavailable because this browser cannot serialize writer identity changes safely.')
+  }
+  const run = () => sync.withAtomicWriterSession(async () => {
+    assertNoIdentityMutationDuringWrite()
+    return fn()
+  })
+  try {
+    return await run()
+  } catch (error) {
+    // The callback did not run when this code is present. Offer only the matching
+    // saved signer to finish the older envelope, then leave the current form/draft
+    // untouched so a recovered post can never be accidentally duplicated.
+    if (!error || error.code !== 'PEERIT_PENDING_WRITER_LOCK') throw error
+    const recovered = await recoverPendingWriterForBlockedIntent()
+    if (recovered === 'cleared') return run()
+    if (recovered !== 'recovered') throw error
+    throw new Error('Your previous signed publication was recovered first. This draft was not submitted; review it, then submit again if you still want to publish it.')
+  }
+}
+
 async function ensureWriterIdentity () {
   // 1. FAIL-CLOSED ORDER: read-only mode never mints, never prompts, never
   //    creates relay state — checked before anything else.
   if (isReadOnly()) throw new Error('This peerit is read-only.')
-  if (identity.me().pubkey) return
+  if (typeof localStorage !== 'undefined' && hasIdentityForgetTombstone(localStorage)) {
+    try {
+      await finishDurableSignerForget()
+      identityForgetCleanupError = ''
+    } catch (error) {
+      identityForgetCleanupError = (error && error.message) || 'Identity forget cleanup is incomplete.'
+      throw new Error('Publishing stays disabled because a prior identity forget request has not finished safely. Reload or use Settings to retry cleanup before creating another writer identity.')
+    }
+  }
+  assertNoIdentityMutationDuringWrite()
+  const durableWebWriter = !!(runtime && runtime.mode === 'web' && !runtime.readOnly)
+  // Availability is checked BEFORE vault UI or identity minting. A visitor who
+  // merely tries a submit while quorum is down remains a true lurker: no prompt,
+  // no key, and no device record are created for a write that cannot commit.
+  if (durableWebWriter) await requireAtomicWebWriter()
+  assertNoIdentityMutationDuringWrite()
+  const savedVaultPub = typeof localStorage !== 'undefined' && hasVault(localStorage) ? vaultPubkey(localStorage) : null
+  if (identity.me().pubkey) {
+    if (durableWebWriter) {
+      await assertDurableIdentity(identity, deviceIdStore, { vaultPubkey: savedVaultPub })
+      // IndexedDB verification is asynchronous; quorum may disappear while it
+      // runs, so an already-active writer gets the same immediate pre-sign
+      // recheck as a newly activated identity.
+      await requireAtomicWebWriter()
+      assertNoIdentityMutationDuringWrite()
+    }
+    return
+  }
   if (_ensuringWriter) return _ensuringWriter
   _ensuringWriter = (async () => {
     // 2. Vault-unlock BEFORE mint: a saved identity exists (possibly created in
@@ -295,6 +416,7 @@ async function ensureWriterIdentity () {
     //    the passphrase right now.
     if (identity.isDev && typeof localStorage !== 'undefined' && hasVault(localStorage)) {
       await unlockVaultAtBoot({ allowCancel: true })
+      assertNoIdentityMutationDuringWrite()
     }
     // 3. Mint + DEVICE-PERSIST, AWAITED before the write proceeds — a tab closed
     //    right after the first post must not leave a relay outbox whose key was
@@ -302,22 +424,29 @@ async function ensureWriterIdentity () {
     //    minted WITHOUT activating (mintEntry): getMe() stays null until
     //    saveOrAdopt settles the multi-tab race, so the gossip poll/wake cannot
     //    open a relay outbox for a key that loses the race and gets discarded.
-    //    The store path is gated on a secure crypto backend (a 'none'-backend
-    //    placeholder identity must stay ephemeral) and degrades to today's
-    //    in-memory mint where unavailable (e.g. degraded private browsing) —
-    //    NEVER to localStorage.
+    //    Public web writing is gated on a secure crypto backend and durable
+    //    device storage. If either is unavailable, browsing continues but
+    //    publishing fails closed; a committed post must never be orphaned
+    //    behind a session-only key. Non-web compatibility paths retain their
+    //    existing in-memory behavior and never fall back to localStorage.
     let pub = identity.me().pubkey
     if (!pub) {
       const useStore = identity.isDev && identity.lazy && typeof identity.mintEntry === 'function' &&
         isSecure() && await deviceIdStore.available()
+      if (durableWebWriter && !useStore) {
+        throw new Error('Publishing is unavailable because this browser cannot durably protect a writer identity. Keep browsing as a lurker or retry in a standard browser window with IndexedDB enabled.')
+      }
       if (useStore) {
         try {
-          const candidate = await identity.mintEntry('anon')
-          const res = await deviceIdStore.saveOrAdopt(candidate) // atomic: our mint OR the racing tab's winner
-          await identity.addUser(res.entry) // activate exactly the durable identity
+          await ensureDurableIdentityForWrite(identity, deviceIdStore, { vaultPubkey: savedVaultPub, label: 'anon' })
         } catch (e) {
-          console.warn('[peerit] device identity persist failed (identity is session-only):', e && e.message)
-          await identity.ensureActive('anon') // fall back to the in-memory mint
+          if (durableWebWriter) {
+            const error = new Error('Publishing stopped before signing because the writer identity could not be durably stored. Browsing remains available; check browser storage and try again.')
+            error.cause = e
+            throw error
+          }
+          console.warn('[peerit] device identity persist failed (non-web identity is session-only):', e && e.message)
+          await identity.ensureActive('anon')
         }
       } else {
         await identity.ensureActive('anon')
@@ -325,6 +454,18 @@ async function ensureWriterIdentity () {
       pub = identity.me().pubkey
     }
     if (!pub) throw new Error('Could not create an identity on this device.')
+    // Re-check immediately before the write returns to data.js. This also covers
+    // the vault-unlock branch above, where no mint/device insertion occurred.
+    if (durableWebWriter) {
+      await assertDurableIdentity(identity, deviceIdStore, {
+        vaultPubkey: typeof localStorage !== 'undefined' && hasVault(localStorage) ? vaultPubkey(localStorage) : null
+      })
+      // Topology/capabilities may have changed while IndexedDB or the vault UI
+      // was active. Re-check after activation and immediately before data.js is
+      // allowed to stamp/sign the record.
+      await requireAtomicWebWriter()
+      assertNoIdentityMutationDuringWrite()
+    }
     // 4. Carry the lurker's device prefs over, re-key prefs, and let the world
     //    know the new writer exists (descriptor + outbox happen on the append's
     //    own _ensureMyOutbox; announce is best-effort acceleration).
@@ -337,16 +478,6 @@ async function ensureWriterIdentity () {
     // return from ensureWriterIdentity before reaching here).
     try { renderUserMenu().catch(() => {}); updateNetStatus().catch(() => {}) } catch {}
     try { if (sync && sync.announce) sync.announce().catch(() => {}) } catch {}
-    // 5. The boot-time local-graph promotion was skipped for lurkers — run it now
-    //    that an identity exists (fire-and-forget, same as boot).
-    try {
-      if (data) {
-        data.migrateLocalGraph({
-          follows: prefs.follows(), subs: prefs.subs(),
-          storage: typeof localStorage !== 'undefined' ? localStorage : null
-        }).catch(() => {})
-      }
-    } catch {}
   })().finally(() => { _ensuringWriter = null })
   return _ensuringWriter
 }
@@ -359,6 +490,120 @@ function isBridgeMode () {
 // with writes disabled. Content is fetched + verified, but posting/voting is
 // blocked until a write path (local keys + writable relay) is enabled.
 function isReadOnly () { return !!(runtime && runtime.readOnly) }
+
+function requiresAtomicWebWriter () {
+  return !!(runtime && runtime.mode === 'web' && !runtime.readOnly)
+}
+
+function atomicWriterAvailable (status) {
+  const atomic = status && status.atomicCommit
+  return !!(atomic && atomic.available === true && atomic.pending !== true && atomic.recoveryNeeded !== true)
+}
+
+function atomicWriterState (status) {
+  const atomic = status && status.atomicCommit
+  if (atomic && atomic.recoveryNeeded === true) return 'recovery'
+  if (atomic && atomic.pending === true) return 'pending'
+  if (atomicWriterAvailable(status)) return 'ready'
+  return 'quorum'
+}
+
+async function requireAtomicWebWriter () {
+  let status = null
+  try { status = sync && typeof sync.status === 'function' ? await sync.status() : null } catch {}
+  if (!atomicWriterAvailable(status)) {
+    const state = atomicWriterState(status)
+    if (state === 'recovery') {
+      throw new Error('Publishing is locked because a previous signed publication needs verified recovery. Peerit will not unlock, mint, import, forget, or use another identity over that unresolved commit.')
+    }
+    if (state === 'pending') {
+      throw new Error('Publishing is locked while Peerit retries the exact previous signed publication for a second durable receipt. No new identity will be unlocked or created over that pending commit.')
+    }
+    throw new Error('Publishing is temporarily paused until two verified durable relays are reachable. You are still browsing as a lurker; no identity or draft was changed.')
+  }
+  return status
+}
+
+function writerAvailabilityCopy (status) {
+  const state = atomicWriterState(status)
+  if (state === 'ready') return '<b>Writer quorum ready.</b> Your encrypted device identity is created or used only when you submit.'
+  if (state === 'pending') return '<b>Previous publication is still being completed.</b> Peerit is retrying its exact signed commit for a second durable receipt. New posts and identity changes stay locked; keep this browser data intact.'
+  if (state === 'recovery') return '<b>Publication recovery is required.</b> Peerit cannot safely rebase the previous signed commit yet. New posts and identity changes stay locked so another identity cannot overwrite it.'
+  return '<b>Browsing is available; publishing is paused.</b> Peerit is waiting for two verified durable relays. Your draft stays on this page and no identity is created.'
+}
+
+function writerAvailabilityNoteHtml (status) {
+  if (!requiresAtomicWebWriter()) return ''
+  const available = atomicWriterAvailable(status)
+  return `<div class="notice ${available ? '' : 'warn'} writer-availability" data-role="writer-availability" data-ready="${available ? 'true' : 'false'}">${writerAvailabilityCopy(status)}</div>`
+}
+
+// Update only the status note/button, never route() or replace the form. Typed
+// drafts therefore survive relay topology transitions in either direction.
+function applyWriterAvailability (status) {
+  if (!requiresAtomicWebWriter() || typeof document === 'undefined') return
+  const available = atomicWriterAvailable(status)
+  for (const note of document.querySelectorAll('[data-role="writer-availability"]')) {
+    note.dataset.ready = available ? 'true' : 'false'
+    note.classList.toggle('warn', !available)
+    note.innerHTML = writerAvailabilityCopy(status)
+    const form = note.closest('form')
+    if (!form) continue
+    form.dataset.writerReady = available ? 'true' : 'false'
+    const button = form.querySelector('button[type="submit"]')
+    if (button) button.disabled = !!form.dataset.busy || !available
+  }
+  const mode = document.querySelector('[data-role="settings-sync-mode"]')
+  if (mode) mode.textContent = writerModeLabel(status)
+}
+
+function writerModeLabel (status) {
+  const state = atomicWriterState(status)
+  if (state === 'ready') return 'Verified public relay (opt-in writer ready)'
+  if (state === 'pending') return 'Verified public relay (browsing only — publication pending)'
+  if (state === 'recovery') return 'Verified public relay (browsing only — publication recovery required)'
+  return 'Verified public relay (browsing only — writer quorum unavailable)'
+}
+
+function localDevIdentityControlsAllowed () {
+  return !!(identity && identity.isDev && runtime && runtime.mode !== 'web')
+}
+
+async function withIdentityMutationGuard (action, fn) {
+  // Identity durability is shared across tabs even while a public release is
+  // temporarily read-only. A pending marker from an earlier writable release must
+  // still block import/forget/reset; only non-web developer/PearBrowser modes skip
+  // this browser-local serialization contract.
+  if (!runtime || runtime.mode !== 'web') return fn()
+  if (_identityMutationInFlight) throw new Error('Another writer identity change is already in progress.')
+  if (data && typeof data.hasWriteInFlight === 'function' && data.hasWriteInFlight()) {
+    throw new Error(`Cannot ${action} the writer identity while a publication is in progress. Wait for its durable result and try again.`)
+  }
+  // Set this synchronously after the busy check: a later write will fail its
+  // ensureWriter gate, while an earlier write always wins and makes us refuse.
+  _identityMutationInFlight = true
+  try {
+    if (!sync || typeof sync.withAtomicWriterSession !== 'function') {
+      throw new Error(`Cannot ${action} the writer identity because cross-tab writer serialization is unavailable.`)
+    }
+    return await sync.withAtomicWriterSession(async () => {
+      // Re-read state only after owning the same cross-tab lock publications use.
+      // A publication that was in flight when the user clicked has now either
+      // completed cleanly or left an exact pending/recovery marker.
+      let status = null
+      try { status = typeof sync.status === 'function' ? await sync.status() : null } catch {}
+      const state = atomicWriterState(status)
+      if (state === 'pending') throw new Error(`Cannot ${action} the writer identity while a signed publication is awaiting its second durable receipt.`)
+      if (state === 'recovery') throw new Error(`Cannot ${action} the writer identity while a previous signed publication needs verified recovery.`)
+      if (data && typeof data.hasWriteInFlight === 'function' && data.hasWriteInFlight()) {
+        throw new Error(`Cannot ${action} the writer identity while a publication is in progress.`)
+      }
+      return fn()
+    })
+  } finally {
+    _identityMutationInFlight = false
+  }
+}
 
 // True when BlindShard dispersal is active for this session.
 function isDispersalActive () { return !!(data && data.dispersal) }
@@ -442,43 +687,72 @@ async function verifyReleaseAtBoot () {
 // through createSync's surface guard — the shape is load-bearing and regressed
 // once (14d8ace). Imported at the top of this file.
 
-// Background relay connector: resolve the signed roster, select a pool, plug it
-// into the lazy facade, wake the sync. Retries FOREVER with capped backoff — a
-// down/rate-limited relay means stale-but-rendered content, never an empty feed.
+// Background relay connector: continuously re-resolve the signed roster and
+// re-probe exact capabilities. One reachable relay is still useful for reads;
+// publishing is enabled only by a non-expired signed topology whose constructed
+// pool advertises the exact durable atomic quorum contract. State transitions
+// wake sync/UI once, while token-only refreshes swap the transport silently.
 async function connectRelaysInBackground (lazy) {
   const fetchFn = globalThis.fetch && globalThis.fetch.bind(globalThis)
-  let delay = 2000
-  for (;;) {
-    try {
-      const candidates = await resolveRelayCandidates({
-        relays: runtime.relays || [runtime.syncOpts.apiBase],
-        roster: runtime.relayRoster,
+  // One cache per long-lived connector. The 15-second capability monitor reuses
+  // each relay's short-lived stateless token instead of minting a fresh token on
+  // every pass; entries disappear when a signed roster drops their API base.
+  const tokenCache = new Map()
+  let lastReadFingerprint = null
+  await monitorRelayAvailability({
+    lazy,
+    writerRequired: !runtime.readOnly,
+    resolveCandidates: () => resolveRelayCandidates({
+      relays: runtime.relays || [runtime.syncOpts.apiBase],
+      roster: runtime.relayRoster,
+      fetch: fetchFn,
+      onWarning: (e) => console.warn('[peerit] relay roster unavailable:', e && e.message)
+    }),
+    // The outer monitor owns retries. A single bounded selection pass makes a
+    // lost quorum visible instead of retaining the previous writer throughout
+    // selectRelaysResilient's historical multi-pass boot retry window.
+    selectRelays: (candidates) => {
+      const current = new Set(candidates.relays || [])
+      for (const apiBase of tokenCache.keys()) if (!current.has(apiBase)) tokenCache.delete(apiBase)
+      return selectRelaysResilient(candidates.relays, {
+        apiToken: runtime.syncOpts.apiToken,
+        tokenCache,
         fetch: fetchFn,
-        onWarning: (e) => console.warn('[peerit] relay roster unavailable:', e && e.message)
+        topology: candidates.topology,
+        tries: 1
       })
-      // Phase B: select UP TO 3 working relays and drive them as a pool — writes
-      // fan out and each author's signed head is cross-checked (highest version
-      // wins), which defeats a single relay serving a stale/absent head.
-      const selected = await selectRelaysResilient(candidates.relays, { apiToken: runtime.syncOpts.apiToken, fetch: fetchFn })
-      if (selected.length) {
-        lazy.setTarget(createRelayPool({ relays: selected, fetch: runtime.syncOpts.fetch, EventSource: runtime.syncOpts.EventSource }))
-        if (candidates.rosterVerified) console.log('[peerit] verified signed relay roster; pool of ' + selected.length + ' relay(s)')
-        // B3: sanity-probe the configured hiverelay-outbox backend (non-blocking, warns only).
-        if (runtime.relayBackend === 'hiverelay-outbox') {
-          probeRelayBackend({ apiBase: selected[0].apiBase || '', apiToken: selected[0].apiToken, fetch: fetchFn })
+    },
+    createPool: (selected, candidates) => createRelayPool({
+      relays: selected,
+      topology: candidates.topology,
+      fetch: runtime.syncOpts.fetch || fetchFn,
+      EventSource: runtime.syncOpts.EventSource
+    }),
+    onStateChange: async (state) => {
+      const readFingerprint = JSON.stringify(state.relays || [])
+      const readTopologyChanged = readFingerprint !== lastReadFingerprint
+      lastReadFingerprint = readFingerprint
+      if (state.readRelayCount) {
+        console.log('[peerit] relay pool: ' + state.readRelayCount + ' readable; atomic writer ' + (state.writerAvailable ? 'ready' : 'unavailable'))
+        // B3: sanity-probe the configured hiverelay-outbox backend (non-blocking,
+        // warns only). Capability admission above remains the actual writer gate.
+        if (runtime.relayBackend === 'hiverelay-outbox' && state.selected[0]) {
+          const primary = state.selected[0]
+          probeRelayBackend({ apiBase: primary.apiBase || '', apiToken: primary.apiToken, fetch: fetchFn })
             .then((probe) => { if (probe.service !== 'outboxlog') console.warn('[peerit] configured hiverelay-outbox backend but relay /api/bridge/status did not report service=outboxlog — check the relay URL') })
             .catch(() => {})
         }
-        if (sync && sync.wake) { try { await sync.wake() } catch (e) { console.warn('[peerit] wake after connect:', e && e.message) } }
-        try { updateNetStatus() } catch {}
-        return
+        // Writer-only capability/expiry changes update status in place. They do
+        // not wake/re-render the data graph, so a typed post/community draft is
+        // never replaced just because quorum changed beneath it.
+        if (readTopologyChanged && sync && sync.wake) { try { await sync.wake() } catch (e) { console.warn('[peerit] wake after connect:', e && e.message) } }
+      } else {
+        console.warn('[peerit] no relay reachable — showing cached verified content while monitoring continues')
       }
-    } catch (e) { console.warn('[peerit] relay connect attempt failed:', e && e.message) }
-    console.warn('[peerit] no relay reachable yet — showing cached content, retrying in ' + Math.round(delay / 1000) + 's')
-    try { updateNetStatus() } catch {}
-    await new Promise((r) => setTimeout(r, delay))
-    delay = Math.min(delay * 2, 30000)
-  }
+      try { await updateNetStatus() } catch {}
+    },
+    onError: (e) => console.warn('[peerit] relay monitor attempt failed:', e && e.message)
+  })
 }
 
 // Fetch the small, hash-pinned seed snapshot on every web boot. Gossip still uses
@@ -559,6 +833,7 @@ async function updateNetStatus () {
   const el = $('#netstatus'); if (!el || !sync) return
   try {
     const s = await sync.status()
+    applyWriterAvailability(s)
     const me = identity.me()
     const secure = s.secure !== false
     const withholding = Array.isArray(s.withholding) ? s.withholding : []
@@ -567,10 +842,17 @@ async function updateNetStatus () {
     el.title = integrityBad
       ? 'Signed outbox integrity warning: newer or complete records are being retained while the relay is withholding or rolled back.'
       : 'P2P sync status — click to refresh'
-    el.innerHTML = `<b>${esc(s.mode || 'sync')}</b> · ${s.peers != null ? s.peers : 1}p · ${s.viewLength || 0} recs · <span class="mono">${me.pubkey ? esc(me.pubkey.slice(0, 6)) + '…' : 'lurking'}</span>${integrityBad ? ` · ⚠ ${withholding.length} outbox integrity issue${withholding.length === 1 ? '' : 's'}` : ''}${secure ? '' : ' · ⚠ insecure'}${isReadOnly() ? ' · read-only' : ''}${isDispersalActive() ? ' · dispersed' : ''}`
+    const writerStateName = atomicWriterState(s)
+    const writerState = requiresAtomicWebWriter()
+      ? (writerStateName === 'ready' ? ' · writer ready' : writerStateName === 'pending' ? ' · publication pending' : writerStateName === 'recovery' ? ' · recovery required' : ' · browsing only')
+      : ''
+    el.innerHTML = `<b>${esc(s.mode || 'sync')}</b> · ${s.peers != null ? s.peers : 1}p · ${s.viewLength || 0} recs · <span class="mono">${me.pubkey ? esc(me.pubkey.slice(0, 6)) + '…' : 'lurking'}</span>${integrityBad ? ` · ⚠ ${withholding.length} outbox integrity issue${withholding.length === 1 ? '' : 's'}` : ''}${secure ? '' : ' · ⚠ insecure'}${isReadOnly() ? ' · read-only' : ''}${writerState}${isDispersalActive() ? ' · dispersed' : ''}`
     if (integrityBad && !integrityWarningActive) toast('Network integrity warning: a relay is withholding or serving a rolled-back outbox. Newer verified content is being retained.', 'error')
     integrityWarningActive = integrityBad
-  } catch (e) { el.textContent = 'sync: ' + (e.message || 'error') }
+  } catch (e) {
+    applyWriterAvailability(null)
+    el.textContent = 'sync: ' + (e.message || 'error')
+  }
 }
 
 async function renderUserMenu () {
@@ -588,7 +870,7 @@ async function renderUserMenu () {
     : ''
   el.innerHTML = `
     ${modeBadge}${dispersalBadge}
-    <button class="user-pill" data-act="toggle-usermenu" aria-haspopup="menu" aria-label="Account menu">
+    <button class="user-pill" data-act="toggle-usermenu" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">
       <span class="avatar" style="background:${colorFor(me.pubkey)}"></span>
       <span class="uname">${me.pubkey ? esc(nameOf(me.pubkey)) : 'browsing'}</span>
     </button>
@@ -603,11 +885,12 @@ async function renderUserMenu () {
       <a role="menuitem" href="#/following">Following</a>
       <a role="menuitem" href="#/saved">Saved</a>
       <a role="menuitem" href="#/settings">Settings</a>
-      ${identity.isDev && me.pubkey ? '<div class="dd-sep"></div>' + devUserSwitcher() : ''}
+      ${localDevIdentityControlsAllowed() && me.pubkey ? '<div class="dd-sep"></div>' + devUserSwitcher() : ''}
     </div>`
 }
 
 function devUserSwitcher () {
+  if (!localDevIdentityControlsAllowed()) return ''
   const users = identity.listUsers()
   const me = identity.me().pubkey
   return `<div class="dd-label">Dev: switch user</div>` +
@@ -854,11 +1137,18 @@ function postSort (sort) {
   return POST_SORTS.includes(sort) ? sort : 'hot'
 }
 
+function isWritableContent (rec) { return !!(rec && rec.protocol === 3) }
+
 function voteWidget (rec, type) {
   const t = rec.tally || { score: 0, myVote: 0 }
   const up = t.myVote === 1 ? 'on' : ''
   const down = t.myVote === -1 ? 'on' : ''
   const cls = t.myVote === 1 ? 'pos' : t.myVote === -1 ? 'neg' : ''
+  if (!isWritableContent(rec)) {
+    return `<div class="votes historical" title="Historical pre-v3 content is readable but cannot be voted on safely." aria-label="Historical score ${fmtCount(t.score)}">
+      <span class="score ${cls}">${fmtCount(t.score)}</span>
+    </div>`
+  }
   return `<div class="votes" data-cid="${esc(rec.cid)}" data-community="${esc(rec.community)}" data-type="${type}" data-myvote="${t.myVote || 0}">
     <button class="arrow up ${up}" data-act="vote" data-dir="1" aria-label="upvote">▲</button>
     <span class="score ${cls}">${fmtCount(t.score)}</span>
@@ -879,9 +1169,10 @@ function postCard (post, ov, opts = {}) {
   const stickied = ov && ov.stickied.has(post.cid)
   const isMod = opts.mods && opts.mods.has(identity.me().pubkey)
   const mine = post.author === identity.me().pubkey
+  const writable = isWritableContent(post)
   const permalink = buildRoute(['r', post.community, 'comments', post.cid])
   const commentCount = opts.commentCounts ? (opts.commentCounts.get(post.cid) || 0) : null
-  const overflow = actionOverflow(post, ov, { isMod, mine, full: opts.full })
+  const overflow = actionOverflow(post, ov, { isMod, mine, writable, full: opts.full })
 
   let bodyHtml = ''
   if (post.deleted) bodyHtml = `<div class="removed-note">[deleted by author]</div>`
@@ -899,6 +1190,7 @@ function postCard (post, ov, opts = {}) {
         ${stickied ? '<span class="pin">📌 pinned</span>' : ''}
         <a class="sub-link" href="#/r/${esc(post.community)}">r/${esc(post.community)}</a>
         <span class="dim">· posted by</span> ${authorLine(post)}
+        ${writable ? '' : '<span class="historical-tag" title="Pre-v3 content: readable, but CID-based writes are disabled">historical · read-only</span>'}
         ${locked ? '<span class="lock" title="Locked">🔒</span>' : ''}
       </div>
       <h2 class="post-title">${opts.full ? esc(post.title) : `<a href="${permalink}">${esc(post.title)}</a>`}
@@ -916,13 +1208,13 @@ function postCard (post, ov, opts = {}) {
   </article>`
 }
 
-function actionOverflow (post, ov, { isMod, mine }) {
+function actionOverflow (post, ov, { isMod, mine, writable }) {
   const items = []
-  if (mine && !post.deleted) {
+  if (writable && mine && !post.deleted) {
     items.push('<button class="pa" data-act="edit-post">✎ edit</button>')
     items.push('<button class="pa danger" data-act="delete-post">🗑 delete</button>')
   }
-  if (isMod && ov) items.push(modMenu(post, ov))
+  if (writable && isMod && ov) items.push(modMenu(post, ov))
   if (!items.length) return ''
   return `<details class="more-actions">
     <summary class="pa" aria-label="More post actions">More</summary>
@@ -1151,10 +1443,13 @@ async function viewPost ({ community, cid, query, guard, token }) {
   if (token !== renderToken) return
   const locked = ov.locked.has(cid)
   const isMod = ov.mods.has(identity.me().pubkey)
+  const writableThread = isWritableContent(pWith)
 
   const banned = ov.banned.has(identity.me().pubkey)
   const composer = (pWith.deleted || ov.removed.has(cid))
     ? `<div class="locked-note">This post is no longer available.</div>`
+    : !writableThread
+      ? `<div class="locked-note">Historical thread — readable for compatibility, but replies, votes, edits, and moderation writes are disabled because its old CID may be ambiguous.</div>`
     : locked
       ? `<div class="locked-note">🔒 This thread is locked. New comments are disabled.</div>`
       : banned
@@ -1169,7 +1464,7 @@ async function viewPost ({ community, cid, query, guard, token }) {
 
   const commentsHtml = sorted.length
     ? sorted.map(n => commentNode(n, pWith, ov, isMod, 0)).join('')
-    : `<div class="no-comments">No comments yet. Be the first.</div>`
+    : `<div class="no-comments">${isReadOnly() ? 'No comments yet.' : 'No comments yet. Be the first.'}</div>`
 
   guard(`<div class="post-detail">
       ${postCard(pWith, ov, { full: true, mods: ov.mods })}
@@ -1195,6 +1490,7 @@ function commentNode (node, post, ov, isMod, depth) {
   const removed = node._removed
   const deleted = node.deleted
   const locked = !!(ov.locked && ov.locked.has(post.cid))
+  const writable = isWritableContent(post) && isWritableContent(node)
   const childCount = node._descendants != null ? node._descendants : countDescendants(node)
   let bodyHtml
   if (deleted) bodyHtml = `<div class="removed-note">[deleted]</div>`
@@ -1202,7 +1498,7 @@ function commentNode (node, post, ov, isMod, depth) {
   else if (node._blobMissing) bodyHtml = `<div class="removed-note">[encrypted body unavailable — no relay is currently serving it]</div>`
   else bodyHtml = `<div class="md">${renderMarkdown(node.body)}</div>`
 
-  const replyOpen = openReplies.has(node.cid) && !locked
+  const replyOpen = writable && openReplies.has(node.cid) && !locked
   const replyForm = replyOpen ? `
     <form class="composer reply" data-form="comment" data-community="${esc(node.community)}" data-post="${esc(post.cid)}" data-parent="${esc(node.cid)}">
       <textarea name="body" placeholder="Reply…" rows="3"></textarea>
@@ -1215,20 +1511,20 @@ function commentNode (node, post, ov, isMod, depth) {
   const children = node.children.length
     ? `<div class="children">${node.children.map(c => commentNode(c, post, ov, isMod, depth + 1)).join('')}</div>` : ''
 
-  return `<div class="comment${isCollapsed ? ' collapsed' : ''}" data-cid="${esc(node.cid)}" data-community="${esc(node.community)}" id="${collapsedId}">
+  return `<div class="comment${isCollapsed ? ' collapsed' : ''}" data-cid="${esc(node.cid)}" data-community="${esc(node.community)}" data-post="${esc(post.cid)}" id="${collapsedId}">
     <div class="comment-row">
       <button class="collapse" data-act="collapse" data-target="${collapsedId}" title="collapse" aria-label="Collapse or expand comment thread">${isCollapsed ? '[+]' : '[–]'}</button>
       <div class="comment-body">
         <div class="comment-head">
           ${voteWidgetInline(node)}
-          ${authorLine(node)} ${childCount ? `<span class="dim">· ${childCount} ${childCount === 1 ? 'reply' : 'replies'}</span>` : ''}
+          ${authorLine(node)} ${writable ? '' : '<span class="historical-tag">historical · read-only</span>'} ${childCount ? `<span class="dim">· ${childCount} ${childCount === 1 ? 'reply' : 'replies'}</span>` : ''}
         </div>
         ${bodyHtml}
         <div class="comment-actions">
-          ${!deleted && !removed && !locked ? `<button class="pa" data-act="reply" data-cid="${esc(node.cid)}">↳ reply</button>` : ''}
-          ${mine && !deleted ? `<button class="pa" data-act="edit-comment" data-cid="${esc(node.cid)}">✎ edit</button>
+          ${writable && !deleted && !removed && !locked ? `<button class="pa" data-act="reply" data-cid="${esc(node.cid)}">↳ reply</button>` : ''}
+          ${writable && mine && !deleted ? `<button class="pa" data-act="edit-comment" data-cid="${esc(node.cid)}">✎ edit</button>
             <button class="pa danger" data-act="delete-comment" data-cid="${esc(node.cid)}">🗑 delete</button>` : ''}
-          ${isMod ? `<button class="pa mod" data-act="mod" data-mod="${removed ? MOD.APPROVE : MOD.REMOVE}" data-cid="${esc(node.cid)}">${removed ? '✓ approve' : '⊘ remove'}</button>` : ''}
+          ${writable && isMod ? `<button class="pa mod" data-act="mod" data-mod="${removed ? MOD.APPROVE : MOD.REMOVE}" data-cid="${esc(node.cid)}">${removed ? '✓ approve' : '⊘ remove'}</button>` : ''}
         </div>
         ${replyForm}
       </div>
@@ -1240,7 +1536,8 @@ function commentNode (node, post, ov, isMod, depth) {
 function voteWidgetInline (rec) {
   const t = rec.tally || { score: 0, myVote: 0 }
   const cls = t.myVote === 1 ? 'pos' : t.myVote === -1 ? 'neg' : ''
-  return `<span class="votes inline" data-cid="${esc(rec.cid)}" data-community="${esc(rec.community)}" data-type="comment" data-myvote="${t.myVote || 0}">
+  if (!isWritableContent(rec)) return `<span class="votes inline historical" title="Historical pre-v3 comment is read-only"><span class="score ${cls}">${fmtCount(t.score)}</span></span>`
+  return `<span class="votes inline" data-cid="${esc(rec.cid)}" data-community="${esc(rec.community)}" data-post="${esc(rec.postCid || '')}" data-type="comment" data-myvote="${t.myVote || 0}">
     <button class="arrow up ${t.myVote === 1 ? 'on' : ''}" data-act="vote" data-dir="1" aria-label="upvote">▲</button>
     <span class="score ${cls}">${fmtCount(t.score)}</span>
     <button class="arrow down ${t.myVote === -1 ? 'on' : ''}" data-act="vote" data-dir="-1" aria-label="downvote">▼</button>
@@ -1249,8 +1546,9 @@ function voteWidgetInline (rec) {
 
 // ---- SUBMIT view ------------------------------------------------------------
 async function viewSubmit ({ query, guard, token }) {
-  const communities = await data.listCommunities()
+  const [communities, writerStatus] = await Promise.all([data.listCommunities(), data.status().catch(() => null)])
   if (token !== renderToken) return
+  const writerReady = !requiresAtomicWebWriter() || atomicWriterAvailable(writerStatus)
   const to = query.to || (communities[0] && communities[0].slug) || ''
   if (!communities.length) {
     return done(guard, token, `<div class="empty"><h3>No communities yet</h3>
@@ -1263,7 +1561,8 @@ async function viewSubmit ({ query, guard, token }) {
   guard(`<div class="panel">
     <h1>Create a post</h1>
     ${bannedHere ? `<div class="locked-note">🚫 You are banned from r/${esc(to)} — pick another community.</div>` : ''}
-    <form data-form="submit-post">
+    <form data-form="submit-post"${requiresAtomicWebWriter() ? ` data-writer-ready="${writerReady ? 'true' : 'false'}"` : ''}>
+      ${writerAvailabilityNoteHtml(writerStatus)}
       ${showBackupWarning ? firstPostBackupWarningHtml() : ''}
       <label>Community
         <select name="community">${communities.map(c => `<option value="${esc(c.slug)}" ${c.slug === to ? 'selected' : ''}>r/${esc(c.slug)}</option>`).join('')}</select>
@@ -1276,7 +1575,7 @@ async function viewSubmit ({ query, guard, token }) {
       <label>Title <input name="title" maxlength="300" placeholder="An interesting title" required></label>
       <label class="field-body">Body (markdown) <textarea name="body" rows="10" placeholder="Text (optional)"></textarea></label>
       <label class="field-url" hidden>URL <input name="url" placeholder="https:// or hyper:// or pear://"></label>
-      <div class="form-actions"><button class="btn btn-primary" type="submit">Post</button>
+      <div class="form-actions"><button class="btn btn-primary" type="submit"${writerReady ? '' : ' disabled'}>Post</button>
         <a class="btn btn-ghost" href="#/r/${esc(to)}">Cancel</a></div>
     </form>
   </div>`)
@@ -1285,16 +1584,20 @@ async function viewSubmit ({ query, guard, token }) {
 
 // ---- CREATE COMMUNITY view --------------------------------------------------
 async function viewCreateCommunity ({ guard, token }) {
+  const writerStatus = requiresAtomicWebWriter() ? await data.status().catch(() => null) : null
+  if (token !== renderToken) return
+  const writerReady = !requiresAtomicWebWriter() || atomicWriterAvailable(writerStatus)
   guard(`<div class="panel">
     <h1>Create a community</h1>
-    <form data-form="create-community">
+    <form data-form="create-community"${requiresAtomicWebWriter() ? ` data-writer-ready="${writerReady ? 'true' : 'false'}"` : ''}>
+      ${writerAvailabilityNoteHtml(writerStatus)}
       <label>Name <span class="dim">r/</span>
         <input name="slug" maxlength="24" placeholder="programming" required>
         <small class="hint">2–24 chars: lowercase letters, numbers, underscores</small>
       </label>
       <label>Display title <input name="title" maxlength="100" placeholder="Programming"></label>
       <label>Description <textarea name="description" rows="3" maxlength="500" placeholder="What is this community about?"></textarea></label>
-      <div class="form-actions"><button class="btn btn-primary" type="submit">Create community</button>
+      <div class="form-actions"><button class="btn btn-primary" type="submit"${writerReady ? '' : ' disabled'}>Create community</button>
         <a class="btn btn-ghost" href="#/communities">Cancel</a></div>
     </form>
     <p class="dim small">You'll be the founding moderator. Anyone can post and comment; you can remove content, lock threads, pin posts, ban users, and add other moderators.</p>
@@ -1474,6 +1777,8 @@ async function refreshNotifBadge (force = false) {
 // ---- SEARCH view ------------------------------------------------------------
 async function viewSearch ({ query, guard, token }) {
   const q = (query.q || '').trim()
+  const searchInput = document.querySelector('form[data-form="search"] input[name="q"]')
+  if (searchInput && searchInput.value !== q) searchInput.value = q
   guard(skeleton('Search'))
   if (!q) return done(guard, token, `<div class="empty"><h3>Search peerit</h3><p>Type a query in the bar above.</p></div>`, renderSidebarHome)
   const { communities: commHits, posts: postHits, comments: commentHits } = await data.search(q)
@@ -1560,7 +1865,7 @@ function backupStatusHtml (backup) {
 // PearBrowser phrase — so the backup copy must talk about exporting, not a phrase.
 const WEB_IDENTITY_COPY = Object.freeze({
   summary: 'This identity lives only in this browser. Export it to move it to another device or keep a backup — peerit has no server that can recover it for you.',
-  detail: "Your posting key is stored in this browser's local storage. If you clear site data or lose this device without exporting, the identity is gone for good. Export creates a passphrase-encrypted file you can import on another browser or your phone.",
+  detail: "Your posting key is kept in this browser's encrypted device storage. If you clear site data or lose this device without exporting, the identity is gone for good. Export creates a passphrase-encrypted file you can import on another browser or your phone.",
   ackLabel: 'I understand this identity is stored only in this browser and peerit cannot recover it for me.'
 })
 
@@ -1597,33 +1902,51 @@ async function viewSettings ({ guard, token }) {
   const currentOutbox = currentSettingsOutbox(status, me)
   const seederCommand = settingsSeederCommand(status, me)
   const hasOutbox = !!(currentOutbox && currentOutbox.inviteKey && seederCommand)
-  const modeLabel = isBridgeMode() ? 'PearBrowser P2P bridge' : 'Local dev fallback'
+  const modeLabel = runtime && runtime.mode === 'web'
+    ? (isReadOnly() ? 'Verified public relay (read-only)' : writerModeLabel(status))
+    : isBridgeMode() ? 'PearBrowser P2P bridge' : 'Local dev fallback'
   const vaultActive = typeof localStorage !== 'undefined' && hasVault(localStorage)
+  const forgetPending = typeof localStorage !== 'undefined' && hasIdentityForgetTombstone(localStorage)
   // Device tier state: the silently-restored identity (identity-store.js) is
   // "active" when the store holds the CURRENT pubkey.
   let deviceActive = false
-  if (identity.isDev && me.pubkey) {
-    try { const d = await deviceIdStore.load(); deviceActive = !!(d && d.pubkey === me.pubkey) } catch {}
+  let deviceState = null
+  if (identity.isDev) {
+    try {
+      deviceState = await deviceIdStore.inspect()
+      deviceActive = !!(me.pubkey && deviceState.status === 'valid' && deviceState.pubkey === me.pubkey)
+    } catch {}
   }
+  corruptDeviceIdentityState = !forgetPending && deviceState && deviceState.status === 'corrupt' ? deviceState : null
   const backup = await pearBackupStatus()
   if (token !== renderToken) return
   guard(`<div class="panel settings-panel">
     <h1>Settings</h1>
     <h2>Profile</h2>
-    <form data-form="profile">
+    ${isReadOnly() ? '<p class="dim small settings-copy">Profile publishing is unavailable in this read-only release.</p>' : `<form data-form="profile">
       <label>Display name <input name="name" maxlength="32" value="${esc(profile && profile.name || '')}" placeholder="pick a name"></label>
       <label>Bio <textarea name="bio" rows="3" maxlength="500" placeholder="about you">${esc(profile && profile.bio || '')}</textarea></label>
       <div class="form-actions"><button class="btn btn-primary" type="submit">Save profile</button></div>
-    </form>
+    </form>`}
     <h2>Identity / Recovery</h2>
     <p class="settings-copy"><b>${esc(identityBackupSummary())}</b></p>
     <p class="dim small settings-copy">${esc(identityBackupDetail())}</p>
+    ${forgetPending ? `<div class="notice warn">
+      <b>Identity forget cleanup is still active.</b>
+      <p>${esc(identityForgetCleanupError || 'Peerit will not restore or use this identity until both encrypted copies are confirmed removed.')}</p>
+      <button class="btn btn-primary" type="button" data-act="retry-identity-forget">Retry safe cleanup</button>
+    </div>` : ''}
+    ${corruptDeviceIdentityState ? `<div class="notice warn">
+      <b>The encrypted device identity cannot be opened.</b>
+      <p>Peerit will not overwrite it silently. You may import a saved identity below, or explicitly reset only this broken device copy${vaultActive ? '; the separate passphrase vault will remain available' : ' and create a new identity on your next write'}.</p>
+      <button class="btn btn-ghost danger" type="button" data-act="reset-corrupt-identity">Reset broken device copy</button>
+    </div>` : ''}
     <ul class="kv settings-kv">
       ${me.pubkey ? `<li><span>App identity fingerprint</span><b class="mono small key-inline" title="${esc(me.pubkey)}">${esc(shortKey(me.pubkey, 12))}</b></li>
       <li><span>App drive key fingerprint</span><b class="mono small" title="${esc(me.driveKey)}">${esc(shortKey(me.driveKey, 12))}</b></li>`
         : '<li><span>App identity</span><b>none yet — created on your first post, comment, or vote</b></li>'}
       <li><span>Backup status</span><b>${backupStatusHtml(backup)}</b></li>
-      <li><span>Sync mode</span><b>${modeLabel}</b></li>
+      <li><span>Sync mode</span><b${requiresAtomicWebWriter() ? ' data-role="settings-sync-mode"' : ''}>${modeLabel}</b></li>
       <li><span>Body dispersal</span><b>${isDispersalActive() ? 'BlindShard active' : 'off'}</b></li>
     </ul>
     ${identity.isDev ? `<h2>Stay logged in on this device</h2>
@@ -1648,7 +1971,7 @@ async function viewSettings ({ guard, token }) {
         : '<p class="dim small settings-copy">Nothing to export yet — an identity is created the first time you post, comment, or vote. You can import an existing identity below.</p>'}
       <form data-form="import-identity" class="import-identity">
         <h3>Import an identity here</h3>
-        <p class="dim small settings-copy">Adds the imported identity alongside any already in this browser and switches to it. Your current identities are kept.</p>
+        <p class="dim small settings-copy">Replaces this browser's active identity only after the imported key is encrypted into both durable device storage and a matching passphrase vault. Export the current identity first if you may need it again.</p>
         <label>Passphrase <input type="password" name="passphrase" autocomplete="off" placeholder="the passphrase used at export"></label>
         <label>Identity export (paste, load a file, or scan a QR)
           <textarea class="keybox mono" name="payload" rows="5" spellcheck="false" placeholder='{"type":"peerit-identity-export",...}'></textarea>
@@ -1709,7 +2032,7 @@ async function viewSettings ({ guard, token }) {
         <button class="btn btn-primary" type="submit">Import bundle</button>
       </div>
     </form>
-    ${identity.isDev ? `<h2>Dev tools</h2>
+    ${localDevIdentityControlsAllowed() ? `<h2>Dev tools</h2>
       <p class="dim small">You're running outside PearBrowser. Multiple browser tabs share one world via localStorage + BroadcastChannel, so you can simulate several users.</p>
       <div class="form-actions">
         <button class="btn btn-ghost" data-act="show-welcome">Show starter feed</button>
@@ -1833,8 +2156,8 @@ async function onClick (e) {
         // the durable network edge (replicates, survives localStorage, powers counts).
         // LURKERS keep the local pref only — the UI promises an identity is created
         // on "post, comment, or vote", so a follow must not silently mint one. The
-        // pref is promoted to a signed edge by migrateLocalGraph after the real
-        // first write (ensureWriterIdentity re-kicks it).
+        // Existing lurker prefs stay device-local; toggling again after a writer
+        // identity exists publishes the signed graph edge explicitly.
         if (!isReadOnly() && identity.me().pubkey) data.setFollow(pub, now).catch(() => {})
         t.textContent = now ? '✓ Following' : '+ Follow'
         t.classList.toggle('btn-primary', !now)
@@ -1859,6 +2182,8 @@ async function onClick (e) {
       case 'export-identity': return void openExportIdentityModal()
       case 'remember-identity': return void openRememberIdentityModal()
       case 'forget-identity': return void forgetVault()
+      case 'retry-identity-forget': return void retryIdentityForget()
+      case 'reset-corrupt-identity': return void resetCorruptIdentity()
       case 'download-identity-file': return void downloadIdentityExport()
       case 'copy-identity-string': return void await copyIdentityExport()
       case 'show-identity-qr': return void showIdentityQr()
@@ -1872,7 +2197,10 @@ async function onClick (e) {
       case 'cancel-reply': { openReplies.delete(t.dataset.cid); route(); return }
       case 'toggle-usermenu': { const d = $('#userdrop'); if (d) { d.hidden = !d.hidden; t.setAttribute('aria-expanded', String(!d.hidden)) } return }
       case 'netstatus': return void updateNetStatus()
-      case 'switch-user': { identity.switchUser(t.dataset.pub); data.invalidateViewCaches(); if (sync.announce) sync.announce(); refreshPrefs(); nameCache.clear(); renderUserMenu(); route(); toast('Switched user'); return }
+      case 'switch-user': {
+        if (!localDevIdentityControlsAllowed()) throw new Error('Developer user switching is unavailable on the public web app.')
+        identity.switchUser(t.dataset.pub); data.invalidateViewCaches(); if (sync.announce) sync.announce(); refreshPrefs(); nameCache.clear(); renderUserMenu(); route(); toast('Switched user'); return
+      }
       case 'start-community': return void await startCommunity(t.dataset.slug)
       case 'bridge-proof-write': return void await onBridgeProofWrite(t)
       case 'bridge-proof-copy': return void await onBridgeProofCopy(t)
@@ -1974,7 +2302,7 @@ async function onVote (t) {
   }
   paint(next) // optimistic
   try {
-    await data.vote(cid, community, type, next)
+    await data.vote(cid, community, type, next, { postCid: box.dataset.post || '' })
   } catch (err) {
     paint(cur) // roll back the optimistic UI on failure
     throw err  // surfaced as a toast by onClick
@@ -2052,7 +2380,13 @@ async function onMod (t) {
     await data.banUser(community, user, '')
     toast('User banned')
   } else {
-    await data.modAction(community, { action: mod, targetCid: cid })
+    const isComment = post.classList.contains('comment')
+    await data.modAction(community, {
+      action: mod,
+      targetCid: cid,
+      targetType: isComment ? TYPE.COMMENT : TYPE.POST,
+      postCid: isComment ? post.dataset.post : null
+    })
     toast('Done: ' + mod)
   }
   route()
@@ -2198,18 +2532,23 @@ async function onSubmit (e) {
       return
     }
     if (f === 'dev-user') {
+      if (!localDevIdentityControlsAllowed()) throw new Error('Developer user creation is unavailable on the public web app.')
       await createDevUser(String(fd.get('name') || '').trim())
       return
     }
   } catch (err) { toast(err.message || String(err), 'error') }
   finally {
     delete form.dataset.busy
-    if (btn && document.contains(btn)) { btn.disabled = false; btn.textContent = btn.dataset.label || btn.textContent }
+    if (btn && document.contains(btn)) {
+      btn.disabled = form.hasAttribute('data-writer-ready') && form.dataset.writerReady !== 'true'
+      btn.textContent = btn.dataset.label || btn.textContent
+    }
   }
 }
 
 // ---- dev helpers ------------------------------------------------------------
 async function createDevUser (name) {
+  if (!localDevIdentityControlsAllowed()) throw new Error('Developer user creation is unavailable on the public web app.')
   if (!name) return
   await identity.createUser(name)
   data.invalidateViewCaches()
@@ -2307,9 +2646,29 @@ function showPearBackupInstructions () {
 // resolves once the user unlocks or chooses to start fresh. Wrong passphrase is a
 // clean retry (no lockout, no partial state); "Start fresh instead" discards the
 // vault and falls back to A1's mint-a-new-identity behavior.
-async function unlockVaultAtBoot ({ allowCancel = false } = {}) {
+async function finishDurableSignerForget () {
+  if (typeof localStorage === 'undefined' || !hasIdentityForgetTombstone(localStorage)) return true
+  return finishIdentityForget({
+    storage: localStorage,
+    deviceStore: deviceIdStore,
+    deactivate: () => { if (identity && typeof identity.deactivate === 'function') identity.deactivate() },
+    vaultPresent: () => hasVault(localStorage),
+    removeVault: () => clearVault(localStorage)
+  })
+}
+
+async function clearDurableSigner () {
+  if (typeof localStorage === 'undefined') throw new Error('Durable browser storage is unavailable.')
+  beginIdentityForget(localStorage, identity && identity.me ? identity.me().pubkey : null)
+  try { if (identity && typeof identity.deactivate === 'function') identity.deactivate() } catch {}
+  return finishDurableSignerForget()
+}
+
+async function unlockVaultAtBoot ({ allowCancel = false, recoveryOnly = false, expectedPubkey = null } = {}) {
   if (typeof document === 'undefined' || !document.body) return
   const pub = vaultPubkey(localStorage)
+  const expected = /^[0-9a-f]{64}$/.test(String(expectedPubkey || '')) ? String(expectedPubkey).toLowerCase() : null
+  if (recoveryOnly && (!expected || pub !== expected)) throw new Error('The saved vault does not match the pending publication author.')
   const who = pub ? 'u/' + shortKey(pub, 8) : 'your saved identity'
   return new Promise((resolve, reject) => {
     const overlay = document.createElement('div')
@@ -2317,13 +2676,15 @@ async function unlockVaultAtBoot ({ allowCancel = false } = {}) {
     overlay.innerHTML = `
       <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="vault-unlock-title">
         <h2 id="vault-unlock-title">Unlock ${esc(who)}</h2>
-        <p class="dim small">This device has a saved, passphrase-encrypted identity. Enter its passphrase to keep posting as ${esc(who)}. peerit has no server that can reset it.</p>
+        <p class="dim small">${recoveryOnly
+          ? `A previous signed publication by ${esc(who)} needs its matching key to finish safely. Unlocking here can only recover that publication; it cannot switch to another identity or submit the current draft.`
+          : `This device has a saved, passphrase-encrypted identity. Enter its passphrase to keep posting as ${esc(who)}. peerit has no server that can reset it.`}</p>
         <form data-role="vault-unlock-form">
           <label>Passphrase <input type="password" name="passphrase" autocomplete="current-password" autofocus required></label>
           <p class="dim small err" data-role="vault-err" hidden></p>
           <div class="form-actions wrap">
             <button class="btn btn-primary" type="submit">Unlock</button>
-            <button class="btn btn-ghost" type="button" data-role="vault-fresh">Start fresh instead</button>
+            ${recoveryOnly ? '' : '<button class="btn btn-ghost" type="button" data-role="vault-fresh">Start fresh instead</button>'}
             ${allowCancel ? '<button class="btn btn-ghost" type="button" data-role="vault-cancel">Not now</button>' : ''}
           </div>
         </form>
@@ -2353,6 +2714,7 @@ async function unlockVaultAtBoot ({ allowCancel = false } = {}) {
         // Decrypt the vault into an entry, then inject the seed into the SAME
         // in-memory identity A1 established. Nothing new touches disk here.
         const entry = await unlockVault(localStorage, passphrase)
+        if (expected && entry.pubkey !== expected) throw new Error('This vault does not contain the identity required by the pending publication.')
         await identity.restoreFromVault(entry)
         toast('Welcome back, u/' + shortKey(entry.pubkey, 6))
         finish()
@@ -2361,18 +2723,19 @@ async function unlockVaultAtBoot ({ allowCancel = false } = {}) {
         showErr(err && err.message ? err.message : 'Could not unlock.')
       }
     })
-    overlay.querySelector('[data-role="vault-fresh"]').addEventListener('click', () => {
-      if (!confirm('Forget the saved identity on this device and start with a new one? The encrypted vault will be deleted. If you have not exported this identity, it is gone for good.')) return
-      // Drop BOTH tiers (a surviving device record would resurrect the identity).
-      // Under lazy web identity nothing was minted at ready() — the visitor
-      // continues as a lurker and a fresh identity is minted on their next write
-      // (ensureWriterIdentity); in eager modes the ready()-minted identity stays
-      // active. Either way: A1's no-vault behavior.
-      clearVault(localStorage)
-      deviceIdStore.clear().catch(() => {})
-      toast('Started fresh — set a new passphrase in Settings to keep this identity.')
-      finish()
-    })
+    const fresh = overlay.querySelector('[data-role="vault-fresh"]')
+    if (fresh) {
+      fresh.addEventListener('click', async () => {
+        if (!confirm('Forget the saved identity on this device and start with a new one? The encrypted vault will be deleted. If you have not exported this identity, it is gone for good.')) return
+        try {
+          await clearDurableSigner()
+          toast('Started fresh — you are browsing as a lurker until your next write creates a new durable identity.')
+          finish()
+        } catch (error) {
+          showErr(error && error.message ? error.message : 'Could not forget this identity.')
+        }
+      })
+    }
   })
 }
 
@@ -2419,18 +2782,78 @@ async function forgetVault () {
   let hasD = false
   try { hasD = !!(await deviceIdStore.load()) } catch {}
   if (!hasV && !hasD) { toast('Nothing to forget on this device.'); return }
-  if (!confirm('Forget the saved identity on this device? Your current identity keeps working until you reload; after that, you browse without an identity until your next post/comment/vote creates a new one — unless you export this one first.')) return
-  if (hasV) clearVault(localStorage)
-  // Key destruction is FAIL-CLOSED: clear() read-back-verifies the delete. Never
-  // toast "forgotten" when the wrapped seed may still be restorable — on a shared
-  // machine the next user's boot would silently sign in as the destroyed identity.
-  const cleared = await deviceIdStore.clear()
-  if (!cleared) {
-    toast('Could not remove the saved identity from this device — it may still be restored on the next reload. Try again, or clear this site’s data in your browser settings.', 'error')
+  if (!confirm('Forget the saved identity on this device now? The current signer will be removed from this page immediately. Your next post/comment/vote creates a new identity unless you import the old one again. Export it first if you may need it.')) return
+  try {
+    await withIdentityMutationGuard('forget', () => clearDurableSigner())
+  } catch (error) {
+    identityForgetCleanupError = (error && error.message) || 'Could not finish removing the saved identity.'
+    refreshPrefs(); nameCache.clear()
+    try { await renderUserMenu(); await updateNetStatus() } catch {}
+    toast((error && error.message) || 'Could not remove the saved identity from this device. It may still be restored on reload.', 'error')
+    route()
     return
   }
-  toast('Forgotten — this identity will not survive the next reload on this device.')
+  identityForgetCleanupError = ''
+  // Re-key every in-memory/UI surface to the lurker immediately. No reference to
+  // the forgotten seed remains available to sign a post in this page.
+  try { if (data) data.invalidateViewCaches() } catch {}
+  refreshPrefs(); nameCache.clear()
+  try { await renderUserMenu(); await updateNetStatus() } catch {}
+  toast('Forgotten — you are now browsing as a lurker. Your next write creates a new durable identity.')
   route()
+}
+
+async function retryIdentityForget () {
+  if (typeof localStorage === 'undefined' || !hasIdentityForgetTombstone(localStorage)) {
+    identityForgetCleanupError = ''
+    toast('Identity forget cleanup is already complete.')
+    route()
+    return
+  }
+  try {
+    await withIdentityMutationGuard('finish forgetting', () => finishDurableSignerForget())
+    identityForgetCleanupError = ''
+    corruptDeviceIdentityState = null
+    refreshPrefs(); nameCache.clear()
+    try { await renderUserMenu(); await updateNetStatus() } catch {}
+    toast('Identity forget cleanup completed. You are browsing as a lurker.')
+    route()
+  } catch (error) {
+    identityForgetCleanupError = (error && error.message) || 'Could not finish identity cleanup.'
+    toast(identityForgetCleanupError, 'error')
+    route()
+  }
+}
+
+async function resetCorruptIdentity () {
+  const observed = corruptDeviceIdentityState
+  if (!observed || observed.status !== 'corrupt' || !observed.token) {
+    toast('The broken device identity is no longer present.', 'error')
+    route()
+    return
+  }
+  const vaultKeepsIdentity = typeof localStorage !== 'undefined' && hasVault(localStorage) && vaultPubkey(localStorage) === observed.pubkey
+  const warning = vaultKeepsIdentity
+    ? 'Reset the broken encrypted device copy? Your separate passphrase vault will be kept, and you will need its passphrase when Peerit next needs this identity.'
+    : 'Reset the broken encrypted device identity? Its signing key cannot be opened. If you do not have an exported backup, this identity will be gone and your next write will create a new one.'
+  if (!confirm(warning)) return
+  try {
+    await withIdentityMutationGuard('reset', async () => {
+      const current = await deviceIdStore.inspect()
+      if (current.status !== 'corrupt' || current.token !== observed.token) {
+        throw new Error('The device identity changed after this page inspected it; reload Settings before resetting it.')
+      }
+      await deviceIdStore.resetCorrupt({ expectedToken: observed.token })
+      if (!vaultKeepsIdentity && identity && identity.me().pubkey === observed.pubkey && typeof identity.deactivate === 'function') identity.deactivate()
+    })
+    corruptDeviceIdentityState = null
+    refreshPrefs(); nameCache.clear()
+    try { await renderUserMenu(); await updateNetStatus() } catch {}
+    toast(vaultKeepsIdentity ? 'Broken device copy reset; the passphrase vault was kept.' : 'Broken device identity reset. Your next write can create a new durable identity.')
+    route()
+  } catch (error) {
+    toast((error && error.message) || 'Could not safely reset the broken device identity.', 'error')
+  }
 }
 
 // ---- web identity export / import -------------------------------------------
@@ -2550,8 +2973,32 @@ function stopIdentityScan () {
 
 async function importIdentityFromForm (payload, passphrase) {
   if (!looksLikeIdentityExport(payload)) throw new Error('That does not look like a peerit identity export — paste the exported JSON, load the file, or scan the QR.')
-  const entry = await importIdentity(payload, passphrase)
-  await identity.addUser(entry)
+  if (!identity || !identity.isDev || typeof identity.restoreFromDurableImport !== 'function') throw new Error('Identity import is only available for this browser-held web identity.')
+  if (typeof localStorage === 'undefined') throw new Error('Identity import requires durable browser storage.')
+  const entry = await withIdentityMutationGuard('import', async () => {
+    const candidate = await importIdentity(payload, passphrase)
+    if (hasIdentityForgetTombstone(localStorage)) await finishDurableSignerForget()
+    const beforeDevice = await deviceIdStore.inspect()
+    const expectedPubkey = beforeDevice.status === 'valid' ? beforeDevice.pubkey : null
+    // A deliberate, authenticated import may atomically replace a corrupt record,
+    // but only the exact bytes inspected under this writer lock. It never performs
+    // an unsafe delete-then-insert or overwrites a valid cross-tab replacement.
+    const expectedToken = beforeDevice.status === 'corrupt' ? beforeDevice.token : null
+    let previousVault = null
+    try { previousVault = localStorage.getItem(VAULT_KEY) } catch {}
+    await replaceDurableIdentity(identity, deviceIdStore, candidate, {
+      expectedPubkey,
+      expectedToken,
+      // Re-encrypt under the entered passphrase and persist the matching vault
+      // before the imported signer can become active.
+      persistVault: (verified) => saveVault(localStorage, verified, passphrase),
+      rollbackVault: () => {
+        if (previousVault == null) localStorage.removeItem(VAULT_KEY)
+        else localStorage.setItem(VAULT_KEY, previousVault)
+      }
+    })
+    return candidate
+  })
   // Mirror the switch-user side effects so the whole UI reflects the new identity.
   data.invalidateViewCaches()
   if (sync.announce) await sync.announce()

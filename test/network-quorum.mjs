@@ -11,6 +11,7 @@ import {
   verifyRelayRoster
 } from '../js/relay-roster.js'
 import { createRelayPool } from '../js/relay-pool.js'
+import { BridgeGossipSync } from '../js/gossip.js'
 
 let passed = 0
 const ok = (condition, message) => { assert.ok(condition, message); passed++; console.log('  ✓ ' + message) }
@@ -122,6 +123,45 @@ async function main () {
   })
   ok(spoofed.length === 1 && spoofed[0].atomicCommit === false,
     'the ingress cannot replace the roster-pinned operator key in its status response')
+
+  const singlePayload = normalizeRelayRosterPayload({
+    version: 1,
+    expires: '2030-01-01T00:00:00.000Z',
+    relays: ['https://outbox.example'],
+    singleIngressWriter: true
+  })
+  const singleRoster = {
+    payload: singlePayload,
+    signature: { alg: 'Ed25519', key: rosterKey.pubHex, sig: await sign(rosterKey.seedHex, rosterSigningMessage(singlePayload)) }
+  }
+  const singleVerified = await verifyRelayRoster(singleRoster, { expectedKey: rosterKey.pubHex, now: Date.parse('2029-01-01T00:00:00.000Z') })
+  const singleFetch = async (url, opts = {}) => {
+    const path = new URL(String(url)).pathname
+    if (path === '/api/token') return response({ token: 'test-token', expiresAt: Date.now() + 900000, ttlMs: 900000 })
+    if (path === '/api/bridge/status') {
+      return response({
+        ready: true,
+        atomicCommit: { schema: 1, method: 'POST', route: '/api/sync/commit', enabled: true, durable: true, cas: true, idempotent: true, idempotency: IDEMPOTENCY },
+        legacyWrites: { create: false, append: false }
+      })
+    }
+    if (path === '/api/sync/commit') {
+      const body = JSON.parse(opts.body)
+      return response({ ok: true, durable: true, appId: body.appId, commitId: body.commit.commitId, inviteKey: 'd'.repeat(64), relayVersion: 2, head: HEAD })
+    }
+    return response({ error: 'not found' }, 404)
+  }
+  const singleSelected = await selectRelays(singleVerified.relays, { fetch: singleFetch, topology: singleVerified.topology })
+  const singlePool = createRelayPool({ relays: singleSelected, topology: singleVerified.topology, fetch: singleFetch })
+  ok(singleSelected[0].atomicCommit === true && singlePool._singleIngressWriter === true,
+    'a signed one-ingress policy enables only the durable atomic writer, never a static fallback')
+  const singleResult = await singlePool.sync.commit(APP_ID, { commitId: COMMIT_ID })
+  ok(singleResult.singleIngress === true && singleResult.quorum === 1 && singleResult.durable === true,
+    'single-ingress launch mode requires the normal local durable atomic receipt')
+  const receiptGate = Object.create(BridgeGossipSync.prototype)
+  const pending = { appId: APP_ID, commit: { commitId: COMMIT_ID, head: { data: HEAD } } }
+  ok(receiptGate._receiptMatchesPending(singleResult, pending) === true,
+    'the normal pending-write recovery path accepts only the pool-marked durable single-ingress receipt')
   console.log(`\n✅ all ${passed} network-quorum checks passed\n`)
 }
 

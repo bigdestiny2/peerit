@@ -82,7 +82,7 @@ export function parseRelayList (raw) {
 
 const RELAY_TOPOLOGY_PROPERTY = '__peeritRelayTopology'
 
-function buildRelayTopology (relays, { key = '', networkQuorum = null } = {}) {
+function buildRelayTopology (relays, { key = '', networkQuorum = null, singleIngressWriter = false } = {}) {
   const entries = relays.map((apiBase, rosterIndex) => ({
     apiBase,
     rosterIndex,
@@ -104,7 +104,8 @@ function buildRelayTopology (relays, { key = '', networkQuorum = null } = {}) {
     origins,
     entries,
     validWriterTopology: valid,
-    networkQuorum: networkQuorum || null
+    networkQuorum: networkQuorum || null,
+    singleIngressWriter: singleIngressWriter === true
   }
 }
 
@@ -153,7 +154,17 @@ export function normalizeRelayRosterPayload (payload = {}) {
   const expires = String(payload.expires || payload.expiresAt || '').trim()
   const relays = dedupeRelayList(payload.relays || [])
   const networkQuorum = normalizeNetworkQuorum(payload.networkQuorum)
-  return networkQuorum ? { version, expires, relays, networkQuorum } : { version, expires, relays }
+  if (payload.singleIngressWriter !== undefined && payload.singleIngressWriter !== true) {
+    throw new Error('relay roster singleIngressWriter must be true when present')
+  }
+  const singleIngressWriter = payload.singleIngressWriter === true
+  return {
+    version,
+    expires,
+    relays,
+    ...(networkQuorum ? { networkQuorum } : {}),
+    ...(singleIngressWriter ? { singleIngressWriter: true } : {})
+  }
 }
 
 // The signed roster can pin a network durability policy without publishing
@@ -215,8 +226,10 @@ export function rosterSigningMessage (payload) {
 
 function assertCanonicalPayload (raw, payload) {
   const keys = Object.keys(raw || {}).sort().join(',')
-  const expectedKeys = payload.networkQuorum ? 'expires,networkQuorum,relays,version' : 'expires,relays,version'
-  if (keys !== expectedKeys) throw new Error('relay roster payload is not canonical')
+  const expectedKeys = ['expires', 'relays', 'version']
+  if (payload.networkQuorum) expectedKeys.push('networkQuorum')
+  if (payload.singleIngressWriter) expectedKeys.push('singleIngressWriter')
+  if (keys !== expectedKeys.sort().join(',')) throw new Error('relay roster payload is not canonical')
   if (raw.version !== payload.version || raw.expires !== payload.expires) throw new Error('relay roster payload is not canonical')
   if (!Array.isArray(raw.relays) || raw.relays.length !== payload.relays.length) throw new Error('relay roster payload is not canonical')
   for (let i = 0; i < raw.relays.length; i++) {
@@ -225,6 +238,7 @@ function assertCanonicalPayload (raw, payload) {
   if (payload.networkQuorum && JSON.stringify(raw.networkQuorum) !== JSON.stringify(payload.networkQuorum)) {
     throw new Error('relay roster networkQuorum is not canonical')
   }
+  if (payload.singleIngressWriter && raw.singleIngressWriter !== true) throw new Error('relay roster singleIngressWriter is not canonical')
 }
 
 export async function verifyRelayRoster (roster, { expectedKey, now = Date.now() } = {}) {
@@ -256,7 +270,12 @@ export async function verifyRelayRoster (roster, { expectedKey, now = Date.now()
     relays: payload.relays,
     key,
     expires: payload.expires,
-    topology: buildRelayTopology(payload.relays, { key, expires: payload.expires, networkQuorum: payload.networkQuorum || null })
+    topology: buildRelayTopology(payload.relays, {
+      key,
+      expires: payload.expires,
+      networkQuorum: payload.networkQuorum || null,
+      singleIngressWriter: payload.singleIngressWriter === true
+    })
   }
 }
 
@@ -518,6 +537,8 @@ export async function selectRelays (relays, { apiToken = '', tokenCache = null, 
     const rosterVerified = !!(topology && topology.verified === true && topology.stable === true && entry)
     const directWriterTopology = rosterVerified && topology.validWriterTopology === true
     const networkQuorum = rosterVerified && hasPinnedNetworkQuorum(status.networkQuorum, topology.networkQuorum)
+    const singleIngressWriter = rosterVerified && topology.singleIngressWriter === true &&
+      Number(topology.size) === 1 && Number(entry.rosterIndex) === 0 && topology.origins[0] === finalOrigin
     const capabilities = {
       atomicCommit: status.atomicCommit || null,
       legacyWrites: status.legacyWrites || null,
@@ -532,8 +553,9 @@ export async function selectRelays (relays, { apiToken = '', tokenCache = null, 
       apiToken: token,
       tokenExpiresAt,
       ready: status.ready === true,
-      atomicCommit: hasDurableAtomicCommit(status) && (directWriterTopology || networkQuorum),
+      atomicCommit: hasDurableAtomicCommit(status) && (directWriterTopology || networkQuorum || singleIngressWriter),
       networkQuorum: networkQuorum ? topology.networkQuorum : null,
+      singleIngressWriter,
       capabilities,
       canonicalOrigin: finalOrigin,
       rosterVerified,

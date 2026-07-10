@@ -66,7 +66,8 @@ function topologyFromEntries (entries) {
     size: first.relay.rosterSize,
     origins,
     validWriterTopology: origins.length >= 2 && origins.every(Boolean) && new Set(origins).size === origins.length,
-    networkQuorum: first.relay.networkQuorum || null
+    networkQuorum: first.relay.networkQuorum || null,
+    singleIngressWriter: first.relay.singleIngressWriter === true
   }
 }
 
@@ -142,11 +143,13 @@ export function createRelayPool ({ relays = [], topology = null, fetch, EventSou
   // status must match that policy before the entry is even considered here.
   const networkWriterEntries = entries.filter((entry) => entry.exactAtomic && entry.relay && entry.relay.networkQuorum)
   const networkWriter = networkWriterEntries.length === 1 ? networkWriterEntries[0] : null
+  const singleIngressEntries = entries.filter((entry) => entry.exactAtomic && entry.relay && entry.relay.singleIngressWriter === true)
+  const singleIngress = singleIngressEntries.length === 1 ? singleIngressEntries[0] : null
   const topologyOriginCount = signedTopology && Array.isArray(signedTopology.origins) ? signedTopology.origins.length : 0
   // Writer readiness is topology-wide. Otherwise a new random appId can hash to
   // an unselected/unready leader after the UI has already advertised writer mode.
   const directAtomicCapable = topologyOriginCount >= 2 && writerEntries.length === topologyOriginCount
-  const atomicCapable = directAtomicCapable || !!networkWriter
+  const atomicCapable = directAtomicCapable || !!networkWriter || !!singleIngress
   const topologyConsistentReads = !!(signedTopology && signedTopology.verified === true && signedTopology.stable === true && signedTopology.validWriterTopology === true)
 
   async function verifiedHead (appId, head) {
@@ -683,8 +686,29 @@ export function createRelayPool ({ relays = [], topology = null, fetch, EventSou
     }
   }
 
+  // Launch mode for a signed one-ingress roster. The relay's atomic journal,
+  // CAS, and idempotent receipt remain mandatory; only the independent remote
+  // receipt requirement is deferred. This cannot be selected by an unsigned
+  // fallback relay or by a relay status response alone.
+  async function singleIngressCommit (appId, commit) {
+    const commitId = commit && commit.commitId
+    if (!singleIngress) throw commitError('Peerit single-ingress writer is unavailable.', 'COMMIT_SINGLE_INGRESS_UNAVAILABLE', 503)
+    if (!HEX64.test(String(commitId || ''))) throw commitError('Peerit commitId is invalid.', 'INVALID_COMMIT_ID', 400)
+    let receipt
+    try {
+      const controller = new AbortController()
+      receipt = durableReceipt(await boundedRelayCommit(singleIngress, appId, commit, controller), appId, commitId)
+    } catch (reason) {
+      if (isStaleFailure(reason)) throw commitError('Peerit commit compare-and-swap is stale at the signed ingress.', 'COMMIT_CAS_MISMATCH', 409, [relayFailure(singleIngress, reason)])
+      throw commitError('Peerit signed ingress did not durably acknowledge the commit.', 'COMMIT_SINGLE_INGRESS_FAILED', 503, [relayFailure(singleIngress, reason)])
+    }
+    if (!receipt) throw commitError('Peerit signed ingress returned an invalid durable receipt.', 'INVALID_COMMIT_RECEIPT', 503, [relayFailure(singleIngress, null, 'INVALID_COMMIT_RECEIPT')])
+    const evidence = receiptEvidence(receipt, singleIngress)
+    return { ...receipt, receipts: [evidence], quorum: 1, leader: singleIngress.canonicalOrigin, singleIngress: true }
+  }
+
   const sync = { ...primary.sync, append: fanoutAppend, crossHead, crossRows, recoverRows, directory, proveCommitQuorum }
-  if (atomicCapable) sync.commit = directAtomicCapable ? quorumCommit : networkQuorumCommit
+  if (atomicCapable) sync.commit = directAtomicCapable ? quorumCommit : (networkWriter ? networkQuorumCommit : singleIngressCommit)
   else delete sync.commit
   return {
     ...primary,
@@ -693,7 +717,8 @@ export function createRelayPool ({ relays = [], topology = null, fetch, EventSou
     _relayCount: apis.length,
     _atomicCommit: atomicCapable,
     _networkQuorum: !!networkWriter && !directAtomicCapable,
-    _writerRelayCount: networkWriter ? 1 : writerEntries.length,
+    _singleIngressWriter: !!singleIngress && !directAtomicCapable && !networkWriter,
+    _writerRelayCount: (networkWriter || singleIngress) ? 1 : writerEntries.length,
     _leaderFor: (appId) => {
       const selected = leaderFor(appId)
       return selected ? { rosterIndex: selected.rosterIndex, origin: selected.origin, available: !!selected.entry } : null

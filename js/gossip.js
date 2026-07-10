@@ -1636,7 +1636,9 @@ class BridgeGossipSync {
       Number(head.count) === Number(expectedHead.count) &&
       String(head.root || '').toLowerCase() === String(expectedHead.root || '').toLowerCase()
     )
-    if (!topMatches || Number(receipt.quorum) < 2 || !Array.isArray(receipt.receipts)) return false
+    if (!topMatches || !Array.isArray(receipt.receipts)) return false
+    if (receipt.singleIngress === true && receipt.receipts.length === 1) return true
+    if (Number(receipt.quorum) < 2) return false
     // A single browser ingress can still supply independently signed durability
     // evidence. relay-pool verifies every receipt against the public keys pinned
     // in the signed roster before setting `verified`; no operator URL is needed

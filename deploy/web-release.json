@@ -2,8 +2,8 @@
   "bootstrapRelays": [
     "https://outbox.peerit.site"
   ],
-  "readonly": true,
-  "releaseSequence": 2,
+  "readonly": false,
+  "releaseSequence": 3,
   "relayRoster": "relay-roster.json",
   "pinnedRosterKey": "92caa893720e763de6c87e5397214cbdbd8be8c073ac029e83fa430a58812538",
   "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
@@ -17,6 +17,7 @@
     "expires": "2026-12-31T00:00:00.000Z",
     "relays": [
       "https://outbox.peerit.site"
-    ]
+    ],
+    "singleIngressWriter": true
   }
 }

@@ -74,6 +74,21 @@ assert.equal(writable.readonly, 'false')
 verifyIndexConfig(indexHtml(writable), writable)
 verifyManifestConfig(manifestFor(writable), writable, HASH, '', DRIVE)
 
+const singleIngressRaw = {
+  ...rawConfig(false),
+  bootstrapRelays: ['https://relay-a.example'],
+  roster: {
+    ...rawConfig(false).roster,
+    relays: ['https://relay-a.example'],
+    singleIngressWriter: true
+  }
+}
+const singleIngress = releaseConfig(singleIngressRaw)
+assert.equal(singleIngress.readonly, 'false')
+assert.equal(singleIngress.roster.singleIngressWriter, true)
+verifyIndexConfig(indexHtml(singleIngress), singleIngress)
+verifyManifestConfig(manifestFor(singleIngress), singleIngress, HASH, '', DRIVE)
+
 assert.throws(
   () => releaseConfig({ ...rawConfig(false), readonly: undefined }),
   /explicitly set readonly=true or readonly=false/

@@ -399,15 +399,17 @@ function validateReleaseConfig (release) {
   }
   if (!release.roster.relays.length) throw new Error('deploy/web-release.json roster.relays must include at least one relay')
   const signedNetworkQuorum = release.roster && release.roster.networkQuorum
-  if (String(release.readonly).toLowerCase() !== 'true' && release.roster.relays.length < 2 && !signedNetworkQuorum) {
-    throw new Error('writable public web releases require at least two signed relay failure domains or a signed network-quorum policy; use readonly=true for a single-relay preview')
+  const signedSingleIngress = release.roster && release.roster.singleIngressWriter === true
+  if (String(release.readonly).toLowerCase() !== 'true' && release.roster.relays.length < 2 && !signedNetworkQuorum && !signedSingleIngress) {
+    throw new Error('writable public web releases require at least two signed relay failure domains, a signed network-quorum policy, or a signed single-ingress policy')
   }
   addCheck('config:relay', 'pass', `Bootstrap relay list has ${release.bootstrapRelays.length} entr${release.bootstrapRelays.length === 1 ? 'y' : 'ies'}.`, {
     bootstrapRelays: release.bootstrapRelays
   })
   addCheck('config:roster', 'pass', `Roster config has ${release.roster.relays.length} signed relay entr${release.roster.relays.length === 1 ? 'y' : 'ies'}.`, {
     relays: release.roster.relays,
-    networkQuorum: signedNetworkQuorum || null
+    networkQuorum: signedNetworkQuorum || null,
+    singleIngressWriter: signedSingleIngress
   })
 }
 

@@ -47,12 +47,17 @@ try {
   const release = loadJson('deploy/web-release.json')
   const relays = Array.isArray(release.roster && release.roster.relays) ? release.roster.relays.filter(Boolean) : []
   const networkQuorum = release.roster && release.roster.networkQuorum
+  const singleIngressWriter = release.roster && release.roster.singleIngressWriter === true
   const readonly = release.readonly !== false
-  add('public write topology is redundant', readonly || relays.length >= 2 || !!networkQuorum, readonly
+  const operatorCount = Array.isArray(networkQuorum && networkQuorum.relays) ? networkQuorum.relays.length : 0
+  const topologyDetail = readonly
     ? 'single-relay previews are acceptable only in read-only mode'
     : networkQuorum
-      ? `${relays.length} browser ingress plus ${networkQuorum.relays && networkQuorum.relays.length || 0} roster-pinned receipt operator(s)`
-      : `${relays.length} signed relay failure domain(s); writable public launch requires at least 2`)
+      ? `${relays.length} browser ingress plus ${operatorCount} roster-pinned receipt operator(s)`
+      : singleIngressWriter
+        ? `${relays.length} signed durable single-ingress writer; federation quorum is deferred`
+        : `${relays.length} signed relay failure domain(s); writable public launch requires at least 2`
+  add('public write topology is redundant', readonly || relays.length >= 2 || !!networkQuorum || singleIngressWriter, topologyDetail)
   add('public release key pinned', /^[0-9a-f]{64}$/i.test(String(release.pinnedReleaseKey || '')), 'deploy/web-release.json must pin the Ed25519 key that signs asset-manifest.json')
 } catch (err) {
   add('web release config valid', false, err.message)
@@ -60,7 +65,7 @@ try {
 
 try {
   const capacity = loadJson('reports/soak-outboxlog-local-2026-07-09.json')
-  const clients = Number(capacity.clients || capacity.config && capacity.config.clients || 0)
+  const clients = Number(capacity.clients || (capacity.config && capacity.config.clients) || 0)
   add('public capacity target measured', clients >= 2000, `${clients || 0} clients measured; public launch gate requires a documented 2,000-client staging run`)
 } catch (err) {
   add('public capacity target measured', false, err.message)

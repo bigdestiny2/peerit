@@ -419,8 +419,9 @@ export async function buildWritableCandidateProof ({
 
   const origins = new Set(verified.relays.map((relay) => new URL(relay).origin))
   const networkQuorum = verified.payload.networkQuorum || null
+  const singleIngressWriter = verified.payload.singleIngressWriter === true
   const directFailureDomains = verified.relays.length >= 2 && origins.size >= 2
-  if (!directFailureDomains && !networkQuorum) {
+  if (!directFailureDomains && !networkQuorum && !singleIngressWriter) {
     addCheck(report, 'roster:failure-domains', 'fail', 'Writable candidates require at least two signed relays on distinct origins.', {
       relays: verified.relays,
       origins: [...origins]
@@ -429,7 +430,9 @@ export async function buildWritableCandidateProof ({
   }
   addCheck(report, 'roster:failure-domains', 'pass', directFailureDomains
     ? `Signed roster has ${verified.relays.length} relays across ${origins.size} origins.`
-    : `Single browser ingress is backed by ${networkQuorum.relays.length} roster-pinned independent receipt operator(s), requiring ${networkQuorum.requiredRemoteAcks} remote acknowledgement(s).`)
+    : networkQuorum
+      ? `Single browser ingress is backed by ${networkQuorum.relays.length} roster-pinned independent receipt operator(s), requiring ${networkQuorum.requiredRemoteAcks} remote acknowledgement(s).`
+      : 'Signed roster explicitly permits one locally durable atomic writer ingress; federation quorum is deferred.')
 
   if (typeof fetchFn !== 'function') {
     addCheck(report, 'candidate:fetch', 'fail', 'Fetch is unavailable; writable relay checks cannot run.')

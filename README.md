@@ -379,12 +379,15 @@ on `status()`.
 Tests: [`outbox-head.mjs`](test/outbox-head.mjs) (A) · [`relay-pool.mjs`](test/relay-pool.mjs) (B) ·
 [`head-floor.mjs`](test/head-floor.mjs) (C, incl. detection surviving a client restart).
 
-**Current production ceiling:** the signed roster carries **one relay**. Durable
-head floors can detect a rollback below a version a returning browser has already
-seen, but there is no live second relay to recover missing rows or protect a first-time
-visitor from a stale single origin. Writable public launch therefore remains gated on
-at least two failure domains; anti-collusion and any "no single origin" claim require
-independent operators. The durable floor is active.
+**Current production posture:** the signed roster carries **one relay**.
+`peerit.site` is live as a writable canary: its single ingress provides locally durable,
+atomic, idempotent receipts, but it cannot keep accepting writes or guarantee no loss if
+that one relay fails. Durable head floors can detect a rollback below a version a
+returning browser has already seen, but there is no live second relay to recover missing
+rows or protect a first-time visitor from a stale single origin. General availability,
+anti-collusion claims, and any "no single origin" promise remain gated on at least two
+independent failure domains. The durable floor is active. See the current
+[`production-readiness matrix`](reports/2026-07-10-PRODUCTION-READINESS-MATRIX.md).
 Grow the pool by self-hosting another relay with one `docker compose up`
 ([`deploy/peerit-relay/`](deploy/peerit-relay/)); the optional blind in-browser DHT
 transport has its own bundle ([`deploy/dht-relay/`](deploy/dht-relay/)).

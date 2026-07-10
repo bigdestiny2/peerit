@@ -1,5 +1,11 @@
 # 2026-07-09 Peerit production read-only containment
 
+> **Historical incident record — superseded.** This containment was removed for
+> the signed writable canary (release sequence 6). It remains as an audit trail,
+> not a description of the current service. See the
+> [`2026-07-10 production-readiness matrix`](2026-07-10-PRODUCTION-READINESS-MATRIX.md)
+> for the live posture and outstanding gates.
+
 **Applied:** 2026-07-09 19:07 UTC
 **Scope:** `outbox.peerit.site` write edge and `peerit-site` deployment lock
 **Reason:** hold the currently live single-relay service read-only while the

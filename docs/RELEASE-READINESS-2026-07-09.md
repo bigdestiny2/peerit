@@ -1,5 +1,11 @@
 # Peerit public release readiness — 2026-07-09
 
+> **Historical audit — superseded.** Its read-only decision was the correct
+> containment at the time. The signed writable canary was subsequently released
+> as sequence 6; it is not yet general-availability clearance. Use the
+> [`2026-07-10 production-readiness matrix`](../reports/2026-07-10-PRODUCTION-READINESS-MATRIX.md)
+> for the current decision and evidence.
+
 > Execution plan: [`PUBLIC-RELEASE-REMEDIATION-PLAN.md`](PUBLIC-RELEASE-REMEDIATION-PLAN.md)
 
 ## Decision

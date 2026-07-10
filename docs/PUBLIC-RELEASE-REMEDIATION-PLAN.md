@@ -1,5 +1,10 @@
 # Peerit live-service remediation and public release plan
 
+> **Historical execution plan — superseded where it describes the live state.**
+> The sequence-6 writable canary has completed several actions below, but it is
+> still not general-availability clearance. The current source of truth is the
+> [`2026-07-10 production-readiness matrix`](../reports/2026-07-10-PRODUCTION-READINESS-MATRIX.md).
+
 **Status:** proposed canonical execution plan
 **Prepared:** 2026-07-09
 **Scope:** `peerit.site`, the Peerit client, HiveRelay OutboxLog, release tooling,

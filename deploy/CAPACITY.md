@@ -1,7 +1,8 @@
 # Peerit OutboxLog capacity contract
 
 **Status:** measured baseline (local HiveRelay OutboxLog, 2026-07-09)  
-**Instrument:** `npm run soak:outboxlog` → `scripts/soak-outboxlog.mjs`  
+**Legacy instrument:** `npm run soak:outboxlog` → `scripts/soak-outboxlog.mjs`
+**Writable-candidate instrument:** `npm run soak:atomic-two-relay` → `scripts/soak-atomic-two-relay.mjs`
 **Never soak production** (`outbox.peerit.site` / marketing spike volume). Staging/local only.
 
 ## Hard limits (code defaults)
@@ -39,9 +40,88 @@ node scripts/soak-outboxlog.mjs --clients 30 --ramp-s 4 --loops 1 \
 
 Evidence path from implementer run: `{SCRATCH}/soak-report.json` (status=pass).
 
+## Durable two-relay atomic baseline
+
+The public writer candidate must use this path; the legacy single-relay
+create/append baseline above is not release evidence for writable mode.
+
+Representative bounded command (2026-07-10):
+
+```bash
+npm run soak:atomic-two-relay -- \
+  --hiverelay-root /path/to/hiverelay-atomic-candidate \
+  --clients 6 --iterations 3 --restarts 2 \
+  --out /tmp/peerit-atomic-two-relay-evidence.json
+```
+
+| Metric / invariant | Result |
+|---|---|
+| concurrent writers | 6 (+ 1 recovery writer) |
+| measured concurrent commits | 36 (community, post/blob, vote, and bound comment writes) |
+| unflushed relay-engine recreations | 2 |
+| injected post-fsync response loss | recovered exact pending envelope |
+| acknowledged loss / signed-head fork / census mismatch | **0 / 0 / 0** |
+| write p50 / p99 / max | **99 / 141 / 141 ms** |
+| measured throughput | **57.6 commits/s** |
+| relay state | exact groups, bytes, commit history, head roots, and signatures |
+
+This is a correctness and bounded-performance baseline, not the M4 marketing
+capacity result. It exercises two real loopback `RelayAPI` + atomic-only
+`OutboxLog` instances with separate fsynced JSONL journals, a lost HTTP response
+after durable commit, exact retry after process-like recreation without a flush,
+and full signed-census comparison on both origins.
+
+### Shared-NAT policy knee versus engine capacity
+
+The instrument has two explicit traffic profiles. They answer different
+questions and neither result may be substituted for the other:
+
+- `--traffic-profile shared-nat` keeps every browser behind one source IP and
+  therefore exercises the real OutboxLog adapter policy of 1,200 accepted
+  requests per 60 seconds per IP.
+- `--traffic-profile distributed` enables trusted-proxy handling only inside the
+  loopback fixture and assigns one deterministic forwarded IP per writer. This
+  isolates durable-engine throughput from the shared-NAT bucket; it does not
+  disable journal fsync, atomic CAS, quorum receipts, restart recovery, or census
+  verification.
+
+Diagnostic sweep (2026-07-10, same local two-relay candidate):
+
+| profile | writers / writer commits | result | p99 / throughput | finding |
+|---|---:|---|---|---|
+| shared NAT | 20 / 200 | pass | 345 ms / 60.96/s | below the HTTP bucket knee |
+| shared NAT | 30 / 300 | **blocked** | n/a | relay A reached 1,200 accepted requests, then returned 429 during vote publication |
+| shared NAT | 50 / 200 | **blocked in census audit** | write phase completed | all 200 writes converged, then relay A's audit request hit the exact 1,200-request ceiling |
+| distributed | 30 / 300 | pass | 1,948 ms / 46.27/s | exact two-relay census after restart; no 429, pending commit, fork, or loss |
+| distributed | 50 / 200 | pass | 952 ms / 58.53/s | exact two-relay census after restart; no 429, pending commit, fork, or loss |
+
+These are local diagnostic results, not the production-equivalent staging M4
+sweep and not mass-marketing clearance.
+
+The 30-writer shared-NAT failure is not an OutboxLog group/storage/commit
+capacity response and not a CAS/census correctness failure. The primary relay
+also serves each client's pre-commit `get`/`heads`/`range` checks, so one public
+write expands into several requests against the same IP bucket. At the knee the
+observed non-200 responses were all HTTP 429; the durable engines remained
+healthy. With the 5-second commit deadline, client backoff is aborted and the
+nested error is `COMMIT_RELAY_ABORTED`, wrapped as a pending quorum failure. A
+15-second diagnostic deadline exposes the underlying `status:429` directly and
+still fails, so raising the timeout is not a capacity fix.
+
+**BLOCK — writable public release:** the current HiveRelay adapter limit is a
+fixed internal default and `RelayAPI` does not pass an operator-configurable
+OutboxLog rate policy into the adapter. Shared offices, carrier NATs, and VPN
+exits can therefore exhaust one another's write/read budget. Before cutover,
+HiveRelay needs an explicit operator configuration
+for this bucket (preferably route/read/write aware), structured 429 telemetry,
+and an accurate `Retry-After`; Peerit then needs a production-equivalent
+shared-NAT test at the chosen supported-user envelope. Keep the distributed
+engine sweep as a separate gate so policy tuning cannot conceal an engine knee.
+
 ### Knee note
 
-At M=30 the local memory-core OutboxLog is well under thresholds. A full sweep  
+At M=30 the legacy local memory-core OutboxLog is well under thresholds, and the
+bounded durable two-relay path is below the 2-second latency gate. A full sweep
 `M ∈ {100, 500, 1000, 2000}` against a **staging** clone (not production) remains  
 required before mass-marketing clearance (SCALE-READINESS M4). This document  
 records the **instrument + numeric contract**, not marketing go.
@@ -76,5 +156,6 @@ npm run soak:outboxlog -- --clients 50 --static-origin https://peerit.site --out
 ## Deferred (not claimed here)
 
 - M4 staging soak at marketing target M with 2-relay pool + induced failure  
-- Production rate-limit envelope under shared NAT  
-- Hypercore journal durability path re-enabled on live fleet (JSON state recovery applied 2026-07-09 after corrupt index block 42)
+- Operator-configurable OutboxLog rate policy + production shared-NAT envelope
+- Long-duration RSS/latency-slope and checkpoint-pause measurement
+- Three independent relay origins if one-relay-loss write availability is a launch promise

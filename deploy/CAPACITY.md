@@ -85,6 +85,13 @@ questions and neither result may be substituted for the other:
   disable journal fsync, atomic CAS, quorum receipts, restart recovery, or census
   verification.
 
+The fixture passes its envelope through canonical
+`outboxlog.http.rateLimit`; it does not monkeypatch RelayAPI gates. Before load,
+it requires every relay's `/api/bridge/status.httpRateLimit` to report
+`source:"operator"` and the exact effective/outbox envelope requested with
+`--rate-limit-max` and `--rate-limit-window-ms`. Explicit disabling is accepted
+only with the distributed profile.
+
 Diagnostic sweep (2026-07-10, same local two-relay candidate):
 
 | profile | writers / writer commits | result | p99 / throughput | finding |
@@ -94,6 +101,22 @@ Diagnostic sweep (2026-07-10, same local two-relay candidate):
 | shared NAT | 50 / 200 | **blocked in census audit** | write phase completed | all 200 writes converged, then relay A's audit request hit the exact 1,200-request ceiling |
 | distributed | 30 / 300 | pass | 1,948 ms / 46.27/s | exact two-relay census after restart; no 429, pending commit, fork, or loss |
 | distributed | 50 / 200 | pass | 952 ms / 58.53/s | exact two-relay census after restart; no 429, pending commit, fork, or loss |
+| shared NAT, configured 12,000/60s | 30 / 300 | pass | 518 ms / 62.14/s | exact restart census; 0 HTTP 429; peak RSS 168 MB |
+| distributed, configured 1,200/60s/IP | 200 / 2,000 | **correctness pass; performance fail** | 4,866 ms / 58.48/s | exact restart census and 0 HTTP 429, but p99 exceeds the 2-second contract; peak RSS 285 MB / heap 160 MB |
+
+```bash
+# Shared-NAT policy gate (30 writers × 10 commits)
+npm run soak:atomic-two-relay -- --hiverelay-root /path/to/hiverelay \
+  --traffic-profile shared-nat --rate-limit-max 12000 \
+  --rate-limit-window-ms 60000 --clients 30 --iterations 7 \
+  --restarts 1 --commit-timeout-ms 5000 --out /tmp/shared-nat.json
+
+# Distributed engine gate (200 writers × 10 commits)
+npm run soak:atomic-two-relay -- --hiverelay-root /path/to/hiverelay \
+  --traffic-profile distributed --rate-limit-max 1200 \
+  --rate-limit-window-ms 60000 --clients 200 --iterations 7 \
+  --restarts 1 --commit-timeout-ms 5000 --out /tmp/distributed.json
+```
 
 These are local diagnostic results, not the production-equivalent staging M4
 sweep and not mass-marketing clearance.
@@ -108,15 +131,20 @@ nested error is `COMMIT_RELAY_ABORTED`, wrapped as a pending quorum failure. A
 15-second diagnostic deadline exposes the underlying `status:429` directly and
 still fails, so raising the timeout is not a capacity fix.
 
-**BLOCK — writable public release:** the current HiveRelay adapter limit is a
-fixed internal default and `RelayAPI` does not pass an operator-configurable
-OutboxLog rate policy into the adapter. Shared offices, carrier NATs, and VPN
-exits can therefore exhaust one another's write/read budget. Before cutover,
-HiveRelay needs an explicit operator configuration
-for this bucket (preferably route/read/write aware), structured 429 telemetry,
-and an accurate `Retry-After`; Peerit then needs a production-equivalent
-shared-NAT test at the chosen supported-user envelope. Keep the distributed
-engine sweep as a separate gate so policy tuning cannot conceal an engine knee.
+HiveRelay candidate `d8c8218` closes the code-level configurability gap: it
+accepts canonical `outboxlog.http.rateLimit`, returns an accurate `Retry-After`,
+and exposes source/effective policy telemetry. The 12,000/60s local shared-NAT
+run proves that configuration removes the former 30-writer 429 knee without
+raising Peerit's 5-second deadline.
+
+**BLOCK — writable public release:** do not infer production readiness from that
+local pass. Every signed public relay still needs the reviewed HiveRelay build,
+the chosen explicit operator envelope, and matching status telemetry behind its
+real trusted proxy. Run the shared-NAT profile against production-equivalent
+staging at the supported-office/VPN envelope. Separately, the distributed
+200-writer run fails the written p99 contract (4,866 ms > 2,000 ms), so engine
+latency/queueing at higher concurrency remains a performance blocker even though
+all 2,000 commits, restart recovery, and signed censuses were correct.
 
 ### Knee note
 
@@ -133,7 +161,7 @@ A soak run at committed target **M** is **PASS** only if **all** hold:
 1. **write p99 < 2000 ms**
 2. **error rate < 1%**
 3. **429 count** within the shared-NAT envelope for the topology under test  
-   (document measured 429s; local soak disables production rate limits)
+   (document the configured envelope and measured 429s; never silently disable it)
 4. **authors-until-cap = 20000** and `directoryTotal` / group growth consistent with ~1 group/author
 5. **peak RSS** below box RAM with margin (record measured value)
 
@@ -156,6 +184,7 @@ npm run soak:outboxlog -- --clients 50 --static-origin https://peerit.site --out
 ## Deferred (not claimed here)
 
 - M4 staging soak at marketing target M with 2-relay pool + induced failure  
-- Operator-configurable OutboxLog rate policy + production shared-NAT envelope
+- Deploy and verify the configured OutboxLog policy on every signed public relay
+- Production-equivalent shared-NAT envelope and distributed p99 under 2 seconds
 - Long-duration RSS/latency-slope and checkpoint-pause measurement
 - Three independent relay origins if one-relay-loss write availability is a launch promise

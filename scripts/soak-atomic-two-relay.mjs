@@ -40,6 +40,9 @@ Options:
   --restarts <n>          Unflushed relay recreation cycles (default: 2)
   --commit-timeout-ms <n> Per-relay atomic commit deadline (default: 5000)
   --traffic-profile <p>   shared-nat or distributed (default: shared-nat)
+  --rate-limit-max <n>    Fixture requests per IP/window (default: 1200)
+  --rate-limit-window-ms <n> Fixture rate window (default: 60000)
+  --disable-rate-limit    Distributed engine isolation only
   --out <file>            Write JSON evidence report
   --keep-temp             Preserve journals for inspection
   -h, --help              Show this help
@@ -60,6 +63,9 @@ function parseArgs (argv) {
     restarts: positiveInt(process.env.PEERIT_ATOMIC_SOAK_RESTARTS, 2, 100),
     commitTimeoutMs: positiveInt(process.env.PEERIT_ATOMIC_SOAK_COMMIT_TIMEOUT_MS, 5000, 120000),
     trafficProfile: process.env.PEERIT_ATOMIC_SOAK_TRAFFIC_PROFILE || 'shared-nat',
+    rateLimitMax: positiveInt(process.env.PEERIT_ATOMIC_SOAK_RATE_LIMIT_MAX, 1200, 10_000_000),
+    rateLimitWindowMs: positiveInt(process.env.PEERIT_ATOMIC_SOAK_RATE_LIMIT_WINDOW_MS, 60_000, 24 * 60 * 60 * 1000),
+    disableRateLimit: process.env.PEERIT_ATOMIC_SOAK_DISABLE_RATE_LIMIT === '1',
     out: process.env.PEERIT_ATOMIC_SOAK_REPORT || '',
     keepTemp: false
   }
@@ -71,13 +77,17 @@ function parseArgs (argv) {
     else if (arg === '--restarts') opts.restarts = positiveInt(argv[++i], 0, 100)
     else if (arg === '--commit-timeout-ms') opts.commitTimeoutMs = positiveInt(argv[++i], 0, 120000)
     else if (arg === '--traffic-profile') opts.trafficProfile = argv[++i] || ''
+    else if (arg === '--rate-limit-max') opts.rateLimitMax = positiveInt(argv[++i], 0, 10_000_000)
+    else if (arg === '--rate-limit-window-ms') opts.rateLimitWindowMs = positiveInt(argv[++i], 0, 24 * 60 * 60 * 1000)
+    else if (arg === '--disable-rate-limit') opts.disableRateLimit = true
     else if (arg === '--out') opts.out = argv[++i] || ''
     else if (arg === '--keep-temp') opts.keepTemp = true
     else if (arg === '-h' || arg === '--help') usage(0)
     else usage(2, `unknown option: ${arg}`)
   }
-  if (!opts.clients || !opts.iterations || !opts.restarts || !opts.commitTimeoutMs) usage(2, 'clients, iterations, restarts, and commit-timeout-ms must be positive integers')
+  if (!opts.clients || !opts.iterations || !opts.restarts || !opts.commitTimeoutMs || !opts.rateLimitMax || !opts.rateLimitWindowMs) usage(2, 'numeric load, timeout, and rate-limit options must be positive integers')
   if (!['shared-nat', 'distributed'].includes(opts.trafficProfile)) usage(2, 'traffic-profile must be shared-nat or distributed')
+  if (opts.disableRateLimit && opts.trafficProfile !== 'distributed') usage(2, 'disable-rate-limit is permitted only with traffic-profile=distributed')
   opts.hiverelayRoot = resolve(ROOT, opts.hiverelayRoot || DEFAULT_HIVERELAY_ROOT)
   if (opts.out) opts.out = resolve(ROOT, opts.out)
   return opts
@@ -97,6 +107,70 @@ function percentile (values, p) {
   if (!values.length) return 0
   const sorted = [...values].sort((a, b) => a - b)
   return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p) - 1))]
+}
+
+function fixtureRateLimitConfig (opts) {
+  return opts.disableRateLimit
+    ? false
+    : { enabled: true, windowMs: opts.rateLimitWindowMs, max: opts.rateLimitMax }
+}
+
+function expectedHttpRateLimit (opts) {
+  const enabled = !opts.disableRateLimit
+  return {
+    scope: 'public-writes',
+    source: 'operator',
+    enabled,
+    windowMs: opts.rateLimitWindowMs,
+    max: enabled ? opts.rateLimitMax : null,
+    outboxLogEnvelope: {
+      enabled,
+      windowMs: opts.rateLimitWindowMs,
+      max: enabled ? opts.rateLimitMax : null
+    }
+  }
+}
+
+function assertHttpRateLimit (status, expected, label) {
+  const actual = status && status.httpRateLimit
+  const same = actual &&
+    actual.scope === expected.scope &&
+    actual.source === expected.source &&
+    actual.enabled === expected.enabled &&
+    actual.windowMs === expected.windowMs &&
+    actual.max === expected.max &&
+    actual.outboxLogEnvelope &&
+    actual.outboxLogEnvelope.enabled === expected.outboxLogEnvelope.enabled &&
+    actual.outboxLogEnvelope.windowMs === expected.outboxLogEnvelope.windowMs &&
+    actual.outboxLogEnvelope.max === expected.outboxLogEnvelope.max
+  if (!same) throw new Error(`${label}: advertised HTTP rate envelope mismatch (expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)})`)
+}
+
+function resourceSnapshot (phase) {
+  const memory = process.memoryUsage()
+  const usage = typeof process.resourceUsage === 'function' ? process.resourceUsage() : null
+  return {
+    phase,
+    at: new Date().toISOString(),
+    memoryBytes: {
+      rss: memory.rss,
+      heapTotal: memory.heapTotal,
+      heapUsed: memory.heapUsed,
+      external: memory.external,
+      arrayBuffers: memory.arrayBuffers
+    },
+    usage
+  }
+}
+
+function resourceSummary (samples) {
+  const last = samples[samples.length - 1] || null
+  return {
+    peakObservedRssBytes: Math.max(0, ...samples.map(sample => sample.memoryBytes.rss)),
+    peakObservedHeapUsedBytes: Math.max(0, ...samples.map(sample => sample.memoryBytes.heapUsed)),
+    processMaxRssKilobytes: last && last.usage ? last.usage.maxRSS : null,
+    final: last
+  }
 }
 
 function tail (value, max = 4000) {
@@ -213,11 +287,12 @@ class SilentEventSource {
 }
 
 class DurableRelay {
-  constructor ({ label, journalPath, modules, trustProxy = false }) {
+  constructor ({ label, journalPath, modules, trustProxy = false, rateLimitConfig }) {
     this.label = label
     this.journalPath = journalPath
     this.modules = modules
     this.trustProxy = trustProxy
+    this.rateLimitConfig = rateLimitConfig
     this.port = 0
     this.base = ''
     this.provider = null
@@ -239,7 +314,8 @@ class DurableRelay {
           namespace: 'peerit',
           legacyWrites: false,
           journalPath: this.journalPath,
-          sweep: false
+          sweep: false,
+          http: { rateLimit: this.rateLimitConfig }
         }
       },
       store: null,
@@ -272,8 +348,6 @@ class DurableRelay {
       apiKey: `peerit-atomic-soak-${this.label}-${randomBytes(8).toString('hex')}`,
       trustProxy: this.trustProxy
     })
-    api._checkRateLimit = () => true
-    api._checkEndpointRateLimit = () => true
     await api.start()
     this.port = api.server.address().port
     this.base = `http://127.0.0.1:${this.port}`
@@ -356,7 +430,7 @@ async function retryTransport (fn, attempts = 3) {
   throw lastError
 }
 
-async function relayDescriptor (relay) {
+async function relayDescriptor (relay, expectedRateLimit) {
   // A recreated local server can invalidate an undici keep-alive socket even
   // though listen() has completed. Retry that transport-only condition; HTTP
   // failures and malformed capabilities still fail immediately.
@@ -367,6 +441,7 @@ async function relayDescriptor (relay) {
   if (!(status && status.ready === true && status.service === 'outboxlog' && atomic && atomic.durable === true && atomic.ready === true && status.legacyWrites && status.legacyWrites.create === false && status.legacyWrites.append === false)) {
     throw new Error(`${relay.label}: durable atomic-only capability unavailable`)
   }
+  assertHttpRateLimit(status, expectedRateLimit, relay.label)
   return {
     relay,
     apiBase: relay.base,
@@ -379,8 +454,8 @@ async function relayDescriptor (relay) {
   }
 }
 
-async function describeFleet (relays) {
-  const descriptors = await Promise.all(relays.map(relayDescriptor))
+async function describeFleet (relays, expectedRateLimit) {
+  const descriptors = await Promise.all(relays.map(relay => relayDescriptor(relay, expectedRateLimit)))
   const origins = descriptors.map(entry => new URL(entry.apiBase).origin)
   const topologyId = 'peerit-local-atomic-soak-v1|' + origins.join('|')
   const topology = {
@@ -528,10 +603,10 @@ async function auditFleet (fleet, authors, fetchImpl = fetch) {
   return out
 }
 
-async function crashAndRestart (relays) {
+async function crashAndRestart (relays, expectedRateLimit) {
   await Promise.all(relays.map(relay => relay.crash()))
   await Promise.all(relays.map(relay => relay.start()))
-  return describeFleet(relays)
+  return describeFleet(relays, expectedRateLimit)
 }
 
 async function run (opts) {
@@ -542,9 +617,11 @@ async function run (opts) {
   ])
   const tempRoot = mkdtempSync(join(tmpdir(), 'peerit-atomic-two-relay-'))
   const trustProxy = opts.trafficProfile === 'distributed'
+  const rateLimitConfig = fixtureRateLimitConfig(opts)
+  const advertisedRateLimit = expectedHttpRateLimit(opts)
   const relays = [
-    new DurableRelay({ label: 'relay-a', journalPath: join(tempRoot, 'relay-a', 'outboxlog.jsonl'), modules: { RelayAPI, OutboxLogApp }, trustProxy }),
-    new DurableRelay({ label: 'relay-b', journalPath: join(tempRoot, 'relay-b', 'outboxlog.jsonl'), modules: { RelayAPI, OutboxLogApp }, trustProxy })
+    new DurableRelay({ label: 'relay-a', journalPath: join(tempRoot, 'relay-a', 'outboxlog.jsonl'), modules: { RelayAPI, OutboxLogApp }, trustProxy, rateLimitConfig }),
+    new DurableRelay({ label: 'relay-b', journalPath: join(tempRoot, 'relay-b', 'outboxlog.jsonl'), modules: { RelayAPI, OutboxLogApp }, trustProxy, rateLimitConfig })
   ]
   const telemetryFetch = createFetchTelemetry(fetch)
   const clientFetch = (index) => opts.trafficProfile === 'distributed'
@@ -557,7 +634,15 @@ async function run (opts) {
     kind: 'peerit-two-relay-atomic-soak',
     version: 1,
     generatedAt: new Date().toISOString(),
-    options: { clients: opts.clients, iterations: opts.iterations, restarts: opts.restarts, commitTimeoutMs: opts.commitTimeoutMs, trafficProfile: opts.trafficProfile, hiverelayRoot: opts.hiverelayRoot },
+    options: {
+      clients: opts.clients,
+      iterations: opts.iterations,
+      restarts: opts.restarts,
+      commitTimeoutMs: opts.commitTimeoutMs,
+      trafficProfile: opts.trafficProfile,
+      httpRateLimit: advertisedRateLimit,
+      hiverelayRoot: opts.hiverelayRoot
+    },
     tempRoot,
     status: 'fail',
     phase: 'setup',
@@ -566,6 +651,7 @@ async function run (opts) {
   }
   const clients = []
   const operationAttempts = []
+  const resourceSamples = [resourceSnapshot('start')]
   const check = (id, pass, detail = null) => {
     report.checks.push({ id, status: pass ? 'pass' : 'fail', ...(detail == null ? {} : { detail }) })
     if (!pass) throw new Error(id)
@@ -589,11 +675,12 @@ async function run (opts) {
 
   try {
     await cryptoReady()
-    console.log(`[soak] traffic=${opts.trafficProfile} commit-timeout=${opts.commitTimeoutMs}ms`)
+    console.log(`[soak] traffic=${opts.trafficProfile} commit-timeout=${opts.commitTimeoutMs}ms rate=${opts.disableRateLimit ? 'disabled' : `${opts.rateLimitMax}/${opts.rateLimitWindowMs}ms/IP`}`)
     check('secure Ed25519 backend', isSecure())
     await Promise.all(relays.map(relay => relay.start()))
-    let fleet = await describeFleet(relays)
+    let fleet = await describeFleet(relays, advertisedRateLimit)
     check('two independent atomic-only relay origins', fleet.topology.validWriterTopology && fleet.entries.length === 2, fleet.topology.origins)
+    check('relays advertise the configured HTTP rate envelope', fleet.descriptors.every(descriptor => descriptor.status.httpRateLimit.source === 'operator'), advertisedRateLimit)
 
     // Lost response after the relay has fsynced: the client must retain its exact
     // pending envelope; recreating both engines without flush must restore the
@@ -612,7 +699,7 @@ async function run (opts) {
     recovery.destroy()
     recovery = null
 
-    fleet = await crashAndRestart(relays)
+    fleet = await crashAndRestart(relays, advertisedRateLimit)
     recovery = await makeClient({ name: 'recovery-writer', fleet, state: recoveryState, fetchImpl: clientFetch(-1), createUser: false, commitTimeoutMs: opts.commitTimeoutMs })
     check('writer identity survives relay recreation', recovery.pub === recoveryPub)
     check('exact pending commit reaches quorum after restart', !recovery.storage.getItem('peerit:pending-commit:v1'))
@@ -622,6 +709,7 @@ async function run (opts) {
 
     report.phase = 'writer-setup'
     for (let i = 0; i < opts.clients; i++) clients.push(await makeClient({ name: `soak-writer-${i}`, fleet, fetchImpl: clientFetch(i), commitTimeoutMs: opts.commitTimeoutMs }))
+    resourceSamples.push(resourceSnapshot('writers-ready'))
     const latencies = []
     const startedAt = Date.now()
     report.phase = 'writer-operations'
@@ -669,10 +757,12 @@ async function run (opts) {
       .filter(Boolean)
     if (writerFailures.length) throw new AggregateError(writerFailures, `${writerFailures.length} writer sequence(s) failed`)
     const durationMs = Date.now() - startedAt
+    resourceSamples.push(resourceSnapshot('writer-operations-complete'))
     const authors = clients.map(client => client.pub)
     report.phase = 'initial-census-audit'
     let audit = await auditFleet(fleet, authors, auditFetch)
     check('all acknowledged writers converge on two exact signed censuses', Object.keys(audit).length === authors.length)
+    resourceSamples.push(resourceSnapshot('initial-census-audit-complete'))
 
     for (let cycle = 1; cycle <= opts.restarts; cycle++) {
       report.phase = `restart-${cycle}`
@@ -684,7 +774,7 @@ async function run (opts) {
         storage: client.storage
       }))
       for (const client of clients.splice(0)) client.destroy()
-      fleet = await crashAndRestart(relays)
+      fleet = await crashAndRestart(relays, advertisedRateLimit)
       for (const state of states) {
         const writerIndex = state.name === 'recovery-writer' ? -1 : Number(state.name.replace('soak-writer-', ''))
         const restored = await makeClient({ name: state.name, fleet, state, fetchImpl: clientFetch(writerIndex), createUser: false, commitTimeoutMs: opts.commitTimeoutMs })
@@ -699,6 +789,7 @@ async function run (opts) {
       ))
       await auditAuthor(fleet, canary.pub, auditFetch)
       check(`restart ${cycle}: new quorum commit succeeds`, true)
+      resourceSamples.push(resourceSnapshot(`restart-${cycle}-complete`))
     }
 
     const commits = opts.clients * (opts.iterations + 3)
@@ -713,7 +804,8 @@ async function run (opts) {
         p99: percentile(latencies, 0.99),
         max: Math.max(...latencies)
       },
-      relays: relays.map(relay => ({ label: relay.label, stats: relay.stats() }))
+      relays: relays.map(relay => ({ label: relay.label, stats: relay.stats() })),
+      resources: resourceSummary(resourceSamples)
     }
     report.phase = 'final-census-audit'
     report.finalAudit = await auditFleet(fleet, authors, auditFetch)
@@ -725,6 +817,8 @@ async function run (opts) {
     report.error = errorReport(error)
     throw error
   } finally {
+    resourceSamples.push(resourceSnapshot(report.status === 'pass' ? 'final' : `failure:${report.phase}`))
+    report.metrics.resources = resourceSummary(resourceSamples)
     const operationCounts = {}
     for (const attempt of operationAttempts) {
       const key = `${attempt.operation}:${attempt.status}`
@@ -737,6 +831,7 @@ async function run (opts) {
       operations: operationAttempts,
       operationCounts,
       http: { ...http, statusCounts: httpStatusCounts, rateLimitedRequests: httpStatusCounts['429'] || 0 },
+      resources: resourceSamples,
       relays: relays.map(relay => ({ label: relay.label, origin: relay.base || null, stats: relay.stats() })),
       pendingClients: clients
         .filter(client => client.storage.getItem('peerit:pending-commit:v1'))

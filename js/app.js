@@ -235,7 +235,7 @@ async function boot () {
   // The gossip layer already re-merges + emits onChange on its own poll and on
   // every real event, so a separate status timer here is redundant.
 
-  window.addEventListener('hashchange', () => { if (liveRefresh) liveRefresh.releaseDraft(null, { schedulePending: false, discardPending: true }); route() })
+  window.addEventListener('hashchange', () => { finishComposerNavigation(); route() })
   window.addEventListener('pagehide', () => {
     try { if (liveRefresh) liveRefresh.destroy() } catch {}
     try { if (sync && sync.destroy) sync.destroy() } catch {}
@@ -335,6 +335,13 @@ function protectRecoveryComposerDraft (source = null) {
   const snapshot = snapshotComposerDraft(form)
   const token = liveRefresh ? liveRefresh.holdDraft(form) : null
   return { form, snapshot, token }
+}
+
+function finishComposerNavigation () {
+  // The explicit route after a successful submit includes every accumulated
+  // sync change, so cancel the duplicate deferred refresh and release any draft
+  // ownership before the old form is replaced.
+  if (liveRefresh) liveRefresh.releaseDraft(null, { schedulePending: false, discardPending: true })
 }
 
 async function recoverPendingWriterForBlockedIntent (draftSource = null) {
@@ -2501,6 +2508,7 @@ async function onSubmit (e) {
       prefs.subscribe(c.slug)
       prefs.markWelcomeSeen()
       toast('Created r/' + c.slug)
+      finishComposerNavigation()
       location.hash = '#/r/' + c.slug
       return
     }
@@ -2515,6 +2523,7 @@ async function onSubmit (e) {
       })
       prefs.markWelcomeSeen()
       toast('Posted')
+      finishComposerNavigation()
       location.hash = buildRoute(['r', p.community, 'comments', p.cid])
       return
     }
@@ -2524,6 +2533,7 @@ async function onSubmit (e) {
       await data.addComment({ community: form.dataset.community, postCid: form.dataset.post, parentCid: parent, body, onProgress })
       if (parent) openReplies.delete(parent)
       prefs.markWelcomeSeen()
+      finishComposerNavigation()
       form.reset()
       toast('Comment added'); route()
       return

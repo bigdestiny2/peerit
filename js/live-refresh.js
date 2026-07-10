@@ -1,6 +1,6 @@
-// Draft-safe structural refresh scheduling. A successful pending-publication
-// recovery emits a normal structural onChange event, but must not let that event
-// replace the still-unsubmitted composer that launched recovery.
+// Draft-safe structural refresh scheduling. Live sync and successful pending-
+// publication recovery both emit structural changes, but neither may replace a
+// still-unsubmitted post, comment, or community composer.
 
 function controlKey (control) {
   if (!control || !control.name) return null
@@ -53,11 +53,13 @@ export function restoreComposerDraft (form, snapshot) {
 }
 
 export function createLiveRefreshController ({ document, route, patchVotesInPlace, integrityStatusKey = null, delay = 350 } = {}) {
+  const draftFormNames = new Set(['submit-post', 'comment', 'create-community'])
   let pendingKeys = null
   let pendingFull = false
   let timer = null
   let deferredRetry = null
   let heldDraft = null
+  const dirtyDraftForms = new Set()
 
   const hasPending = () => pendingFull || !!(pendingKeys && pendingKeys.size)
   const formConnected = (form) => {
@@ -70,6 +72,19 @@ export function createLiveRefreshController ({ document, route, patchVotesInPlac
     if (formConnected(heldDraft.form)) return true
     heldDraft = null
     return false
+  }
+  const composerFormFor = (target) => {
+    const form = target && target.closest ? target.closest('form[data-form]') : null
+    const name = form && (form.dataset ? form.dataset.form : form.getAttribute && form.getAttribute('data-form'))
+    return draftFormNames.has(name) ? form : null
+  }
+  const ownsDirtyDraft = () => {
+    let connected = false
+    for (const form of dirtyDraftForms) {
+      if (formConnected(form)) connected = true
+      else dirtyDraftForms.delete(form)
+    }
+    return connected
   }
   const clearDeferred = () => {
     if (!deferredRetry || !document) return
@@ -93,15 +108,37 @@ export function createLiveRefreshController ({ document, route, patchVotesInPlac
     document.addEventListener('focusout', deferredRetry, true)
     document.addEventListener('visibilitychange', deferredRetry)
   }
+  const markDraftDirty = (event) => {
+    const form = composerFormFor(event && event.target)
+    if (form) dirtyDraftForms.add(form)
+  }
+  const markDraftReset = (event) => {
+    const form = composerFormFor(event && event.target)
+    if (!form || !dirtyDraftForms.delete(form)) return
+    if (hasPending()) schedule()
+  }
+  if (document && typeof document.addEventListener === 'function') {
+    document.addEventListener('input', markDraftDirty, true)
+    document.addEventListener('change', markDraftDirty, true)
+    document.addEventListener('reset', markDraftReset, true)
+  }
   const flush = async () => {
     if (!hasPending()) return 'idle'
     // Recovery owns this exact form until the user navigates/submits it. Keep the
     // accumulated structural change pending; releaseDraft() schedules it again.
     if (ownsDraft()) return 'held'
+    // Once a composer has been edited, clicking elsewhere or backgrounding the
+    // tab does not surrender its draft. It stays connected until navigation,
+    // reset, or a successful submit explicitly releases it.
+    if (ownsDirtyDraft()) { armDeferred(); return 'held' }
     const active = document && document.activeElement
     const focusIsActive = !document || typeof document.hasFocus !== 'function' || document.hasFocus()
     const formControlActive = active && (/^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName) || active.isContentEditable || (active.tagName === 'BUTTON' && active.closest && active.closest('form[data-form]')))
-    if (focusIsActive && formControlActive) { armDeferred(); return 'focused' }
+    const activeForm = formControlActive && active.closest ? active.closest('form[data-form]') : null
+    // Generic controls (notably header search) defer only while this document
+    // owns focus. Dirty composers were handled above and remain protected even
+    // when a backgrounded browser keeps or clears their activeElement.
+    if (focusIsActive && formControlActive && formConnected(activeForm || active)) { armDeferred(); return 'focused' }
     const full = pendingFull
     const keys = pendingKeys
     pendingFull = false
@@ -126,8 +163,13 @@ export function createLiveRefreshController ({ document, route, patchVotesInPlac
     return token
   }
   const releaseDraft = (token = null, { schedulePending = true, discardPending = false } = {}) => {
-    if (!heldDraft || (token && heldDraft.token !== token)) return false
+    if (token && (!heldDraft || heldDraft.token !== token)) return false
+    const releasedHeldDraft = !!heldDraft
+    const releasedDirtyDrafts = !token && dirtyDraftForms.size > 0
+    const hadPending = hasPending()
+    const hadDeferredWork = timer != null || !!deferredRetry
     heldDraft = null
+    if (!token) dirtyDraftForms.clear()
     clearDeferred()
     if (discardPending) {
       pendingFull = false
@@ -136,13 +178,19 @@ export function createLiveRefreshController ({ document, route, patchVotesInPlac
       timer = null
     }
     if (schedulePending && hasPending()) schedule()
-    return true
+    return releasedHeldDraft || releasedDirtyDrafts || hadPending || hadDeferredWork
   }
   const destroy = () => {
     if (timer != null) clearTimeout(timer)
     timer = null
     clearDeferred()
     heldDraft = null
+    dirtyDraftForms.clear()
+    if (document && typeof document.removeEventListener === 'function') {
+      document.removeEventListener('input', markDraftDirty, true)
+      document.removeEventListener('change', markDraftDirty, true)
+      document.removeEventListener('reset', markDraftReset, true)
+    }
   }
 
   return { onChange, flush, holdDraft, releaseDraft, ownsDraft, destroy }

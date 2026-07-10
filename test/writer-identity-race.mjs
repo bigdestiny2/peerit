@@ -264,6 +264,122 @@ console.log('— recovered structural emit preserves the live composer draft —
   refresh.destroy()
 }
 
+console.log('— backgrounded dirty composer survives focus changes until navigation —')
+{
+  const listeners = new Map()
+  const form = { isConnected: true, dataset: { form: 'submit-post' } }
+  const textarea = {
+    tagName: 'TEXTAREA',
+    isConnected: true,
+    closest: selector => selector === 'form[data-form]' ? form : null
+  }
+  const fakeDocument = {
+    activeElement: textarea,
+    hasFocus: () => false,
+    contains: node => node && node.isConnected !== false,
+    addEventListener: (name, fn) => listeners.set(name, fn),
+    removeEventListener: (name, fn) => { if (listeners.get(name) === fn) listeners.delete(name) }
+  }
+  let routes = 0
+  const refresh = createLiveRefreshController({
+    document: fakeDocument,
+    route: () => { routes++ },
+    patchVotesInPlace: async () => false,
+    delay: 15
+  })
+
+  listeners.get('input')({ target: textarea })
+  refresh.onChange(['comment!remote'])
+  await new Promise(resolve => setTimeout(resolve, 45))
+  assert.equal(routes, 0, 'document.hasFocus=false cannot replace an active connected composer')
+
+  listeners.get('visibilitychange')()
+  await new Promise(resolve => setTimeout(resolve, 45))
+  assert.equal(routes, 0, 'returning to the tab still preserves the active draft')
+
+  fakeDocument.activeElement = { tagName: 'BODY', isConnected: true }
+  listeners.get('focusout')()
+  await new Promise(resolve => setTimeout(resolve, 45))
+  assert.equal(routes, 0, 'clicking outside a dirty connected composer cannot erase its unsent draft')
+
+  form.isConnected = false
+  listeners.get('visibilitychange')()
+  await new Promise(resolve => setTimeout(resolve, 45))
+  assert.equal(routes, 1, 'the pending structural refresh runs after the user leaves and the composer disconnects')
+  refresh.destroy()
+}
+
+console.log('— backgrounded clean search control cannot starve structural refresh —')
+{
+  const listeners = new Map()
+  const searchForm = { isConnected: true, dataset: { form: 'search' } }
+  const search = {
+    tagName: 'INPUT',
+    isConnected: true,
+    closest: selector => selector === 'form[data-form]' ? searchForm : null
+  }
+  const fakeDocument = {
+    activeElement: search,
+    hasFocus: () => false,
+    contains: node => node && node.isConnected !== false,
+    addEventListener: (name, fn) => listeners.set(name, fn),
+    removeEventListener: (name, fn) => { if (listeners.get(name) === fn) listeners.delete(name) }
+  }
+  let routes = 0
+  const refresh = createLiveRefreshController({
+    document: fakeDocument,
+    route: () => { routes++ },
+    patchVotesInPlace: async () => false,
+    delay: 15
+  })
+
+  refresh.onChange(['post!remote'])
+  await new Promise(resolve => setTimeout(resolve, 45))
+  assert.equal(routes, 1, 'a clean non-composer control in a background tab does not hold live refresh')
+  assert.equal(listeners.has('focusout'), false)
+  assert.equal(listeners.has('visibilitychange'), false)
+  refresh.destroy()
+}
+
+console.log('— successful composer navigation consumes deferred refresh work —')
+{
+  const listeners = new Map()
+  const form = { isConnected: true, dataset: { form: 'comment' } }
+  const textarea = {
+    tagName: 'TEXTAREA',
+    isConnected: true,
+    closest: selector => selector === 'form[data-form]' ? form : null
+  }
+  const fakeDocument = {
+    activeElement: textarea,
+    hasFocus: () => false,
+    contains: node => node && node.isConnected !== false,
+    addEventListener: (name, fn) => listeners.set(name, fn),
+    removeEventListener: (name, fn) => { if (listeners.get(name) === fn) listeners.delete(name) }
+  }
+  let routes = 0
+  const refresh = createLiveRefreshController({
+    document: fakeDocument,
+    route: () => { routes++ },
+    patchVotesInPlace: async () => false,
+    delay: 15
+  })
+
+  listeners.get('input')({ target: textarea })
+  refresh.onChange(['post!remote'])
+  await new Promise(resolve => setTimeout(resolve, 45))
+  assert.equal(routes, 0)
+  assert.equal(refresh.releaseDraft(null, { schedulePending: false, discardPending: true }), true)
+  routes++ // the successful comment/post/create handler performs its explicit route
+  fakeDocument.activeElement = { tagName: 'BODY', isConnected: true }
+  await new Promise(resolve => setTimeout(resolve, 45))
+  assert.equal(routes, 1, 'submission gets one fresh route and no deferred duplicate or starvation')
+  assert.equal(listeners.has('focusout'), false, 'submission clears the deferred focus listener')
+  assert.equal(listeners.has('visibilitychange'), false, 'submission clears the deferred visibility listener')
+  refresh.destroy()
+  assert.equal(listeners.size, 0, 'destroy removes the persistent draft-tracking listeners')
+}
+
 console.log('— public-web UI and recovery gates —')
 {
   const source = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8')

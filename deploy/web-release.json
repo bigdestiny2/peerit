@@ -1,4 +1,6 @@
 {
+  "substrateProfile": "blind-v1",
+  "relayHints": [],
   "bootstrapRelays": [
     "https://outbox.peerit.site"
   ],

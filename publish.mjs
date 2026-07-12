@@ -19,10 +19,11 @@ import { createRequire } from 'module'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join, resolve } from 'path'
+import { assertPeeritBlindProductReleaseReady } from './js/substrate/product-release-status.mjs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const relayCount = (s) => (s && (s.relays ? s.relays.length : s.relayCount)) || 0
 const intEnv = (name, fallback) => {
   const n = Number(process.env[name])
@@ -104,12 +105,83 @@ async function loadHiveRelayClient () {
 }
 
 // Files that make up the served site (everything the browser needs, nothing else).
+// The official blind-substrate release uses this independent closure. It cannot
+// reopen the historical OutboxLog/DHT/BlindShard writers because none of those
+// modules or their entry routes exist in the artifact.
+export const SUBSTRATE_SITE_FILES = Object.freeze([
+  'index.html', 'styles.css', 'icon.svg',
+  'js/blob-store.js',
+  'js/box.js',
+  'js/canon.js',
+  'js/crypto.js',
+  'js/data.js',
+  'js/feed-algorithms.js',
+  'js/identity-primitives.js',
+  'js/identity-store.js',
+  'js/materialized-index.js',
+  'js/model.js',
+  'js/moderation.js',
+  'js/pow-current.js',
+  'js/ranking.js',
+  'js/recovery.js',
+  'js/seal.js',
+  'js/util.js',
+  'js/verify.js',
+  'js/substrate/app-entry.js',
+  'js/substrate/availability-policy.mjs',
+  'js/substrate/blind-client-browser-verifier.mjs',
+  'js/substrate/blind-client-relay.js',
+  'js/substrate/browser-runtime-authority.mjs',
+  'js/substrate/capability-vault.js',
+  'js/substrate/descriptor-trust-backend.js',
+  'js/substrate/local-identity.js',
+  'js/substrate/peerit-journal-backend.js',
+  'js/substrate/peerit-journal.js',
+  'js/substrate/peerit-product-runtime.js',
+  'js/substrate/peerit-product-ui.js',
+  'js/substrate/peerit-substrate-sync.js',
+  'js/substrate/profile-artifact-codec.mjs',
+  'js/substrate/profile-codec-ir.mjs',
+  'js/substrate/profile-external-authority.mjs',
+  'js/substrate/profile-inventory-scan.mjs',
+  'js/substrate/profile-status.mjs',
+  'js/substrate/publication-status.js',
+  'js/substrate/relay-consumer.js',
+  'js/substrate/relay-requalification-scheduler.js',
+  'js/substrate/release-authority-transition.mjs',
+  'js/substrate/release-control-codec.mjs',
+  'js/substrate/release-control-primitives.mjs',
+  'js/substrate/release-control-registry.mjs',
+  'js/substrate/release-control-verifier.mjs',
+  'js/substrate/validator-artifact.mjs',
+  'js/substrate/web-asset-manifest.mjs',
+  'js/vendor/noble-hashes/sha2.js',
+  'js/vendor/noble-hashes/_md.js',
+  'js/vendor/noble-hashes/_u64.js',
+  'js/vendor/noble-hashes/utils.js',
+  'docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md',
+  'protocol/peerit-profile-v1.cenc',
+  'protocol/vectors/peerit-profile-v1.manifest.cenc',
+  'protocol/validator/peerit-validator-v1.bare.mjs',
+  'protocol/validator/peerit-validator-v1.manifest.cenc',
+  'protocol/availability-policy-v1.cenc',
+  'vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs',
+  'vendor/hiverelay-blind-client-v1/blind-client-control-v1.manifest.cenc',
+  'vendor/hiverelay-blind-client-v1/blind-client-control-v1.chromium-evidence.json',
+  'vendor/hiverelay-blind-client-v1/blind-client-control-v1.cross-host-evidence.json',
+  'vendor/hiverelay-blind-client-v1/authority.json'
+])
+
 export const SITE_FILES = [
   'index.html', 'styles.css', 'icon.svg',
-  'js/app.js', 'js/blob-store.js', 'js/box.js', 'js/canon.js', 'js/crypto.js', 'js/data.js', 'js/dht-bundle.js', 'js/feed-algorithms.js', 'js/feed-window.js', 'js/gossip.js', 'js/materialized-index.js', 'js/moderation.js',
-  'js/identity.js', 'js/identity-export.js', 'js/identity-store.js', 'js/identity-vault.js', 'js/lazy-pool.js', 'js/live-refresh.js', 'js/markdown.js', 'js/model.js', 'js/onboarding.js', 'js/pear-api.js', 'js/qr.js',
-  'js/prefs.js', 'js/pow.js', 'js/legacy-v2-pow-allowlist.js', 'js/legacy-action-allowlist.js', 'js/ranking.js', 'js/reader-bundle.js', 'js/recovery.js', 'js/relay-pool.js', 'js/relay-roster.js', 'js/release-verify.js', 'js/release-update.js',
-  'js/runtime.js', 'js/seal.js', 'js/shard-roster.js', 'js/sync.js', 'js/util.js', 'js/verify.js',
+  'js/app.js', 'js/blob-store.js', 'js/box.js', 'js/canon.js', 'js/crypto.js', 'js/data.js', 'js/data-dispersal.js', 'js/dht-bundle.js', 'js/feed-algorithms.js', 'js/feed-window.js', 'js/gossip.js', 'js/materialized-index.js', 'js/moderation.js',
+  'js/identity.js', 'js/identity-export.js', 'js/identity-primitives.js', 'js/identity-store.js', 'js/identity-vault.js', 'js/lazy-pool.js', 'js/live-refresh.js', 'js/markdown.js', 'js/model.js', 'js/onboarding.js', 'js/pear-api.js', 'js/qr.js',
+  'js/prefs.js', 'js/pow.js', 'js/pow-current.js', 'js/legacy-v2-pow-allowlist.js', 'js/legacy-action-allowlist.js', 'js/ranking.js', 'js/reader-bundle.js', 'js/recovery.js', 'js/relay-pool.js', 'js/relay-roster.js', 'js/release-verify.js', 'js/release-update.js',
+  'js/runtime.js', 'js/seal.js', 'js/shard-roster.js', 'js/sync.js', 'js/substrate/capability-vault.js', 'js/substrate/descriptor-trust-backend.js', 'js/substrate/peerit-journal-backend.js', 'js/substrate/peerit-journal.js', 'js/substrate/peerit-substrate-sync.js', 'js/substrate/pin-history-witness-backend.mjs', 'js/substrate/product-release-status.mjs', 'js/substrate/profile-status.mjs', 'js/substrate/publication-status.js', 'js/substrate/relay-consumer.js', 'js/substrate/relay-requalification-scheduler.js', 'js/substrate/release-authority-transition.mjs', 'js/substrate/release-control-codec.mjs', 'js/substrate/release-control-primitives.mjs', 'js/substrate/release-control-registry.mjs', 'js/substrate/release-control-verifier.mjs', 'js/util.js', 'js/verify.js',
+  'js/substrate/availability-policy.mjs', 'js/substrate/blind-client-browser-verifier.mjs', 'js/substrate/blind-client-relay.js', 'js/substrate/browser-runtime-authority.mjs', 'js/substrate/profile-artifact-codec.mjs', 'js/substrate/profile-codec-ir.mjs', 'js/substrate/profile-external-authority.mjs', 'js/substrate/profile-inventory-scan.mjs', 'js/substrate/validator-artifact.mjs', 'js/substrate/web-asset-manifest.mjs',
+  'docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md', 'protocol/peerit-profile-v1.cenc', 'protocol/vectors/peerit-profile-v1.manifest.cenc', 'protocol/validator/peerit-validator-v1.bare.mjs', 'protocol/validator/peerit-validator-v1.manifest.cenc', 'protocol/availability-policy-v1.cenc',
+  'vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs', 'vendor/hiverelay-blind-client-v1/blind-client-control-v1.manifest.cenc', 'vendor/hiverelay-blind-client-v1/blind-client-control-v1.chromium-evidence.json', 'vendor/hiverelay-blind-client-v1/blind-client-control-v1.cross-host-evidence.json', 'vendor/hiverelay-blind-client-v1/authority.json',
+  'js/vendor/noble-hashes/sha2.js', 'js/vendor/noble-hashes/_md.js', 'js/vendor/noble-hashes/_u64.js', 'js/vendor/noble-hashes/utils.js',
   'config/shard-roster.public.json'
 ]
 
@@ -142,8 +214,8 @@ function writeDeployReport (report) {
 // relay holds the index and some blocks but never finished the blobs core. So we poll
 // the blobs core's own replication peers until one has the full contiguous length.
 async function waitForBlobsDurable (drive, { timeoutMs = 120000, pollMs = 1000, minPeers = 1 } = {}) {
-  const blobs = await drive.getBlobs()            // forces the (lazy) content core open
-  const bcore = blobs.core                        // SEPARATE hypercore = the file bytes
+  const blobs = await drive.getBlobs() // forces the (lazy) content core open
+  const bcore = blobs.core // SEPARATE hypercore = the file bytes
   await bcore.ready()
   const deadline = Date.now() + timeoutMs
   const snap = () => {
@@ -166,7 +238,27 @@ async function waitForBlobsDurable (drive, { timeoutMs = 120000, pollMs = 1000, 
   return s
 }
 
+function replacementOnlyIndex (input) {
+  let html = input.toString('utf8')
+  html = html.replace(/\s*<meta\s+name="peerit-v2"[^>]*>/gi, '')
+  html = html.replace(
+    /<meta\s+name="description"\s+content="[^"]*">/i,
+    '<meta name="description" content="peerit is a local-first community app using authenticated blind relay substrate artifacts.">')
+  html = html.replace(
+    /<script\s+type="module"\s+src="js\/(?:app\.js|substrate\/app-entry\.js)"(?:\s+[^>]*)?><\/script>/,
+    '<script type="module" src="js/substrate/app-entry.js"></script>')
+  return Buffer.from(html)
+}
+
 async function main () {
+  const release = JSON.parse(readFileSync(join(__dir, 'deploy', 'web-release.json'), 'utf8'))
+  const siteFiles = release.substrateProfile ? SUBSTRATE_SITE_FILES : SITE_FILES
+  // Public publication is an authority boundary, not merely a file-copy step.
+  // Local Hyperdrive previews remain available, but no production artifact may
+  // be announced while the replacement profile is incomplete.
+  if (!LOCAL) {
+    assertPeeritBlindProductReleaseReady(release)
+  }
   const manifestPath = join(__dir, 'manifest.json')
   const originalManifestText = readFileSync(manifestPath, 'utf8')
   const manifest = JSON.parse(originalManifestText)
@@ -180,7 +272,7 @@ async function main () {
     minAnchorPeers: MIN_ANCHOR_PEERS,
     status: 'started',
     generatedAt: new Date().toISOString(),
-    siteFiles: SITE_FILES.length,
+    siteFiles: siteFiles.length,
     hiveRelayClient: source,
     relaysConnected: 0,
     driveKey: null,
@@ -197,7 +289,12 @@ async function main () {
   console.log('[peerit] relays connected:', report.relaysConnected)
 
   // 1. publish the site folder as a drive (seed only on a real public deploy)
-  const files = SITE_FILES.map((p) => ({ path: '/' + p, content: readFileSync(join(__dir, p)) }))
+  const files = siteFiles.map((p) => ({
+    path: '/' + p,
+    content: p === 'index.html' && release.substrateProfile
+      ? replacementOnlyIndex(readFileSync(join(__dir, p)))
+      : readFileSync(join(__dir, p))
+  }))
   console.log('[peerit] publishing site drive (' + files.length + ' files)…')
   const drive = await client.publish(files, {
     appId: 'peerit',
@@ -330,9 +427,9 @@ async function main () {
       console.warn('[peerit] WARNING:', msg)
     }
     if (!blobDurable.durable) {
-      const msg = `metadata anchored but NO relay mirrored the full BLOBS core ` +
+      const msg = 'metadata anchored but NO relay mirrored the full BLOBS core ' +
         `(${blobDurable.blobRemoteMax}/${blobDurable.blobLocalLen} blocks) — ` +
-        `index.html may load while js/app.js 404s. This is the silent partial-pin.`
+        'index.html may load while js/app.js 404s. This is the silent partial-pin.'
       if (STRICT_ANCHOR) {
         restoreManifestOnStrictFailure()
         throw new Error(msg)

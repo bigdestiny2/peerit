@@ -103,11 +103,29 @@ function repoPath (file, label) {
 }
 
 export function releaseConfig (raw) {
-  if (typeof raw.readonly !== 'boolean') throw new Error('deploy/web-release.json must explicitly set readonly=true or readonly=false')
   const releaseSequence = raw.releaseSequence
   if (!Number.isSafeInteger(releaseSequence) || releaseSequence < 1) {
     throw new Error('deploy/web-release.json releaseSequence must be a positive safe integer')
   }
+  const substrateProfile = String(raw.substrateProfile || '').trim()
+  const pinnedReleaseKey = String(raw.pinnedReleaseKey || raw.releaseKey || '').trim().toLowerCase()
+  if (!HEX64.test(pinnedReleaseKey)) throw new Error('deploy/web-release.json has an invalid pinnedReleaseKey')
+  if (substrateProfile) {
+    if (substrateProfile !== 'blind-v1') throw new Error(`unsupported Peerit substrate profile: ${substrateProfile}`)
+    const forbidden = ['relay', 'bootstrapRelays', 'relayBackend', 'readonly', 'readOnly', 'relayRoster', 'relayRosterMirrors', 'pinnedRosterKey', 'roster', 'dhtRelay', 'shardRoster', 'seedOutboxes']
+      .filter(key => raw[key] != null && raw[key] !== '' && (!Array.isArray(raw[key]) || raw[key].length > 0))
+    if (forbidden.length) throw new Error(`blind-substrate release refuses legacy transport configuration: ${forbidden.join(', ')}`)
+    const relayHints = Array.isArray(raw.relayHints) ? [...new Set(raw.relayHints.map(value => String(value).trim()).filter(Boolean))] : []
+    for (const hint of relayHints) {
+      let url
+      try { url = new URL(hint) } catch { throw new Error(`invalid blind-substrate relay hint: ${hint}`) }
+      const loopback = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+      if (url.protocol !== 'https:' && !loopback) throw new Error(`blind-substrate relay hint must use HTTPS (or loopback HTTP): ${hint}`)
+      if (url.hostname === 'outbox.peerit.site') throw new Error('blind-substrate release refuses the retired outbox.peerit.site destination')
+    }
+    return { transport: 'blind-substrate', substrateProfile, relayHints, releaseSequence, pinnedReleaseKey }
+  }
+  if (typeof raw.readonly !== 'boolean') throw new Error('legacy migration compatibility must explicitly set readonly=true or readonly=false')
   const bootstrapRelays = Array.isArray(raw.bootstrapRelays)
     ? raw.bootstrapRelays.map((value) => String(value).trim()).filter(Boolean)
     : String(raw.relay || '').split(',').map((value) => value.trim()).filter(Boolean)
@@ -124,7 +142,6 @@ export function releaseConfig (raw) {
   const relayRoster = String(raw.relayRoster || 'relay-roster.json').trim()
   if (!safeManifestPath(relayRoster)) throw new Error('deploy/web-release.json relayRoster must be a safe repository-relative path')
   const pinnedRosterKey = String(raw.pinnedRosterKey || raw.rosterKey || '').trim().toLowerCase()
-  const pinnedReleaseKey = String(raw.pinnedReleaseKey || raw.releaseKey || '').trim().toLowerCase()
   if (!HEX64.test(pinnedRosterKey)) throw new Error('deploy/web-release.json has an invalid pinnedRosterKey')
   if (!HEX64.test(pinnedReleaseKey)) throw new Error('deploy/web-release.json has an invalid pinnedReleaseKey')
 
@@ -148,6 +165,7 @@ export function releaseConfig (raw) {
   }
 
   return {
+    transport: 'legacy-migration-compatibility',
     releaseSequence,
     bootstrapRelays,
     relay: bootstrapRelays.join(','),
@@ -251,6 +269,16 @@ function expectedSeedOutboxes (items) {
 
 export function verifyIndexConfig (html, release) {
   const metas = metaMap(html)
+  if (release.transport === 'blind-substrate') {
+    requireMeta(metas, 'peerit-substrate', release.substrateProfile)
+    if (release.relayHints.length) requireMeta(metas, 'peerit-substrate-relays', release.relayHints.join(','))
+    else forbidMeta(metas, 'peerit-substrate-relays')
+    requireMeta(metas, 'peerit-release-key', release.pinnedReleaseKey)
+    requireMeta(metas, 'peerit-release-sequence', String(release.releaseSequence))
+    for (const legacy of ['peerit-relay', 'peerit-relay-backend', 'peerit-relay-readonly', 'peerit-relay-roster', 'peerit-relay-roster-key', 'peerit-dht-relay', 'peerit-shard-roster', 'peerit-seed-outboxes']) forbidMeta(metas, legacy)
+    if (String(html).includes('outbox.peerit.site')) throw new Error('blind-substrate index contains the retired outbox.peerit.site destination')
+    return
+  }
   requireMeta(metas, 'peerit-relay', release.relay)
   requireMeta(metas, 'peerit-relay-readonly', release.readonly)
   requireMeta(metas, 'peerit-relay-roster', [release.relayRoster, ...release.relayRosterMirrors].join(','))
@@ -284,6 +312,20 @@ export function verifyManifestConfig (manifest, release, rosterHash, shardRoster
   if (manifest.driveKey !== driveKey) throw new Error('asset-manifest.json driveKey does not match manifest.json')
   if (!manifest.webRelease || typeof manifest.webRelease !== 'object' || Array.isArray(manifest.webRelease)) {
     throw new Error('asset-manifest.json webRelease is missing')
+  }
+  if (release.transport === 'blind-substrate') {
+    const expected = {
+      releaseSequence: release.releaseSequence,
+      transport: 'blind-substrate',
+      substrateProfile: release.substrateProfile,
+      relayHints: release.relayHints,
+      networkDelivery: 'profile-gated',
+      legacyDestination: null,
+      releaseKey: release.pinnedReleaseKey
+    }
+    if (!equalJson(manifest.webRelease, expected)) throw new Error('asset-manifest.json webRelease does not match the replacement substrate config')
+    if (manifest.files && Object.hasOwn(manifest.files, 'relay-roster.json')) throw new Error('blind-substrate asset manifest must not ship a legacy relay roster')
+    return
   }
   const expected = {
     releaseSequence: release.releaseSequence,
@@ -420,15 +462,19 @@ async function main () {
     throw new Error('manifest.json url/homepage do not match its driveKey')
   }
 
-  const rosterBytes = await readRequired(repoPath(release.relayRoster, 'relayRoster'), release.relayRoster)
-  const rosterHash = sha256(rosterBytes)
-  const roster = parseJson(rosterBytes, release.relayRoster)
-  const verifiedRoster = await verifyRelayRoster(roster, { expectedKey: release.pinnedRosterKey })
-  if (!equalJson(verifiedRoster.payload, release.roster)) {
-    throw new Error('signed relay roster payload does not match deploy/web-release.json')
-  }
-  if (release.readonly === 'false' && verifiedRoster.relays.length < 2 && !verifiedRoster.payload.networkQuorum && verifiedRoster.payload.singleIngressWriter !== true) {
-    throw new Error('writable public web releases require at least two signed roster relays, a signed network-quorum policy, or a signed single-ingress policy')
+  let rosterBytes = null
+  let rosterHash = ''
+  if (release.transport !== 'blind-substrate') {
+    rosterBytes = await readRequired(repoPath(release.relayRoster, 'relayRoster'), release.relayRoster)
+    rosterHash = sha256(rosterBytes)
+    const roster = parseJson(rosterBytes, release.relayRoster)
+    const verifiedRoster = await verifyRelayRoster(roster, { expectedKey: release.pinnedRosterKey })
+    if (!equalJson(verifiedRoster.payload, release.roster)) {
+      throw new Error('signed relay roster payload does not match deploy/web-release.json')
+    }
+    if (release.readonly === 'false' && verifiedRoster.relays.length < 2 && !verifiedRoster.payload.networkQuorum && verifiedRoster.payload.singleIngressWriter !== true) {
+      throw new Error('writable public web releases require at least two signed roster relays, a signed network-quorum policy, or a signed single-ingress policy')
+    }
   }
 
   let shardRosterBytes = null
@@ -466,7 +512,7 @@ async function main () {
   if (!localAssets.get('verify.html').toString('utf8').includes(release.pinnedReleaseKey)) {
     throw new Error('verify.html does not carry the pinned release key')
   }
-  if (!localAssets.get('sw.js').toString('utf8').includes(`"relay-roster.json":"${rosterHash}"`)) {
+  if (release.transport !== 'blind-substrate' && !localAssets.get('sw.js').toString('utf8').includes(`"relay-roster.json":"${rosterHash}"`)) {
     throw new Error('sw.js does not pin the configured relay roster')
   }
   if (release.shardRoster && !localAssets.get('sw.js').toString('utf8').includes(`"${release.shardRoster}":"${shardRosterHash}"`)) {
@@ -485,9 +531,11 @@ async function main () {
   }
 
   await verifyRemoteAssets(baseUrl, entries, localAssets, nonce)
-  const deployedRoster = localAssets.get('relay-roster.json')
-  if (!deployedRoster || !deployedRoster.equals(rosterBytes)) {
-    throw new Error('deployed relay-roster.json differs from the configured signed roster')
+  if (release.transport !== 'blind-substrate') {
+    const deployedRoster = localAssets.get('relay-roster.json')
+    if (!deployedRoster || !deployedRoster.equals(rosterBytes)) {
+      throw new Error('deployed relay-roster.json differs from the configured signed roster')
+    }
   }
   if (release.shardRoster) {
     const deployedShardRoster = localAssets.get(release.shardRoster)
@@ -496,7 +544,7 @@ async function main () {
     }
   }
 
-  console.log(`[deploy-verify] PASS ${RELEASE_MSG_VERSION}: sequence ${release.releaseSequence}; readonly=${release.readonly}; ${manifest.files && Object.keys(manifest.files).length} files + ${manifest.controls && Object.keys(manifest.controls).length} controls; drive ${driveKey.slice(0, 12)}…; key ${release.pinnedReleaseKey.slice(0, 12)}…`)
+  console.log(`[deploy-verify] PASS ${RELEASE_MSG_VERSION}: sequence ${release.releaseSequence}; transport=${release.transport}; ${manifest.files && Object.keys(manifest.files).length} files + ${manifest.controls && Object.keys(manifest.controls).length} controls; drive ${driveKey.slice(0, 12)}…; key ${release.pinnedReleaseKey.slice(0, 12)}…`)
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {

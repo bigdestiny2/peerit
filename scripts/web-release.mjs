@@ -17,6 +17,7 @@ import {
   releaseSigningMessage
 } from '../js/release-verify.js'
 import { normalizeShardRosterPayload, shardRosterSigningMessage } from '../js/shard-roster.js'
+import { assertPeeritBlindProductReleaseReady } from '../js/substrate/product-release-status.mjs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dir, '..')
@@ -281,10 +282,21 @@ function resolveRoot (file) {
 }
 
 function normalizeConfig (raw) {
+  const substrateProfile = String(raw.substrateProfile || '').trim()
+  if (substrateProfile) {
+    return {
+      transport: 'blind-substrate',
+      substrateProfile,
+      relayHints: Array.isArray(raw.relayHints) ? [...new Set(raw.relayHints.map(value => String(value).trim()).filter(Boolean))] : [],
+      releaseSequence: Number(raw.releaseSequence),
+      pinnedReleaseKey: String(raw.pinnedReleaseKey || raw.releaseKey || '').trim().toLowerCase()
+    }
+  }
   const bootstrapRelays = Array.isArray(raw.bootstrapRelays)
     ? raw.bootstrapRelays.map((v) => String(v).trim()).filter(Boolean)
     : String(raw.relay || '').split(',').map((v) => v.trim()).filter(Boolean)
   return {
+    transport: 'legacy-migration-compatibility',
     bootstrapRelays,
     relay: bootstrapRelays.join(','),
     relayBackend: String(raw.relayBackend || '').trim(),
@@ -392,6 +404,22 @@ function validateReleaseConfig (release) {
   if (!Number.isSafeInteger(release.releaseSequence) || release.releaseSequence < 1) {
     throw new Error('deploy/web-release.json releaseSequence must be a positive safe integer')
   }
+  if (release.transport === 'blind-substrate') {
+    if (release.substrateProfile !== 'blind-v1') throw new Error(`unsupported Peerit substrate profile: ${release.substrateProfile}`)
+    if (!HEX64.test(release.pinnedReleaseKey)) throw new Error('deploy/web-release.json has an invalid pinnedReleaseKey')
+    for (const hint of release.relayHints) {
+      let url
+      try { url = new URL(hint) } catch { throw new Error(`invalid blind-substrate relay hint: ${hint}`) }
+      const loopback = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+      if (url.protocol !== 'https:' && !loopback) throw new Error(`blind-substrate relay hint must use HTTPS (or loopback HTTP): ${hint}`)
+      if (url.hostname === 'outbox.peerit.site') throw new Error('blind-substrate release refuses the retired outbox.peerit.site destination')
+    }
+    addCheck('config:substrate', 'pass', `Release selects ${release.substrateProfile} with ${release.relayHints.length} untrusted relay hint(s).`, {
+      relayHints: release.relayHints,
+      legacyDestination: null
+    })
+    return
+  }
   const normalizedBootstrap = dedupeRelayList(release.bootstrapRelays)
   if (!release.bootstrapRelays.length) throw new Error('deploy/web-release.json must configure at least one bootstrap relay')
   if (normalizedBootstrap.length !== release.bootstrapRelays.length) {
@@ -434,22 +462,21 @@ function run (cmd, args, options = {}) {
 }
 
 async function buildWeb (release, driveKey) {
-  const args = [
-    'build-web.mjs',
-    '--config', opts.config,
-    '--relay', release.relay,
-    '--readonly', release.readonly,
-    '--release-sequence', String(release.releaseSequence),
-    '--relay-roster', release.relayRoster,
-    '--relay-roster-key', release.pinnedRosterKey,
-    '--drive-key', driveKey
-  ]
+  const args = ['build-web.mjs', '--config', opts.config, '--release-sequence', String(release.releaseSequence), '--drive-key', driveKey]
+  if (release.transport === 'blind-substrate') {
+    args.push('--substrate-profile', release.substrateProfile)
+    if (release.relayHints.length) args.push('--substrate-relay-hints', release.relayHints.join(','))
+  } else {
+    args.push('--relay', release.relay, '--readonly', release.readonly, '--relay-roster', release.relayRoster, '--relay-roster-key', release.pinnedRosterKey)
+  }
   if (release.relayBackend) args.push('--relay-backend', release.relayBackend)
-  if (release.relayRosterMirrors.length) args.push('--relay-roster-mirrors', release.relayRosterMirrors.join(','))
+  if (release.relayRosterMirrors && release.relayRosterMirrors.length) args.push('--relay-roster-mirrors', release.relayRosterMirrors.join(','))
   if (release.dhtRelay) args.push('--dht-relay', release.dhtRelay)
   if (release.shardRoster) args.push('--shard-roster', release.shardRoster)
   await run('node', args)
-  addCheck('build:web', 'pass', 'Built web/ from the signed relay roster release config.')
+  addCheck('build:web', 'pass', release.transport === 'blind-substrate'
+    ? 'Built web/ from the replacement substrate release config.'
+    : 'Built the separately selected legacy migration-compatibility artifact.')
 }
 
 function metaContent (html, name) {
@@ -459,7 +486,60 @@ function metaContent (html, name) {
   return match ? match[1] : ''
 }
 
+function verifySubstrateWebBundle (release, driveKey, { requireSignature = true } = {}) {
+  const required = ['index.html', 'asset-manifest.json', 'sw.js', 'verify.html'].map(file => join(ROOT, 'web', file))
+  for (const file of required) if (!existsSync(file)) throw new Error(`${file} is missing; run npm run build-web`)
+  const html = readFileSync(required[0], 'utf8')
+  if (metaContent(html, 'peerit-substrate') !== release.substrateProfile) throw new Error('web/index.html substrate profile meta does not match deploy/web-release.json')
+  const hints = release.relayHints.join(',')
+  if (metaContent(html, 'peerit-substrate-relays') !== hints) throw new Error('web/index.html substrate relay hints do not match deploy/web-release.json')
+  for (const legacy of ['peerit-relay', 'peerit-relay-backend', 'peerit-relay-readonly', 'peerit-relay-roster', 'peerit-relay-roster-key', 'peerit-dht-relay', 'peerit-shard-roster', 'peerit-seed-outboxes']) {
+    if (metaContent(html, legacy)) throw new Error(`blind-substrate web artifact must not contain ${legacy}`)
+  }
+  if (html.includes('outbox.peerit.site')) throw new Error('blind-substrate web artifact contains the retired outbox.peerit.site destination')
+  if (metaContent(html, 'peerit-release-key') !== release.pinnedReleaseKey) throw new Error('web/index.html release key meta does not match deploy/web-release.json')
+  if (metaContent(html, 'peerit-release-sequence') !== String(release.releaseSequence)) throw new Error('web/index.html release sequence meta does not match deploy/web-release.json')
+  addCheck('web:index-meta', 'pass', 'web/index.html selects only the replacement substrate transport.')
+
+  const manifest = readJson(required[1])
+  if (!manifest) throw new Error('web/asset-manifest.json is invalid')
+  verifyManifestFileHashes(manifest, { requireSignature })
+  if (manifest.releaseSequence !== release.releaseSequence || manifest.driveKey !== driveKey) throw new Error('web/asset-manifest.json release identity does not match the release config')
+  const expected = {
+    releaseSequence: release.releaseSequence,
+    transport: 'blind-substrate',
+    substrateProfile: release.substrateProfile,
+    relayHints: release.relayHints,
+    networkDelivery: 'profile-gated',
+    legacyDestination: null,
+    releaseKey: release.pinnedReleaseKey
+  }
+  if (!manifest.webRelease || JSON.stringify(manifest.webRelease) !== JSON.stringify(expected)) {
+    throw new Error('asset-manifest.json webRelease does not match the replacement substrate release config')
+  }
+  const verifySource = readFileSync(required[3], 'utf8')
+  if (!verifySource.includes(driveKey) || !verifySource.includes(release.pinnedReleaseKey)) throw new Error('verify.html does not include the release pins')
+  addCheck('web:asset-manifest', 'pass', 'asset-manifest.json binds the replacement profile without a legacy destination.')
+
+  if (!requireSignature) {
+    addCheck('web:release-signature', 'info', 'Artifact is frozen and awaiting an external asset-manifest.sig; no build will run during verification.')
+    return
+  }
+  const sigPath = join(ROOT, 'web', 'asset-manifest.sig')
+  if (!existsSync(sigPath)) throw new Error('pinnedReleaseKey is set but web/asset-manifest.sig is missing')
+  const sig = readJson(sigPath)
+  if (!sig || sig.alg !== RELEASE_ALG || sig.msgVersion !== RELEASE_MSG_VERSION || String(sig.key || '').toLowerCase() !== release.pinnedReleaseKey || !/^[0-9a-f]{128}$/i.test(String(sig.sig || ''))) {
+    throw new Error('asset-manifest.sig is invalid for the pinned release key')
+  }
+  const ok = nodeVerify(null, Buffer.from(releaseSigningMessage(manifest), 'utf8'),
+    createPublicKey({ key: Buffer.from(SPKI_PREFIX + release.pinnedReleaseKey, 'hex'), format: 'der', type: 'spki' }),
+    Buffer.from(sig.sig, 'hex'))
+  if (!ok) throw new Error('asset-manifest.sig does not verify over the built asset-manifest.json')
+  addCheck('web:release-signature', 'pass', `asset-manifest.sig verifies with the pinned release key ${release.pinnedReleaseKey.slice(0, 12)}...`)
+}
+
 function verifyWebBundle (release, rosterInfo, driveKey, { requireSignature = true } = {}) {
+  if (release.transport === 'blind-substrate') return verifySubstrateWebBundle(release, driveKey, { requireSignature })
   const webIndex = join(ROOT, 'web', 'index.html')
   const webManifest = join(ROOT, 'web', 'asset-manifest.json')
   const webRoster = join(ROOT, 'web', 'relay-roster.json')
@@ -586,7 +666,7 @@ function verifyWebBundle (release, rosterInfo, driveKey, { requireSignature = tr
 function verifyDocs () {
   const docsPath = join(ROOT, 'docs', 'WEB-DEPLOYMENT.md')
   const docs = readFileSync(docsPath, 'utf8')
-  const missing = ['npm run web:release', 'deploy/web-release.json', 'relay-roster.json']
+  const missing = ['npm run web:release', 'deploy/web-release.json']
     .filter((needle) => !docs.includes(needle))
   if (missing.length) throw new Error(`docs/WEB-DEPLOYMENT.md is missing release-flow references: ${missing.join(', ')}`)
   addCheck('docs:web-release', 'pass', 'WEB-DEPLOYMENT.md documents the web release command and config files.')
@@ -596,20 +676,33 @@ async function main () {
   const raw = readJson(opts.config)
   if (!raw) throw new Error(`${opts.config} is missing or invalid JSON`)
   const release = normalizeConfig(raw)
-  report.release = {
-    relay: release.relay,
-    relayBackend: release.relayBackend,
-    readonly: release.readonly,
-    releaseSequence: release.releaseSequence,
-    relayRoster: release.relayRoster,
-    relayRosterMirrors: release.relayRosterMirrors,
-    pinnedRosterKey: release.pinnedRosterKey,
-    pinnedReleaseKey: release.pinnedReleaseKey,
-    dhtRelay: release.dhtRelay || null,
-    shardRoster: release.shardRoster || null
-  }
+  report.release = release.transport === 'blind-substrate'
+    ? {
+        transport: release.transport,
+        substrateProfile: release.substrateProfile,
+        relayHints: release.relayHints,
+        releaseSequence: release.releaseSequence,
+        pinnedReleaseKey: release.pinnedReleaseKey,
+        legacyDestination: null
+      }
+    : {
+        transport: release.transport,
+        relay: release.relay,
+        relayBackend: release.relayBackend,
+        readonly: release.readonly,
+        releaseSequence: release.releaseSequence,
+        relayRoster: release.relayRoster,
+        relayRosterMirrors: release.relayRosterMirrors,
+        pinnedRosterKey: release.pinnedRosterKey,
+        pinnedReleaseKey: release.pinnedReleaseKey,
+        dhtRelay: release.dhtRelay || null,
+        shardRoster: release.shardRoster || null
+      }
   validateReleaseConfig(release)
-  const rosterInfo = await prepareRoster(release)
+  // This is the official web-release boundary. A profile-only green state must
+  // never publish an uncomposed browser/daemon/store product.
+  if (release.transport === 'blind-substrate') assertPeeritBlindProductReleaseReady(release)
+  const rosterInfo = release.transport === 'blind-substrate' ? null : await prepareRoster(release)
   verifyDocs()
   const driveKey = String(opts.driveKey || loadManifestDriveKey()).toLowerCase()
   report.driveKey = driveKey
@@ -628,7 +721,10 @@ async function main () {
 }
 
 main().catch((err) => {
-  addCheck('web-release:error', 'fail', err.message)
+  addCheck('web-release:error', 'fail', err.message,
+    Array.isArray(err.releaseBlockers)
+      ? { releaseBlockers: [...err.releaseBlockers], profileOnlyGateAccepted: false }
+      : undefined)
 }).finally(() => {
   writeReport()
   process.exit(report.status === 'blocked' ? 1 : 0)

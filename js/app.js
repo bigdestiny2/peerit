@@ -34,9 +34,19 @@ import {
   replaceDurableIdentity,
   resetCorruptDurableIdentity
 } from './identity-store.js'
-import { isSecure } from './crypto.js'
+import { isSecure, ready as cryptoReady } from './crypto.js'
 import { encodeQR, qrToSvg, isScanSupported, scanQR } from './qr.js'
 import { createLiveRefreshController, restoreComposerDraft, snapshotComposerDraft } from './live-refresh.js'
+import {
+  publicationModeLabel,
+  publicationNetSegments,
+  publicationUiState
+} from './substrate/publication-status.js'
+import {
+  installPeeritBlindRelayConsumer,
+  stopPeeritBlindRelayConsumer
+} from './substrate/relay-consumer.js'
+import { loadPeeritBrowserRuntimeAuthorityV1 } from './substrate/browser-runtime-authority.mjs'
 import {
   escapeHtml as esc, timeAgo, fmtCount, parseRoute, buildRoute,
   colorFor, shortKey, normalizeSlug, safeUserUrl, parsePubkeyInput
@@ -80,10 +90,19 @@ async function boot () {
   // resolves to empty opts == the existing host path, untouched. Only a normal
   // browser with no host bridge and a configured relay gets the web path
   // (local keys + remote untrusted relay). See js/runtime.js.
-  runtime = resolveRuntime({
-    rawPear: (typeof window !== 'undefined' ? window.pear : null),
-    doc: (typeof document !== 'undefined' ? document : null)
-  })
+  try {
+    runtime = resolveRuntime({
+      rawPear: (typeof window !== 'undefined' ? window.pear : null),
+      doc: (typeof document !== 'undefined' ? document : null)
+    })
+  } catch (error) {
+    if (!error || error.code !== 'PEERIT_SUBSTRATE_VERSION_UNSUPPORTED') throw error
+    console.error('[peerit] unsupported blind substrate profile; refusing legacy downgrade')
+    if (typeof document !== 'undefined' && document.body) {
+      document.body.innerHTML = '<main class="layout"><section class="content"><div class="panel"><h1>Peerit update required</h1><p>This release requests a blind-substrate version this client cannot verify. Peerit did not fall back to the legacy relay path. Reload after updating the application.</p></div></section></main>'
+    }
+    return
+  }
   // Identity first — the gossip layer needs to know who "me" is to pick which
   // outbox to write to (getMe is read dynamically so user-switching just works).
   // In web mode this is a browser-LOCAL key (forceDev); the relay never signs.
@@ -199,6 +218,34 @@ async function boot () {
     ? createSync({ getMe: () => identity.me().pubkey, identity, pear: pearForSync, writeHead, readOnly: runtime.readOnly, requireAtomicWrites: runtime.mode === 'web' && !runtime.readOnly, seedOutboxes, instantBoot: runtime.mode === 'web' && !pearOverride, seedSnapshot })
     : createSync({ getMe: () => identity.me().pubkey, identity, ...runtime.syncOpts, writeHead, readOnly: runtime.readOnly })
   await sync.ready()
+  // Install teardown before relay setup can await imports or network work. A
+  // pagehide during that await invalidates the install ownership token, so an
+  // old completion cannot publish into a destroyed sync instance.
+  window.addEventListener('pagehide', () => {
+    try { if (liveRefresh) liveRefresh.destroy() } catch {}
+    try { if (sync) stopPeeritBlindRelayConsumer(sync) } catch {}
+    try { if (sync && sync.destroy) sync.destroy() } catch {}
+  })
+  window.addEventListener('pageshow', (event) => {
+    // pagehide deliberately destroys the substrate session. A BFCache restore
+    // must boot a new clock/qualification graph instead of reviving dead state.
+    if (event.persisted && runtime && runtime.mode === 'web-substrate') location.reload()
+  })
+  if (runtime.mode === 'web-substrate') {
+    const browserRuntime = await loadPeeritBrowserRuntimeAuthorityV1({ document })
+    const relayConsumer = await installPeeritBlindRelayConsumer({
+      sync,
+      runtime,
+      releaseAuthority: browserRuntime.active ? browserRuntime.authority : null
+    })
+    if (!relayConsumer.active) {
+      console.warn('[peerit] blind relay qualification remains local-queue only:',
+        [...new Set([
+          ...(browserRuntime.releaseBlockers || []),
+          ...(relayConsumer.releaseBlockers || [])
+        ])].join(', '))
+    }
+  }
   data = createData(sync, identity, {
     v2: runtime.v2,
     dispersal: !!shardCohort,
@@ -212,8 +259,8 @@ async function boot () {
     // Hold the same cross-tab atomic-writer session from the first writer gate
     // through target reads, PoW, signing, pending persistence, and durable ACKs.
     // Import/forget take this session too, so neither can cross a publication.
-    withWriterSession: requiresAtomicWebWriter() ? withAtomicDataWriterSession : null,
-    assertWriterStart: requiresAtomicWebWriter() ? assertNoIdentityMutationDuringWrite : null,
+    withWriterSession: requiresSerializedWebWriter() ? withDataWriterSession : null,
+    assertWriterStart: requiresSerializedWebWriter() ? assertNoIdentityMutationDuringWrite : null,
     // Device durability floor (ADR-2026-07-07): the author keeps key+iv+ciphertext
     // for their own dispersed bodies device-local, never synced.
     deviceStore: typeof localStorage !== 'undefined' ? localStorage : null
@@ -243,10 +290,6 @@ async function boot () {
   // every real event, so a separate status timer here is redundant.
 
   window.addEventListener('hashchange', () => { finishComposerNavigation(); route() })
-  window.addEventListener('pagehide', () => {
-    try { if (liveRefresh) liveRefresh.destroy() } catch {}
-    try { if (sync && sync.destroy) sync.destroy() } catch {}
-  })
   document.addEventListener('click', onClick)
   document.addEventListener('submit', onSubmit)
   document.addEventListener('input', onInput)
@@ -393,6 +436,23 @@ async function recoverPendingPublicationFromControl (button) {
   }
 }
 
+async function withLocalDataWriterSession (fn) {
+  assertNoIdentityMutationDuringWrite()
+  if (!sync || typeof sync.withLocalWriterSession !== 'function') {
+    throw new Error('Publishing is unavailable because this browser cannot serialize its local writer journal safely.')
+  }
+  return sync.withLocalWriterSession(async (writerSession) => {
+    assertNoIdentityMutationDuringWrite()
+    return fn(writerSession)
+  })
+}
+
+function withDataWriterSession (fn) {
+  return isPeeritSubstrateRuntime()
+    ? withLocalDataWriterSession(fn)
+    : withAtomicDataWriterSession(fn)
+}
+
 async function withAtomicDataWriterSession (fn) {
   assertNoIdentityMutationDuringWrite()
   if (!sync || typeof sync.withAtomicWriterSession !== 'function') {
@@ -420,6 +480,7 @@ async function ensureWriterIdentity () {
   // 1. FAIL-CLOSED ORDER: read-only mode never mints, never prompts, never
   //    creates relay state — checked before anything else.
   if (isReadOnly()) throw new Error('This peerit is read-only.')
+  if (isPeeritSubstrateRuntime()) await requireLocalSubstrateWriter()
   if (typeof localStorage !== 'undefined' && hasIdentityForgetTombstone(localStorage)) {
     try {
       await finishDurableSignerForget()
@@ -430,20 +491,19 @@ async function ensureWriterIdentity () {
     }
   }
   assertNoIdentityMutationDuringWrite()
-  const durableWebWriter = !!(runtime && runtime.mode === 'web' && !runtime.readOnly)
-  // Availability is checked BEFORE vault UI or identity minting. A visitor who
-  // merely tries a submit while quorum is down remains a true lurker: no prompt,
-  // no key, and no device record are created for a write that cannot commit.
-  if (durableWebWriter) await requireAtomicWebWriter()
+  const durableWebWriter = isWritablePublicWebRuntime()
+  // The legacy relay writer preflights its atomic transport before minting. The
+  // replacement substrate deliberately does not: it can commit a signed intent
+  // locally with zero relays and publish later.
+  if (requiresAtomicWebWriter()) await requireAtomicWebWriter()
   assertNoIdentityMutationDuringWrite()
   const savedVaultPub = typeof localStorage !== 'undefined' && hasVault(localStorage) ? vaultPubkey(localStorage) : null
   if (identity.me().pubkey) {
     if (durableWebWriter) {
       await assertDurableIdentity(identity, deviceIdStore, { vaultPubkey: savedVaultPub })
-      // IndexedDB verification is asynchronous; quorum may disappear while it
-      // runs, so an already-active writer gets the same immediate pre-sign
-      // recheck as a newly activated identity.
-      await requireAtomicWebWriter()
+      // Only the legacy atomic transport is a pre-sign gate. Blind-substrate
+      // relay availability remains an independent publication axis.
+      if (requiresAtomicWebWriter()) await requireAtomicWebWriter()
       assertNoIdentityMutationDuringWrite()
     }
     return
@@ -474,6 +534,12 @@ async function ensureWriterIdentity () {
     //    existing in-memory behavior and never fall back to localStorage.
     let pub = identity.me().pubkey
     if (!pub) {
+      // Lazy lurker boot intentionally does not mint a keypair, so identity.ready()
+      // does not initialize crypto.js's Ed25519 backend. The first explicit write
+      // must await that backend probe before consulting isSecure(); otherwise a
+      // perfectly capable fresh browser is misclassified as insecure and can
+      // never create its first durable writer identity.
+      await cryptoReady()
       const useStore = identity.isDev && identity.lazy && typeof identity.mintEntry === 'function' &&
         isSecure() && await deviceIdStore.available()
       if (durableWebWriter && !useStore) {
@@ -503,10 +569,9 @@ async function ensureWriterIdentity () {
       await assertDurableIdentity(identity, deviceIdStore, {
         vaultPubkey: typeof localStorage !== 'undefined' && hasVault(localStorage) ? vaultPubkey(localStorage) : null
       })
-      // Topology/capabilities may have changed while IndexedDB or the vault UI
-      // was active. Re-check after activation and immediately before data.js is
-      // allowed to stamp/sign the record.
-      await requireAtomicWebWriter()
+      // The legacy topology/capability gate may have changed while IndexedDB or
+      // the vault UI was active. Replacement-substrate writes stay local-first.
+      if (requiresAtomicWebWriter()) await requireAtomicWebWriter()
       assertNoIdentityMutationDuringWrite()
     }
     // 4. Carry the lurker's device prefs over, re-key prefs, and let the world
@@ -534,8 +599,34 @@ function isBridgeMode () {
 // blocked until a write path (local keys + writable relay) is enabled.
 function isReadOnly () { return !!(runtime && runtime.readOnly) }
 
+function isPeeritSubstrateRuntime () {
+  return !!(runtime && runtime.mode === 'web-substrate')
+}
+
+function isPublicWebRuntime () {
+  return !!(runtime && (runtime.mode === 'web' || runtime.mode === 'web-substrate'))
+}
+
+function isWritablePublicWebRuntime () {
+  return isPublicWebRuntime() && !runtime.readOnly
+}
+
 function requiresAtomicWebWriter () {
   return !!(runtime && runtime.mode === 'web' && !runtime.readOnly)
+}
+
+function requiresSerializedWebWriter () {
+  return requiresAtomicWebWriter() || isPeeritSubstrateRuntime()
+}
+
+function requiresWriterAvailabilityStatus () {
+  return requiresAtomicWebWriter() || isPeeritSubstrateRuntime()
+}
+
+function writerAvailable (status) {
+  return isPeeritSubstrateRuntime()
+    ? publicationUiState(status).authoringReady
+    : atomicWriterAvailable(status)
 }
 
 function atomicWriterAvailable (status) {
@@ -567,7 +658,20 @@ async function requireAtomicWebWriter () {
   return status
 }
 
+async function requireLocalSubstrateWriter () {
+  let status = null
+  try { status = sync && typeof sync.status === 'function' ? await sync.status() : null } catch {}
+  if (!publicationUiState(status).authoringReady) {
+    throw new Error('Publishing is unavailable because Peerit cannot safely read or durably journal local signed events on this device. Browsing remains available; check browser storage and reload.')
+  }
+  return status
+}
+
 function writerAvailabilityCopy (status) {
+  if (isPeeritSubstrateRuntime()) {
+    const ui = publicationUiState(status)
+    return `<b>${ui.authoringReady ? 'Local-first writer ready.' : 'Local authoring unavailable.'}</b> ${esc(ui.copy)}`
+  }
   const state = atomicWriterState(status)
   if (state === 'ready') return '<b>Writer quorum ready.</b> Your encrypted device identity is created or used only when you submit.'
   if (state === 'pending') return '<b>Previous publication is still being completed.</b> Peerit is retrying its exact signed commit for a second durable receipt. New posts and identity changes stay locked; keep this browser data intact.'
@@ -576,6 +680,7 @@ function writerAvailabilityCopy (status) {
 }
 
 function writerRecoveryActionHtml (status) {
+  if (isPeeritSubstrateRuntime()) return ''
   const state = atomicWriterState(status)
   if (state !== 'pending' && state !== 'recovery') return ''
   const appId = String(status && status.atomicCommit && status.atomicCommit.pendingAppId || '').toLowerCase()
@@ -591,19 +696,25 @@ function writerAvailabilityContent (status) {
 }
 
 function writerAvailabilityNoteHtml (status) {
-  if (!requiresAtomicWebWriter()) return ''
-  const available = atomicWriterAvailable(status)
-  return `<div class="notice ${available ? '' : 'warn'} writer-availability" data-role="writer-availability" data-ready="${available ? 'true' : 'false'}">${writerAvailabilityContent(status)}</div>`
+  if (!requiresWriterAvailabilityStatus()) return ''
+  const available = writerAvailable(status)
+  const warning = isPeeritSubstrateRuntime()
+    ? publicationUiState(status).tone === 'warn'
+    : !available
+  return `<div class="notice ${warning ? 'warn' : ''} writer-availability" data-role="writer-availability" data-ready="${available ? 'true' : 'false'}">${writerAvailabilityContent(status)}</div>`
 }
 
 // Update only the status note/button, never route() or replace the form. Typed
 // drafts therefore survive relay topology transitions in either direction.
 function applyWriterAvailability (status) {
-  if (!requiresAtomicWebWriter() || typeof document === 'undefined') return
-  const available = atomicWriterAvailable(status)
+  if (!requiresWriterAvailabilityStatus() || typeof document === 'undefined') return
+  const available = writerAvailable(status)
+  const warning = isPeeritSubstrateRuntime()
+    ? publicationUiState(status).tone === 'warn'
+    : !available
   for (const note of document.querySelectorAll('[data-role="writer-availability"]')) {
     note.dataset.ready = available ? 'true' : 'false'
-    note.classList.toggle('warn', !available)
+    note.classList.toggle('warn', warning)
     note.innerHTML = writerAvailabilityContent(status)
     const form = note.closest('form')
     if (!form) continue
@@ -616,6 +727,7 @@ function applyWriterAvailability (status) {
 }
 
 function writerModeLabel (status) {
+  if (isPeeritSubstrateRuntime()) return publicationModeLabel(status)
   const state = atomicWriterState(status)
   if (state === 'ready') return 'Verified public relay (opt-in writer ready)'
   if (state === 'pending') return 'Verified public relay (browsing only — publication pending)'
@@ -624,7 +736,7 @@ function writerModeLabel (status) {
 }
 
 function localDevIdentityControlsAllowed () {
-  return !!(identity && identity.isDev && runtime && runtime.mode !== 'web')
+  return !!(identity && identity.isDev && runtime && !isPublicWebRuntime())
 }
 
 async function withIdentityMutationGuard (action, fn) {
@@ -632,7 +744,7 @@ async function withIdentityMutationGuard (action, fn) {
   // temporarily read-only. A pending marker from an earlier writable release must
   // still block import/forget/reset; only non-web developer/PearBrowser modes skip
   // this browser-local serialization contract.
-  if (!runtime || runtime.mode !== 'web') return fn()
+  if (!isPublicWebRuntime()) return fn()
   if (_identityMutationInFlight) throw new Error('Another writer identity change is already in progress.')
   if (data && typeof data.hasWriteInFlight === 'function' && data.hasWriteInFlight()) {
     throw new Error(`Cannot ${action} the writer identity while a publication is in progress. Wait for its durable result and try again.`)
@@ -650,9 +762,17 @@ async function withIdentityMutationGuard (action, fn) {
       // completed cleanly or left an exact pending/recovery marker.
       let status = null
       try { status = typeof sync.status === 'function' ? await sync.status() : null } catch {}
-      const state = atomicWriterState(status)
-      if (state === 'pending') throw new Error(`Cannot ${action} the writer identity while a signed publication is awaiting its second durable receipt.`)
-      if (state === 'recovery') throw new Error(`Cannot ${action} the writer identity while a previous signed publication needs verified recovery.`)
+      if (isPeeritSubstrateRuntime()) {
+        const publication = status && status.publication
+        const relay = publication && publication.relay
+        if (relay && (relay.pendingIntents > 0 || ['queued-no-relay', 'queued', 'delivering', 'pending-unknown'].includes(relay.state))) {
+          throw new Error(`Cannot ${action} the writer identity while locally signed publications still need delivery or exact reconciliation. Keep this browser data intact.`)
+        }
+      } else {
+        const state = atomicWriterState(status)
+        if (state === 'pending') throw new Error(`Cannot ${action} the writer identity while a signed publication is awaiting its second durable receipt.`)
+        if (state === 'recovery') throw new Error(`Cannot ${action} the writer identity while a previous signed publication needs verified recovery.`)
+      }
       if (data && typeof data.hasWriteInFlight === 'function' && data.hasWriteInFlight()) {
         throw new Error(`Cannot ${action} the writer identity while a publication is in progress.`)
       }
@@ -920,10 +1040,13 @@ async function updateNetStatus () {
     el.title = integrityBad
       ? 'Signed outbox integrity warning: newer or complete records are being retained while the relay is withholding or rolled back.'
       : 'P2P sync status — click to refresh'
-    const writerStateName = atomicWriterState(s)
-    const writerState = requiresAtomicWebWriter()
-      ? (writerStateName === 'ready' ? ' · writer ready' : writerStateName === 'pending' ? ' · publication pending' : writerStateName === 'recovery' ? ' · recovery required' : ' · browsing only')
-      : ''
+    let writerState = ''
+    if (isPeeritSubstrateRuntime()) {
+      writerState = ' · ' + publicationNetSegments(s).map(esc).join(' · ')
+    } else if (requiresAtomicWebWriter()) {
+      const writerStateName = atomicWriterState(s)
+      writerState = writerStateName === 'ready' ? ' · writer ready' : writerStateName === 'pending' ? ' · publication pending' : writerStateName === 'recovery' ? ' · recovery required' : ' · browsing only'
+    }
     el.innerHTML = `<b>${esc(s.mode || 'sync')}</b> · ${s.peers != null ? s.peers : 1}p · ${s.viewLength || 0} recs · <span class="mono">${me.pubkey ? esc(me.pubkey.slice(0, 6)) + '…' : 'lurking'}</span>${integrityBad ? ` · ⚠ ${withholding.length} outbox integrity issue${withholding.length === 1 ? '' : 's'}` : ''}${secure ? '' : ' · ⚠ insecure'}${isReadOnly() ? ' · read-only' : ''}${writerState}${isDispersalActive() ? ' · dispersed' : ''}`
     if (integrityBad && !integrityWarningActive) toast('Network integrity warning: a relay is withholding or serving a rolled-back outbox. Newer verified content is being retained.', 'error')
     integrityWarningActive = integrityBad
@@ -938,11 +1061,16 @@ async function renderUserMenu () {
   if (me.pubkey) await primeNames([me.pubkey])
   const el = $('#usermenu')
   if (!el) return
-  const modeBadge = (runtime && runtime.mode === 'web')
-    ? '<span class="mode-badge web" title="Bridged to peerit\'s P2P network over a public relay — records are verified, but install PearBrowser for fully trustless P2P">web</span>'
-    : !isBridgeMode()
-      ? '<span class="mode-badge dev" title="Running on local dev fallback (no PearBrowser bridge detected)">dev</span>'
-      : '<span class="mode-badge live" title="Connected to PearBrowser P2P bridge">p2p</span>'
+  let modeBadge
+  if (isPeeritSubstrateRuntime()) {
+    modeBadge = '<span class="mode-badge web" title="Local-first Peerit over the generic blind HiveRelay substrate">blind</span>'
+  } else if (runtime && runtime.mode === 'web') {
+    modeBadge = '<span class="mode-badge web" title="Bridged to peerit\'s P2P network over a public relay — records are verified, but install PearBrowser for fully trustless P2P">web</span>'
+  } else if (!isBridgeMode()) {
+    modeBadge = '<span class="mode-badge dev" title="Running on local dev fallback (no PearBrowser bridge detected)">dev</span>'
+  } else {
+    modeBadge = '<span class="mode-badge live" title="Connected to PearBrowser P2P bridge">p2p</span>'
+  }
   const dispersalBadge = isDispersalActive()
     ? '<span class="mode-badge dispersal" title="BlindShard dispersal active — long bodies are PVSS-split across a shard cohort">dispersed</span>'
     : ''
@@ -1537,7 +1665,7 @@ function starterFeed () {
 }
 
 function welcomePanel (compact) {
-  const mode = runtime && runtime.mode === 'web' ? 'web' : (isBridgeMode() ? 'p2p' : 'dev')
+  const mode = isPeeritSubstrateRuntime() ? 'blind' : (runtime && runtime.mode === 'web' ? 'web' : (isBridgeMode() ? 'p2p' : 'dev'))
   return `<section class="welcome-panel ${compact ? 'compact' : ''}">
     <div class="welcome-copy">
       <span class="tag">${esc(mode)}</span>
@@ -1733,7 +1861,7 @@ function voteWidgetInline (rec) {
 async function viewSubmit ({ query, guard, token }) {
   const [communities, writerStatus] = await Promise.all([data.listCommunities(), data.status().catch(() => null)])
   if (token !== renderToken) return
-  const writerReady = !requiresAtomicWebWriter() || atomicWriterAvailable(writerStatus)
+  const writerReady = !requiresWriterAvailabilityStatus() || writerAvailable(writerStatus)
   const to = query.to || (communities[0] && communities[0].slug) || ''
   if (!communities.length) {
     return done(guard, token, `<div class="empty"><h3>No communities yet</h3>
@@ -1746,7 +1874,7 @@ async function viewSubmit ({ query, guard, token }) {
   guard(`<div class="panel">
     <h1>Create a post</h1>
     ${bannedHere ? `<div class="locked-note">🚫 You are banned from r/${esc(to)} — pick another community.</div>` : ''}
-    <form data-form="submit-post"${requiresAtomicWebWriter() ? ` data-writer-ready="${writerReady ? 'true' : 'false'}"` : ''}>
+    <form data-form="submit-post"${requiresWriterAvailabilityStatus() ? ` data-writer-ready="${writerReady ? 'true' : 'false'}"` : ''}>
       ${writerAvailabilityNoteHtml(writerStatus)}
       ${showBackupWarning ? firstPostBackupWarningHtml() : ''}
       <label>Community
@@ -1769,12 +1897,12 @@ async function viewSubmit ({ query, guard, token }) {
 
 // ---- CREATE COMMUNITY view --------------------------------------------------
 async function viewCreateCommunity ({ guard, token }) {
-  const writerStatus = requiresAtomicWebWriter() ? await data.status().catch(() => null) : null
+  const writerStatus = requiresWriterAvailabilityStatus() ? await data.status().catch(() => null) : null
   if (token !== renderToken) return
-  const writerReady = !requiresAtomicWebWriter() || atomicWriterAvailable(writerStatus)
+  const writerReady = !requiresWriterAvailabilityStatus() || writerAvailable(writerStatus)
   guard(`<div class="panel">
     <h1>Create a community</h1>
-    <form data-form="create-community"${requiresAtomicWebWriter() ? ` data-writer-ready="${writerReady ? 'true' : 'false'}"` : ''}>
+    <form data-form="create-community"${requiresWriterAvailabilityStatus() ? ` data-writer-ready="${writerReady ? 'true' : 'false'}"` : ''}>
       ${writerAvailabilityNoteHtml(writerStatus)}
       <label>Name <span class="dim">r/</span>
         <input name="slug" maxlength="24" placeholder="programming" required>
@@ -2095,7 +2223,7 @@ async function viewSettings ({ guard, token }) {
   const currentOutbox = currentSettingsOutbox(status, me)
   const seederCommand = settingsSeederCommand(status, me)
   const hasOutbox = !!(currentOutbox && currentOutbox.inviteKey && seederCommand)
-  const modeLabel = runtime && runtime.mode === 'web'
+  const modeLabel = isPublicWebRuntime()
     ? (isReadOnly() ? 'Verified public relay (read-only)' : writerModeLabel(status))
     : isBridgeMode() ? 'PearBrowser P2P bridge' : 'Local dev fallback'
   const vaultActive = typeof localStorage !== 'undefined' && hasVault(localStorage)
@@ -2139,7 +2267,7 @@ async function viewSettings ({ guard, token }) {
       <li><span>App drive key fingerprint</span><b class="mono small" title="${esc(me.driveKey)}">${esc(shortKey(me.driveKey, 12))}</b></li>`
         : '<li><span>App identity</span><b>none yet — created on your first post, comment, or vote</b></li>'}
       <li><span>Backup status</span><b>${backupStatusHtml(backup)}</b></li>
-      <li><span>Sync mode</span><b${requiresAtomicWebWriter() ? ' data-role="settings-sync-mode"' : ''}>${modeLabel}</b></li>
+      <li><span>Sync mode</span><b${requiresWriterAvailabilityStatus() ? ' data-role="settings-sync-mode"' : ''}>${modeLabel}</b></li>
       <li><span>Body dispersal</span><b>${isDispersalActive() ? 'BlindShard active' : 'off'}</b></li>
     </ul>
     ${identity.isDev ? `<h2>Stay logged in on this device</h2>
@@ -2244,9 +2372,12 @@ async function sidebarHome () {
   await Promise.all(communities.map(async c => { c._count = await data.postCount(c.slug) }))
   communities.sort((a, b) => (b._count || 0) - (a._count || 0))
   const top = communities.slice(0, 8)
-  const networkCopy = runtime && runtime.mode === 'web'
-    ? 'Signed per-author outboxes carried by relay infrastructure; your browser verifies every record.'
-    : 'Signed per-author outboxes replicate directly between peers; your device verifies every record.'
+  let networkCopy = 'Signed per-author outboxes replicate directly between peers; your device verifies every record.'
+  if (isPeeritSubstrateRuntime()) {
+    networkCopy = 'Signed events commit locally first, then replicate as opaque data through compatible blind relays.'
+  } else if (runtime && runtime.mode === 'web') {
+    networkCopy = 'Signed per-author outboxes carried by relay infrastructure; your browser verifies every record.'
+  }
   return `<div class="card side">
       <h3>peerit</h3>
       <p class="dim small">${esc(networkCopy)}</p>

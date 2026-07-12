@@ -102,7 +102,9 @@ ok(appSource.includes('await replaceDurableIdentity(identity, deviceIdStore, can
 ok(appSource.includes('identity.deactivate()'), 'app forget path removes the in-memory signer immediately')
 const writerStart = appSource.indexOf('async function ensureWriterIdentity')
 const writerEnd = appSource.indexOf('\nfunction isBridgeMode', writerStart)
-ok(writerStart >= 0 && writerEnd > writerStart && !appSource.slice(writerStart, writerEnd).includes('migrateLocalGraph'), 'first-write gate does not start local graph migration before the user publication')
+const writerGate = appSource.slice(writerStart, writerEnd)
+ok(writerStart >= 0 && writerEnd > writerStart && !writerGate.includes('migrateLocalGraph'), 'first-write gate does not start local graph migration before the user publication')
+ok(writerGate.indexOf('await cryptoReady()') >= 0 && writerGate.indexOf('await cryptoReady()') < writerGate.indexOf('isSecure() &&'), 'lazy first-write initializes the crypto backend before classifying the browser signing path')
 ok(!appSource.includes('data.migrateLocalGraph('), 'returning browse does not auto-publish local graph preferences')
 
 console.log(`\nidentity-public-web-lifecycle: ${passed} checks passed`)

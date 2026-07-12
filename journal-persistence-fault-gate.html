@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Peerit journal persistence fault gate</title>
+</head>
+<body data-status="ready">
+  <main>
+    <h1>Peerit journal persistence fault gate</h1>
+    <p>This local-only page is controlled by the Playwright fault harness.</p>
+  </main>
+  <script>
+    globalThis.__PEERIT_PERSISTENCE_FAULT_PAGE__ = Object.freeze({
+      schema: 'peerit-persistence-fault-page-v1',
+      productionJournalModule: '/js/substrate/peerit-journal.js'
+    })
+  </script>
+</body>
+</html>

@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Peerit browser scale gate</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    body { margin: 0; padding: 24px; background: #08111f; color: #dce8ff; }
+    main { max-width: 920px; margin: auto; }
+    h1 { font: 700 24px/1.2 system-ui, sans-serif; }
+    pre { white-space: pre-wrap; padding: 16px; border: 1px solid #294262; border-radius: 12px; background: #0d1a2c; }
+    [data-status="passed"] pre { border-color: #2f9662; }
+    [data-status="failed"] pre { border-color: #bf4b56; }
+  </style>
+</head>
+<body data-status="running">
+  <main>
+    <h1>Peerit browser scale gate</h1>
+    <pre id="result">starting…</pre>
+  </main>
+  <script type="module">
+    import { MaterializedIndex } from './js/materialized-index.js'
+    import { createIndexedDbPeeritJournal } from './js/substrate/peerit-journal.js'
+    import { sha256 } from './js/vendor/noble-hashes/sha2.js'
+
+    const output = document.querySelector('#result')
+    const query = new URLSearchParams(location.search)
+    const bounded = (name, fallback, maximum) => {
+      const value = Number(query.get(name) || fallback)
+      if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+        throw new Error(`${name} must be an integer in 1..${maximum}`)
+      }
+      return value
+    }
+    const options = {
+      intents: bounded('intents', 1000, 10000),
+      records: bounded('records', 10000, 100000),
+      communities: bounded('communities', 100, 10000),
+      pageSize: bounded('page', 1000, 1000)
+    }
+    const profile = query.get('profile') || 'smoke'
+    if (profile !== 'smoke' && profile !== 'full') throw new Error('profile must be smoke or full')
+    const recordsPerIntent = Math.ceil(options.records / options.intents)
+    if (recordsPerIntent > 64) throw new Error('workload exceeds 64 records per intent')
+
+    const requestedRunId = query.get('run')
+    if (requestedRunId != null && !/^[a-z0-9-]{1,80}$/i.test(requestedRunId)) {
+      throw new Error('run must contain only 1..80 ASCII letters, digits, or hyphens')
+    }
+    const dbName = `peerit-browser-scale-${requestedRunId || Date.now()}`
+    const id = number => Number(number).toString(16).padStart(64, '0')
+    const encoder = new TextEncoder()
+    const hex = bytes => [...bytes].map(value => value.toString(16).padStart(2, '0')).join('')
+    const createRowDigest = () => {
+      const digest = sha256.create()
+      let pending = []
+      const flush = () => {
+        if (!pending.length) return
+        digest.update(encoder.encode(pending.join('')))
+        pending = []
+      }
+      return {
+        add (row) {
+          pending.push(JSON.stringify([row.key, row.value]) + '\n')
+          if (pending.length >= 128) flush()
+        },
+        finish () {
+          flush()
+          return hex(digest.digest())
+        }
+      }
+    }
+    const percentile = (values, quantile) => {
+      const sorted = [...values].sort((left, right) => left - right)
+      return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * quantile) - 1))] || 0
+    }
+    const timing = values => ({
+      count: values.length,
+      meanMs: values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length),
+      p50Ms: percentile(values, 0.5),
+      p95Ms: percentile(values, 0.95),
+      p99Ms: percentile(values, 0.99),
+      maxMs: values.length ? Math.max(...values) : 0
+    })
+    const nextFrame = () => new Promise(resolve => requestAnimationFrame(() => resolve()))
+    const update = text => { output.textContent = text }
+    const deleteDatabase = name => new Promise((resolve, reject) => {
+      const request = indexedDB.deleteDatabase(name)
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+      request.onblocked = () => reject(new Error(`delete blocked for ${name}`))
+    })
+    const makeJournal = () => createIndexedDbPeeritJournal({
+      indexedDB,
+      IDBKeyRange,
+      dbName,
+      legacyStorage: null,
+      markerStorage: null
+    })
+
+    async function run () {
+      const longTasks = []
+      let observer = null
+      let longTaskObserverSupported = false
+      try {
+        observer = new PerformanceObserver(list => {
+          for (const entry of list.getEntries()) longTasks.push(entry.duration)
+        })
+        observer.observe({ type: 'longtask', buffered: true })
+        longTaskObserverSupported = true
+      } catch {}
+
+      await deleteDatabase(dbName)
+      const storageBefore = navigator.storage && navigator.storage.estimate
+        ? await navigator.storage.estimate()
+        : null
+      const journal = makeJournal()
+      await journal.ready()
+      const commitTimes = []
+      let recordNumber = 0
+      const startedAt = performance.now()
+      for (let intentNumber = 0; intentNumber < options.intents; intentNumber++) {
+        const records = []
+        while (records.length < recordsPerIntent && recordNumber < options.records) {
+          const community = `c-${recordNumber % options.communities}`
+          const cid = id(recordNumber + 100000)
+          records.push({
+            key: `post!${community}!${cid}`,
+            value: {
+              cid,
+              community,
+              author: id((recordNumber % 1000) + 200000),
+              title: `browser record ${recordNumber}`,
+              createdAt: recordNumber
+            }
+          })
+          recordNumber++
+        }
+        const before = performance.now()
+        await journal.commitIntent({
+          intentId: id(intentNumber + 1),
+          logicalId: id(intentNumber + 20000),
+          operationBytes: JSON.stringify({
+            version: 1,
+            operations: records.map(record => ({
+              type: 'browser-scale-record',
+              key: record.key,
+              data: record.value
+            }))
+          }),
+          records,
+          createdAt: intentNumber + 1
+        })
+        commitTimes.push(performance.now() - before)
+        if ((intentNumber + 1) % 100 === 0) {
+          update(`committed ${intentNumber + 1}/${options.intents} intents\n${recordNumber}/${options.records} records`)
+          await nextFrame()
+        }
+      }
+      const commitWallMs = performance.now() - startedAt
+
+      const index = new MaterializedIndex()
+      const pageTimes = []
+      let cursor = null
+      let indexed = 0
+      const initialDigest = createRowDigest()
+      const indexStartedAt = performance.now()
+      while (indexed < options.records) {
+        const before = performance.now()
+        const page = await journal.rangeView({ gt: cursor || undefined, limit: options.pageSize })
+        pageTimes.push(performance.now() - before)
+        if (!page.length) break
+        for (const row of page) {
+          index.upsert(row.key, row.value)
+          initialDigest.add(row)
+        }
+        indexed += page.length
+        cursor = page[page.length - 1].key
+      }
+      const indexWallMs = performance.now() - indexStartedAt
+      const initialViewSha256 = initialDigest.finish()
+      const summary = await journal.summary()
+      const count = await journal.countView('post!')
+      await journal.close()
+
+      const reopened = makeJournal()
+      await reopened.ready()
+      const reopenedSummary = await reopened.summary()
+      const reopenedCount = await reopened.countView('post!')
+      const reopenedDigest = createRowDigest()
+      let reopenedRows = 0
+      let reopenedCursor = null
+      while (reopenedRows < options.records) {
+        const page = await reopened.rangeView({ gt: reopenedCursor || undefined, limit: options.pageSize })
+        if (!page.length) break
+        for (const row of page) reopenedDigest.add(row)
+        reopenedRows += page.length
+        reopenedCursor = page[page.length - 1].key
+      }
+      const reopenedViewSha256 = reopenedDigest.finish()
+      const lastRecord = await reopened.getView(`post!c-${(options.records - 1) % options.communities}!${id(options.records - 1 + 100000)}`)
+      await reopened.close()
+      const storageAfter = navigator.storage && navigator.storage.estimate
+        ? await navigator.storage.estimate()
+        : null
+      await deleteDatabase(dbName)
+      if (observer) observer.disconnect()
+
+      const commit = timing(commitTimes)
+      const page = timing(pageTimes)
+      const longTask = timing(longTasks)
+      const gates = [
+        { id: 'EXACT_COUNTS', passed: summary.intentCount === options.intents && summary.viewRecordCount === options.records && count === options.records },
+        { id: 'REOPEN_PERSISTENCE', passed: reopenedSummary.intentCount === options.intents && reopenedSummary.viewRecordCount === options.records && !!lastRecord },
+        { id: 'REOPEN_RECOUNT_DIGEST', passed: reopenedCount === options.records && reopenedRows === options.records && reopenedViewSha256 === initialViewSha256 },
+        { id: 'INDEX_REBUILD_COUNT', passed: indexed === options.records && index.records.size === options.records },
+        { id: 'COMMIT_P99', passed: commit.p99Ms <= 50, ceilingMs: 50, observedMs: commit.p99Ms },
+        { id: 'RANGE_PAGE_P99', passed: page.p99Ms <= 100, ceilingMs: 100, observedMs: page.p99Ms },
+        { id: 'INDEX_REBUILD_WALL', passed: indexWallMs <= 10000, ceilingMs: 10000, observedMs: indexWallMs },
+        { id: 'LONG_TASK_OBSERVATION', passed: longTaskObserverSupported },
+        { id: 'LONG_TASK_MAX', passed: longTaskObserverSupported && longTask.maxMs <= 250, ceilingMs: 250, observedMs: longTask.maxMs }
+      ]
+      const blockers = gates.filter(gate => !gate.passed).map(gate => gate.id)
+      return {
+        schema: 'peerit-browser-scale-gate-v1',
+        evidenceClass: 'MEASURED_LOCAL_BROWSER_INDEXEDDB',
+        claimBoundary: 'One local desktop browser build on one machine; not other engines, mobile, crash recovery, quota exhaustion, network, or mainnet evidence.',
+        profile,
+        operationShape: 'exact-generated-record-operations-v1',
+        userAgent: navigator.userAgent,
+        workload: options,
+        summary: {
+          intents: summary.intentCount,
+          records: summary.viewRecordCount,
+          countedRecords: count,
+          indexedRecords: indexed,
+          reopenedIntents: reopenedSummary.intentCount,
+          reopenedRecords: reopenedSummary.viewRecordCount,
+          reopenedCountedRecords: reopenedCount,
+          reopenedScannedRecords: reopenedRows,
+          initialViewSha256,
+          reopenedViewSha256,
+          lastRecordRecovered: !!lastRecord
+        },
+        timing: { commit, commitWallMs, rangePage: page, indexWallMs, longTask },
+        observability: { longTaskObserverSupported },
+        storage: {
+          before: storageBefore,
+          after: storageAfter,
+          estimatedUsageDelta: storageBefore && storageAfter
+            ? (storageAfter.usage || 0) - (storageBefore.usage || 0)
+            : null
+        },
+        memory: performance.memory
+          ? {
+              usedJSHeapSize: performance.memory.usedJSHeapSize,
+              totalJSHeapSize: performance.memory.totalJSHeapSize,
+              jsHeapSizeLimit: performance.memory.jsHeapSizeLimit
+            }
+          : null,
+        gates,
+        blockers,
+        localBrowserRunReady: blockers.length === 0,
+        localBrowserGateReady: profile === 'full' && blockers.length === 0,
+        releaseReady: false,
+        releaseBlockers: [
+          'OTHER_DESKTOP_BROWSER_ENGINES_UNRUN',
+          'MOBILE_RENDER_SCALE_UNRUN',
+          'BROWSER_CRASH_RECOVERY_UNRUN',
+          'BROWSER_QUOTA_EXHAUSTION_UNRUN'
+        ]
+      }
+    }
+
+    run().then(report => {
+      globalThis.__PEERIT_BROWSER_SCALE_GATE__ = report
+      document.body.dataset.status = report.localBrowserRunReady ? 'passed' : 'failed'
+      output.textContent = JSON.stringify(report, null, 2)
+    }).catch(async error => {
+      try { await deleteDatabase(dbName) } catch {}
+      const report = {
+        schema: 'peerit-browser-scale-gate-v1',
+        evidenceClass: 'MEASURED_LOCAL_BROWSER_INDEXEDDB',
+        claimBoundary: 'One local desktop browser build on one machine; not other engines, mobile, crash recovery, quota exhaustion, network, or mainnet evidence.',
+        profile,
+        localBrowserRunReady: false,
+        localBrowserGateReady: false,
+        releaseReady: false,
+        blockers: ['BROWSER_SCALE_GATE_ERROR'],
+        error: String(error && error.stack || error)
+      }
+      globalThis.__PEERIT_BROWSER_SCALE_GATE__ = report
+      document.body.dataset.status = 'failed'
+      output.textContent = JSON.stringify(report, null, 2)
+    })
+  </script>
+</body>
+</html>

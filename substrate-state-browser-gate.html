@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Peerit substrate state browser gate</title>
+</head>
+<body data-status="running">
+  <main>
+    <h1>Peerit substrate state browser gate</h1>
+    <pre id="result">running</pre>
+  </main>
+  <script type="module">
+    import { createPeeritCapabilityVault } from './js/substrate/capability-vault.js'
+    import { createPeeritDescriptorTrustBackend } from './js/substrate/descriptor-trust-backend.js'
+
+    const CAPABILITY_DB = 'peerit-substrate-capabilities'
+    const DESCRIPTOR_DB = 'peerit-substrate-descriptor-trust'
+    const output = document.querySelector('#result')
+    const checks = []
+
+    function check (condition, message) {
+      if (!condition) throw new Error(message)
+      checks.push(message)
+    }
+
+    function deleteDatabase (name) {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.deleteDatabase(name)
+        request.onsuccess = () => resolve()
+        request.onerror = () => reject(request.error)
+        request.onblocked = () => reject(new Error(`delete blocked for ${name}`))
+      })
+    }
+
+    function records (name) {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open(name, 1)
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => {
+          const db = request.result
+          const tx = db.transaction('records', 'readonly')
+          const all = tx.objectStore('records').getAll()
+          all.onsuccess = () => resolve(all.result)
+          all.onerror = () => reject(all.error)
+          tx.oncomplete = () => db.close()
+        }
+      })
+    }
+
+    function packet (marker) {
+      return {
+        intentId: 'browser-intent',
+        logicalId: 'browser-logical',
+        targetId: 'cell-v1:browser-relay:browser-store',
+        targetContext: {
+          relayPublicKey: new Uint8Array(32).fill(0x11),
+          storeId: new Uint8Array(32).fill(0x22),
+          endpointId: 1,
+          descriptorSequence: 1n
+        },
+        prepared: {
+          requestBytes: new Uint8Array([0x42, 0x52, 0x4f, 0x57, 0x53, 0x45, 0x52, marker]),
+          requestCommitment: new Uint8Array(32).fill(0x30 + marker),
+          readCap: { cellKey: new Uint8Array(32).fill(0x40 + marker) },
+          writeCap: {
+            createPrivateKey: new Uint8Array(32).fill(0x50 + marker),
+            renewPrivateKey: new Uint8Array(32).fill(0x60 + marker),
+            dropPrivateKey: new Uint8Array(32).fill(0x70 + marker)
+          }
+        }
+      }
+    }
+
+    function descriptorState (index, history = null) {
+      const descriptor = new TextEncoder().encode(`browser-signed-descriptor-${index}`)
+      return {
+        rootRelayPublicKey: new Uint8Array(32).fill(0xa1),
+        storeId: new Uint8Array(32).fill(0xb2),
+        currentBytes: descriptor,
+        currentHash: new Uint8Array(32).fill(0xc0 + index),
+        sequence: BigInt(history ? history.length : 0),
+        identitySequence: BigInt(history ? history.length : 0),
+        relayPublicKey: new Uint8Array(32).fill(0xd0 + index),
+        durabilityProfileId: 1,
+        durabilityContinuityHash: new Uint8Array(32).fill(0xe0 + index),
+        history: [...(history || []), descriptor],
+        quarantined: history != null
+      }
+    }
+
+    async function nonextractable (key) {
+      if (!(key instanceof CryptoKey) || key.extractable !== false) return false
+      try {
+        await crypto.subtle.exportKey('raw', key)
+        return false
+      } catch {
+        return true
+      }
+    }
+
+    function tamper (name) {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open(name, 1)
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => {
+          const db = request.result
+          const tx = db.transaction('records', 'readwrite')
+          const store = tx.objectStore('records')
+          const cursor = store.openCursor()
+          cursor.onsuccess = () => {
+            const value = structuredClone(cursor.result.value)
+            value.ciphertext[0] ^= 0xff
+            cursor.result.update(value)
+          }
+          cursor.onerror = () => reject(cursor.error)
+          tx.oncomplete = () => { db.close(); resolve() }
+          tx.onerror = () => reject(tx.error)
+        }
+      })
+    }
+
+    async function run () {
+      await deleteDatabase(CAPABILITY_DB)
+      await deleteDatabase(DESCRIPTOR_DB)
+
+      const firstVault = createPeeritCapabilityVault({ indexedDB, crypto })
+      const secondVault = createPeeritCapabilityVault({ indexedDB, crypto })
+      const firstPacket = packet(1)
+      const secondPacket = packet(2)
+      const prepared = await Promise.allSettled([
+        firstVault.persistPreparedReplica(firstPacket),
+        secondVault.persistPreparedReplica(secondPacket)
+      ])
+      const winnerIndex = prepared.findIndex(value => value.status === 'fulfilled')
+      check(winnerIndex >= 0 && prepared.filter(value => value.status === 'fulfilled').length === 1,
+        'concurrent browser capability preparation has exactly one winner')
+
+      const winnerVault = winnerIndex === 0 ? firstVault : secondVault
+      const winnerPacket = winnerIndex === 0 ? firstPacket : secondPacket
+      const verified = await winnerVault.persistVerifiedResult({
+        ...winnerPacket,
+        resultBytes: new Uint8Array([9, 8, 7, 6]),
+        readCapability: winnerPacket.prepared.readCap
+      })
+      check(verified.stage === 'verified' && verified.revision === 2,
+        'verified result commits only after prepared secret state')
+
+      const reloaded = await createPeeritCapabilityVault({ indexedDB, crypto })
+        .load(firstPacket.intentId, firstPacket.targetId)
+      check(reloaded.stage === 'verified' && reloaded.payload.resultBytes.join(',') === '9,8,7,6',
+        'verified capability state reloads from a new browser instance')
+
+      const capabilityRecords = await records(CAPABILITY_DB)
+      const capabilityJson = JSON.stringify(capabilityRecords, (_key, value) =>
+        value instanceof Uint8Array ? [...value] : value)
+      check(capabilityRecords.length === 1 && await nonextractable(capabilityRecords[0].wrapKey) &&
+        !capabilityJson.includes('browser-intent') && !capabilityJson.includes('browser-logical') &&
+        !capabilityJson.includes('browser-relay'),
+      'capability storage exposes no clear application or relay identity and uses a non-extractable key')
+
+      const rootHex = 'a1'.repeat(32)
+      const storeHex = 'b2'.repeat(32)
+      const key = `descriptor:${rootHex}:${storeHex}`
+      const firstTrust = createPeeritDescriptorTrustBackend({ indexedDB, crypto })
+      const secondTrust = createPeeritDescriptorTrustBackend({ indexedDB, crypto })
+      const trustRace = await Promise.all([
+        firstTrust.compareAndSwap(key, 0, descriptorState(1)),
+        secondTrust.compareAndSwap(key, 0, descriptorState(2))
+      ])
+      check(trustRace.filter(Boolean).length === 1,
+        'descriptor TOFU compare-and-swap has exactly one browser winner')
+
+      const current = await firstTrust.read(key)
+      const next = descriptorState(3, current.value.history)
+      const swapped = await firstTrust.compareAndSwap(key, current.version, next)
+      const trustReloaded = await createPeeritDescriptorTrustBackend({ indexedDB, crypto }).read(key)
+      check(swapped && trustReloaded.version === 2 && trustReloaded.value.quarantined,
+        'descriptor continuity and quarantine survive an atomic browser update and reload')
+
+      const descriptorRecords = await records(DESCRIPTOR_DB)
+      const descriptorJson = JSON.stringify(descriptorRecords, (_key, value) =>
+        value instanceof Uint8Array ? [...value] : value)
+      check(descriptorRecords.length === 1 && await nonextractable(descriptorRecords[0].wrapKey) &&
+        !descriptorJson.includes(rootHex) && !descriptorJson.includes(storeHex) &&
+        !descriptorJson.includes('browser-signed-descriptor'),
+      'descriptor storage exposes no clear continuity tuple or descriptor and uses a non-extractable key')
+
+      await tamper(CAPABILITY_DB)
+      await tamper(DESCRIPTOR_DB)
+      let capabilityTamper = false
+      let descriptorTamper = false
+      try { await firstVault.load(firstPacket.intentId, firstPacket.targetId) } catch (error) {
+        capabilityTamper = /authentication failed/.test(String(error && error.message || error))
+      }
+      try { await firstTrust.read(key) } catch (error) {
+        descriptorTamper = error && error.code === 'PEERIT_DESCRIPTOR_TRUST_CORRUPT'
+      }
+      check(capabilityTamper && descriptorTamper,
+        'browser ciphertext tampering fails closed for both persistent stores')
+
+      await deleteDatabase(CAPABILITY_DB)
+      await deleteDatabase(DESCRIPTOR_DB)
+    }
+
+    try {
+      await run()
+      globalThis.__PEERIT_SUBSTRATE_STATE_GATE__ = { ok: true, assertions: checks.length, checks }
+      document.body.dataset.status = 'passed'
+      output.textContent = `passed ${checks.length}/${checks.length}\n${checks.join('\n')}`
+    } catch (error) {
+      globalThis.__PEERIT_SUBSTRATE_STATE_GATE__ = {
+        ok: false,
+        assertions: checks.length,
+        checks,
+        error: String(error && error.stack || error)
+      }
+      document.body.dataset.status = 'failed'
+      output.textContent = `failed after ${checks.length} checks\n${String(error && error.stack || error)}`
+    }
+  </script>
+</body>
+</html>

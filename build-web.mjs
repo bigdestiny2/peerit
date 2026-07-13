@@ -31,6 +31,16 @@ import { buildReaderBundle } from './scripts/build-reader-bundle.mjs'
 import { normalizeRelayRosterPayload, verifyRelayRoster } from './js/relay-roster.js'
 import { patchCspForWeb, cspConnectOrigin } from './scripts/csp.mjs'
 import { serviceWorkerSource } from './scripts/service-worker-source.mjs'
+import {
+  buildPeeritSubstrateRuntimeArtifactV1,
+  peeritServiceWorkerRegisterSourceV1,
+  PEERIT_APP_ARTIFACT_PATH,
+  PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE,
+  PEERIT_WEB_ASSET_MANIFEST_PATH
+} from './scripts/substrate-runtime-artifact.mjs'
+import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from './js/substrate/production-release-authority.mjs'
+import { normalizePeeritReleaseRelayHintsV1 } from './js/substrate/release-relay-hints.mjs'
+import { verifyPeeritProductionPinHistoryReleaseV1 } from './scripts/production-pin-history-release.mjs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const arg = (name) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : null }
@@ -42,6 +52,21 @@ const releaseConfig = readConfig(CONFIG_PATH)
 const SUBSTRATE_PROFILE = String(process.env.PEERIT_SUBSTRATE_PROFILE || arg('--substrate-profile') || releaseConfig.substrateProfile || '')
 const SUBSTRATE_RELAY_HINTS = String(process.env.PEERIT_SUBSTRATE_RELAY_HINTS || arg('--substrate-relay-hints') || configSubstrateRelayHints(releaseConfig) || '')
 const IS_SUBSTRATE_RELEASE = !!SUBSTRATE_PROFILE
+const SUBSTRATE_RELAY_HINT_VALUES = IS_SUBSTRATE_RELEASE
+  ? normalizePeeritReleaseRelayHintsV1(
+      SUBSTRATE_RELAY_HINTS.split(',').map(value => value.trim()).filter(Boolean),
+      'blind-substrate build')
+  : []
+const PRODUCTION_PIN_HISTORY_BUNDLE = IS_SUBSTRATE_RELEASE
+  ? String(releaseConfig.productionPinHistoryBundle || '').trim()
+  : ''
+if (PRODUCTION_PIN_HISTORY_BUNDLE &&
+    PRODUCTION_PIN_HISTORY_BUNDLE !== PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)) {
+  throw new Error(`productionPinHistoryBundle must equal ${PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)}`)
+}
+const PRODUCTION_PIN_HISTORY_BYTES = PRODUCTION_PIN_HISTORY_BUNDLE
+  ? readFileSync(join(__dir, PRODUCTION_PIN_HISTORY_BUNDLE))
+  : null
 const RELEASE_SITE_FILES = IS_SUBSTRATE_RELEASE ? SUBSTRATE_SITE_FILES : SITE_FILES
 if (IS_SUBSTRATE_RELEASE) {
   if (SUBSTRATE_PROFILE !== 'blind-v1') throw new Error(`unsupported Peerit substrate profile: ${SUBSTRATE_PROFILE}`)
@@ -53,13 +78,6 @@ if (IS_SUBSTRATE_RELEASE) {
     .filter(key => process.env[key])
   if (forbiddenConfig.length || forbiddenArgs.length || forbiddenEnv.length) {
     throw new Error(`blind-substrate release refuses legacy transport configuration: ${[...forbiddenConfig, ...forbiddenArgs, ...forbiddenEnv].join(', ')}`)
-  }
-  for (const hint of SUBSTRATE_RELAY_HINTS.split(',').map(value => value.trim()).filter(Boolean)) {
-    const url = new URL(hint)
-    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) {
-      throw new Error(`blind-substrate relay hint must use HTTPS (or loopback HTTP): ${hint}`)
-    }
-    if (url.hostname === 'outbox.peerit.site') throw new Error('blind-substrate release refuses the retired outbox.peerit.site destination')
   }
 }
 // These variables exist only for an explicitly separate compatibility build.
@@ -87,6 +105,10 @@ const RELEASE_KEY = (process.env.PEERIT_RELEASE_KEY || arg('--release-key') || r
 const RELEASE_SEQUENCE = Number(process.env.PEERIT_RELEASE_SEQUENCE || arg('--release-sequence') || releaseConfig.releaseSequence || 0)
 if (RELEASE_KEY && (!Number.isSafeInteger(RELEASE_SEQUENCE) || RELEASE_SEQUENCE < 1)) {
   throw new Error('a signed web build requires --release-sequence to be a positive safe integer')
+}
+if (IS_SUBSTRATE_RELEASE && (!Number.isSafeInteger(RELEASE_SEQUENCE) ||
+    RELEASE_SEQUENCE < PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE)) {
+  throw new Error(`blind-substrate replacement releaseSequence must be at least ${PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE}; sequence 6 belongs to the retired legacy artifact`)
 }
 const NO_RELAY_ROSTER = hasArg('--no-relay-roster') || process.env.PEERIT_NO_RELAY_ROSTER === '1'
 const RELAY_ROSTER = IS_SUBSTRATE_RELEASE || NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER || arg('--relay-roster') || releaseConfig.relayRoster || '')
@@ -230,7 +252,9 @@ if (!IS_SUBSTRATE_RELEASE) {
   }
 }
 
-// 2. transform index.html: relay meta + SW registration (external, CSP-safe) + SRI
+// 2. transform the runtime closure. Blind-substrate Web and Hyper publication
+// call the same deterministic builder; the legacy compatibility path stays
+// deliberately separate.
 const rosterRelease = IS_SUBSTRATE_RELEASE ? { meta: '', sha256: '' } : await prepareRoster()
 // Multi-home the roster: same-origin file first, then independent mirror URLs (e.g.
 // an IPFS gateway) that serve the SAME signed roster. Each is verified client-side
@@ -238,103 +262,71 @@ const rosterRelease = IS_SUBSTRATE_RELEASE ? { meta: '', sha256: '' } : await pr
 // fetch chokepoint. Comma-list via PEERIT_RELAY_ROSTER_MIRRORS / --relay-roster-mirrors.
 const ROSTER_MIRRORS = (process.env.PEERIT_RELAY_ROSTER_MIRRORS || arg('--relay-roster-mirrors') || (releaseConfig.relayRosterMirrors || []).join(',') || '')
 const relayRosterMeta = [rosterRelease.meta, ...ROSTER_MIRRORS.split(',').map((s) => s.trim())].filter(Boolean).join(',')
-let html = files['index.html'].toString('utf8')
-if (IS_SUBSTRATE_RELEASE) {
-  html = html.replace(/\s*<meta\s+name="peerit-v2"[^>]*>/gi, '')
-  html = html.replace(
-    /<meta\s+name="description"\s+content="[^"]*">/i,
-    '<meta name="description" content="peerit is a local-first community app using authenticated blind relay substrate artifacts.">')
-}
-// The source shell carries the development shard-roster hint so local builds can
-// exercise the reader. A production release with no signed shard cohort must not
-// ship that stale placeholder meta: it causes every visitor to fetch an unsigned
-// roster and report a false dispersal warning.
-html = html.replace(/\s*<meta\s+name="peerit-shard-(?:roster|relays|threshold)"[^>]*>/gi, '')
-// Normalize the transport declaration to exactly one mode. This removes stale
-// source-shell or previous-build metadata before emitting the selected profile.
-html = html.replace(/\s*<meta\s+name="peerit-(?:relay(?:-[a-z0-9-]+)?|dht-relay|seed-outboxes|substrate(?:-relays)?)"[^>]*>/gi, '')
-const head = [
-  IS_SUBSTRATE_RELEASE ? `<meta name="peerit-substrate" content="${attr(SUBSTRATE_PROFILE)}">` : '',
-  IS_SUBSTRATE_RELEASE && SUBSTRATE_RELAY_HINTS ? `<meta name="peerit-substrate-relays" content="${attr(SUBSTRATE_RELAY_HINTS)}">` : '',
-  RELAY ? `<meta name="peerit-relay" content="${attr(RELAY)}">` : '',
-  RELAY && RELAY_BACKEND ? `<meta name="peerit-relay-backend" content="${attr(RELAY_BACKEND)}">` : '',
-  RELAY ? `<meta name="peerit-relay-readonly" content="${attr(READONLY)}">` : '',
-  relayRosterMeta ? `<meta name="peerit-relay-roster" content="${attr(relayRosterMeta)}">` : '',
-  RELAY_ROSTER_KEY ? `<meta name="peerit-relay-roster-key" content="${attr(RELAY_ROSTER_KEY)}">` : '',
-  RELEASE_KEY ? `<meta name="peerit-release-key" content="${attr(RELEASE_KEY)}">` : '',
-  RELEASE_KEY ? `<meta name="peerit-release-sequence" content="${attr(RELEASE_SEQUENCE)}">` : '',
-  DHT_RELAY ? `<meta name="peerit-dht-relay" content="${attr(DHT_RELAY)}">` : '',
-  SHARD_ROSTER ? `<meta name="peerit-shard-roster" content="${attr(SHARD_ROSTER)}">` : '',
-  SEED_OUTBOXES ? `<meta name="peerit-seed-outboxes" content="${attr(SEED_OUTBOXES)}">` : '',
-  '<script src="sw-register.js"></script>'
-].filter(Boolean).join('\n  ')
-html = html.replace('</head>', '  ' + head + '\n</head>')
-// Pin connect-src to exactly the origins this build talks to (relays, roster
-// mirrors, shard cohort, DHT relay) — the source CSP carries NO http:/https:
-// wildcard, so a same-origin XSS cannot exfiltrate to an arbitrary host (audit
-// PT-BRW-002). Same-origin ("same-origin"/"/") needs no entry ('self' covers it).
 const connectOrigins = collectConnectOrigins()
-if (connectOrigins.length || DHT_RELAY || IS_SUBSTRATE_RELEASE) {
-  // The authenticated blind-client and validator modules are imported from the
-  // exact bytes already checked against the signed profile/web manifest. Blob
-  // module URLs avoid a second mutable network fetch/TOCTOU window.
-  html = patchCspForWeb(html, {
-    dhtRelay: DHT_RELAY,
-    connectOrigins
+let substrateArtifact = null
+if (IS_SUBSTRATE_RELEASE) {
+  substrateArtifact = buildPeeritSubstrateRuntimeArtifactV1({
+    sourceFiles: files,
+    substrateProfile: SUBSTRATE_PROFILE,
+    relayHints: SUBSTRATE_RELAY_HINT_VALUES,
+    releaseSequence: RELEASE_SEQUENCE,
+    releaseKey: RELEASE_KEY,
+    productionPinHistoryBytes: PRODUCTION_PIN_HISTORY_BYTES
   })
+  if (PRODUCTION_PIN_HISTORY_BYTES) {
+    await verifyPeeritProductionPinHistoryReleaseV1({
+      bundleBytes: PRODUCTION_PIN_HISTORY_BYTES,
+      releaseSequence: RELEASE_SEQUENCE,
+      appArtifactHash: substrateArtifact.appArtifactHash,
+      webAssetManifestHash: substrateArtifact.webAssetManifestHash
+    })
+  }
+  for (const key of Object.keys(files)) delete files[key]
+  for (const key of Object.keys(manifest)) delete manifest[key]
+  for (const key of Object.keys(sriMap)) delete sriMap[key]
+  for (const [path, bytes] of substrateArtifact.files) {
+    files[path] = bytes
+    manifest[path] = sha256(bytes)
+    sriMap[path] = sri(bytes)
+  }
+} else {
+  let html = files['index.html'].toString('utf8')
+  html = html.replace(/\s*<meta\s+name="peerit-shard-(?:roster|relays|threshold)"[^>]*>/gi, '')
+  html = html.replace(/\s*<meta\s+name="peerit-(?:relay(?:-[a-z0-9-]+)?|dht-relay|seed-outboxes|substrate(?:-relays)?)"[^>]*>/gi, '')
+  const head = [
+    RELAY ? `<meta name="peerit-relay" content="${attr(RELAY)}">` : '',
+    RELAY && RELAY_BACKEND ? `<meta name="peerit-relay-backend" content="${attr(RELAY_BACKEND)}">` : '',
+    RELAY ? `<meta name="peerit-relay-readonly" content="${attr(READONLY)}">` : '',
+    relayRosterMeta ? `<meta name="peerit-relay-roster" content="${attr(relayRosterMeta)}">` : '',
+    RELAY_ROSTER_KEY ? `<meta name="peerit-relay-roster-key" content="${attr(RELAY_ROSTER_KEY)}">` : '',
+    RELEASE_KEY ? `<meta name="peerit-release-key" content="${attr(RELEASE_KEY)}">` : '',
+    RELEASE_KEY ? `<meta name="peerit-release-sequence" content="${attr(RELEASE_SEQUENCE)}">` : '',
+    DHT_RELAY ? `<meta name="peerit-dht-relay" content="${attr(DHT_RELAY)}">` : '',
+    SHARD_ROSTER ? `<meta name="peerit-shard-roster" content="${attr(SHARD_ROSTER)}">` : '',
+    SEED_OUTBOXES ? `<meta name="peerit-seed-outboxes" content="${attr(SEED_OUTBOXES)}">` : '',
+    '<script src="sw-register.js"></script>'
+  ].filter(Boolean).join('\n  ')
+  html = html.replace('</head>', '  ' + head + '\n</head>')
+  if (connectOrigins.length || DHT_RELAY) {
+    html = patchCspForWeb(html, { dhtRelay: DHT_RELAY, connectOrigins })
+  }
+  html = html.replace('<link rel="stylesheet" href="styles.css">', `<link rel="stylesheet" href="styles.css" integrity="${sriMap['styles.css']}" crossorigin="anonymous">`)
+  html = html.replace(/<script\s+type="module"\s+src="js\/(?:app\.js|substrate\/app-entry\.js)"(?:\s+[^>]*)?><\/script>/,
+    `<script type="module" src="js/app.js" integrity="${sriMap['js/app.js']}" crossorigin="anonymous"></script>`)
+  files['index.html'] = Buffer.from(html)
+  manifest['index.html'] = sha256(files['index.html'])
+  files['sw-register.js'] = Buffer.from(peeritServiceWorkerRegisterSourceV1())
+  manifest['sw-register.js'] = sha256(files['sw-register.js'])
 }
-html = html.replace('<link rel="stylesheet" href="styles.css">', `<link rel="stylesheet" href="styles.css" integrity="${sriMap['styles.css']}" crossorigin="anonymous">`)
-const appEntry = IS_SUBSTRATE_RELEASE ? 'js/substrate/app-entry.js' : 'js/app.js'
-html = html.replace(/<script\s+type="module"\s+src="js\/(?:app\.js|substrate\/app-entry\.js)"(?:\s+[^>]*)?><\/script>/,
-  `<script type="module" src="${appEntry}" integrity="${sriMap[appEntry]}" crossorigin="anonymous"></script>`)
-files['index.html'] = Buffer.from(html)
-manifest['index.html'] = sha256(files['index.html'])
 
 // 3. write the bundle
 rmSync(OUT, { recursive: true, force: true })
 mkdirSync(join(OUT, 'js'), { recursive: true })
-for (const p of RELEASE_SITE_FILES) {
+for (const p of Object.keys(files)) {
   const outPath = join(OUT, p)
   mkdirSync(dirname(outPath), { recursive: true })
   writeFileSync(outPath, files[p])
 }
-if (files['relay-roster.json']) writeFileSync(join(OUT, 'relay-roster.json'), files['relay-roster.json'])
-if (files['seed-snapshot.json']) writeFileSync(join(OUT, 'seed-snapshot.json'), files['seed-snapshot.json'])
-
-const swRegister = `if ('serviceWorker' in navigator) {
-  // A new deploy changes the bundle hashes -> a new sw.js. The SW skipWaiting()s +
-  // clients.claim()s, so it activates immediately, but the page already loaded with
-  // the OLD cached assets. Reload ONCE when the new SW takes control so returning
-  // visitors actually run the new audited bundle instead of stale code. Guard with
-  // hadController so a brand-new visitor (first install) does not reload.
-  // RATE-LIMITED, not once-per-session: the old boolean latch blocked the reload
-  // for every deploy AFTER a tab's first, so long-lived tabs silently ran stale
-  // builds until a manual refresh. A timestamp latch keeps reload loops harmless
-  // (two fighting SW versions reload at most once per 5 minutes instead of
-  // pinning the CPU) while every real deploy — always minutes+ apart — applies.
-  var hadController = !!navigator.serviceWorker.controller, refreshing = false;
-  var releaseUpdate = { hadController: hadController, controllerChanged: false };
-  window.__peeritServiceWorkerUpdate = releaseUpdate;
-  var LATCH = 'peerit:sw-reloaded-at', WINDOW_MS = 5 * 60 * 1000;
-  navigator.serviceWorker.addEventListener('controllerchange', function () {
-    releaseUpdate.controllerChanged = true;
-    if (refreshing || !hadController) return;
-    try {
-      var last = Number(sessionStorage.getItem(LATCH) || 0);
-      if (Date.now() - last < WINDOW_MS) return;
-      sessionStorage.setItem(LATCH, String(Date.now()));
-    } catch (e) {}
-    refreshing = true; location.reload();
-  });
-  addEventListener('load', function () {
-    navigator.serviceWorker.register('sw.js').then(function (reg) {
-      if (reg && reg.update) { try { reg.update(); } catch (e) {} } // check for a newer bundle each load
-    }).catch(function () {});
-  });
-}
-`
-writeFileSync(join(OUT, 'sw-register.js'), swRegister)
-manifest['sw-register.js'] = sha256(Buffer.from(swRegister))
 
 // Generate control files before the signed manifest. Their source reads the
 // manifest at runtime rather than embedding these hashes, so hashing them here
@@ -358,9 +350,16 @@ writeFileSync(join(OUT, 'asset-manifest.json'), JSON.stringify({
         releaseSequence: RELEASE_SEQUENCE,
         transport: 'blind-substrate',
         substrateProfile: SUBSTRATE_PROFILE,
-        relayHints: SUBSTRATE_RELAY_HINTS ? SUBSTRATE_RELAY_HINTS.split(',').map(value => value.trim()).filter(Boolean) : [],
+        relayHints: SUBSTRATE_RELAY_HINT_VALUES,
         networkDelivery: 'profile-gated',
         legacyDestination: null,
+        productionPinHistory: PRODUCTION_PIN_HISTORY_BYTES
+          ? PEERIT_PRODUCTION_PIN_HISTORY_PATH
+          : null,
+        appArtifact: `/${PEERIT_APP_ARTIFACT_PATH}`,
+        appArtifactHash: substrateArtifact.appArtifactHashHex,
+        canonicalWebAssetManifest: `/${PEERIT_WEB_ASSET_MANIFEST_PATH}`,
+        canonicalWebAssetManifestHash: substrateArtifact.webAssetManifestHashHex,
         releaseKey: RELEASE_KEY
       }
     : {
@@ -379,7 +378,7 @@ writeFileSync(join(OUT, 'asset-manifest.json'), JSON.stringify({
   note: 'SHA-256 of every served file. Cross-check driveKey against the published hyper:// drive in PearBrowser. If asset-manifest.sig is present, verify it against releaseKey (see verify.html / js/release-verify.js).'
 }, null, 2))
 
-console.log(`[build-web] wrote ${RELEASE_SITE_FILES.length + 4 + (files['relay-roster.json'] ? 1 : 0)} files to web/`)
+console.log(`[build-web] wrote ${Object.keys(files).length + 3} files to web/`)
 console.log(`           transport=${IS_SUBSTRATE_RELEASE ? `blind-substrate/${SUBSTRATE_PROFILE}` : 'legacy-migration-compatibility'} releaseSequence=${RELEASE_SEQUENCE || '(unsigned)'} driveKey=${DRIVE_KEY || '(unset)'}`)
 if (IS_SUBSTRATE_RELEASE) console.log(`           relayHints=${SUBSTRATE_RELAY_HINTS || '(none — local queue only until qualified)'}`)
 else console.log(`           relay=${RELAY || '(none — local-only)'} readonly=${READONLY} relayRoster=${relayRosterMeta || '(none)'}`)

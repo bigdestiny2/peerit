@@ -20,6 +20,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join, resolve } from 'path'
 import { assertPeeritBlindProductReleaseReady } from './js/substrate/product-release-status.mjs'
+import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from './js/substrate/production-release-authority.mjs'
+import {
+  hashPeeritAppArtifactV1,
+  hashPeeritWebAssetManifestV1
+} from './js/substrate/web-asset-manifest.mjs'
+import { verifyPeeritProductionPinHistoryReleaseV1 } from './scripts/production-pin-history-release.mjs'
+import { buildPeeritSubstrateRuntimeArtifactV1 } from './scripts/substrate-runtime-artifact.mjs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
@@ -124,6 +131,7 @@ export const SUBSTRATE_SITE_FILES = Object.freeze([
   'js/pow-current.js',
   'js/ranking.js',
   'js/recovery.js',
+  'js/release-verify.js',
   'js/seal.js',
   'js/util.js',
   'js/verify.js',
@@ -140,6 +148,9 @@ export const SUBSTRATE_SITE_FILES = Object.freeze([
   'js/substrate/peerit-product-runtime.js',
   'js/substrate/peerit-product-ui.js',
   'js/substrate/peerit-substrate-sync.js',
+  'js/substrate/pin-history-bootstrap.mjs',
+  'js/substrate/pin-history-witness-backend.mjs',
+  'js/substrate/production-release-authority.mjs',
   'js/substrate/profile-artifact-codec.mjs',
   'js/substrate/profile-codec-ir.mjs',
   'js/substrate/profile-external-authority.mjs',
@@ -148,6 +159,8 @@ export const SUBSTRATE_SITE_FILES = Object.freeze([
   'js/substrate/publication-status.js',
   'js/substrate/relay-consumer.js',
   'js/substrate/relay-requalification-scheduler.js',
+  'js/substrate/release-coherence.js',
+  'js/substrate/release-relay-hints.mjs',
   'js/substrate/release-authority-transition.mjs',
   'js/substrate/release-control-codec.mjs',
   'js/substrate/release-control-primitives.mjs',
@@ -238,21 +251,32 @@ async function waitForBlobsDurable (drive, { timeoutMs = 120000, pollMs = 1000, 
   return s
 }
 
-function replacementOnlyIndex (input) {
-  let html = input.toString('utf8')
-  html = html.replace(/\s*<meta\s+name="peerit-v2"[^>]*>/gi, '')
-  html = html.replace(
-    /<meta\s+name="description"\s+content="[^"]*">/i,
-    '<meta name="description" content="peerit is a local-first community app using authenticated blind relay substrate artifacts.">')
-  html = html.replace(
-    /<script\s+type="module"\s+src="js\/(?:app\.js|substrate\/app-entry\.js)"(?:\s+[^>]*)?><\/script>/,
-    '<script type="module" src="js/substrate/app-entry.js"></script>')
-  return Buffer.from(html)
+export function createPublishedSiteFilesV1 (release) {
+  const siteFiles = release.substrateProfile ? SUBSTRATE_SITE_FILES : SITE_FILES
+  if (!release.substrateProfile) {
+    return siteFiles.map(path => ({ path: '/' + path, content: readFileSync(join(__dir, path)) }))
+  }
+  const sourceFiles = new Map(siteFiles.map(path => [path, readFileSync(join(__dir, path))]))
+  const relayHints = Array.isArray(release.relayHints) ? release.relayHints : []
+  const pinHistoryBundle = String(release.productionPinHistoryBundle || '').trim()
+  if (pinHistoryBundle && pinHistoryBundle !== PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)) {
+    throw new Error(`productionPinHistoryBundle must equal ${PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)}`)
+  }
+  const artifact = buildPeeritSubstrateRuntimeArtifactV1({
+    sourceFiles,
+    substrateProfile: release.substrateProfile,
+    relayHints,
+    releaseSequence: release.releaseSequence,
+    releaseKey: release.pinnedReleaseKey,
+    productionPinHistoryBytes: pinHistoryBundle
+      ? readFileSync(join(__dir, pinHistoryBundle))
+      : null
+  })
+  return [...artifact.files].map(([path, content]) => ({ path: '/' + path, content }))
 }
 
 async function main () {
   const release = JSON.parse(readFileSync(join(__dir, 'deploy', 'web-release.json'), 'utf8'))
-  const siteFiles = release.substrateProfile ? SUBSTRATE_SITE_FILES : SITE_FILES
   // Public publication is an authority boundary, not merely a file-copy step.
   // Local Hyperdrive previews remain available, but no production artifact may
   // be announced while the replacement profile is incomplete.
@@ -272,7 +296,7 @@ async function main () {
     minAnchorPeers: MIN_ANCHOR_PEERS,
     status: 'started',
     generatedAt: new Date().toISOString(),
-    siteFiles: siteFiles.length,
+    siteFiles: 0,
     hiveRelayClient: source,
     relaysConnected: 0,
     driveKey: null,
@@ -289,12 +313,19 @@ async function main () {
   console.log('[peerit] relays connected:', report.relaysConnected)
 
   // 1. publish the site folder as a drive (seed only on a real public deploy)
-  const files = siteFiles.map((p) => ({
-    path: '/' + p,
-    content: p === 'index.html' && release.substrateProfile
-      ? replacementOnlyIndex(readFileSync(join(__dir, p)))
-      : readFileSync(join(__dir, p))
-  }))
+  const files = createPublishedSiteFilesV1(release)
+  if (release.productionPinHistoryBundle) {
+    const published = new Map(files.map(file => [file.path, file.content]))
+    await verifyPeeritProductionPinHistoryReleaseV1({
+      bundleBytes: published.get(PEERIT_PRODUCTION_PIN_HISTORY_PATH),
+      releaseSequence: release.releaseSequence,
+      appArtifactHash: hashPeeritAppArtifactV1(
+        published.get('/peerit-app-artifact-v1.json')),
+      webAssetManifestHash: hashPeeritWebAssetManifestV1(
+        published.get('/peerit-web-assets-v1.cenc'))
+    })
+  }
+  report.siteFiles = files.length
   console.log('[peerit] publishing site drive (' + files.length + ' files)…')
   const drive = await client.publish(files, {
     appId: 'peerit',

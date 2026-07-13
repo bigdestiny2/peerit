@@ -1,11 +1,20 @@
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { createServer } from 'node:http'
 import { dirname, join, normalize } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { SUBSTRATE_SITE_FILES } from '../publish.mjs'
+import { once } from 'node:events'
+import { createPublishedSiteFilesV1, SUBSTRATE_SITE_FILES } from '../publish.mjs'
 import { PEERIT_BROWSER_RUNTIME_ASSET_PATHS } from '../js/substrate/browser-runtime-authority.mjs'
+import {
+  buildPeeritSubstrateRuntimeArtifactV1,
+  PEERIT_APP_ARTIFACT_PATH,
+  PEERIT_WEB_ASSET_MANIFEST_PATH,
+  verifyPeeritSubstrateRuntimeArtifactV1
+} from '../scripts/substrate-runtime-artifact.mjs'
+import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from '../js/substrate/production-release-authority.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const served = new Set(SUBSTRATE_SITE_FILES)
@@ -40,7 +49,9 @@ for (const requiredProductFile of [
 ]) assert.equal(served.has(requiredProductFile), true, `${requiredProductFile} is in the replacement product closure`)
 
 for (const path of Object.values(PEERIT_BROWSER_RUNTIME_ASSET_PATHS)) {
-  assert.equal(served.has(path.slice(1)), true, `${path} is in the authenticated runtime closure`)
+  const generated = path === `/${PEERIT_APP_ARTIFACT_PATH}`
+  assert.equal(generated || served.has(path.slice(1)), true,
+    `${path} is source-owned or deterministically generated in the authenticated runtime closure`)
 }
 
 const forbiddenRuntimeTokens = [
@@ -60,6 +71,8 @@ const importPattern = /\b(?:import|export)\s+(?:[^'";]+?\s+from\s*)?['"]([^'"]+)
 for (const file of SUBSTRATE_SITE_FILES.filter(file => /\.(?:js|mjs)$/.test(file))) {
   const source = readFileSync(join(root, file), 'utf8')
   for (const token of forbiddenRuntimeTokens) {
+    if (file === 'js/substrate/release-relay-hints.mjs' &&
+        token === 'outbox.peerit.site') continue
     assert.equal(source.includes(token), false, `${file} contains no retired writer token ${token}`)
   }
   for (const match of source.matchAll(importPattern)) {
@@ -79,9 +92,103 @@ const build = spawnSync(process.execPath, [
 })
 assert.equal(build.status, 0, `${build.stdout}\n${build.stderr}`)
 
+const variantOutput = mkdtempSync(join(tmpdir(), 'peerit-substrate-build-variant-'))
+const variantBuild = spawnSync(process.execPath, [
+  'build-web.mjs', '--config', 'deploy/web-release.json', '--out', variantOutput
+], {
+  cwd: root,
+  encoding: 'utf8',
+  env: {
+    ...process.env,
+    LANG: 'tr_TR.UTF-8',
+    LC_ALL: 'tr_TR.UTF-8',
+    PEERIT_RELAY_ROSTER_MIRRORS: 'https://legacy-mirror-must-not-enter.example/'
+  }
+})
+assert.equal(variantBuild.status, 0, `${variantBuild.stdout}\n${variantBuild.stderr}`)
+
 const manifest = JSON.parse(readFileSync(join(output, 'asset-manifest.json'), 'utf8'))
+const variantManifest = JSON.parse(readFileSync(
+  join(variantOutput, 'asset-manifest.json'), 'utf8'))
+assert.deepEqual(variantManifest, manifest,
+  'locale and stray legacy mirror environment cannot change replacement release bytes')
+for (const file of [...Object.keys(manifest.files), ...Object.keys(manifest.controls)]) {
+  assert.deepEqual(readFileSync(join(variantOutput, file)), readFileSync(join(output, file)),
+    `${file} is byte-reproducible across locale and ignored legacy mirror state`)
+}
 assert.equal(manifest.webRelease.transport, 'blind-substrate')
-assert.deepEqual(new Set(Object.keys(manifest.files)), new Set([...SUBSTRATE_SITE_FILES, 'sw-register.js']))
+assert.deepEqual(new Set(Object.keys(manifest.files)), new Set([
+  ...SUBSTRATE_SITE_FILES,
+  'sw-register.js',
+  PEERIT_APP_ARTIFACT_PATH,
+  PEERIT_WEB_ASSET_MANIFEST_PATH
+]))
+
+const builtRuntimeFiles = new Map(Object.keys(manifest.files).map(file => [
+  file,
+  readFileSync(join(output, file))
+]))
+const officialRelease = JSON.parse(readFileSync(join(root, 'deploy', 'web-release.json'), 'utf8'))
+const verifiedRuntime = verifyPeeritSubstrateRuntimeArtifactV1({
+  files: builtRuntimeFiles,
+  releaseSequence: officialRelease.releaseSequence,
+  releaseKey: officialRelease.pinnedReleaseKey
+})
+assert.equal(verifiedRuntime.appArtifactHashHex, manifest.webRelease.appArtifactHash)
+assert.equal(verifiedRuntime.webAssetManifestHashHex,
+  manifest.webRelease.canonicalWebAssetManifestHash)
+assert.equal(manifest.webRelease.productionPinHistory, null)
+assert.throws(() => verifyPeeritSubstrateRuntimeArtifactV1({
+  files: new Map([...builtRuntimeFiles, ['js/app.js', Buffer.from('legacy writer')]]),
+  releaseSequence: officialRelease.releaseSequence,
+  releaseKey: officialRelease.pinnedReleaseKey
+}), /outside its exact canonical closure/,
+'an extra signed legacy writer cannot sit outside canonical WebAssetManifestV1')
+assert.throws(() => createPublishedSiteFilesV1({ ...officialRelease, releaseSequence: 6 }),
+  /sequence 6 belongs to the retired legacy artifact/)
+
+const sourceRuntimeFiles = new Map(SUBSTRATE_SITE_FILES.map(file => [
+  file,
+  readFileSync(join(root, file))
+]))
+const nonProductionPinHistoryFixture = readFileSync(join(
+  root, 'protocol', 'vectors', 'release-control', 'pin-history-bundle.bin'))
+const ceremonyArtifact = buildPeeritSubstrateRuntimeArtifactV1({
+  sourceFiles: sourceRuntimeFiles,
+  substrateProfile: 'blind-v1',
+  relayHints: [],
+  releaseSequence: officialRelease.releaseSequence,
+  releaseKey: officialRelease.pinnedReleaseKey,
+  productionPinHistoryBytes: nonProductionPinHistoryFixture
+})
+assert.deepEqual(
+  ceremonyArtifact.files.get(PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)),
+  nonProductionPinHistoryFixture,
+  'a future ceremony can carry exact detached pin-history control bytes')
+assert.match(ceremonyArtifact.files.get('index.html').toString('utf8'),
+  new RegExp(`name="peerit-production-pin-history" content="${PEERIT_PRODUCTION_PIN_HISTORY_PATH}"`))
+assert.equal(ceremonyArtifact.appArtifact.productionPinHistory,
+  PEERIT_PRODUCTION_PIN_HISTORY_PATH)
+assert.equal(ceremonyArtifact.appArtifact.files[
+  PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)], undefined,
+'detached pin history is excluded from the app artifact hash closure')
+const ceremonyVerified = verifyPeeritSubstrateRuntimeArtifactV1({
+  files: ceremonyArtifact.files,
+  releaseSequence: officialRelease.releaseSequence,
+  releaseKey: officialRelease.pinnedReleaseKey
+})
+assert.equal(ceremonyVerified.webAssetManifest.assets.some(
+  asset => asset.path === PEERIT_PRODUCTION_PIN_HISTORY_PATH), false,
+'detached pin history is excluded from WebAssetManifestV1 to avoid a hash cycle')
+
+const publishedRuntimeFiles = new Map(createPublishedSiteFilesV1(officialRelease)
+  .map(({ path, content }) => [path.slice(1), Buffer.from(content)]))
+assert.deepEqual(new Set(publishedRuntimeFiles.keys()), new Set(builtRuntimeFiles.keys()),
+  'Web and Hyper publication contain the same replacement runtime paths')
+for (const [file, bytes] of publishedRuntimeFiles) {
+  assert.deepEqual(bytes, builtRuntimeFiles.get(file),
+    `Web and Hyper publication converge on exact bytes for ${file}`)
+}
 
 const builtIndex = readFileSync(join(output, 'index.html'), 'utf8')
 assert.match(builtIndex, /src="js\/substrate\/app-entry\.js"/)
@@ -90,10 +197,14 @@ const csp = builtIndex.match(/http-equiv="Content-Security-Policy"\s+content="([
 const scriptSrc = csp.split(';').map(value => value.trim()).find(value => value.startsWith('script-src')) || ''
 assert.equal(scriptSrc, "script-src 'self'")
 assert.doesNotMatch(scriptSrc, /data:|'unsafe-inline'|'unsafe-eval'/)
+assert.match(builtIndex,
+  new RegExp(`name="peerit-production-web-asset-manifest" content="/${PEERIT_WEB_ASSET_MANIFEST_PATH}"`))
 
 for (const file of Object.keys(manifest.files).filter(file => /\.(?:js|mjs)$/.test(file))) {
   const source = readFileSync(join(output, file), 'utf8')
   for (const token of forbiddenRuntimeTokens) {
+    if (file === 'js/substrate/release-relay-hints.mjs' &&
+        token === 'outbox.peerit.site') continue
     assert.equal(source.includes(token), false, `built ${file} contains no retired writer token ${token}`)
   }
 }
@@ -108,6 +219,9 @@ assert.equal(existsSync(join(output, 'js', 'data-dispersal.js')), false)
 const productEntry = readFileSync(join(output, 'js', 'substrate', 'app-entry.js'), 'utf8')
 assert.match(productEntry, /createPeeritProductRuntimeV1/)
 assert.match(productEntry, /mountPeeritProductUiV1/)
+assert.match(productEntry, /installPeeritBlindRelayConsumer/)
+assert.match(productEntry, /loadPeeritProductionPinHistoryTerminalV1/)
+assert.match(productEntry, /verifyPeeritReleaseCoherenceV1/)
 assert.doesNotMatch(productEntry, /Read-only —/)
 
 const productRuntime = readFileSync(join(output, 'js', 'substrate', 'peerit-product-runtime.js'), 'utf8')
@@ -116,4 +230,32 @@ assert.match(productRuntime, /v2:\s*true/)
 assert.match(productRuntime, /dispersal:\s*false/)
 assert.doesNotMatch(productRuntime, /relayHints:\s*\[[^\]]+\]/)
 
-console.log('peerit-substrate-build-closure: replacement artifact has a closed import graph and no legacy writer/import/route surface')
+const server = createServer((request, response) => {
+  const pathname = new URL(request.url, 'http://127.0.0.1').pathname.replace(/^\//, '') || 'index.html'
+  const file = join(output, pathname)
+  if (!existsSync(file)) {
+    response.writeHead(404)
+    response.end('not found')
+    return
+  }
+  response.writeHead(200)
+  response.end(readFileSync(file))
+})
+server.listen(0, '127.0.0.1')
+await once(server, 'listening')
+try {
+  const base = `http://127.0.0.1:${server.address().port}/`
+  const verifyResponse = await fetch(new URL('verify.html', base))
+  assert.equal(verifyResponse.status, 200, '/verify.html is served')
+  const verifyHtml = await verifyResponse.text()
+  const verifierImport = verifyHtml.match(/from\s+['"]\.\/([^'"]+)['"]/)?.[1]
+  assert.equal(verifierImport, 'js/release-verify.js')
+  const verifierResponse = await fetch(new URL(verifierImport, base))
+  assert.equal(verifierResponse.status, 200,
+    '/verify.html module dependency is present instead of returning 404')
+} finally {
+  server.close()
+  await once(server, 'close')
+}
+
+console.log('peerit-substrate-build-closure: Web+Hyper bytes converge, canonical bindings verify, /verify.html has no missing module, and legacy writer routes stay absent')

@@ -544,11 +544,10 @@ async function runTests () {
   }
 
   try {
-    // The release gate must execute the same complete suite advertised to
-    // contributors. The old three-file subset let regressions in identity,
-    // v2, recovery, relay-pool, and storage tests ship unnoticed.
-    await run('npm', ['test'])
-    addCheck('tests:node', 'pass', 'The complete npm test suite passed.')
+    // Ship includes the legacy/full regression suite plus the replacement-only
+    // profile, generated-closure, app-entry, cutover, and authority gates.
+    await run('npm', ['run', 'test:ship'])
+    addCheck('tests:node', 'pass', 'The complete npm and replacement substrate release suites passed.')
   } catch (err) {
     addCheck('tests:node', 'fail', err.message)
   }

@@ -11,6 +11,15 @@ import { dirname, join, posix, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dedupeRelayList, normalizeRelayRosterPayload, verifyRelayRoster } from '../js/relay-roster.js'
 import { RELEASE_MSG_VERSION, verifyReleaseManifest } from '../js/release-verify.js'
+import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from '../js/substrate/production-release-authority.mjs'
+import { normalizePeeritReleaseRelayHintsV1 } from '../js/substrate/release-relay-hints.mjs'
+import {
+  PEERIT_APP_ARTIFACT_PATH,
+  PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE,
+  PEERIT_WEB_ASSET_MANIFEST_PATH,
+  verifyPeeritSubstrateRuntimeArtifactV1
+} from './substrate-runtime-artifact.mjs'
+import { verifyPeeritProductionPinHistoryReleaseV1 } from './production-pin-history-release.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const WEB = join(ROOT, 'web')
@@ -111,19 +120,29 @@ export function releaseConfig (raw) {
   const pinnedReleaseKey = String(raw.pinnedReleaseKey || raw.releaseKey || '').trim().toLowerCase()
   if (!HEX64.test(pinnedReleaseKey)) throw new Error('deploy/web-release.json has an invalid pinnedReleaseKey')
   if (substrateProfile) {
+    if (releaseSequence < PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE) {
+      throw new Error(`blind-substrate replacement releaseSequence must be at least ${PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE}; sequence 6 belongs to the retired legacy artifact`)
+    }
     if (substrateProfile !== 'blind-v1') throw new Error(`unsupported Peerit substrate profile: ${substrateProfile}`)
     const forbidden = ['relay', 'bootstrapRelays', 'relayBackend', 'readonly', 'readOnly', 'relayRoster', 'relayRosterMirrors', 'pinnedRosterKey', 'roster', 'dhtRelay', 'shardRoster', 'seedOutboxes']
       .filter(key => raw[key] != null && raw[key] !== '' && (!Array.isArray(raw[key]) || raw[key].length > 0))
     if (forbidden.length) throw new Error(`blind-substrate release refuses legacy transport configuration: ${forbidden.join(', ')}`)
-    const relayHints = Array.isArray(raw.relayHints) ? [...new Set(raw.relayHints.map(value => String(value).trim()).filter(Boolean))] : []
-    for (const hint of relayHints) {
-      let url
-      try { url = new URL(hint) } catch { throw new Error(`invalid blind-substrate relay hint: ${hint}`) }
-      const loopback = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
-      if (url.protocol !== 'https:' && !loopback) throw new Error(`blind-substrate relay hint must use HTTPS (or loopback HTTP): ${hint}`)
-      if (url.hostname === 'outbox.peerit.site') throw new Error('blind-substrate release refuses the retired outbox.peerit.site destination')
+    const relayHints = normalizePeeritReleaseRelayHintsV1(
+      raw.relayHints == null ? [] : raw.relayHints,
+      'deploy/web-release.json')
+    const productionPinHistoryBundle = String(raw.productionPinHistoryBundle || '').trim()
+    if (productionPinHistoryBundle &&
+        productionPinHistoryBundle !== PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)) {
+      throw new Error(`productionPinHistoryBundle must equal ${PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)}`)
     }
-    return { transport: 'blind-substrate', substrateProfile, relayHints, releaseSequence, pinnedReleaseKey }
+    return {
+      transport: 'blind-substrate',
+      substrateProfile,
+      relayHints,
+      productionPinHistoryBundle,
+      releaseSequence,
+      pinnedReleaseKey
+    }
   }
   if (typeof raw.readonly !== 'boolean') throw new Error('legacy migration compatibility must explicitly set readonly=true or readonly=false')
   const bootstrapRelays = Array.isArray(raw.bootstrapRelays)
@@ -275,6 +294,12 @@ export function verifyIndexConfig (html, release) {
     else forbidMeta(metas, 'peerit-substrate-relays')
     requireMeta(metas, 'peerit-release-key', release.pinnedReleaseKey)
     requireMeta(metas, 'peerit-release-sequence', String(release.releaseSequence))
+    requireMeta(metas, 'peerit-production-web-asset-manifest', `/${PEERIT_WEB_ASSET_MANIFEST_PATH}`)
+    if (release.productionPinHistoryBundle) {
+      requireMeta(metas, 'peerit-production-pin-history', PEERIT_PRODUCTION_PIN_HISTORY_PATH)
+    } else {
+      forbidMeta(metas, 'peerit-production-pin-history')
+    }
     for (const legacy of ['peerit-relay', 'peerit-relay-backend', 'peerit-relay-readonly', 'peerit-relay-roster', 'peerit-relay-roster-key', 'peerit-dht-relay', 'peerit-shard-roster', 'peerit-seed-outboxes']) forbidMeta(metas, legacy)
     if (String(html).includes('outbox.peerit.site')) throw new Error('blind-substrate index contains the retired outbox.peerit.site destination')
     return
@@ -314,6 +339,12 @@ export function verifyManifestConfig (manifest, release, rosterHash, shardRoster
     throw new Error('asset-manifest.json webRelease is missing')
   }
   if (release.transport === 'blind-substrate') {
+    const appArtifactHash = String(manifest.webRelease.appArtifactHash || '')
+    const canonicalWebAssetManifestHash = String(
+      manifest.webRelease.canonicalWebAssetManifestHash || '')
+    if (!HEX64.test(appArtifactHash) || !HEX64.test(canonicalWebAssetManifestHash)) {
+      throw new Error('asset-manifest.json webRelease has invalid canonical replacement hashes')
+    }
     const expected = {
       releaseSequence: release.releaseSequence,
       transport: 'blind-substrate',
@@ -321,6 +352,13 @@ export function verifyManifestConfig (manifest, release, rosterHash, shardRoster
       relayHints: release.relayHints,
       networkDelivery: 'profile-gated',
       legacyDestination: null,
+      productionPinHistory: release.productionPinHistoryBundle
+        ? PEERIT_PRODUCTION_PIN_HISTORY_PATH
+        : null,
+      appArtifact: `/${PEERIT_APP_ARTIFACT_PATH}`,
+      appArtifactHash,
+      canonicalWebAssetManifest: `/${PEERIT_WEB_ASSET_MANIFEST_PATH}`,
+      canonicalWebAssetManifestHash,
       releaseKey: release.pinnedReleaseKey
     }
     if (!equalJson(manifest.webRelease, expected)) throw new Error('asset-manifest.json webRelease does not match the replacement substrate config')
@@ -506,6 +544,29 @@ async function main () {
   const localIndex = localAssets.get('index.html')
   if (!localIndex) throw new Error('asset-manifest.json must include index.html')
   verifyIndexConfig(localIndex.toString('utf8'), release)
+  if (release.transport === 'blind-substrate') {
+    const runtimeFiles = new Map(Object.keys(manifest.files).map(file => [
+      file,
+      localAssets.get(file)
+    ]))
+    const runtime = verifyPeeritSubstrateRuntimeArtifactV1({
+      files: runtimeFiles,
+      releaseSequence: release.releaseSequence,
+      releaseKey: release.pinnedReleaseKey
+    })
+    if (manifest.webRelease.appArtifactHash !== runtime.appArtifactHashHex ||
+        manifest.webRelease.canonicalWebAssetManifestHash !== runtime.webAssetManifestHashHex) {
+      throw new Error('signed JSON manifest does not cross-bind the exact canonical replacement artifacts')
+    }
+    if (release.productionPinHistoryBundle) {
+      await verifyPeeritProductionPinHistoryReleaseV1({
+        bundleBytes: runtimeFiles.get(release.productionPinHistoryBundle),
+        releaseSequence: release.releaseSequence,
+        appArtifactHash: runtime.appArtifactHash,
+        webAssetManifestHash: runtime.webAssetManifestHash
+      })
+    }
+  }
   if (!localAssets.get('verify.html').toString('utf8').includes(driveKey)) {
     throw new Error('verify.html does not carry the release driveKey')
   }

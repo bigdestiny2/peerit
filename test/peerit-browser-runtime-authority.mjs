@@ -53,6 +53,9 @@ const crypto = createNodeReleaseControlCrypto()
 const appArtifactBytes = new TextEncoder().encode('peerit-browser-runtime-test-app-artifact-v1')
 
 function fileBytes (assetPath) {
+  if (assetPath === PEERIT_BROWSER_RUNTIME_ASSET_PATHS.appArtifact) {
+    return appArtifactBytes.slice()
+  }
   return new Uint8Array(fs.readFileSync(path.join(root, assetPath.slice(1))))
 }
 

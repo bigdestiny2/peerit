@@ -11,7 +11,7 @@ import {
   isPeeritVerifiedRelayAdapter,
   qualifyPermissionlessRelayCandidates
 } from '../js/substrate/relay-consumer.js'
-import { SITE_FILES } from '../publish.mjs'
+import { SUBSTRATE_SITE_FILES } from '../publish.mjs'
 
 const descriptorHash = '11'.repeat(32)
 const continuityRoot = '22'.repeat(32)
@@ -133,22 +133,22 @@ assert.equal(irrelevant.state, 'not-applicable')
 assert.deepEqual(irrelevantAssignments, [])
 
 assert.equal(PEERIT_BLIND_CLIENT_CONSUMER_STATUS.releaseReady, false)
-assert.ok(SITE_FILES.includes('js/substrate/relay-consumer.js'))
-assert.ok(SITE_FILES.includes('js/substrate/capability-vault.js'))
-assert.ok(SITE_FILES.includes('js/substrate/descriptor-trust-backend.js'))
-assert.ok(SITE_FILES.includes('js/substrate/relay-requalification-scheduler.js'))
-assert.ok(SITE_FILES.includes('js/substrate/blind-client-relay.js'),
+assert.ok(SUBSTRATE_SITE_FILES.includes('js/substrate/relay-consumer.js'))
+assert.ok(SUBSTRATE_SITE_FILES.includes('js/substrate/capability-vault.js'))
+assert.ok(SUBSTRATE_SITE_FILES.includes('js/substrate/descriptor-trust-backend.js'))
+assert.ok(SUBSTRATE_SITE_FILES.includes('js/substrate/relay-requalification-scheduler.js'))
+assert.ok(SUBSTRATE_SITE_FILES.includes('js/substrate/blind-client-relay.js'),
   'the local adapter is shipped only behind the authenticated exact-byte control authority')
 const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 assert.equal(packageJson.dependencies && packageJson.dependencies['@hiverelay/blind-client'], undefined)
-const appSource = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8')
-assert.ok(appSource.indexOf('await sync.ready()') < appSource.indexOf('installPeeritBlindRelayConsumer({'))
+const appSource = readFileSync(new URL('../js/substrate/app-entry.js', import.meta.url), 'utf8')
+assert.ok(appSource.indexOf('await product.ready()') < appSource.indexOf('installPeeritBlindRelayConsumer({'))
 assert.ok(appSource.indexOf("window.addEventListener('pagehide'") <
   appSource.indexOf('installPeeritBlindRelayConsumer({'),
 'pagehide invalidation is armed before asynchronous relay installation starts')
-assert.ok(appSource.indexOf('stopPeeritBlindRelayConsumer(sync)') < appSource.indexOf('sync.destroy()'),
+assert.ok(appSource.indexOf('stopPeeritBlindRelayConsumer(product.sync)') < appSource.indexOf('product.destroy()'),
   'browser teardown invalidates the relay owner before destroying sync')
-assert.match(appSource, /event\.persisted && runtime && runtime\.mode === 'web-substrate'/,
+assert.match(appSource, /event\.persisted && window\.location/,
   'a BFCache restore boots a fresh qualification clock instead of reviving stopped state')
 const consumerSource = readFileSync(new URL('../js/substrate/relay-consumer.js', import.meta.url), 'utf8')
 assert.match(consumerSource, /ACTIVE_RELAY_INSTALLATIONS/)

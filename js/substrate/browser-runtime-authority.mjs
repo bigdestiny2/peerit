@@ -26,12 +26,17 @@ import {
 } from './validator-artifact.mjs'
 import {
   decodePeeritWebAssetManifestV1,
+  hashPeeritAppArtifactV1,
   hashPeeritWebAssetManifestV1,
   verifyPeeritWebAssetBytesV1
 } from './web-asset-manifest.mjs'
 import { createBlindCellRelay } from './blind-client-relay.js'
+import { PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1 } from './production-release-authority.mjs'
+
+export { PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1 } from './production-release-authority.mjs'
 
 export const PEERIT_BROWSER_RUNTIME_ASSET_PATHS = Object.freeze({
+  appArtifact: '/peerit-app-artifact-v1.json',
   hiveArtifact: '/vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs',
   hiveManifest: '/vendor/hiverelay-blind-client-v1/blind-client-control-v1.manifest.cenc',
   hiveChromiumEvidence: '/vendor/hiverelay-blind-client-v1/blind-client-control-v1.chromium-evidence.json',
@@ -47,6 +52,7 @@ export const PEERIT_BROWSER_RUNTIME_ASSET_PATHS = Object.freeze({
 })
 
 const ASSET_HARD_CAPS = Object.freeze({
+  [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.appArtifact]: 512 * 1024,
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveArtifact]: 320 * 1024,
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveManifest]: 16 * 1024,
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveChromiumEvidence]: 16 * 1024,
@@ -87,13 +93,6 @@ export const PEERIT_BROWSER_RUNTIME_ASSEMBLY_STATUS = Object.freeze({
     'AUTHENTICATED_PROFILE_EXTERNAL_CODEC_DECODERS_UNASSEMBLED',
     'FIRST_VISIT_EXECUTING_VERIFIER_ORIGIN_BOOTSTRAP_UNRESOLVED'
   ])
-})
-
-// Filled only by a real, externally distributed production authority. Meta
-// tags and caller inputs never define this trust root.
-export const PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1 = Object.freeze({
-  publicKey: null,
-  genesisPinHash: null
 })
 
 const VERIFIED_AUTHORITIES = new WeakMap()
@@ -339,6 +338,12 @@ async function assemblePeeritBrowserRuntimeAuthorityInternal (input, trusted) {
     requiredPaths: Object.values(PEERIT_BROWSER_RUNTIME_ASSET_PATHS),
     requireComplete: false
   })
+  const appArtifactBytes = requireAsset(
+    assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.appArtifact)
+  if (!bytesEqual(hashPeeritAppArtifactV1(appArtifactBytes), pin.appArtifactHash)) {
+    fail('PRODUCTION_APP_ARTIFACT_PIN_MISMATCH',
+      'the exact app-distribution artifact does not match the production pin')
+  }
 
   const hive = verifyBlindClientBrowserReleaseV1({
     artifactBytes: requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveArtifact),

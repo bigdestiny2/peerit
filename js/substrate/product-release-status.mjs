@@ -17,6 +17,7 @@ import {
   PEERIT_BLIND_CLIENT_CONSUMER_STATUS
 } from './relay-consumer.js'
 import { PEERIT_PIN_HISTORY_WITNESS_BACKEND_STATUS } from './pin-history-witness-backend.mjs'
+import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from './production-release-authority.mjs'
 
 const HEX_32 = /^[0-9a-f]{64}$/
 
@@ -72,10 +73,11 @@ export const PEERIT_PRODUCTION_HIVERELAY_RUNTIME_STATUS = Object.freeze({
 })
 
 const browserProductRuntime = {
-  // The replacement-only build closure is isolated, but its current entry is a
-  // release-blocked shell. It does not yet mount Peerit's UI/model, lurker boot,
-  // explicit first-write identity flow, or durable offline publication queue.
-  substrateUiAndLocalAuthoringRuntimeReady: false,
+  // The official replacement entry now mounts the local product/UI and keeps
+  // lurker boot plus explicit first-write authoring available with zero relays.
+  // This does not imply network or release authority readiness.
+  substrateUiAndLocalAuthoringRuntimeReady: true,
+  signedCanonicalReleaseServiceWorkerCasReady: false,
   authenticatedBlindClientArtifact: false,
   blindClientArtifactHashPinnedByProductionPin: false,
   authenticatedPeeritRuntimeAuthority: false,
@@ -95,6 +97,9 @@ export const PEERIT_BLIND_PRODUCT_RELEASE_BLOCKERS = unique([
   ...PEERIT_BLIND_CLIENT_CONSUMER_BLOCKERS,
   ...(!PEERIT_BROWSER_PRODUCT_RUNTIME_STATUS.substrateUiAndLocalAuthoringRuntimeReady
     ? ['PEERIT_SUBSTRATE_UI_AND_LOCAL_AUTHORING_RUNTIME_UNASSEMBLED']
+    : []),
+  ...(!PEERIT_BROWSER_PRODUCT_RUNTIME_STATUS.signedCanonicalReleaseServiceWorkerCasReady
+    ? ['SIGNED_CANONICAL_RELEASE_SERVICE_WORKER_CAS_UNIMPLEMENTED']
     : []),
   ...(!exactSubstrateTuple(PEERIT_PRODUCTION_SUBSTRATE_AUTHORITY_STATUS.emitSubstrateTuple) ||
       !PEERIT_PRODUCTION_SUBSTRATE_AUTHORITY_STATUS.emitSubstrateTuplePinned
@@ -172,6 +177,10 @@ export function assertPeeritBlindProductReleaseReady (releaseConfig) {
   const configuredKey = String(releaseConfig.pinnedReleaseKey || '').toLowerCase()
   if (!HEX_32.test(String(expectedKey || '')) || configuredKey !== expectedKey) {
     configurationFailure('web release key is not the exact key authenticated by the production Peerit profile pin')
+  }
+  if (releaseConfig.productionPinHistoryBundle !==
+      PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)) {
+    configurationFailure('public blind release requires the canonical detached production pin-history bundle')
   }
   return PEERIT_BLIND_PRODUCT_RELEASE_STATUS
 }

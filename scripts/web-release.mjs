@@ -18,6 +18,15 @@ import {
 } from '../js/release-verify.js'
 import { normalizeShardRosterPayload, shardRosterSigningMessage } from '../js/shard-roster.js'
 import { assertPeeritBlindProductReleaseReady } from '../js/substrate/product-release-status.mjs'
+import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from '../js/substrate/production-release-authority.mjs'
+import { normalizePeeritReleaseRelayHintsV1 } from '../js/substrate/release-relay-hints.mjs'
+import {
+  PEERIT_APP_ARTIFACT_PATH,
+  PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE,
+  PEERIT_WEB_ASSET_MANIFEST_PATH,
+  verifyPeeritSubstrateRuntimeArtifactV1
+} from './substrate-runtime-artifact.mjs'
+import { verifyPeeritProductionPinHistoryReleaseV1 } from './production-pin-history-release.mjs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dir, '..')
@@ -287,7 +296,10 @@ function normalizeConfig (raw) {
     return {
       transport: 'blind-substrate',
       substrateProfile,
-      relayHints: Array.isArray(raw.relayHints) ? [...new Set(raw.relayHints.map(value => String(value).trim()).filter(Boolean))] : [],
+      relayHints: normalizePeeritReleaseRelayHintsV1(
+        raw.relayHints == null ? [] : raw.relayHints,
+        'deploy/web-release.json'),
+      productionPinHistoryBundle: String(raw.productionPinHistoryBundle || '').trim(),
       releaseSequence: Number(raw.releaseSequence),
       pinnedReleaseKey: String(raw.pinnedReleaseKey || raw.releaseKey || '').trim().toLowerCase()
     }
@@ -405,15 +417,15 @@ function validateReleaseConfig (release) {
     throw new Error('deploy/web-release.json releaseSequence must be a positive safe integer')
   }
   if (release.transport === 'blind-substrate') {
-    if (release.substrateProfile !== 'blind-v1') throw new Error(`unsupported Peerit substrate profile: ${release.substrateProfile}`)
-    if (!HEX64.test(release.pinnedReleaseKey)) throw new Error('deploy/web-release.json has an invalid pinnedReleaseKey')
-    for (const hint of release.relayHints) {
-      let url
-      try { url = new URL(hint) } catch { throw new Error(`invalid blind-substrate relay hint: ${hint}`) }
-      const loopback = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
-      if (url.protocol !== 'https:' && !loopback) throw new Error(`blind-substrate relay hint must use HTTPS (or loopback HTTP): ${hint}`)
-      if (url.hostname === 'outbox.peerit.site') throw new Error('blind-substrate release refuses the retired outbox.peerit.site destination')
+    if (release.releaseSequence < PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE) {
+      throw new Error(`blind-substrate replacement releaseSequence must be at least ${PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE}; sequence 6 belongs to the retired legacy artifact`)
     }
+    if (release.substrateProfile !== 'blind-v1') throw new Error(`unsupported Peerit substrate profile: ${release.substrateProfile}`)
+    if (release.productionPinHistoryBundle &&
+        release.productionPinHistoryBundle !== PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)) {
+      throw new Error(`productionPinHistoryBundle must equal ${PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)}`)
+    }
+    if (!HEX64.test(release.pinnedReleaseKey)) throw new Error('deploy/web-release.json has an invalid pinnedReleaseKey')
     addCheck('config:substrate', 'pass', `Release selects ${release.substrateProfile} with ${release.relayHints.length} untrusted relay hint(s).`, {
       relayHints: release.relayHints,
       legacyDestination: null
@@ -486,8 +498,15 @@ function metaContent (html, name) {
   return match ? match[1] : ''
 }
 
-function verifySubstrateWebBundle (release, driveKey, { requireSignature = true } = {}) {
-  const required = ['index.html', 'asset-manifest.json', 'sw.js', 'verify.html'].map(file => join(ROOT, 'web', file))
+async function verifySubstrateWebBundle (release, driveKey, { requireSignature = true } = {}) {
+  const required = [
+    'index.html',
+    'asset-manifest.json',
+    'sw.js',
+    'verify.html',
+    PEERIT_APP_ARTIFACT_PATH,
+    PEERIT_WEB_ASSET_MANIFEST_PATH
+  ].map(file => join(ROOT, 'web', file))
   for (const file of required) if (!existsSync(file)) throw new Error(`${file} is missing; run npm run build-web`)
   const html = readFileSync(required[0], 'utf8')
   if (metaContent(html, 'peerit-substrate') !== release.substrateProfile) throw new Error('web/index.html substrate profile meta does not match deploy/web-release.json')
@@ -499,12 +518,38 @@ function verifySubstrateWebBundle (release, driveKey, { requireSignature = true 
   if (html.includes('outbox.peerit.site')) throw new Error('blind-substrate web artifact contains the retired outbox.peerit.site destination')
   if (metaContent(html, 'peerit-release-key') !== release.pinnedReleaseKey) throw new Error('web/index.html release key meta does not match deploy/web-release.json')
   if (metaContent(html, 'peerit-release-sequence') !== String(release.releaseSequence)) throw new Error('web/index.html release sequence meta does not match deploy/web-release.json')
+  if (metaContent(html, 'peerit-production-web-asset-manifest') !== `/${PEERIT_WEB_ASSET_MANIFEST_PATH}`) {
+    throw new Error('web/index.html canonical WebAssetManifestV1 meta does not match the replacement release')
+  }
+  const expectedPinHistoryPath = release.productionPinHistoryBundle
+    ? PEERIT_PRODUCTION_PIN_HISTORY_PATH
+    : ''
+  if (metaContent(html, 'peerit-production-pin-history') !== expectedPinHistoryPath) {
+    throw new Error('web/index.html production pin-history meta does not match deploy/web-release.json')
+  }
   addCheck('web:index-meta', 'pass', 'web/index.html selects only the replacement substrate transport.')
 
   const manifest = readJson(required[1])
   if (!manifest) throw new Error('web/asset-manifest.json is invalid')
   verifyManifestFileHashes(manifest, { requireSignature })
   if (manifest.releaseSequence !== release.releaseSequence || manifest.driveKey !== driveKey) throw new Error('web/asset-manifest.json release identity does not match the release config')
+  const runtimeFiles = new Map(Object.keys(manifest.files).map(file => [
+    file,
+    readFileSync(join(ROOT, 'web', ...file.split('/')))
+  ]))
+  const runtime = verifyPeeritSubstrateRuntimeArtifactV1({
+    files: runtimeFiles,
+    releaseSequence: release.releaseSequence,
+    releaseKey: release.pinnedReleaseKey
+  })
+  if (release.productionPinHistoryBundle) {
+    await verifyPeeritProductionPinHistoryReleaseV1({
+      bundleBytes: runtimeFiles.get(release.productionPinHistoryBundle),
+      releaseSequence: release.releaseSequence,
+      appArtifactHash: runtime.appArtifactHash,
+      webAssetManifestHash: runtime.webAssetManifestHash
+    })
+  }
   const expected = {
     releaseSequence: release.releaseSequence,
     transport: 'blind-substrate',
@@ -512,6 +557,13 @@ function verifySubstrateWebBundle (release, driveKey, { requireSignature = true 
     relayHints: release.relayHints,
     networkDelivery: 'profile-gated',
     legacyDestination: null,
+    productionPinHistory: release.productionPinHistoryBundle
+      ? PEERIT_PRODUCTION_PIN_HISTORY_PATH
+      : null,
+    appArtifact: `/${PEERIT_APP_ARTIFACT_PATH}`,
+    appArtifactHash: runtime.appArtifactHashHex,
+    canonicalWebAssetManifest: `/${PEERIT_WEB_ASSET_MANIFEST_PATH}`,
+    canonicalWebAssetManifestHash: runtime.webAssetManifestHashHex,
     releaseKey: release.pinnedReleaseKey
   }
   if (!manifest.webRelease || JSON.stringify(manifest.webRelease) !== JSON.stringify(expected)) {
@@ -519,7 +571,8 @@ function verifySubstrateWebBundle (release, driveKey, { requireSignature = true 
   }
   const verifySource = readFileSync(required[3], 'utf8')
   if (!verifySource.includes(driveKey) || !verifySource.includes(release.pinnedReleaseKey)) throw new Error('verify.html does not include the release pins')
-  addCheck('web:asset-manifest', 'pass', 'asset-manifest.json binds the replacement profile without a legacy destination.')
+  addCheck('web:asset-manifest', 'pass',
+    `asset-manifest.json cross-binds the ${runtime.verifiedAssetCount}-asset canonical replacement closure without a legacy destination.`)
 
   if (!requireSignature) {
     addCheck('web:release-signature', 'info', 'Artifact is frozen and awaiting an external asset-manifest.sig; no build will run during verification.')
@@ -538,7 +591,7 @@ function verifySubstrateWebBundle (release, driveKey, { requireSignature = true 
   addCheck('web:release-signature', 'pass', `asset-manifest.sig verifies with the pinned release key ${release.pinnedReleaseKey.slice(0, 12)}...`)
 }
 
-function verifyWebBundle (release, rosterInfo, driveKey, { requireSignature = true } = {}) {
+async function verifyWebBundle (release, rosterInfo, driveKey, { requireSignature = true } = {}) {
   if (release.transport === 'blind-substrate') return verifySubstrateWebBundle(release, driveKey, { requireSignature })
   const webIndex = join(ROOT, 'web', 'index.html')
   const webManifest = join(ROOT, 'web', 'asset-manifest.json')
@@ -710,12 +763,12 @@ async function main () {
   if (opts.phase === 'prepare') {
     const priorSigningRequest = readJson(opts.signingRequest)
     await buildWeb(release, driveKey)
-    verifyWebBundle(release, rosterInfo, driveKey, { requireSignature: false })
+    await verifyWebBundle(release, rosterInfo, driveKey, { requireSignature: false })
     writeSigningRequest(release, driveKey, priorSigningRequest)
   } else {
     // Verification is intentionally build-free. The signing request binds this
     // exact manifest to the build phase; a missing or changed artifact is fatal.
-    verifyWebBundle(release, rosterInfo, driveKey, { requireSignature: true })
+    await verifyWebBundle(release, rosterInfo, driveKey, { requireSignature: true })
     verifySigningRequest(release, driveKey)
   }
 }

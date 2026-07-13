@@ -64,6 +64,23 @@ async function sha256 (value) {
   return new Uint8Array(digest)
 }
 
+// WebCrypto is deliberately asynchronous. Awaiting every candidate serially
+// pays that boundary cost once per nonce and is disproportionately slow in
+// Firefox. A small fixed batch preserves the exact ascending nonce search (and
+// therefore the first valid proof) while allowing the browser to schedule hash
+// work efficiently. The batch divides the existing 1024-candidate progress and
+// cancellation boundary, so responsiveness and observable progress do not
+// change.
+const HASH_BATCH_SIZE = 64
+
+async function sha256Batch (prefix, firstNonce) {
+  const pending = new Array(HASH_BATCH_SIZE)
+  for (let offset = 0; offset < pending.length; offset++) {
+    pending[offset] = sha256(prefix + (firstNonce + offset))
+  }
+  return Promise.all(pending)
+}
+
 function hex (bytes) {
   let output = ''
   for (const byte of bytes) output += byte.toString(16).padStart(2, '0')
@@ -74,11 +91,16 @@ export async function mint (type, data, bits, options = {}) {
   const version = options.version != null ? Number(options.version) : POW_VERSION
   const target = powTargetForVersion(type, data, version)
   const targetHash = hex(await sha256(target))
+  const prefix = target + '|'
   let nonce = 0
   for (;;) {
-    const digest = await sha256(target + '|' + nonce)
-    if (leadingZeroBits(digest) >= bits) return { bits, nonce, targetHash, v: version }
-    nonce++
+    const digests = await sha256Batch(prefix, nonce)
+    for (let offset = 0; offset < digests.length; offset++) {
+      if (leadingZeroBits(digests[offset]) >= bits) {
+        return { bits, nonce: nonce + offset, targetHash, v: version }
+      }
+    }
+    nonce += HASH_BATCH_SIZE
     if ((nonce & 1023) === 0) {
       if (options.onProgress) options.onProgress(nonce)
       if (options.signal && options.signal.aborted) throw new Error('proof-of-work cancelled')

@@ -151,6 +151,30 @@ async function main () {
   ok(world.counts.ranges > 0, 'the advertised batch endpoint delivers a complete outbox before signed-head admission')
   const initialWatermark = Number(bob.storage.getItem('peerit:directory-watermark:v1'))
   ok(initialWatermark > 0, 'a complete directory snapshot persists a relay watermark for later delta discovery')
+  const initialCheckpoint = JSON.parse(bob.storage.getItem('peerit:directory-checkpoint:v1') || 'null')
+  ok(initialCheckpoint && initialCheckpoint.watermark === initialWatermark && initialCheckpoint.peers.includes(alice.pub), 'the watermark atomically checkpoints the complete discovered author roster')
+
+  console.log('\n— a tab suspension between discovery and content caching cannot strand history —')
+  const earlyCloseStorage = mem()
+  const earlyClose = await makeClient(world, [A, B], 'early-close', { storage: earlyCloseStorage, pollMs: 0 })
+  const earlyWatermark = Number(earlyCloseStorage.getItem('peerit:directory-watermark:v1'))
+  const earlyCheckpoint = JSON.parse(earlyCloseStorage.getItem('peerit:directory-checkpoint:v1') || 'null')
+  ok(earlyWatermark > 0 && earlyCheckpoint && earlyCheckpoint.peers.includes(alice.pub), 'directory discovery saves its roster even before an outbox content cache exists')
+  earlyCloseStorage.removeItem('peerit:gossip-view') // exact mobile kill window: directory completed, content refresh/cache did not
+  earlyClose.sync.destroy()
+  const directoryBeforeResume = world.counts.directory.length
+  const resumed = await makeClient(world, [A, B], 'resumed', { storage: earlyCloseStorage, pollMs: 0 })
+  const resumeRequests = world.counts.directory.slice(directoryBeforeResume)
+  ok(resumeRequests.length === 2 && resumeRequests.every((request) => Number(request.since) === earlyWatermark), 'the resumed tab may safely use delta discovery because its checkpoint restored the older author roster')
+  ok(resumed.sync._peers.has(alice.pub) && (await resumed.data.getCommunity('p2p'))?.title === 'P2P', 'the older author and content survive a restart without a gossip-view cache')
+
+  const orphanedWatermarkStorage = mem()
+  orphanedWatermarkStorage.setItem('peerit:directory-watermark:v1', String(earlyWatermark)) // shape written by older affected builds
+  const directoryBeforeLegacyResume = world.counts.directory.length
+  const legacyResume = await makeClient(world, [A, B], 'legacy-resume', { storage: orphanedWatermarkStorage, pollMs: 0 })
+  const legacyResumeRequests = world.counts.directory.slice(directoryBeforeLegacyResume)
+  ok(legacyResumeRequests.length === 2 && legacyResumeRequests.every((request) => request.since === null), 'an old watermark without its author checkpoint is ignored and forces one healing full scan')
+  ok(legacyResume.sync._peers.has(alice.pub), 'the healing full scan recovers authors stranded by older builds')
 
   const erin = await makeClient(world, [A, B], 'erin', { writeHead: true })
   await erin.data.createCommunity({ slug: 'delta', title: 'Delta', description: 'x' })
@@ -203,7 +227,7 @@ async function main () {
   const flagged = await until(async () => (await dave.sync.status()).withholding.includes(alice.pub), { tries: 80 })
   ok(flagged, 'a fresh visitor whose floor was directory-seeded to v3 FLAGS the all-relays rollback to v1 on first read')
 
-  for (const c of [alice, bob, erin, frank, capped, fallback, carol, dave]) c.sync.destroy && c.sync.destroy()
+  for (const c of [alice, bob, resumed, legacyResume, erin, frank, capped, fallback, carol, dave]) c.sync.destroy && c.sync.destroy()
   console.log(`\n✅ all ${passed} directory checks passed\n`)
 }
 main().catch((e) => { console.error('❌', (e && e.stack) || e); process.exit(1) })

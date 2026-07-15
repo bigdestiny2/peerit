@@ -8,6 +8,7 @@ import { SYNC_INTEGRITY_STATUS_KEY } from './gossip.js'
 import { createIdentity } from './identity.js'
 import { resolveRuntime, fetchShardRoster } from './runtime.js'
 import { verifyReleaseManifestWithFloor } from './release-verify.js'
+import { SERVICE_WORKER_RELEASE_RETRY_MS, isServiceWorkerReleaseUpgrade } from './release-update.js'
 import { probeRelayBackend } from './pear-api.js'
 import { resolveRelayCandidates, selectRelaysResilient } from './relay-roster.js'
 import { createRelayPool } from './relay-pool.js'
@@ -16,8 +17,7 @@ import { createData } from './data.js'
 import { Prefs } from './prefs.js'
 import { STARTER_COMMUNITIES, STARTER_POSTS, WELCOME_COMMUNITY, starterCommunity } from './onboarding.js'
 import { renderMarkdown, excerpt } from './markdown.js'
-import { sortPosts, sortComments, weight as voteWeight, POST_SORTS, COMMENT_SORTS, TIME_WINDOW_KEYS } from './ranking.js'
-import { windowFeed } from './feed-window.js'
+import { sortPosts, rankPostsWindow, sortComments, weight as voteWeight, POST_SORTS, COMMENT_SORTS, TIME_WINDOW_KEYS } from './ranking.js'
 import { buildCommentTree, sortCommentTree, annotateDescendants, countDescendants, MOD, TYPE } from './model.js'
 import { COPY as RECOVERY_COPY, buildRecoveryBundle, cleanOutboxes, peeritSeederCommand, recoveryBundleFilename, recoveryBundleJson } from './recovery.js'
 import { exportIdentity, importIdentity, looksLikeIdentityExport, identityExportJson, identityExportFilename, passphraseStrength, MIN_PASSPHRASE } from './identity-export.js'
@@ -54,6 +54,8 @@ let editing = null                 // { kind:'post'|'comment', ... } inline edit
 const nameCache = new Map()        // pub -> display name (sync-ish for render)
 let integrityWarningActive = false
 let releaseManifestWarning = ''
+let releaseManifestWarningKind = 'error'
+let releaseUpdateRetryScheduled = false
 let corruptDeviceIdentityState = null
 let identityForgetCleanupError = ''
 let liveRefresh = null
@@ -687,7 +689,7 @@ function showReleaseManifestWarning () {
   const warn = existing || document.createElement('div')
   warn.id = 'release-manifest-warning'
   warn.className = 'readonly-banner'
-  warn.style.background = '#7f1d1d'
+  warn.style.background = releaseManifestWarningKind === 'update' ? '#1e3a8a' : '#7f1d1d'
   warn.textContent = releaseManifestWarning
   if (!existing) document.body.insertBefore(warn, document.body.firstChild)
 }
@@ -697,14 +699,16 @@ function showReleaseManifestWarning () {
 // modules have already executed; hashing every asset here would be late as well as
 // expensive. The operator-side proof:web-deploy command performs that full check.
 // Absent pin => no-op (release signing not enabled for this build).
-async function verifyReleaseAtBoot () {
+async function verifyReleaseAtBoot ({ afterServiceWorkerWait = false } = {}) {
   if (typeof document === 'undefined' || typeof fetch !== 'function') return
   const el = document.querySelector('meta[name="peerit-release-key"]')
   const pinned = el && el.getAttribute('content') ? el.getAttribute('content').trim().toLowerCase() : ''
   if (!pinned) return
+  let expectedSequence = null
+  let manifest = null
   try {
     const sequenceEl = document.querySelector('meta[name="peerit-release-sequence"]')
-    const expectedSequence = Number(sequenceEl && sequenceEl.getAttribute('content'))
+    expectedSequence = Number(sequenceEl && sequenceEl.getAttribute('content'))
     if (!Number.isSafeInteger(expectedSequence) || expectedSequence < 1) throw new Error('page has no valid release sequence')
     const [res, sigRes] = await Promise.all([
       fetch('asset-manifest.json', { cache: 'no-store' }),
@@ -712,23 +716,41 @@ async function verifyReleaseAtBoot () {
     ])
     if (!res.ok) throw new Error('asset-manifest.json HTTP ' + res.status)
     if (!sigRes.ok) throw new Error('asset-manifest.sig HTTP ' + sigRes.status + ' (release key pinned but bundle unsigned)')
-    const manifest = await res.json()
+    manifest = await res.json()
     const signature = await sigRes.json()
     const verified = await verifyReleaseManifestWithFloor({
       manifest,
       signature,
       expectedKey: pinned,
-      expectedSequence,
       floor: readReleaseFloor(pinned)
     })
+    if (verified.releaseSequence !== expectedSequence) {
+      if (isServiceWorkerReleaseUpgrade({
+        pageSequence: expectedSequence,
+        signedSequence: verified.releaseSequence,
+        serviceWorkerUpdate: globalThis.__peeritServiceWorkerUpdate
+      }) && !afterServiceWorkerWait) {
+        releaseManifestWarningKind = 'update'
+        releaseManifestWarning = 'A newer signed peerit release is installing. This page will reload automatically when its complete verified bundle is ready.'
+        showReleaseManifestWarning()
+        if (!releaseUpdateRetryScheduled) {
+          releaseUpdateRetryScheduled = true
+          setTimeout(() => { verifyReleaseAtBoot({ afterServiceWorkerWait: true }).catch(() => {}) }, SERVICE_WORKER_RELEASE_RETRY_MS)
+        }
+        return
+      }
+      throw new Error(`release: signed sequence ${verified.releaseSequence} does not match the page sequence ${expectedSequence}`)
+    }
     if (!persistReleaseFloor(pinned, verified.floor)) {
       console.warn('[peerit] signed release manifest accepted, but the local anti-rollback floor could not be persisted')
     }
     releaseManifestWarning = ''
+    releaseManifestWarningKind = 'error'
     showReleaseManifestWarning()
     console.log('[peerit] signed release manifest accepted (sequence ' + verified.releaseSequence + ', key ' + pinned.slice(0, 12) + '…); full module-byte verification is external')
   } catch (e) {
     console.error('[peerit] SIGNED RELEASE MANIFEST VALIDATION FAILED:', e && e.message)
+    releaseManifestWarningKind = 'error'
     releaseManifestWarning = '⚠ The signed release manifest failed validation (' + (e && e.message) + '). This check does not prove the module bytes already loaded on a first visit. Treat this page as untrusted — verify the deployment externally via verify.html or use PearBrowser.'
     try { showReleaseManifestWarning() } catch {}
   }
@@ -1354,20 +1376,23 @@ async function viewFeed ({ scope, community, query, guard, token }) {
     posts = await data.listAllPosts(undefined, { hydrate: false })
   }
 
-  // hide locally-hidden, enrich with tallies, compute overlays per community.
+  // Hide locally-hidden and compute overlays per community. Chronological
+  // feeds do not depend on votes, so defer their tally work until the visible
+  // page; score-based ranking still uses the full verified record set.
   posts = posts.filter(p => !prefs.isHidden(p.community + '/' + p.cid))
-  posts = await data.withTallies(posts)
 
   // mark stickied (community feed only) + overlay removal
   if (scope === 'community' && ov) {
     posts.forEach(p => { p.stickied = ov.stickied.has(p.cid) })
   }
-  const ranked = sortPosts(posts, sort, tw)
-  const page = windowFeed(ranked, query.page)
+  const rankingNeedsTallies = sort !== 'new' && sort !== 'old'
+  if (rankingNeedsTallies) posts = await data.withTallies(posts)
+  const page = rankPostsWindow(posts, sort, tw, query.page)
+  const pagePosts = rankingNeedsTallies ? page.items : await data.withTallies(page.items)
   // Ranking used the complete verified record set above. Keep expensive body
   // hydration, author/profile lookups, comment counts, and DOM construction to
   // the visible window only; this is the practical low-memory-device boundary.
-  const visible = await Promise.all(page.items.map(async (post) => ({
+  const visible = await Promise.all(pagePosts.map(async (post) => ({
     ...post,
     ...(await data.getPost(post.community, post.cid))
   })))
@@ -1388,7 +1413,7 @@ async function viewFeed ({ scope, community, query, guard, token }) {
   const base = scope === 'community' ? ['r', community] : (scope === 'home' ? [] : scope === 'following' ? ['following'] : ['all'])
   const showWelcome = scope === 'home' && !prefs.seenWelcome
   let body
-  if (!ranked.length) {
+  if (!page.totalItems) {
     body = showWelcome ? starterFeed() : emptyFeed(scope, community)
   } else {
     body = (showWelcome ? welcomePanel(true) : '') + visible.map(p => postCard(p, scope === 'community' ? ov : null, {

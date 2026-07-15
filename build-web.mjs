@@ -263,8 +263,11 @@ const swRegister = `if ('serviceWorker' in navigator) {
   // (two fighting SW versions reload at most once per 5 minutes instead of
   // pinning the CPU) while every real deploy — always minutes+ apart — applies.
   var hadController = !!navigator.serviceWorker.controller, refreshing = false;
+  var releaseUpdate = { hadController: hadController, controllerChanged: false };
+  window.__peeritServiceWorkerUpdate = releaseUpdate;
   var LATCH = 'peerit:sw-reloaded-at', WINDOW_MS = 5 * 60 * 1000;
   navigator.serviceWorker.addEventListener('controllerchange', function () {
+    releaseUpdate.controllerChanged = true;
     if (refreshing || !hadController) return;
     try {
       var last = Number(sessionStorage.getItem(LATCH) || 0);

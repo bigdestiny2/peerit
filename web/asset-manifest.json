@@ -1,10 +1,10 @@
 {
-  "releaseSequence": 6,
+  "releaseSequence": 10,
   "files": {
-    "index.html": "e3eef6fc23a683bf7245b06951d152bc1a2b4e37532a22dde6d04a8ef129bedf",
+    "index.html": "c9f742768de0a4f0ce3d4120b9ba46b380f78d1b90c05008ef38ec875b10ec81",
     "styles.css": "719335a9a4d8053e9d26def2fb8a95d2289a879fd5afb8258a3485b879e951d3",
     "icon.svg": "7925827f718381ddf887d3c5bea9b5b94e6e80de569d6604e384033767914a1c",
-    "js/app.js": "47abf7db629f3bcd4bb5c8e365c2689cd69bf0ddd97e52aa963872d358171827",
+    "js/app.js": "80c78ae70d3f8f71f49a98006e91d2c5be858f4a8526284283840c486e3c88c4",
     "js/blob-store.js": "1a947ca86c25a590a73d8a7808476e4ee659604da1f848d6da57a289392bfbc9",
     "js/box.js": "7d4460772ef79358bc57c7cc7bcb820af1a6aa96638f1a98b44e4d00fd5fe947",
     "js/canon.js": "8488f17f6d6965449325543a1d69f8e12ee08c3c37e49f4f344ff6217deb3e9b",
@@ -26,15 +26,16 @@
     "js/pear-api.js": "6adce1fff60938824fa5a0642e8198976bd6240580bc32fb6f8e1291ae7dcce7",
     "js/qr.js": "4fceabaa0805cba7e55a89291a2a882030fa7d8381b491670faee09aa755002a",
     "js/prefs.js": "f06781e9b30f4e35c1797f1414f6d718aceedc897e8989804dad3ca37753a108",
-    "js/pow.js": "cf51679a04ac8d1bf52d4d4acd3d8e122b3cfae6f532cf826b49262a612f56ad",
+    "js/pow.js": "7cae1496462745d7cb8c2e47f6ebff3c58198bcb743681a83f029da3022417e4",
     "js/legacy-v2-pow-allowlist.js": "af3d33272e839513cdaa0a47985ce8092665290677b8b97da6de9ba669614dd3",
     "js/legacy-action-allowlist.js": "455a6e019d8743db1e924a78a715ca0f649716e5c0729e426801d23a765ce41c",
-    "js/ranking.js": "5cf90c04f8132dd8e388b642bcd303cfd61a882768c1a0277cd0e216d3540221",
+    "js/ranking.js": "3de81e31ee1727104b22f0aaaa365859de40b44f518fa0b57352f3f76da40832",
     "js/reader-bundle.js": "13ef24fe9b7307d24ef12a3c1376c8f7ffe346fd898a25f153e90ffd980b3a5a",
     "js/recovery.js": "60c940b0c6b40ab46b229b4597c47cff4b14d512eeb616a8ad8222b41405f42c",
     "js/relay-pool.js": "8ae2092aecedf9448c41da2e888bd924a2dea14c7b89fdc488687dc320ff2067",
     "js/relay-roster.js": "3593d8be3bb066fe379cec10f06b00f5d5d05b0a0027864aa20cbd060b039d26",
     "js/release-verify.js": "217ae2950e45b8ec1acb7391cfb2dbb40846ef6a3bc468d4a15ebea7dd842d53",
+    "js/release-update.js": "82d4dc84e0fec472ef6f63fa71378bc61f39d51a671ce52c80a73fb963a12d9a",
     "js/runtime.js": "97e442c7efcd3070437a710ebf062d67a16fca94aed0fe3f9c3df81d12052ef9",
     "js/seal.js": "6f64ce89aee4c886b01d48231d716eb7704c9c0b314cdbad8660d9017907c3df",
     "js/shard-roster.js": "0542dda755f813cfb515097cbc958a9e788e9f9a4424c447a8441ad9fa2357de",
@@ -44,15 +45,15 @@
     "config/shard-roster.public.json": "c52ec812e673f3e032e6e22ec196cdc5623260c501e07f4eb8f363ceb9923bad",
     "seed-snapshot.json": "c6488226fd120959493141012ae289f11c5ec971106b920cf40c555f6683ab0b",
     "relay-roster.json": "ee116d647df5b316e06da184f872c969724ed856712bba8bde775cebb090b551",
-    "sw-register.js": "453dcef5e737350700981e105a2834a38debcb7f96182c5b820aef955fc98c84"
+    "sw-register.js": "91aa30dc3a73b7297ea2662bad5ed09dbec7f530a47ab4fb925a628b3a03fefc"
   },
   "controls": {
-    "sw.js": "c0787d86fce542d52a6a978357f709a5040281254efd82e8aff102b0d16c4162",
-    "verify.html": "70897a8b84c8e0c5610abc149961d6d45fb4a33e12cf3a1c2e2ef6ecf48e71a3"
+    "sw.js": "30229abec6a33bf7e82fc26c38d60b90a9b5ad9fb2325dcbc36c4f4770505dd7",
+    "verify.html": "e762a02d2ab5c82a01318024683d10d296c4540df4c91e66008af8dca5c2feca"
   },
   "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
   "webRelease": {
-    "releaseSequence": 6,
+    "releaseSequence": 10,
     "relay": "https://outbox.peerit.site",
     "relayBackend": "",
     "readonly": "false",

@@ -1,6 +1,8 @@
 // ranking.js — Reddit-style ranking algorithms. Pure functions over
 // { score, up, down, createdAt } shapes so they're unit-testable.
 
+import { FEED_PAGE_SIZE, parseFeedPage } from './feed-window.js'
+
 const EPOCH = 1134028003000 // Reddit's epoch (2005-12-08) in ms
 
 function sign (n) { return n > 0 ? 1 : n < 0 ? -1 : 0 }
@@ -62,7 +64,10 @@ export function weight (ageDays, receivedUpvotes) {
 export function tally (votes, me, weightOf) {
   const byAuthor = new Map()
   for (const v of votes || []) byAuthor.set(v.author, v.value)
-  let up = 0, down = 0, myVote = 0, weighted = 0
+  let up = 0
+  let down = 0
+  let myVote = 0
+  let weighted = 0
   for (const [author, value] of byAuthor) {
     if (value === 1) up++
     else if (value === -1) down++
@@ -77,8 +82,12 @@ export function tally (votes, me, weightOf) {
 function rankScore (t) { return t ? (t.weighted != null ? t.weighted : t.score) : 0 }
 
 const TIME_WINDOWS = {
-  hour: 3600000, day: 86400000, week: 604800000,
-  month: 2592000000, year: 31536000000, all: Infinity
+  hour: 3600000,
+  day: 86400000,
+  week: 604800000,
+  month: 2592000000,
+  year: 31536000000,
+  all: Infinity
 }
 
 // Sort an array of posts (each carrying .createdAt and a tally {score,up,down}).
@@ -91,11 +100,98 @@ export function sortPosts (posts, sort = 'hot', timeWindow = 'all', now = Date.n
   // Stickied posts always float to the top (community sticky), preserving sort within.
   const cmp = comparator(sort, now)
   list.sort((a, b) => {
-    const sa = a.stickied ? 1 : 0, sb = b.stickied ? 1 : 0
+    const sa = a.stickied ? 1 : 0
+    const sb = b.stickied ? 1 : 0
     if (sa !== sb) return sb - sa
     return cmp(a, b)
   })
   return list
+}
+
+// Return only one globally-ranked feed window without first allocating and
+// sorting a second full-size array. The input remains the complete verified
+// record set, so score-based sorts retain their global ordering semantics; the
+// bounded heap merely avoids sorting records that cannot appear on this page.
+// This intentionally does not hydrate bodies or calculate tallies: callers can
+// skip both for chronological feeds and do them only for the visible window.
+export function rankPostsWindow (posts, sort = 'hot', timeWindow = 'all', requestedPage = 1, pageSize = FEED_PAGE_SIZE, now = Date.now()) {
+  const list = Array.isArray(posts) ? posts : []
+  const size = Number.isSafeInteger(pageSize) && pageSize > 0 ? pageSize : FEED_PAGE_SIZE
+  const eligible = post => {
+    if (!post || typeof post !== 'object') return false
+    if ((sort === 'top' || sort === 'controversial') && timeWindow !== 'all') {
+      const cutoff = now - (TIME_WINDOWS[timeWindow] || Infinity)
+      return Number(post.createdAt) >= cutoff
+    }
+    return true
+  }
+  let totalItems = 0
+  for (const post of list) if (eligible(post)) totalItems++
+
+  const totalPages = Math.max(1, Math.ceil(totalItems / size))
+  const page = Math.min(parseFeedPage(requestedPage), totalPages)
+  const wanted = Math.min(totalItems, page * size)
+  if (!wanted) {
+    return { items: [], page, pageSize: size, totalItems, totalPages, hasPrevious: false, hasNext: false }
+  }
+
+  const postComparator = comparator(sort, now)
+  const compare = (a, b) => {
+    const aSticky = a.post.stickied ? 1 : 0
+    const bSticky = b.post.stickied ? 1 : 0
+    if (aSticky !== bSticky) return bSticky - aSticky
+    const ranked = postComparator(a.post, b.post)
+    // Array#sort is stable, so preserve that existing tie behaviour even when
+    // the requested page is selected via a heap instead of a full sort.
+    return ranked || (a.index - b.index)
+  }
+  const heap = [] // root is the least desirable selected row
+  for (let index = 0; index < list.length; index++) {
+    const post = list[index]
+    if (!eligible(post)) continue
+    const row = { post, index }
+    if (heap.length < wanted) heapPushWorst(heap, row, compare)
+    else if (compare(row, heap[0]) < 0) {
+      heap[0] = row
+      heapSinkWorst(heap, 0, compare)
+    }
+  }
+  heap.sort(compare)
+  const start = (page - 1) * size
+  return {
+    items: heap.slice(start, start + size).map(row => row.post),
+    page,
+    pageSize: size,
+    totalItems,
+    totalPages,
+    hasPrevious: page > 1,
+    hasNext: page < totalPages
+  }
+}
+
+function heapPushWorst (heap, row, compare) {
+  heap.push(row)
+  let child = heap.length - 1
+  while (child > 0) {
+    const parent = Math.floor((child - 1) / 2)
+    // The less desirable row belongs closer to the root.
+    if (compare(heap[parent], heap[child]) > 0) break
+    ;[heap[parent], heap[child]] = [heap[child], heap[parent]]
+    child = parent
+  }
+}
+
+function heapSinkWorst (heap, parent, compare) {
+  for (;;) {
+    const left = parent * 2 + 1
+    const right = left + 1
+    let worst = parent
+    if (left < heap.length && compare(heap[left], heap[worst]) > 0) worst = left
+    if (right < heap.length && compare(heap[right], heap[worst]) > 0) worst = right
+    if (worst === parent) return
+    ;[heap[parent], heap[worst]] = [heap[worst], heap[parent]]
+    parent = worst
+  }
 }
 
 export function sortComments (comments, sort = 'best', now = Date.now()) {

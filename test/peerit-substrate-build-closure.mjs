@@ -41,8 +41,10 @@ for (const requiredProductFile of [
   'js/identity-store.js',
   'js/pow-current.js',
   'js/substrate/local-identity.js',
+  'js/substrate/author-bind-inner-envelope-policy.mjs',
   'js/substrate/peerit-journal-backend.js',
   'js/substrate/peerit-journal.js',
+  'js/substrate/peerit-operation-authority-v1.js',
   'js/substrate/peerit-product-runtime.js',
   'js/substrate/peerit-product-ui.js',
   'js/substrate/peerit-substrate-sync.js'

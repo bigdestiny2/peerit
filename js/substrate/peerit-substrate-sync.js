@@ -10,26 +10,50 @@
 // does not depend on navigator.locks being present.
 
 import { hashHex } from '../crypto.js'
-import { verifyRecord } from '../verify.js'
 import {
   LEGACY_SUBSTRATE_STATE_KEY,
   PeeritJournal,
   createIndexedDbPeeritJournal
 } from './peerit-journal.js'
+import {
+  PEERIT_INNER_OPERATION_BATCH_V1_DEFAULT_MAX_RECORD_KEY_BYTES,
+  normalizePeeritSignedOperationBatchV1
+} from './peerit-operation-authority-v1.js'
 import { isPeeritVerifiedRelayAdapter } from './relay-consumer.js'
 
 export const SUBSTRATE_STATE_KEY = LEGACY_SUBSTRATE_STATE_KEY
 
 const MAX_RELAY_TARGETS = 3
 const MAX_DELIVERY_INTENT_CONCURRENCY = 32
-const SIGNER = /^[0-9a-f]{64}$/i
-const SIGNATURE = /^[0-9a-f]{128}$/i
 const ACKNOWLEDGED = new Set(['acknowledged', 'readback-verified'])
 
 function clone (value) {
   if (value == null) return value
   if (typeof structuredClone === 'function') return structuredClone(value)
   return JSON.parse(JSON.stringify(value))
+}
+
+async function normalizePublicationBatch (operations, options = undefined) {
+  try {
+    return await normalizePeeritSignedOperationBatchV1(operations, options)
+  } catch (cause) {
+    // Retain the public sync-boundary error vocabulary for callers that already
+    // distinguish malformed/unsigned records from a cryptographically bad
+    // record, while preserving the narrower authority reason as the cause.
+    if (cause && cause.code === 'PEERIT_OPERATION_BATCH_METADATA') {
+      const error = new Error('Peerit substrate append refuses an unsigned or malformed author event.')
+      error.code = 'PEERIT_SUBSTRATE_UNSIGNED_EVENT'
+      error.cause = cause
+      throw error
+    }
+    if (cause && cause.code === 'PEERIT_OPERATION_BATCH_SIGNATURE') {
+      const error = new Error('Peerit substrate append refuses a forged, tampered, or owner-mismatched event.')
+      error.code = 'PEERIT_SUBSTRATE_INVALID_SIGNATURE'
+      error.cause = cause
+      throw error
+    }
+    throw cause
+  }
 }
 
 function emptySummary () {
@@ -44,41 +68,6 @@ function emptySummary () {
     latest: null,
     dormant: true
   }
-}
-
-function stable (value) {
-  if (value === null) return 'null'
-  if (typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value)
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new TypeError('signed operation contains a non-finite number')
-    return JSON.stringify(value)
-  }
-  if (Array.isArray(value)) return '[' + value.map(item => stable(item === undefined ? null : item)).join(',') + ']'
-  if (!value || typeof value !== 'object') throw new TypeError('signed operation contains an unsupported value')
-  const keys = Object.keys(value).filter(key => value[key] !== undefined).sort()
-  return '{' + keys.map(key => JSON.stringify(key) + ':' + stable(value[key])).join(',') + '}'
-}
-
-async function normalizeOperation (input) {
-  if (!input || typeof input !== 'object' || typeof input.type !== 'string' || !input.type) {
-    throw new TypeError('Peerit substrate append requires an operation type')
-  }
-  const data = clone(input.data)
-  if (!data || typeof data !== 'object' || data.id == null) {
-    throw new TypeError('Peerit substrate append requires record data with an id')
-  }
-  if (!SIGNER.test(String(data._k || '')) || !SIGNATURE.test(String(data._sig || ''))) {
-    const error = new Error('Peerit substrate append refuses an unsigned or malformed author event.')
-    error.code = 'PEERIT_SUBSTRATE_UNSIGNED_EVENT'
-    throw error
-  }
-  const semanticType = input.type === 'v2' ? data._t : input.type
-  if ((await verifyRecord(input.type, data, semanticType)) !== 'ok') {
-    const error = new Error('Peerit substrate append refuses a forged, tampered, or owner-mismatched event.')
-    error.code = 'PEERIT_SUBSTRATE_INVALID_SIGNATURE'
-    throw error
-  }
-  return { type: input.type, data }
 }
 
 function viewKey (operation) {
@@ -432,8 +421,18 @@ export class PeeritSubstrateSync {
       error.cause = this._localFailure
       throw error
     }
-    const normalized = await Promise.all(operations.map(normalizeOperation))
-    const exact = stable({ version: 1, operations: normalized })
+    // VNext's narrow operation authority preserves the existing canonical
+    // journal bytes while rejecting mixed authors, duplicate reductions,
+    // noncanonical JSON, and unclosed v2 semantic types before the journal's
+    // failure latch can be tripped.
+    const journalKeyLimit = this.journal && this.journal.limits && this.journal.limits.maxRecordKeyBytes
+    const batch = await normalizePublicationBatch(operations, {
+      maxRecordKeyBytes: Number.isSafeInteger(journalKeyLimit) && journalKeyLimit > 0
+        ? journalKeyLimit
+        : PEERIT_INNER_OPERATION_BATCH_V1_DEFAULT_MAX_RECORD_KEY_BYTES
+    })
+    const normalized = batch.operations
+    const exact = batch.canonicalOperationBatch
     const intentId = await hashHex('peerit.substrate.intent.v1|' + exact)
     const logicalId = await hashHex('peerit.substrate.logical.v1|' + exact)
     const keys = normalized.map(viewKey)

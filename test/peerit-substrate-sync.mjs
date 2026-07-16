@@ -211,11 +211,25 @@ async function main () {
   ok(firstLww.logicalId !== secondLww.logicalId && (await lwwSync.status()).publication.intentCount === 2,
     'distinct signed LWW updates sharing one materialized key retain distinct logical event identities')
   await assert.rejects(
-    () => lwwSync.append({ type: 'profile', data: { id: 'a'.repeat(64), author: 'a'.repeat(64), _k: 'a'.repeat(64), _sig: 'b'.repeat(128) } }),
+    () => lwwSync.append({
+      type: 'profile',
+      data: {
+        id: 'a'.repeat(64),
+        author: 'a'.repeat(64),
+        _k: 'a'.repeat(64),
+        _sig: 'b'.repeat(128),
+        _dk: 'c'.repeat(64),
+        _ns: 'peerit',
+        _alg: 'ed25519'
+      }
+    }),
     error => error && error.code === 'PEERIT_SUBSTRATE_INVALID_SIGNATURE'
   )
   passed++
   console.log('  ✓ shape-correct fake signatures cannot enter the local materialized view')
+  const afterRejectedPreflight = await lwwSync.append(await signedOperation(identity, 'valid after rejected preflight'))
+  ok(afterRejectedPreflight.ok === true,
+    'a pre-journal signature rejection cannot latch local authoring or block the next valid append')
   lwwSync.destroy()
 
   console.log('\n— ambiguous response loss never auto-resubmits —')

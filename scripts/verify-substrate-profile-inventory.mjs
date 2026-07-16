@@ -39,9 +39,13 @@ assert.equal(result.externalTypeCount, PEERIT_PROFILE_STATUS.externalHiveRelayTy
 assert.equal(result.profileRegistryCount, PEERIT_PROFILE_STATUS.profileRegistryCount)
 assert.equal(PEERIT_PROFILE_STATUS.profileRegistryReady, true)
 assert.equal(PEERIT_PROFILE_STATUS.profileVectorManifestReady, true)
+assert.equal(PEERIT_PROFILE_STATUS.webAssetContentFetchValidationReady, true)
 assert.equal(PROFILE_ARTIFACT_STATUS.fixtureOnly, false)
+assert.equal(PROFILE_ARTIFACT_STATUS.webAssetContentFetchValidationReady, true)
 assert.equal(PROFILE_RELEASE_BLOCKERS.includes('PROFILE_REGISTRY_ARTIFACT_MISSING'), false)
 assert.equal(PROFILE_RELEASE_BLOCKERS.includes('PROFILE_VECTOR_MANIFEST_MISSING'), false)
+assert.equal(PROFILE_RELEASE_BLOCKERS.includes(
+  'PROFILE_WEB_ASSET_CONTENT_FETCH_VALIDATION_INCOMPLETE'), false)
 assert.equal(fs.existsSync(path.join(root, PROFILE_ARTIFACT_STATUS.registryArtifact)), true)
 assert.equal(fs.existsSync(path.join(root, PROFILE_ARTIFACT_STATUS.vectorManifest)), true)
 

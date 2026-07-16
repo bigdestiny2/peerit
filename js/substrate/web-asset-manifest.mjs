@@ -15,6 +15,8 @@ export const PEERIT_WEB_ASSET_MANIFEST_HASH_DOMAIN =
   'peerit.release-web-asset-manifest-hash.v1'
 export const PEERIT_APP_ARTIFACT_HASH_DOMAIN =
   'peerit.release-app-artifact-hash.v1'
+export const PEERIT_BOOTSTRAP_HASH_DOMAIN =
+  'peerit.hiverelay.bootstrap-hash.v1'
 export const PEERIT_WEB_ASSET_LIMITS = Object.freeze({
   maximumAssets: 4096,
   maximumPathBytes: 512,
@@ -192,6 +194,10 @@ export function hashPeeritWebAssetManifestV1 (input) {
 
 export function hashPeeritAppArtifactV1 (input) {
   return domainLengthHash(PEERIT_APP_ARTIFACT_HASH_DOMAIN, input)
+}
+
+export function hashPeeritBootstrapV1 (input) {
+  return domainLengthHash(PEERIT_BOOTSTRAP_HASH_DOMAIN, input)
 }
 
 export function verifyPeeritWebAssetBytesV1 (manifest, suppliedAssets, options = {}) {

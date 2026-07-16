@@ -267,6 +267,7 @@ test('canonical profile and local publication slices clear only proven blockers 
   assert.equal(PEERIT_PROFILE_STATUS.profileArtifact.pendingClientExampleImportCount, 0)
   assert.equal(PEERIT_PROFILE_STATUS.profileArtifact.externalCodecAuthorityComplete, true)
   assert.equal(PEERIT_PROFILE_STATUS.profileArtifact.recordCodecsReady, true)
+  assert.equal(PEERIT_PROFILE_STATUS.profileArtifact.webAssetContentFetchValidationReady, true)
   assert.equal(PEERIT_PROFILE_STATUS.profileArtifact.crossRuntimeEqualityReady, true)
   assert.equal(PEERIT_PROFILE_STATUS.validatorArtifactReady, true)
   assert.equal(PEERIT_PROFILE_STATUS.validatorVectorManifestReady, true)
@@ -287,6 +288,7 @@ test('canonical profile and local publication slices clear only proven blockers 
   assert.equal(PEERIT_PROFILE_STATUS.releaseControlSlice.fullProfileAbi, false)
   assert.equal(PEERIT_PROFILE_STATUS.releaseControlSlice.releaseReady, false)
   assert.equal(PEERIT_PROFILE_STATUS.signedPinVerifierReady, true)
+  assert.equal(PEERIT_PROFILE_STATUS.webAssetContentFetchValidationReady, true)
   assert.equal(PEERIT_PROFILE_STATUS.signedPinContinuity, SIGNED_PIN_CONTINUITY_STATUS)
   assert.equal(SIGNED_PIN_CONTINUITY_STATUS.exactBrandedAnchorRequired, true)
   assert.equal(SIGNED_PIN_CONTINUITY_STATUS.contiguousUnknownNewerPinsAccepted, true)
@@ -305,8 +307,7 @@ test('canonical profile and local publication slices clear only proven blockers 
     'PROFILE_REPLICA_DURABILITY_PROOF_RUNTIME_INCOMPLETE',
     'PROFILE_DISCOVERY_RADIX_PROPOSAL_REPLAY_RUNTIME_INCOMPLETE',
     'PROFILE_FIXED_SUPPORTING_EVIDENCE_AUTHORITY_UNAVAILABLE',
-    'PROFILE_LEGACY_RECORD_RESTORE_EVIDENCE_AUTHORITY_INCOMPLETE',
-    'PROFILE_WEB_ASSET_CONTENT_FETCH_VALIDATION_INCOMPLETE'
+    'PROFILE_LEGACY_RECORD_RESTORE_EVIDENCE_AUTHORITY_INCOMPLETE'
   ])
   assert.throws(() => assertPeeritProfileReleaseReady(), error => {
     assert.equal(error.code, 'PEERIT_PROFILE_INCOMPLETE')

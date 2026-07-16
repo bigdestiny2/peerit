@@ -26,7 +26,9 @@ import {
 } from './validator-artifact.mjs'
 import {
   decodePeeritWebAssetManifestV1,
+  encodePeeritWebAssetManifestV1,
   hashPeeritAppArtifactV1,
+  hashPeeritBootstrapV1,
   hashPeeritWebAssetManifestV1,
   verifyPeeritWebAssetBytesV1
 } from './web-asset-manifest.mjs'
@@ -70,11 +72,15 @@ const MAX_RUNTIME_BOOT_BYTES = 4 * 1024 * 1024
 const MAX_WEB_ASSET_MANIFEST_BYTES = 2269742
 const ASSET_FETCH_DEADLINE_MILLIS = 10000
 const RUNTIME_ASSEMBLY_DEADLINE_MILLIS = 30000
+const MAX_COMPLETE_WEB_ASSET_BYTES = 64 * 1024 * 1024
+const MAX_COMPLETE_WEB_ASSET_BYTES_PER_ASSET = 16 * 1024 * 1024
+const MAX_COMPLETE_WEB_ASSET_FETCH_CONCURRENCY = 8
 
 export const PEERIT_BROWSER_RUNTIME_ASSEMBLY_STATUS = Object.freeze({
   deterministicHiveVendoringReady: true,
   hiveArtifactReleaseEvidenceVerifierReady: true,
   signedWebAssetManifestVerifierReady: true,
+  completeSignedWebAssetContentFetchReady: true,
   signedProfilePinVerifierReady: true,
   profileArtifactBindingReady: true,
   validatorArtifactBindingReady: true,
@@ -660,6 +666,125 @@ export async function fetchBoundedPeeritBrowserRuntimeAssetV1 ({
   }
 }
 
+function boundedWebAssetFetchPolicy (value, field, maximum) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    fail('WEB_ASSET_FETCH_POLICY_INVALID', `${field} must be an integer from 1 through ${maximum}`)
+  }
+  return value
+}
+
+function canonicalWebAssetManifest (value) {
+  return value && typeof value === 'object' && Array.isArray(value.assets)
+    ? decodePeeritWebAssetManifestV1(encodePeeritWebAssetManifestV1(value))
+    : decodePeeritWebAssetManifestV1(value)
+}
+
+export async function fetchAndVerifyPeeritWebAssetContentV1 (options = {}) {
+  if (!options || typeof options !== 'object' || typeof options.fetch !== 'function') {
+    fail('WEB_ASSET_FETCH_POLICY_INVALID', 'complete web asset validation requires a fetch function')
+  }
+  const manifest = canonicalWebAssetManifest(options.manifest)
+  const maximumTotalBytes = boundedWebAssetFetchPolicy(
+    options.maximumTotalBytes == null ? MAX_COMPLETE_WEB_ASSET_BYTES : options.maximumTotalBytes,
+    'maximumTotalBytes', MAX_COMPLETE_WEB_ASSET_BYTES)
+  const maximumAssetBytes = boundedWebAssetFetchPolicy(
+    options.maximumAssetBytes == null ? MAX_COMPLETE_WEB_ASSET_BYTES_PER_ASSET : options.maximumAssetBytes,
+    'maximumAssetBytes', MAX_COMPLETE_WEB_ASSET_BYTES_PER_ASSET)
+  const maximumConcurrency = boundedWebAssetFetchPolicy(
+    options.maximumConcurrency == null
+      ? MAX_COMPLETE_WEB_ASSET_FETCH_CONCURRENCY
+      : options.maximumConcurrency,
+    'maximumConcurrency', MAX_COMPLETE_WEB_ASSET_FETCH_CONCURRENCY)
+  const timeoutMillis = boundedWebAssetFetchPolicy(
+    options.timeoutMillis == null ? ASSET_FETCH_DEADLINE_MILLIS : options.timeoutMillis,
+    'timeoutMillis', ASSET_FETCH_DEADLINE_MILLIS)
+  const document = options.document || globalThis.document
+  const base = options.baseUrl || (document && document.baseURI) || globalThis.location?.href
+  let baseUrl
+  try {
+    baseUrl = new URL(base)
+  } catch {
+    fail('WEB_ASSET_FETCH_ORIGIN_INVALID', 'complete web asset validation requires one canonical base URL')
+  }
+  if (!['https:', 'http:'].includes(baseUrl.protocol) || baseUrl.username || baseUrl.password) {
+    fail('WEB_ASSET_FETCH_ORIGIN_INVALID', 'complete web asset validation requires an HTTP(S) origin')
+  }
+
+  // This call performs the runtime-path checks before any network request.
+  verifyPeeritWebAssetBytesV1(manifest, new Map(), { requiredPaths: [] })
+  const appArtifactPath = PEERIT_BROWSER_RUNTIME_ASSET_PATHS.appArtifact
+  if (!manifest.assets.some(asset => asset.path === appArtifactPath)) {
+    fail('WEB_APP_ARTIFACT_MISSING', `${appArtifactPath} is absent from signed WebAssetManifestV1`)
+  }
+
+  let totalBytes = 0
+  const plan = manifest.assets.map(asset => {
+    const length = Number(asset.byteLength)
+    if (!Number.isSafeInteger(length) || length > maximumAssetBytes ||
+        totalBytes + length > maximumTotalBytes) {
+      fail('WEB_ASSET_FETCH_BUDGET_EXCEEDED', `${asset.path} exceeds the complete web asset fetch budget`)
+    }
+    totalBytes += length
+    return Object.freeze({
+      asset,
+      length,
+      url: canonicalSameOriginUrl(asset.path, { baseURI: baseUrl.href }, asset.path)
+    })
+  })
+
+  const assets = new Map()
+  for (let offset = 0; offset < plan.length; offset += maximumConcurrency) {
+    const batch = plan.slice(offset, offset + maximumConcurrency)
+    const results = await Promise.allSettled(batch.map(async entry => ({
+      path: entry.asset.path,
+      bytes: await fetchBoundedPeeritBrowserRuntimeAssetV1({
+        fetch: options.fetch,
+        url: entry.url,
+        path: entry.asset.path,
+        maximumBytes: Math.min(maximumAssetBytes, entry.length),
+        expectedLength: entry.length,
+        signal: options.signal || null,
+        timeoutMillis
+      })
+    })))
+    const failed = results.find(result => result.status === 'rejected')
+    if (failed) throw failed.reason
+    for (const result of results) assets.set(result.value.path, result.value.bytes)
+  }
+
+  const verified = verifyPeeritWebAssetBytesV1(manifest, assets, { requireComplete: true })
+  const appArtifactBytes = assets.get(appArtifactPath)
+  if (!bytesEqual(hashPeeritAppArtifactV1(appArtifactBytes), manifest.appArtifactHash)) {
+    fail('WEB_APP_ARTIFACT_DRIFT', `${appArtifactPath} does not match WebAssetManifestV1.appArtifactHash`)
+  }
+
+  const bootstrapCandidates = new Map()
+  for (const [path, assetBytes] of assets) {
+    const hash = bytesToHex(hashPeeritBootstrapV1(assetBytes))
+    const paths = bootstrapCandidates.get(hash) || []
+    paths.push(path)
+    bootstrapCandidates.set(hash, paths)
+  }
+  const bootstrapAssets = manifest.recommendedBootstrapHashes.map(hash => {
+    const hashHex = bytesToHex(hash)
+    const paths = bootstrapCandidates.get(hashHex)
+    if (!paths || paths.length === 0) {
+      fail('WEB_BOOTSTRAP_CONTENT_MISSING', `recommended bootstrap ${hashHex} has no exact same-origin asset`)
+    }
+    return Object.freeze({ hash: hash.slice(), paths: Object.freeze([...paths]) })
+  })
+
+  return Object.freeze({
+    releaseSequence: manifest.releaseSequence,
+    assets,
+    verifiedAssetCount: verified.verifiedAssetCount,
+    verifiedTotalBytes: totalBytes,
+    appArtifactVerified: true,
+    bootstrapAssets: Object.freeze(bootstrapAssets),
+    complete: verified.complete
+  })
+}
+
 function deadlineError (code, message) {
   const error = new Error(message)
   error.code = code
@@ -752,29 +877,26 @@ export async function loadPeeritBrowserRuntimeAuthorityV1 (options = {}) {
       fail('PRODUCTION_WEB_ASSET_MANIFEST_PIN_MISMATCH',
         'fetched WebAssetManifestV1 does not match the verified production pin')
     }
-    const assets = new Map()
     const signedAssets = new Map(webAssetManifest.assets.map(asset => [asset.path, asset]))
-    let totalBytes = 0
+    let runtimeBootBytes = 0
     for (const assetPath of Object.values(PEERIT_BROWSER_RUNTIME_ASSET_PATHS)) {
       const asset = signedAssets.get(assetPath)
       if (!asset) fail('WEB_ASSET_MISSING', `${assetPath} is absent from signed WebAssetManifestV1`)
       const length = Number(asset.byteLength)
       const hardCap = ASSET_HARD_CAPS[assetPath]
       if (!Number.isSafeInteger(length) || length > hardCap ||
-          totalBytes + length > MAX_RUNTIME_BOOT_BYTES) {
+          runtimeBootBytes + length > MAX_RUNTIME_BOOT_BYTES) {
         fail('BROWSER_RUNTIME_ASSET_LENGTH_INVALID', `${assetPath} exceeds the runtime asset budget`)
       }
-      totalBytes += length
-      const assetUrl = canonicalSameOriginUrl(assetPath, document, assetPath)
-      assets.set(assetPath, await fetchBoundedPeeritBrowserRuntimeAssetV1({
-        fetch: fetchFunction,
-        url: assetUrl,
-        path: assetPath,
-        maximumBytes: hardCap,
-        expectedLength: length,
-        signal: assemblyDeadline.signal
-      }))
+      runtimeBootBytes += length
     }
+    const content = await fetchAndVerifyPeeritWebAssetContentV1({
+      fetch: fetchFunction,
+      manifest: webAssetManifest,
+      document,
+      signal: assemblyDeadline.signal
+    })
+    const assets = content.assets
     const authority = await assemblePeeritBrowserRuntimeAuthorityV1({
       assets,
       pinHistoryTerminal: options.pinHistoryTerminal,

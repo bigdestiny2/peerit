@@ -4,8 +4,7 @@ export const PROFILE_RELEASE_BLOCKERS = Object.freeze([
   'PROFILE_REPLICA_DURABILITY_PROOF_RUNTIME_INCOMPLETE',
   'PROFILE_DISCOVERY_RADIX_PROPOSAL_REPLAY_RUNTIME_INCOMPLETE',
   'PROFILE_FIXED_SUPPORTING_EVIDENCE_AUTHORITY_UNAVAILABLE',
-  'PROFILE_LEGACY_RECORD_RESTORE_EVIDENCE_AUTHORITY_INCOMPLETE',
-  'PROFILE_WEB_ASSET_CONTENT_FETCH_VALIDATION_INCOMPLETE'
+  'PROFILE_LEGACY_RECORD_RESTORE_EVIDENCE_AUTHORITY_INCOMPLETE'
 ])
 
 export const PROFILE_UNPUBLISHED_ARTIFACTS = Object.freeze({})
@@ -75,6 +74,7 @@ export const PROFILE_ARTIFACT_STATUS = Object.freeze({
   pendingClientExampleImportCount: 0,
   externalCodecAuthorityComplete: true,
   recordCodecsReady: true,
+  webAssetContentFetchValidationReady: true,
   validatorReady: false,
   crossRuntimeEqualityReady: true,
   releaseReady: false
@@ -150,6 +150,7 @@ export const PEERIT_PROFILE_STATUS = Object.freeze({
   validatorReady: false,
   signedPinVerifierReady: true,
   witnessedFloorPersistenceReady: true,
+  webAssetContentFetchValidationReady: true,
   offlineAuthoringStateMachineReady: true,
   publicationQueueStateMachineReady: true,
   crossRuntimeEqualityReady: true,

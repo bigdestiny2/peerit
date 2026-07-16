@@ -393,6 +393,7 @@ for (const unsafePath of [
 
 const manifest = decodePeeritWebAssetManifestV1(valid.webAssetManifestBytes)
 assert.equal(verifyPeeritWebAssetBytesV1(manifest, valid.assets, { requireComplete: true }).complete, true)
+assert.equal(PEERIT_BROWSER_RUNTIME_ASSEMBLY_STATUS.completeSignedWebAssetContentFetchReady, true)
 assert.equal(PEERIT_BROWSER_RUNTIME_ASSEMBLY_STATUS.releaseReady, false)
 assert.deepEqual(PEERIT_BROWSER_RUNTIME_ASSEMBLY_STATUS.releaseBlockers, [
   'PRODUCTION_PEERIT_SIGNED_PROFILE_PIN_UNAVAILABLE',

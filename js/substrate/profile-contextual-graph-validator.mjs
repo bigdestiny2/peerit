@@ -16,6 +16,10 @@ import {
   u64Bytes
 } from './release-control-primitives.mjs'
 import { encodePeeritProfileRecordPrefixFromIr } from './profile-codec-ir.mjs'
+import {
+  hashPeeritWebAssetManifestV1,
+  verifyPeeritWebAssetContentV1
+} from './web-asset-manifest.mjs'
 
 const AUTHORITY_STATE = new WeakMap()
 const SUPPORTING_EVIDENCE_STATE = new WeakMap()
@@ -1881,6 +1885,53 @@ function validateLegacyRetirementReferences (state, session, value, bytes, conte
   return Object.freeze({ evidenceHash, target, previous, older, genesis })
 }
 
+function validateWebAssetManifestGraph (state, session, value, bytes, context = {}) {
+  if (context.profilePinBytes == null) {
+    failGraph('WEB_ASSET_PROFILE_PIN_REQUIRED', 'WebAssetManifestV1 graph validation requires exact signed profilePinBytes')
+  }
+  if (context.webAssetContentSnapshot == null) {
+    failGraph('WEB_ASSET_CONTENT_SNAPSHOT_REQUIRED', 'WebAssetManifestV1 graph validation requires a complete content snapshot')
+  }
+  const pinBytes = snapshotBytes(context.profilePinBytes, 'web asset profile pin')
+  const pin = state.catalog.PeeritHiveRelayProfilePinV1.decode(pinBytes)
+  const pinChain = validatePinChain(state, session, pin, pinBytes)
+  const manifestHash = hashPeeritWebAssetManifestV1(bytes)
+  if (pin.releaseSequence !== value.releaseSequence ||
+      !bytesEqual(pin.webAssetManifestHash, manifestHash) ||
+      !bytesEqual(pin.appArtifactHash, value.appArtifactHash) ||
+      pin.recommendedBootstrapHashes.length !== value.recommendedBootstrapHashes.length ||
+      pin.recommendedBootstrapHashes.some((hash, index) =>
+        !bytesEqual(hash, value.recommendedBootstrapHashes[index]))) {
+    failGraph('BAD_WEB_ASSET_PIN_BINDING', 'WebAssetManifestV1 release, hash, app, or bootstrap fields do not equal its signed profile pin')
+  }
+
+  chargeEntries(session, value.assets.length, 'web asset manifest entries')
+  if (session.fetchedObjects + value.assets.length > state.budgets.maximumFetchedObjects) {
+    failGraph('CONTEXTUAL_GRAPH_BUDGET_EXCEEDED', 'web asset snapshot exceeds the fetched-object budget')
+  }
+  let declaredBytes = 0n
+  for (const asset of value.assets) declaredBytes = checkedAdd(declaredBytes, asset.byteLength)
+  const remainingBytes = BigInt(state.budgets.maximumFetchedBytes - session.fetchedBytes)
+  if (declaredBytes > remainingBytes || declaredBytes > BigInt(Number.MAX_SAFE_INTEGER)) {
+    failGraph('CONTEXTUAL_GRAPH_BUDGET_EXCEEDED', 'web asset snapshot exceeds the fetched-byte budget')
+  }
+  session.fetchedObjects += value.assets.length
+  session.fetchedBytes += Number(declaredBytes)
+  const content = verifyPeeritWebAssetContentV1(value, context.webAssetContentSnapshot)
+  if (content.verifiedTotalBytes !== Number(declaredBytes)) {
+    failGraph('BAD_WEB_ASSET_CONTENT_LENGTH', 'verified web asset bytes do not reproduce the manifest aggregate length')
+  }
+  return Object.freeze({
+    manifestHash,
+    pinHash: hashPeeritProfilePinV1(pinBytes),
+    pinChainLength: pinChain.length,
+    verifiedAssetCount: content.verifiedAssetCount,
+    verifiedTotalBytes: content.verifiedTotalBytes,
+    recommendedBootstrapCount: content.bootstrapAssets.length,
+    complete: content.complete
+  })
+}
+
 const INCOMPLETE_CONTEXTUAL_SCHEMAS = Object.freeze(new Set([
   'AvailabilityBootstrapV1',
   'InboxEpochSetV1',
@@ -1922,8 +1973,7 @@ const INCOMPLETE_CONTEXTUAL_SCHEMAS = Object.freeze(new Set([
   'LegacyArchiveIndexV1',
   'PeeritLegacyArchiveV1',
   'LegacyArchiveBundleV1',
-  'LegacyRetirementEvidenceV1',
-  'WebAssetManifestV1'
+  'LegacyRetirementEvidenceV1'
 ]))
 
 function authorityState (authority) {
@@ -1969,6 +2019,7 @@ export function createPeeritContextualGraphAuditAuthorityV1 (options) {
       }
       if (schemaName === 'PeeritReleaseQualificationEvidenceBundleV1') return validateQualificationEvidenceBundle(state, session, value, bytes)
       if (schemaName === 'PeeritOperatorGroupRegistryV1') return validateOperatorGroupRegistry(state, session, value, bytes)
+      if (schemaName === 'WebAssetManifestV1') return validateWebAssetManifestGraph(state, session, value, bytes, context)
       if (INCOMPLETE_CONTEXTUAL_SCHEMAS.has(schemaName)) {
         failGraph('CONTEXTUAL_GRAPH_RUNTIME_UNAVAILABLE', `${schemaName} still requires an unassembled external proof or traversal runtime`)
       }
@@ -2021,8 +2072,16 @@ export function createPeeritContextualGraphAuditAuthorityV1 (options) {
       const snapshot = snapshotBytes(bytes, 'legacy retirement evidence')
       return validateLegacyRetirementReferences(state, createSession(state, context), state.catalog.LegacyRetirementEvidenceV1.decode(snapshot), snapshot, context)
     },
+    validateWebAssetManifest (bytes, context = {}) {
+      const snapshot = snapshotBytes(bytes, 'web asset manifest')
+      return validateWebAssetManifestGraph(state, createSession(state, context), state.catalog.WebAssetManifestV1.decode(snapshot), snapshot, context)
+    },
     recoverCustodyEnvelope (bytes, custodianPrivateKeys, context = {}) {
       return recoverCustodyEnvelope(state, bytes, custodianPrivateKeys, context)
+    },
+    validateAuthorSignatureChainAudit (bytes, context = {}) {
+      const snapshot = snapshotBytes(bytes, 'author binding')
+      return validateAuthorChain(state, createSession(state, context), state.catalog.AuthorBindV1.decode(snapshot), snapshot)
     },
     validateAuthorChain () {
       failGraph('CONTEXTUAL_GRAPH_RUNTIME_UNAVAILABLE',
@@ -2058,6 +2117,7 @@ export const PEERIT_CONTEXTUAL_GRAPH_VALIDATOR_STATUS_V1 = Object.freeze({
   boundedFetchSnapshotReady: true,
   exactContentHashSubstitutionRejectionReady: true,
   pinCheckpointAuthorObservationChainReady: true,
+  authorSignatureChainAuditReady: true,
   releaseAuthorityTransitionReady: true,
   rootRecoveryThresholdCryptoReady: true,
   discoveryThresholdCryptoReady: true,
@@ -2067,6 +2127,11 @@ export const PEERIT_CONTEXTUAL_GRAPH_VALIDATOR_STATUS_V1 = Object.freeze({
   deterministicCutoffArchiveGraphReady: true,
   deterministicMigrationGenesisGraphReady: true,
   retirementReferenceGraphReady: true,
+  webAssetManifestGraphReady: true,
+  runtimeUnavailableSchemaCount: INCOMPLETE_CONTEXTUAL_SCHEMAS.size,
+  runtimeUnavailableSchemas: Object.freeze([...INCOMPLETE_CONTEXTUAL_SCHEMAS].sort()),
+  signedValidatorBundleGraphAuthorityFactoryReady: false,
+  browserHarnessCompleteGraphReady: false,
   legacyRecordAndRestoreAuthenticityReady: false,
   retirementRestoreEvidenceGraphReady: false,
   externalHiveRelayProofRuntimeReady: false,

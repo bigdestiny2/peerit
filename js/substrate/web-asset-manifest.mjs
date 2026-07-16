@@ -4,6 +4,7 @@ import {
   asBytes,
   blake2b256,
   bytesEqual,
+  bytesToHex,
   compareBytes,
   decodeUtf8,
   domainLengthHash,
@@ -17,6 +18,7 @@ export const PEERIT_APP_ARTIFACT_HASH_DOMAIN =
   'peerit.release-app-artifact-hash.v1'
 export const PEERIT_BOOTSTRAP_HASH_DOMAIN =
   'peerit.hiverelay.bootstrap-hash.v1'
+export const PEERIT_APP_ARTIFACT_PATH_V1 = '/peerit-app-artifact-v1.json'
 export const PEERIT_WEB_ASSET_LIMITS = Object.freeze({
   maximumAssets: 4096,
   maximumPathBytes: 512,
@@ -227,5 +229,56 @@ export function verifyPeeritWebAssetBytesV1 (manifest, suppliedAssets, options =
     releaseSequence: manifest.releaseSequence,
     verifiedAssetCount: supplied.size,
     complete: supplied.size === manifest.assets.length
+  })
+}
+
+export function verifyPeeritWebAssetContentV1 (manifest, suppliedAssets, options = {}) {
+  manifest = manifest && manifest.assets
+    ? decodePeeritWebAssetManifestV1(encodePeeritWebAssetManifestV1(manifest))
+    : decodePeeritWebAssetManifestV1(manifest)
+  const supplied = suppliedAssets instanceof Map
+    ? new Map(suppliedAssets)
+    : new Map(Object.entries(suppliedAssets || {}))
+  const assets = new Map()
+  for (const [path, value] of supplied) {
+    if (typeof path !== 'string') fail('BAD_WEB_ASSET_PATH', 'supplied web asset path must be a string')
+    assets.set(path, new Uint8Array(asBytes(value, `${path} bytes`)))
+  }
+  const verified = verifyPeeritWebAssetBytesV1(manifest, assets, { requireComplete: true })
+  const appArtifactPath = options.appArtifactPath == null
+    ? PEERIT_APP_ARTIFACT_PATH_V1
+    : String(options.appArtifactPath)
+  if (!manifest.assets.some(asset => asset.path === appArtifactPath) || !assets.has(appArtifactPath)) {
+    fail('WEB_APP_ARTIFACT_MISSING', `${appArtifactPath} is absent from signed WebAssetManifestV1 content`)
+  }
+  if (!bytesEqual(hashPeeritAppArtifactV1(assets.get(appArtifactPath)), manifest.appArtifactHash)) {
+    fail('WEB_APP_ARTIFACT_DRIFT', `${appArtifactPath} does not match WebAssetManifestV1.appArtifactHash`)
+  }
+
+  const bootstrapCandidates = new Map()
+  for (const [path, assetBytes] of assets) {
+    const hash = bytesToHex(hashPeeritBootstrapV1(assetBytes))
+    const paths = bootstrapCandidates.get(hash) || []
+    paths.push(path)
+    bootstrapCandidates.set(hash, paths)
+  }
+  const bootstrapAssets = manifest.recommendedBootstrapHashes.map(hash => {
+    const hashHex = bytesToHex(hash)
+    const paths = bootstrapCandidates.get(hashHex)
+    if (!paths || paths.length === 0) {
+      fail('WEB_BOOTSTRAP_CONTENT_MISSING', `recommended bootstrap ${hashHex} has no exact same-origin asset`)
+    }
+    return Object.freeze({ hash: hash.slice(), paths: Object.freeze([...paths]) })
+  })
+
+  let verifiedTotalBytes = 0
+  for (const value of assets.values()) verifiedTotalBytes += value.byteLength
+  return Object.freeze({
+    releaseSequence: manifest.releaseSequence,
+    verifiedAssetCount: verified.verifiedAssetCount,
+    verifiedTotalBytes,
+    appArtifactVerified: true,
+    bootstrapAssets: Object.freeze(bootstrapAssets),
+    complete: verified.complete
   })
 }

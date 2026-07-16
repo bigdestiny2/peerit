@@ -11,6 +11,7 @@ import {
   PEERIT_CELL_READBACK_FRESHNESS_TTL_MS,
   createPeeritSubstrateSync
 } from '../js/substrate/peerit-substrate-sync.js'
+import { createBlindCellRelay } from '../js/substrate/blind-client-relay.js'
 import { publicationUiState } from '../js/substrate/publication-status.js'
 
 const TTL = 100
@@ -91,9 +92,13 @@ function relayFixture (id, state = {}) {
 }
 
 function syncFor (shared, relay, clock, suffix, options = {}) {
+  return syncForRelays(shared, relay ? [relay] : [], clock, suffix, options)
+}
+
+function syncForRelays (shared, relays, clock, suffix, options = {}) {
   return createPeeritSubstrateSync({
     journal: createMemoryPeeritJournal({ shared, clock: () => clock.value }),
-    relays: relay ? [relay] : [],
+    relays,
     autoFlush: false,
     clock: () => clock.value,
     readbackFreshnessTtlMs: TTL,
@@ -102,6 +107,37 @@ function syncFor (shared, relay, clock, suffix, options = {}) {
     channelName: `peerit-readback-freshness-${suffix}`,
     attemptOwner: `freshness-${suffix}`,
     ...options
+  })
+}
+
+function qualifiedRelayFixture (relayByte, storeByte, state = {}) {
+  const relayPublicKey = new Uint8Array(32).fill(relayByte)
+  const endpointContext = Object.freeze({
+    relayPublicKey,
+    storeId: new Uint8Array(32).fill(storeByte),
+    continuityRoot: new Uint8Array(32).fill(relayByte + 1),
+    durabilityContinuityHash: new Uint8Array(32).fill(storeByte + 1),
+    descriptorHash: new Uint8Array(32).fill(relayByte + storeByte),
+    endpointId: 1,
+    familyId: 2,
+    operationId: 3,
+    transportId: 1,
+    transportSupportBit: 1,
+    privacyProfileBit: 1,
+    durabilityProfileId: 1
+  })
+  const qualified = createBlindCellRelay({
+    blindClient: { createCellReplica () { throw new Error('identity-only adapter must not prepare') } },
+    relayPublicKey,
+    endpoint: Object.freeze({ verified: true }),
+    endpointContext,
+    httpClient: { request () { throw new Error('identity-only adapter must not send') } },
+    persistPreparedReplica () { throw new Error('identity-only adapter must not persist') },
+    persistVerifiedResult () { throw new Error('identity-only adapter must not persist') }
+  })
+  return Object.freeze({
+    ...relayFixture(qualified.id, state),
+    qualifiedContext: endpointContext
   })
 }
 
@@ -257,6 +293,53 @@ await identity.ensureActive('readback-freshness-test')
   assert.deepEqual([state.puts, state.gets], [1, 1],
     'cleared capability fails before GET and never authorizes a replacement PUT')
   reloaded.destroy()
+}
+
+{
+  const clock = { value: 4500 }
+  const oldState = {}
+  const original = qualifiedRelayFixture(17, 33, oldState)
+  const authored = await authorOnce(identity, original, oldState, clock, 'definitive-cell-loss')
+  authored.sync.destroy()
+
+  oldState.present = false
+  oldState.mode = 'not-found'
+  const lostOldTarget = qualifiedRelayFixture(17, 33, oldState)
+  const freshState = { present: false, capability: false }
+  const freshDifferentTarget = qualifiedRelayFixture(18, 34, freshState)
+  assert.equal(lostOldTarget.id, original.id,
+    'the old qualified relay/store tuple reproduces the exact historical target identity')
+  assert.notEqual(freshDifferentTarget.id, lostOldTarget.id)
+  assert.notDeepEqual(freshDifferentTarget.qualifiedContext.relayPublicKey,
+    lostOldTarget.qualifiedContext.relayPublicKey)
+  assert.notDeepEqual(freshDifferentTarget.qualifiedContext.storeId,
+    lostOldTarget.qualifiedContext.storeId)
+
+  const replacement = syncForRelays(
+    authored.shared,
+    [lostOldTarget, freshDifferentTarget],
+    clock,
+    'definitive-cell-loss-replacement'
+  )
+  await replacement.ready()
+  await replacement.flushPublicationQueue()
+  const status = await replacement.status()
+  const intent = await replacement.journal.getIntent(authored.intentId)
+  assert.equal(intent.targets[lostOldTarget.id].readbackRepairNeeded, true)
+  assert.equal(intent.targets[freshDifferentTarget.id].readbackVerified, true)
+  assert.equal(status.publication.durability.state, 'recently-retrievable')
+  assert.equal(status.publication.durability.readbackVerified, 1,
+    'only the fresh different target restores current availability')
+  assert.deepEqual([oldState.puts, oldState.gets], [1, 2],
+    'definitive old-Cell loss performs one final GET and never a same-target PUT')
+  assert.deepEqual([freshState.puts, freshState.gets], [1, 1],
+    'one fresh qualified relay/store target receives exactly one new replica and capability-bound readback')
+
+  await replacement.flushPublicationQueue()
+  assert.deepEqual([oldState.puts, oldState.gets], [1, 2])
+  assert.deepEqual([freshState.puts, freshState.gets], [1, 1],
+    'recovered availability is idempotent and never recreates either Cell')
+  replacement.destroy()
 }
 
 {

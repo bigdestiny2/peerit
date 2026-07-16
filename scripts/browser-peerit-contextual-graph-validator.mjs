@@ -4,7 +4,10 @@ import { build } from 'esbuild'
 import { chromium } from 'playwright'
 
 const entry = `
-import { PEERIT_CONTEXTUAL_GRAPH_CRYPTO_V1 } from './js/substrate/profile-contextual-graph-validator.mjs';
+import {
+  PEERIT_CONTEXTUAL_GRAPH_CRYPTO_V1,
+  PEERIT_CONTEXTUAL_GRAPH_VALIDATOR_STATUS_V1
+} from './js/substrate/profile-contextual-graph-validator.mjs';
 export function runVector(){
   const plaintext=new Uint8Array(257).map((_,index)=>index&255);
   const aad=new Uint8Array(93).map((_,index)=>(index*7)&255);
@@ -12,7 +15,7 @@ export function runVector(){
   const key=new Uint8Array(32).map((_,index)=>(index*13)&255);
   const cipher=PEERIT_CONTEXTUAL_GRAPH_CRYPTO_V1.xchacha20poly1305Encrypt(plaintext,aad,nonce,key);
   const recovered=PEERIT_CONTEXTUAL_GRAPH_CRYPTO_V1.xchacha20poly1305Decrypt(cipher,aad,nonce,key);
-  return {cipher,recovered};
+  return {cipher,recovered,status:PEERIT_CONTEXTUAL_GRAPH_VALIDATOR_STATUS_V1};
 }
 `
 
@@ -47,10 +50,17 @@ try {
     return {
       cipherEqual: equal(vector.cipher, expected),
       plaintextEqual: equal(vector.recovered, new Uint8Array(257).map((_, index) => index & 255)),
-      cipherBytes: vector.cipher.byteLength
+      cipherBytes: vector.cipher.byteLength,
+      webAssetManifestGraphReady: vector.status.webAssetManifestGraphReady,
+      runtimeUnavailableSchemaCount: vector.status.runtimeUnavailableSchemaCount,
+      signedValidatorBundleGraphAuthorityFactoryReady: vector.status.signedValidatorBundleGraphAuthorityFactoryReady,
+      browserHarnessCompleteGraphReady: vector.status.browserHarnessCompleteGraphReady
     }
   }, { artifact, expected: [...expected] })
-  if (!result.cipherEqual || !result.plaintextEqual || result.cipherBytes !== 273) {
+  if (!result.cipherEqual || !result.plaintextEqual || result.cipherBytes !== 273 ||
+      result.webAssetManifestGraphReady !== true || result.runtimeUnavailableSchemaCount !== 41 ||
+      result.signedValidatorBundleGraphAuthorityFactoryReady !== false ||
+      result.browserHarnessCompleteGraphReady !== false) {
     throw new Error(`Chromium contextual crypto drift: ${JSON.stringify(result)}`)
   }
   process.stdout.write(`${JSON.stringify({ schema: 'PeeritContextualGraphChromiumVectorV1', ...result })}\n`)

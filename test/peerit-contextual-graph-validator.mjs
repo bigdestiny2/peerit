@@ -18,7 +18,8 @@ import {
   createPeeritSupportingEvidenceAuditAuthorityV1,
   hashPeeritProfileRecordIdV1,
   hashPeeritProfilePinV1,
-  PEERIT_CONTEXTUAL_GRAPH_CRYPTO_V1
+  PEERIT_CONTEXTUAL_GRAPH_CRYPTO_V1,
+  PEERIT_CONTEXTUAL_GRAPH_VALIDATOR_STATUS_V1
 } from '../js/substrate/profile-contextual-graph-validator.mjs'
 import {
   createPeeritProfileValidatorV1,
@@ -36,6 +37,12 @@ import {
   u32Bytes,
   u64Bytes
 } from '../js/substrate/release-control-primitives.mjs'
+import {
+  encodePeeritWebAssetManifestV1,
+  hashPeeritAppArtifactV1,
+  hashPeeritBootstrapV1,
+  hashPeeritWebAssetManifestV1
+} from '../js/substrate/web-asset-manifest.mjs'
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const profile = fs.readFileSync(path.join(root, 'docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md'), 'utf8')
@@ -149,6 +156,35 @@ function makePin (sequence, predecessorBytes, pair = keyPair(41)) {
   return catalog.PeeritHiveRelayProfilePinV1.encode(pin)
 }
 
+function webAssetGraphFixture () {
+  const assets = new Map([
+    ['/bootstrap.cenc', new TextEncoder().encode('peerit contextual bootstrap')],
+    ['/index.html', new TextEncoder().encode('<!doctype html><title>peerit graph</title>')],
+    ['/peerit-app-artifact-v1.json', new TextEncoder().encode('{"schema":"peerit-app-artifact-v1"}\n')]
+  ])
+  const bootstrapHash = hashPeeritBootstrapV1(assets.get('/bootstrap.cenc'))
+  const appArtifactHash = hashPeeritAppArtifactV1(assets.get('/peerit-app-artifact-v1.json'))
+  const manifestBytes = encodePeeritWebAssetManifestV1({
+    version: 1,
+    releaseSequence: 0n,
+    appArtifactHash,
+    recommendedBootstrapHashes: [bootstrapHash],
+    assets: [...assets].map(([assetPath, assetBytes]) => ({
+      path: assetPath,
+      byteLength: BigInt(assetBytes.byteLength),
+      assetHash: blake2b256(assetBytes)
+    })).sort((left, right) => compareBytes(new TextEncoder().encode(left.path), new TextEncoder().encode(right.path)))
+  })
+  const pair = keyPair(41)
+  const pin = catalog.PeeritHiveRelayProfilePinV1.decode(makePin(0, null, pair))
+  pin.appArtifactHash = new Uint8Array(appArtifactHash)
+  pin.recommendedBootstrapHashes = [new Uint8Array(bootstrapHash)]
+  pin.webAssetManifestHash = hashPeeritWebAssetManifestV1(manifestBytes)
+  signLastField('PeeritHiveRelayProfilePinV1', pin, 'signature', 'peerit.hiverelay.profile-pin.v1', pair.secretKey)
+  const pinBytes = catalog.PeeritHiveRelayProfilePinV1.encode(pin)
+  return { assets, manifestBytes, pin, pinBytes, pair }
+}
+
 let passed = 0
 async function test (name, operation) {
   await operation()
@@ -196,6 +232,116 @@ await test('AuthorBind contextual validation fails closed until Cell readback au
     () => graphAuthority(evidenceStore()).validateAuthorChain(new Uint8Array()),
     error => error.code === 'CONTEXTUAL_GRAPH_RUNTIME_UNAVAILABLE'
   )
+})
+
+await test('AuthorBind signature/predecessor audit is executable without claiming capability-bound acceptance', () => {
+  const pair = keyPair(73)
+  const first = fixtures.create('AuthorBindV1', 7300)
+  first.authorSequence = 0n
+  first.previousAuthorRecordId = null
+  first.authorPublicKey = new Uint8Array(pair.publicKey)
+  signLastField('AuthorBindV1', first, 'signature', 'peerit.hiverelay.author-bind.v1', pair.secretKey)
+  const firstBytes = catalog.AuthorBindV1.encode(first)
+  const firstId = hashPeeritProfileRecordIdV1(3, firstBytes)
+
+  const second = fixtures.create('AuthorBindV1', 7301)
+  second.authorSequence = 1n
+  second.previousAuthorRecordId = new Uint8Array(firstId)
+  second.authorPublicKey = new Uint8Array(pair.publicKey)
+  signLastField('AuthorBindV1', second, 'signature', 'peerit.hiverelay.author-bind.v1', pair.secretKey)
+  const secondBytes = catalog.AuthorBindV1.encode(second)
+  const store = evidenceStore()
+  store.put(firstId, firstBytes)
+  const authority = graphAuthority(store)
+  assert.equal(bytesEqual(
+    authority.validateAuthorSignatureChainAudit(secondBytes),
+    hashPeeritProfileRecordIdV1(3, secondBytes)
+  ), true)
+  assert.throws(
+    () => graphAuthority(evidenceStore()).validateAuthorSignatureChainAudit(secondBytes),
+    error => error.code === 'FETCHED_EVIDENCE_UNAVAILABLE'
+  )
+  assert.equal(PEERIT_CONTEXTUAL_GRAPH_VALIDATOR_STATUS_V1.authorSignatureChainAuditReady, true)
+  assert.equal(authority.incompleteSchemas.includes('AuthorBindV1'), true,
+    'signature continuity alone never clears capability-bound AuthorBind acceptance')
+})
+
+await test('web asset graph binds one signed pin to every exact app and bootstrap byte', () => {
+  const fixture = webAssetGraphFixture()
+  const store = evidenceStore()
+  const authority = graphAuthority(store)
+  const context = {
+    profilePinBytes: fixture.pinBytes,
+    webAssetContentSnapshot: fixture.assets
+  }
+  const graph = authority.validateWebAssetManifest(fixture.manifestBytes, context)
+  assert.equal(graph.pinChainLength, 1)
+  assert.equal(graph.verifiedAssetCount, fixture.assets.size)
+  assert.equal(graph.recommendedBootstrapCount, 1)
+  assert.equal(graph.complete, true)
+
+  const validator = createPeeritProfileValidatorV1(compiled, PEERIT_PROFILE_INVENTORY, {
+    externalAuthorities: authorities.object,
+    contextualGraphAuthority: authority
+  })
+  const integrated = validator.validate('WebAssetManifestV1', fixture.manifestBytes, context)
+  assert.equal(integrated.contextual.complete, true)
+  assert.equal(integrated.contextual.verifiedAssetCount, fixture.assets.size)
+  assert.equal(authority.incompleteSchemas.includes('WebAssetManifestV1'), false)
+})
+
+await test('web asset graph rejects absent authority, substitution, pin drift, and over-budget snapshots', () => {
+  const fixture = webAssetGraphFixture()
+  const store = evidenceStore()
+  const authority = graphAuthority(store)
+  assert.throws(
+    () => authority.validateWebAssetManifest(fixture.manifestBytes, {
+      webAssetContentSnapshot: fixture.assets
+    }),
+    error => error.code === 'WEB_ASSET_PROFILE_PIN_REQUIRED'
+  )
+  assert.throws(
+    () => authority.validateWebAssetManifest(fixture.manifestBytes, {
+      profilePinBytes: fixture.pinBytes
+    }),
+    error => error.code === 'WEB_ASSET_CONTENT_SNAPSHOT_REQUIRED'
+  )
+
+  const substituted = new Map(fixture.assets)
+  substituted.set('/index.html', new TextEncoder().encode('<!doctype html><title>attack graph</title>'))
+  assert.throws(
+    () => authority.validateWebAssetManifest(fixture.manifestBytes, {
+      profilePinBytes: fixture.pinBytes,
+      webAssetContentSnapshot: substituted
+    }),
+    error => error.code === 'WEB_ASSET_DRIFT'
+  )
+
+  const wrongPin = structuredClone(fixture.pin)
+  wrongPin.webAssetManifestHash = new Uint8Array(32).fill(0x7f)
+  signLastField('PeeritHiveRelayProfilePinV1', wrongPin, 'signature', 'peerit.hiverelay.profile-pin.v1', fixture.pair.secretKey)
+  assert.throws(
+    () => authority.validateWebAssetManifest(fixture.manifestBytes, {
+      profilePinBytes: catalog.PeeritHiveRelayProfilePinV1.encode(wrongPin),
+      webAssetContentSnapshot: fixture.assets
+    }),
+    error => error.code === 'BAD_WEB_ASSET_PIN_BINDING'
+  )
+
+  const bounded = graphAuthority(store, { budgets: { maximumFetchedObjects: 2 } })
+  assert.throws(
+    () => bounded.validateWebAssetManifest(fixture.manifestBytes, {
+      profilePinBytes: fixture.pinBytes,
+      webAssetContentSnapshot: fixture.assets
+    }),
+    error => error.code === 'CONTEXTUAL_GRAPH_BUDGET_EXCEEDED'
+  )
+  assert.equal(PEERIT_CONTEXTUAL_GRAPH_VALIDATOR_STATUS_V1.webAssetManifestGraphReady, true)
+  assert.equal(PEERIT_CONTEXTUAL_GRAPH_VALIDATOR_STATUS_V1.runtimeUnavailableSchemaCount, 41)
+  assert.equal(PEERIT_CONTEXTUAL_GRAPH_VALIDATOR_STATUS_V1.runtimeUnavailableSchemas.includes('AuthorBindV1'), true)
+  assert.equal(PEERIT_CONTEXTUAL_GRAPH_VALIDATOR_STATUS_V1.runtimeUnavailableSchemas.includes('WebAssetManifestV1'), false)
+  assert.equal(PEERIT_CONTEXTUAL_GRAPH_VALIDATOR_STATUS_V1.signedValidatorBundleGraphAuthorityFactoryReady, false)
+  assert.equal(PEERIT_CONTEXTUAL_GRAPH_VALIDATOR_STATUS_V1.browserHarnessCompleteGraphReady, false)
 })
 
 await test('profile pin graph accepts one exact contiguous signed chain', () => {

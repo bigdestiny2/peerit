@@ -181,18 +181,18 @@ export function peeritProfileNamedSortProjection (owner, type, value, encoded) {
   const normalized = normalizedOwner(owner)
   const field = fieldName(owner)
   if (REPLICA_ARRAY_FIELDS.has(field)) return replicaIdentityProjection(value)
-  if (normalized.endsWith('AvailabilityBootstrapV1.inboxEpochSets[]')) {
+  if (normalized.endsWith('AvailabilityBootstrapV1.inboxEpochSets')) {
     return u32Bytes(0xffffffff - value.inboxEpoch)
   }
-  if (normalized.endsWith('LegacyArchiveDistributionV1.copies[]')) {
+  if (normalized.endsWith('LegacyArchiveDistributionV1.copies')) {
     return concatBytes(value.operatorGroupId, Uint8Array.of(value.copyKind), value.locator)
   }
-  if (normalized.endsWith('WebAssetManifestV1.assets[]')) return value.path
-  if (normalized.endsWith('PeeritWriteOperationEvidenceShardV1.entries[]')) return value.logicalIntentEvidenceId
-  if (normalized.endsWith('PeeritWriteSupportingEvidenceManifestV1.artifacts[]')) {
+  if (normalized.endsWith('WebAssetManifestV1.assets')) return value.path
+  if (normalized.endsWith('PeeritWriteOperationEvidenceShardV1.entries')) return value.logicalIntentEvidenceId
+  if (normalized.endsWith('PeeritWriteSupportingEvidenceManifestV1.artifacts')) {
     return concatBytes(value.supportingEvidenceHash, Uint8Array.of(value.evidenceKind))
   }
-  if (normalized.endsWith('PeeritReleaseQualificationEvidenceBundleV1.runtimeEvidence[]')) return value.runtimeEvidenceKeyHash
+  if (normalized.endsWith('PeeritReleaseQualificationEvidenceBundleV1.runtimeEvidence')) return value.runtimeEvidenceKeyHash
   return encoded
 }
 

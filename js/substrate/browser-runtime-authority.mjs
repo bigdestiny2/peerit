@@ -27,9 +27,10 @@ import {
 import {
   decodePeeritWebAssetManifestV1,
   encodePeeritWebAssetManifestV1,
+  PEERIT_APP_ARTIFACT_PATH_V1,
   hashPeeritAppArtifactV1,
-  hashPeeritBootstrapV1,
   hashPeeritWebAssetManifestV1,
+  verifyPeeritWebAssetContentV1,
   verifyPeeritWebAssetBytesV1
 } from './web-asset-manifest.mjs'
 import { createBlindCellRelay } from './blind-client-relay.js'
@@ -38,7 +39,7 @@ import { PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1 } from './production-release-aut
 export { PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1 } from './production-release-authority.mjs'
 
 export const PEERIT_BROWSER_RUNTIME_ASSET_PATHS = Object.freeze({
-  appArtifact: '/peerit-app-artifact-v1.json',
+  appArtifact: PEERIT_APP_ARTIFACT_PATH_V1,
   hiveArtifact: '/vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs',
   hiveManifest: '/vendor/hiverelay-blind-client-v1/blind-client-control-v1.manifest.cenc',
   hiveChromiumEvidence: '/vendor/hiverelay-blind-client-v1/blind-client-control-v1.chromium-evidence.json',
@@ -510,8 +511,13 @@ export async function assemblePeeritBrowserRuntimeAuthorityV1 (input = {}) {
   }))
 }
 
-async function importNodeTestModule ({ bytes }) {
-  return import(`data:text/javascript;base64,${Buffer.from(bytes).toString('base64')}`)
+async function importNodeTestModule ({ bytes, canonicalPath }) {
+  try {
+    return await import(`data:text/javascript;base64,${Buffer.from(bytes).toString('base64')}`)
+  } catch (cause) {
+    if (cause && typeof cause.code === 'string') throw cause
+    throw moduleLoadError('BROWSER_RUNTIME_MODULE_IMPORT_FAILED', canonicalPath, cause)
+  }
 }
 
 // This harness is unavailable in browsers and requires an explicit test-process
@@ -752,35 +758,15 @@ export async function fetchAndVerifyPeeritWebAssetContentV1 (options = {}) {
     for (const result of results) assets.set(result.value.path, result.value.bytes)
   }
 
-  const verified = verifyPeeritWebAssetBytesV1(manifest, assets, { requireComplete: true })
-  const appArtifactBytes = assets.get(appArtifactPath)
-  if (!bytesEqual(hashPeeritAppArtifactV1(appArtifactBytes), manifest.appArtifactHash)) {
-    fail('WEB_APP_ARTIFACT_DRIFT', `${appArtifactPath} does not match WebAssetManifestV1.appArtifactHash`)
-  }
-
-  const bootstrapCandidates = new Map()
-  for (const [path, assetBytes] of assets) {
-    const hash = bytesToHex(hashPeeritBootstrapV1(assetBytes))
-    const paths = bootstrapCandidates.get(hash) || []
-    paths.push(path)
-    bootstrapCandidates.set(hash, paths)
-  }
-  const bootstrapAssets = manifest.recommendedBootstrapHashes.map(hash => {
-    const hashHex = bytesToHex(hash)
-    const paths = bootstrapCandidates.get(hashHex)
-    if (!paths || paths.length === 0) {
-      fail('WEB_BOOTSTRAP_CONTENT_MISSING', `recommended bootstrap ${hashHex} has no exact same-origin asset`)
-    }
-    return Object.freeze({ hash: hash.slice(), paths: Object.freeze([...paths]) })
-  })
+  const verified = verifyPeeritWebAssetContentV1(manifest, assets)
 
   return Object.freeze({
     releaseSequence: manifest.releaseSequence,
     assets,
     verifiedAssetCount: verified.verifiedAssetCount,
-    verifiedTotalBytes: totalBytes,
-    appArtifactVerified: true,
-    bootstrapAssets: Object.freeze(bootstrapAssets),
+    verifiedTotalBytes: verified.verifiedTotalBytes,
+    appArtifactVerified: verified.appArtifactVerified,
+    bootstrapAssets: verified.bootstrapAssets,
     complete: verified.complete
   })
 }

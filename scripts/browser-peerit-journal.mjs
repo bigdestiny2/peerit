@@ -78,8 +78,13 @@ async function deleteDatabase (page, name) {
 async function initJournal (page, dbName) {
   return page.evaluate(async dbName => {
     const modulePath = '/js/substrate/peerit-journal.js'
-    const module = await import(modulePath)
+    const fixturePath = '/test/fixtures/peerit-vnext-journal-fixture.mjs'
+    const [module, fixture] = await Promise.all([
+      import(modulePath),
+      import(fixturePath)
+    ])
     globalThis.__peeritJournalModule = module
+    globalThis.__peeritVnextJournalFixture = fixture
     globalThis.__peeritJournal = module.createIndexedDbPeeritJournal({
       indexedDB: globalThis.indexedDB,
       IDBKeyRange: globalThis.IDBKeyRange,
@@ -131,16 +136,15 @@ async function createSchemaFixture (page, { name, version, corruption = null, ta
 }
 
 async function commit (page, number) {
-  return page.evaluate(({ number, intentId, logicalId }) => {
-    return globalThis.__peeritJournal.commitIntent({
-      intentId,
-      logicalId,
-      operationBytes: JSON.stringify({ version: 1, operations: [{ type: 'post', data: { id: String(number) } }] }),
+  return page.evaluate(async number => {
+    const intent = globalThis.__peeritVnextJournalFixture.createStructuralPeeritVnextJournalIntent({
+      operations: [{ type: 'post', data: { id: String(number) } }],
       records: [{ key: `post!${number}`, value: { id: String(number), body: `browser ${number}` } }],
-      createdAt: number,
-      discoveryState: 'queued'
+      createdAt: number
     })
-  }, { number, intentId: id(number), logicalId: id(number + 10_000) })
+    const committed = await globalThis.__peeritJournal.commitIntent(intent)
+    return { ...committed, intentId: intent.intentId }
+  }, number)
 }
 
 async function main () {
@@ -167,7 +171,7 @@ async function main () {
       'fresh lurker readiness creates no IndexedDB database')
 
     await initJournal(second, dbName)
-    await Promise.all([commit(first, 1), commit(second, 2)])
+    const committed = await Promise.all([commit(first, 1), commit(second, 2)])
     const summary = await first.evaluate(() => globalThis.__peeritJournal.summary())
     ok(summary.intentCount === 2 && summary.viewRecordCount === 2,
       'separate tabs commit without lost IndexedDB metadata or view records')
@@ -179,10 +183,10 @@ async function main () {
     const claims = await Promise.all([
       first.evaluate(intentId => globalThis.__peeritJournal.claimTarget({
         intentId, targetId: 'relay', state: 'delivering', attemptToken: 'tab-one', leaseUntil: 1000, now: 0
-      }), id(1)),
+      }), committed[0].intentId),
       second.evaluate(intentId => globalThis.__peeritJournal.claimTarget({
         intentId, targetId: 'relay', state: 'delivering', attemptToken: 'tab-two', leaseUntil: 1000, now: 0
-      }), id(1))
+      }), committed[0].intentId)
     ])
     ok(claims.filter(Boolean).length === 1,
       'separate tabs elect exactly one target owner without Web Locks')
@@ -289,16 +293,15 @@ async function main () {
     await initJournal(first, fairnessDb)
     const fairness = await first.evaluate(async () => {
       const journal = globalThis.__peeritJournal
-      const hex = number => Number(number).toString(16).padStart(64, '0')
+      const createIntent = globalThis.__peeritVnextJournalFixture.createStructuralPeeritVnextJournalIntent
       const queue = async (number, updatedAt) => {
-        const intentId = hex(number)
-        await journal.commitIntent({
-          intentId,
-          logicalId: hex(number + 10_000),
-          operationBytes: JSON.stringify({ version: 1, operations: [{ number }] }),
+        const intent = createIntent({
+          operations: [{ type: 'post', data: { id: `fair-${number}`, number } }],
           records: [{ key: `post!fair!${number}`, value: { number } }],
           createdAt: number
         })
+        await journal.commitIntent(intent)
+        const intentId = intent.intentId
         const token = await journal.claimTarget({
           intentId,
           targetId: 'fair-relay',
@@ -316,16 +319,17 @@ async function main () {
           now: updatedAt,
           nextAttemptAt: 0
         })
+        return intentId
       }
       const oldCount = 64
-      for (let number = 1000; number < 1000 + oldCount; number++) await queue(number, 1)
+      const oldIds = new Set()
+      for (let number = 1000; number < 1000 + oldCount; number++) oldIds.add(await queue(number, 1))
       const seen = new Set()
       for (let round = 0; round < 4; round++) {
         for (let arrival = 0; arrival < 8; arrival++) await queue(2000 + round * 8 + arrival, 10 + round)
         const page = await journal.listRetryIntentIds({ now: 100, targetIds: ['fair-relay'], limit: 16 })
         for (const intentId of page.intentIds) {
-          const number = Number.parseInt(intentId, 16)
-          if (number >= 1000 && number < 1000 + oldCount) seen.add(intentId)
+          if (oldIds.has(intentId)) seen.add(intentId)
           const token = await journal.claimTarget({
             intentId,
             targetId: 'fair-relay',

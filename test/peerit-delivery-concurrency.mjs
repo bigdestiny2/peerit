@@ -1,30 +1,61 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { canonical } from '../js/canon.js'
+import { ready as cryptoReady } from '../js/crypto.js'
+import { createIdentity } from '../js/identity.js'
 import {
   createMemoryJournalState,
   createMemoryPeeritJournal
 } from '../js/substrate/peerit-journal.js'
 import { createPeeritSubstrateSync } from '../js/substrate/peerit-substrate-sync.js'
+import { memoryStorage } from '../js/sync.js'
 
-function id (domain, index) {
-  return createHash('sha256').update(`${domain}:${index}`).digest('hex')
+async function signedProfileOperation (identity, label, value) {
+  const me = identity.me()
+  const data = { id: me.pubkey, author: me.pubkey, name: `${label}:${JSON.stringify(value)}` }
+  const signature = await identity.sign(canonical('profile', data))
+  Object.assign(data, {
+    _sig: signature.signature,
+    _k: signature.publicKey,
+    _dk: signature.driveKey,
+    _ns: signature.namespace,
+    _alg: signature.algorithm
+  })
+  return { type: 'profile', data }
+}
+
+async function seedSignedIntents (journal, identity, domain, values) {
+  const author = createPeeritSubstrateSync({
+    journal,
+    relays: [],
+    autoFlush: false,
+    requireVerifiedRelayAdapters: false,
+    channelName: `peerit-delivery-seed-${domain}`
+  })
+  await author.ready()
+  for (const [index, value] of values.entries()) {
+    await author.append(await signedProfileOperation(identity, `${domain}:${index}`, value))
+  }
+  author.destroy()
 }
 
 function delay (milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds))
 }
 
+await cryptoReady()
+const identity = createIdentity({
+  forceDev: true,
+  lazy: true,
+  storage: memoryStorage(),
+  session: memoryStorage()
+})
+await identity.ready()
+await identity.ensureActive('delivery-concurrency-fixture')
+
 const state = createMemoryJournalState()
 const journal = createMemoryPeeritJournal({ shared: state })
-for (let index = 0; index < 12; index++) {
-  await journal.commitIntent({
-    intentId: id('intent', index),
-    logicalId: id('logical', index),
-    operationBytes: JSON.stringify({ version: 1, operations: [{ index }] }),
-    records: [{ key: `post!scale!${id('record', index)}`, value: { index } }],
-    createdAt: index + 1
-  })
-}
+await seedSignedIntents(journal, identity, 'concurrency',
+  Array.from({ length: 12 }, (_, index) => ({ index })))
 
 let inFlight = 0
 let maximumInFlight = 0
@@ -94,13 +125,7 @@ assert.equal(summary.targetStateCounts['pending-unknown'], 12)
 sync.destroy()
 
 const adversarialJournal = createMemoryPeeritJournal({ shared: createMemoryJournalState() })
-await adversarialJournal.commitIntent({
-  intentId: id('adversarial-intent', 0),
-  logicalId: id('adversarial-logical', 0),
-  operationBytes: JSON.stringify({ version: 1, operations: [{ adversarial: true }] }),
-  records: [{ key: `post!scale!${id('adversarial-record', 0)}`, value: { adversarial: true } }],
-  createdAt: 1
-})
+await seedSignedIntents(adversarialJournal, identity, 'adversarial', [{ adversarial: true }])
 const abortAckSync = createPeeritSubstrateSync({
   journal: adversarialJournal,
   relays: [{
@@ -128,13 +153,7 @@ abortAckSync.destroy()
 
 const partialState = createMemoryJournalState()
 const partialJournal = createMemoryPeeritJournal({ shared: partialState })
-await partialJournal.commitIntent({
-  intentId: id('partial-intent', 0),
-  logicalId: id('partial-logical', 0),
-  operationBytes: JSON.stringify({ version: 1, operations: [{ partial: true }] }),
-  records: [{ key: `post!scale!${id('partial-record', 0)}`, value: { partial: true } }],
-  createdAt: 1
-})
+await seedSignedIntents(partialJournal, identity, 'partial', [{ partial: true }])
 let ambiguousSends = 0
 const partialFirst = createPeeritSubstrateSync({
   journal: partialJournal,
@@ -185,13 +204,7 @@ assert.equal(repairedSummary.targetStateCounts['pending-unknown'], 0)
 partialSecond.destroy()
 
 const boundedJournal = createMemoryPeeritJournal({ shared: createMemoryJournalState() })
-await boundedJournal.commitIntent({
-  intentId: id('bounded-intent', 0),
-  logicalId: id('bounded-logical', 0),
-  operationBytes: JSON.stringify({ version: 1, operations: [{ bounded: true }] }),
-  records: [{ key: `post!bounded!${id('bounded-record', 0)}`, value: { bounded: true } }],
-  createdAt: 1
-})
+await seedSignedIntents(boundedJournal, identity, 'bounded', [{ bounded: true }])
 const retrySelections = []
 const wakeSelections = []
 const originalRetryList = boundedJournal.listRetryIntentIds.bind(boundedJournal)

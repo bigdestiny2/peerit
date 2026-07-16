@@ -52,6 +52,12 @@ const FLOOR_KEY = 'peerit:head-floor'   // Phase C durable monotonic head floor 
 // it after a complete one-page directory read; any relay reset below it forces a
 // full rescan before the value is replaced.
 const DIRECTORY_WATERMARK_KEY = 'peerit:directory-watermark:v1'
+// A delta watermark is only safe when the complete author roster observed at that
+// position survives with it. Persist the roster first and the numeric watermark
+// second; a crash/suspension between those writes creates a harmless mismatch that
+// forces a full rescan. Older clients wrote only the numeric key, so their first boot
+// on this build also rescans once instead of potentially stranding older authors.
+const DIRECTORY_CHECKPOINT_KEY = 'peerit:directory-checkpoint:v1'
 // Exactly one owner-signed atomic commit may be in flight per device. Persisting
 // the complete envelope before the first network call makes response-loss retry
 // byte-for-byte idempotent across wake/reload; later writes remain blocked until
@@ -910,13 +916,50 @@ class BridgeGossipSync {
 
   _loadDirectoryWatermark () {
     const watermark = Number(this._getLocal(DIRECTORY_WATERMARK_KEY))
-    if (Number.isSafeInteger(watermark) && watermark >= 0) this._directoryWatermark = watermark
+    if (!Number.isSafeInteger(watermark) || watermark < 0) return
+    try {
+      const checkpoint = JSON.parse(this._getLocal(DIRECTORY_CHECKPOINT_KEY) || 'null')
+      if (!checkpoint || checkpoint.v !== 1 || checkpoint.watermark !== watermark || !Array.isArray(checkpoint.peers)) return
+      const peers = []
+      const seen = new Set()
+      for (const pub of checkpoint.peers) {
+        if (!HEX64.test(pub || '') || seen.has(pub) || peers.length >= MAX_PEERS) return
+        seen.add(pub)
+        peers.push(pub)
+      }
+      const me = this.getMe()
+      for (const pub of peers) {
+        if (pub === me) continue
+        const existing = this._peers.get(pub)
+        if (existing) existing.dir = true
+        else if (this._peers.size < MAX_PEERS) this._peers.set(pub, { appId: pub, inviteKey: pub, dir: true })
+        else return
+      }
+      this._directoryWatermark = watermark
+    } catch {}
   }
 
   _saveDirectoryWatermark (watermark) {
     if (!Number.isSafeInteger(watermark) || watermark < 0) return
-    this._directoryWatermark = watermark
-    this._setLocal(DIRECTORY_WATERMARK_KEY, String(watermark))
+    const store = this._store()
+    if (!store || typeof store.getItem !== 'function' || typeof store.setItem !== 'function') return
+    const peers = []
+    for (const [pub, info] of this._peers) {
+      if (info && info.dir === true && info.appId === pub && HEX64.test(pub)) peers.push(pub)
+    }
+    peers.sort()
+    const checkpointBlob = JSON.stringify({ v: 1, watermark, peers })
+    const watermarkBlob = String(watermark)
+    try {
+      // Write the sufficient state first. If the browser is killed before the
+      // second write, the old numeric watermark will not match this checkpoint
+      // and _loadDirectoryWatermark deliberately falls back to a full scan.
+      store.setItem(DIRECTORY_CHECKPOINT_KEY, checkpointBlob)
+      if (store.getItem(DIRECTORY_CHECKPOINT_KEY) !== checkpointBlob) return
+      store.setItem(DIRECTORY_WATERMARK_KEY, watermarkBlob)
+      if (store.getItem(DIRECTORY_WATERMARK_KEY) !== watermarkBlob) return
+      this._directoryWatermark = watermark
+    } catch {}
   }
 
   async _saveFloor ({ required = false, requiredHead = null } = {}) {
@@ -1040,8 +1083,10 @@ class BridgeGossipSync {
         // peer (inviteKey unused for relay reads; admit re-verifies every row's signature, so a
         // lying relay still can't forge). Directory is a relay-only surface, so this never runs
         // under PearBrowser's P2P sync (which needs the real read-cap). Skip empties + self.
-        if (this._discover && (h.count | 0) > 0 && !this._peers.has(appId)) {
-          if (this._peers.size < MAX_PEERS) this._peers.set(appId, { appId, inviteKey: appId, dir: true }) // inviteKey placeholder: relay range is keyed by appId
+        if (this._discover && (h.count | 0) > 0) {
+          const existing = this._peers.get(appId)
+          if (existing) existing.dir = true // checkpoint every author seen in the complete/delta directory, regardless of how it was first discovered
+          else if (this._peers.size < MAX_PEERS) this._peers.set(appId, { appId, inviteKey: appId, dir: true }) // inviteKey placeholder: relay range is keyed by appId
           else peerCapBlocked = true
         }
       }

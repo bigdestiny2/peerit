@@ -2,16 +2,16 @@
   "schema": "peerit-web-signing-request-v2",
   "manifest": "web/asset-manifest.json",
   "signature": "web/asset-manifest.sig",
-  "releaseSequence": 10,
+  "releaseSequence": 11,
   "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
   "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
-  "manifestSha256": "03cb3c5e756f7fa3e493be11bd6fc50719e1d9e1b2b09a9709bc902a2639d75d",
-  "signingMessageSha256": "588b531d60a92667bd6d46fe79934ab3bb4ebcbac3b2947e68465e93c30c73b2",
+  "manifestSha256": "91cc2c55e151ce56ca9eeebb6969995b88eabd28262a56a01b8f941580ca34b9",
+  "signingMessageSha256": "605df3a63dbd5b3b8c437b474e3ac9f850f67abaf4f3cbe2edef13e11e68fff0",
   "artifactFiles": {
-    "asset-manifest.json": "03cb3c5e756f7fa3e493be11bd6fc50719e1d9e1b2b09a9709bc902a2639d75d",
+    "asset-manifest.json": "91cc2c55e151ce56ca9eeebb6969995b88eabd28262a56a01b8f941580ca34b9",
     "config/shard-roster.public.json": "c52ec812e673f3e032e6e22ec196cdc5623260c501e07f4eb8f363ceb9923bad",
     "icon.svg": "7925827f718381ddf887d3c5bea9b5b94e6e80de569d6604e384033767914a1c",
-    "index.html": "c9f742768de0a4f0ce3d4120b9ba46b380f78d1b90c05008ef38ec875b10ec81",
+    "index.html": "dc6c5eb952e3199aa5a31dfd6da1fcf089651ca97a8d60950043fe9edc42ffe3",
     "js/app.js": "80c78ae70d3f8f71f49a98006e91d2c5be858f4a8526284283840c486e3c88c4",
     "js/blob-store.js": "1a947ca86c25a590a73d8a7808476e4ee659604da1f848d6da57a289392bfbc9",
     "js/box.js": "7d4460772ef79358bc57c7cc7bcb820af1a6aa96638f1a98b44e4d00fd5fe947",
@@ -20,7 +20,7 @@
     "js/data.js": "935808186d08a04479228d89936b94af57e8879f0440c29069a3c07650e28c04",
     "js/dht-bundle.js": "ef35ec7ce2c46f1a9f75bd04cf311377c7d41ad10cc6c52d36ff571ca68fafd9",
     "js/feed-window.js": "b6507956f71e1c53123aff3282cca5bf5b65da152050a8a9b5615698e1bc0758",
-    "js/gossip.js": "1d4e01ef3a93b91ab673e6d603c500a25d81d0a7474fe48929138fe3fd03f574",
+    "js/gossip.js": "eae199bbd451f2d1a44e94b1347b10ed4496e9482b6bc397b8fc3db98a47d25f",
     "js/identity-export.js": "59551ecaf8cc8ab8bc1f78fec9bf43eedb8bc5595d4963cac054152727ec4fff",
     "js/identity-store.js": "4a351324a4fc139ac3eb706afca31a335327f09ea9a7f1143a998fc09bd0e1ff",
     "js/identity-vault.js": "c03fe780ccdc1e8acb3247a7d3ac69df6a05f042d2368d0a09d54353cf72e141",
@@ -54,7 +54,7 @@
     "seed-snapshot.json": "c6488226fd120959493141012ae289f11c5ec971106b920cf40c555f6683ab0b",
     "styles.css": "719335a9a4d8053e9d26def2fb8a95d2289a879fd5afb8258a3485b879e951d3",
     "sw-register.js": "91aa30dc3a73b7297ea2662bad5ed09dbec7f530a47ab4fb925a628b3a03fefc",
-    "sw.js": "30229abec6a33bf7e82fc26c38d60b90a9b5ad9fb2325dcbc36c4f4770505dd7",
-    "verify.html": "e762a02d2ab5c82a01318024683d10d296c4540df4c91e66008af8dca5c2feca"
+    "sw.js": "fb71810b041a6b748e6d0b91cc9f956784588d353a75d91fa50addfa31c84395",
+    "verify.html": "9a463e9767369979ce3267920d504169a9eb89f7b45f6df99b682c80c32ad3a5"
   }
 }

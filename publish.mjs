@@ -123,6 +123,7 @@ export const SUBSTRATE_SITE_FILES = Object.freeze([
   'js/crypto.js',
   'js/data.js',
   'js/feed-algorithms.js',
+  'js/feed-window.js',
   'js/identity-primitives.js',
   'js/identity-store.js',
   'js/materialized-index.js',

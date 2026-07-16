@@ -25,8 +25,8 @@ const paths = Object.freeze({
 const EXPECTED = Object.freeze({
   artifactLength: 248195,
   artifactHash: '967cbc42a3583ef158045dfdf6afd82f672153c117236a928bc2c2684776b008',
-  manifestHash: 'a9eec068b64e919260f0b52223caa6e394b497bda8a465d567221eed00e01255',
-  sourceClosureHash: '7a8670a9fd27cb7ff04b9fe9c25679dbf260d0f8e3321543ec3d333ba9fe4a02'
+  manifestHash: '9f789a8ce4479880986483cfb5b77547bf1cc611697251594fb5d944305a4c0e',
+  sourceClosureHash: '9e21df70fec4106935ca388478f7ca48f550556df9a05b54483cea631e10b97c'
 })
 
 const bytes = name => new Uint8Array(fs.readFileSync(path.join(sourceArtifacts, name)))

@@ -15,6 +15,12 @@ import {
   peeritProfileNamedSortProjection
 } from '../js/substrate/profile-validator.mjs'
 import {
+  PEERIT_AUTHOR_BIND_CELL_CONTENT_CAPACITY_V1,
+  PEERIT_INNER_OPERATION_BATCH_V1_CODEC,
+  assertPeeritAuthorBindInnerEnvelopeV1,
+  peeritAuthorBindCellSizeClassForInnerLengthV1
+} from '../js/substrate/author-bind-inner-envelope-policy.mjs'
+import {
   decodePeeritValidatorVectorManifestV1,
   hashPeeritValidatorArtifactV1,
   hashPeeritValidatorVectorSetV1
@@ -79,8 +85,8 @@ async function test (name, operation) {
   process.stdout.write(`ok ${passed} - ${name}\n`)
 }
 
-await test('all 77 generated codecs round-trip exact tags and reject truncation, tag bitflips, and trailing bytes', () => {
-  assert.equal(Object.keys(catalog).length, 77)
+await test('all 78 generated codecs round-trip exact tags and reject truncation, tag bitflips, and trailing bytes', () => {
+  assert.equal(Object.keys(catalog).length, 78)
   for (const schema of compiled.schemas) {
     const bytes = catalog[schema.name].encode(fixtures.create(schema.name, schema.ordinal * 1009))
     const decoded = catalog[schema.name].decode(bytes)
@@ -93,16 +99,17 @@ await test('all 77 generated codecs round-trip exact tags and reject truncation,
   }
 })
 
-await test('checked validator vector manifest binds 77 positives plus truncation, bitflip, reorder, duplicate, and cross-field negatives', () => {
+await test('checked validator vector manifest binds 78 structural positives plus truncation, bitflip, reorder, duplicate, and cross-field negatives', () => {
   const manifestBytes = new Uint8Array(fs.readFileSync(path.join(root, PROFILE_VALIDATOR_ARTIFACT_STATUS.vectorManifest)))
   const rows = decodePeeritValidatorVectorManifestV1(manifestBytes)
-  assert.equal(rows.length, 234)
-  assert.equal(rows.filter(row => row.path.startsWith('positive/')).length, 77)
-  assert.equal(rows.filter(row => row.path.startsWith('negative/truncated/')).length, 77)
-  assert.equal(rows.filter(row => row.path.startsWith('negative/bitflip-tag/')).length, 77)
+  assert.equal(rows.length, 238)
+  assert.equal(rows.filter(row => row.path.startsWith('positive/')).length, 78)
+  assert.equal(rows.filter(row => row.path.startsWith('negative/truncated/')).length, 78)
+  assert.equal(rows.filter(row => row.path.startsWith('negative/bitflip-tag/')).length, 78)
   assert.equal(rows.some(row => row.path.endsWith('reordered-recovery-keys.cenc')), true)
   assert.equal(rows.some(row => row.path.endsWith('duplicate-recovery-key.cenc')), true)
   assert.equal(rows.some(row => row.path.endsWith('recovery-length-mismatch.cenc')), true)
+  assert.equal(rows.some(row => row.path.endsWith('inner-operation-batch-invalid-utf8.cenc')), true)
   for (const row of rows) {
     const bytes = new Uint8Array(fs.readFileSync(path.join(root, 'protocol/validator/vectors', row.path)))
     assert.equal(BigInt(bytes.byteLength), row.vectorLength, row.path)
@@ -123,6 +130,10 @@ await test('reorder, duplicate, and dependent-length vectors fail for their exac
   assert.throws(
     () => catalog.PeeritRecoveryBundleV1.decode(read('recovery-length-mismatch.cenc')),
     error => error.code === 'BAD_PROFILE_CODEC_VALUE'
+  )
+  assert.throws(
+    () => catalog.PeeritInnerOperationBatchV1.decode(read('inner-operation-batch-invalid-utf8.cenc')),
+    error => error.code === 'BAD_RELEASE_CONTROL_ENCODING'
   )
 })
 
@@ -206,6 +217,53 @@ await test('local semantic validator enforces mode, counter, causal, lease, and 
   assert.throws(() => validator.validate('RepairAddV1', catalog.RepairAddV1.encode(repair)), error => error.code === 'ZERO_PROFILE_VALUE')
 })
 
+await test('AuthorBind closes the VNext envelope to one consistent Cell representation', () => {
+  const validator = createPeeritProfileValidatorV1(compiled, PEERIT_PROFILE_INVENTORY, {
+    externalAuthorities: authorities.object,
+    verifySignatures: false
+  })
+  const authorBind = fixtures.create('AuthorBindV1')
+  authorBind.logicalHash = new Uint8Array(authorBind.initialReplicas[0].logicalHash)
+  authorBind.innerCodec = PEERIT_INNER_OPERATION_BATCH_V1_CODEC
+  authorBind.innerLength = 8n
+  authorBind.initialReplicas[0].sizeClass = 1
+  assertPeeritAuthorBindInnerEnvelopeV1(authorBind)
+  validator.validate('AuthorBindV1', catalog.AuthorBindV1.encode(authorBind))
+
+  assert.equal(peeritAuthorBindCellSizeClassForInnerLengthV1(8n), 1)
+  assert.equal(peeritAuthorBindCellSizeClassForInnerLengthV1(PEERIT_AUTHOR_BIND_CELL_CONTENT_CAPACITY_V1[1]), 1)
+  assert.equal(peeritAuthorBindCellSizeClassForInnerLengthV1(PEERIT_AUTHOR_BIND_CELL_CONTENT_CAPACITY_V1[1] + 1n), 2)
+  assert.equal(peeritAuthorBindCellSizeClassForInnerLengthV1(1048519n), 5)
+
+  const nonMinimalClass = structuredClone(authorBind)
+  nonMinimalClass.innerLength = PEERIT_AUTHOR_BIND_CELL_CONTENT_CAPACITY_V1[1] + 1n
+  assert.throws(() => assertPeeritAuthorBindInnerEnvelopeV1(nonMinimalClass), error => error.code === 'BAD_AUTHOR_BIND')
+  nonMinimalClass.initialReplicas[0].sizeClass = 2
+  assertPeeritAuthorBindInnerEnvelopeV1(nonMinimalClass)
+  validator.validate('AuthorBindV1', catalog.AuthorBindV1.encode(nonMinimalClass))
+
+  const badCodec = structuredClone(authorBind)
+  badCodec.innerCodec = PEERIT_INNER_OPERATION_BATCH_V1_CODEC - 1
+  assert.throws(() => assertPeeritAuthorBindInnerEnvelopeV1(badCodec), error => error.code === 'BAD_AUTHOR_BIND')
+  assert.throws(() => catalog.AuthorBindV1.encode(badCodec), error => error.code === 'BAD_PROFILE_CODEC_VALUE')
+
+  const badLength = structuredClone(authorBind)
+  badLength.innerLength = 7n
+  assert.throws(() => assertPeeritAuthorBindInnerEnvelopeV1(badLength), error => error.code === 'BAD_AUTHOR_BIND')
+  assert.throws(() => catalog.AuthorBindV1.encode(badLength), error => error.code === 'BAD_PROFILE_CODEC_VALUE')
+
+  const badClass = structuredClone(authorBind)
+  badClass.initialReplicas[0].sizeClass = 0
+  assert.throws(() => assertPeeritAuthorBindInnerEnvelopeV1(badClass), error => error.code === 'BAD_AUTHOR_BIND')
+  assert.throws(() => catalog.AuthorBindV1.encode(badClass), error => error.code === 'BAD_PROFILE_CODEC_VALUE')
+
+  const mismatchedReplica = structuredClone(authorBind)
+  const second = structuredClone(mismatchedReplica.initialReplicas[0])
+  second.encodingCommitment[0] ^= 1
+  mismatchedReplica.initialReplicas.push(second)
+  assert.throws(() => assertPeeritAuthorBindInnerEnvelopeV1(mismatchedReplica), error => error.code === 'BAD_AUTHOR_BIND')
+})
+
 await test('embedded Ed25519 verifier accepts the exact domain+prefix and rejects a signature bitflip', () => {
   const value = fixtures.create('AvailabilityRootV1')
   const seed = new Uint8Array(32).fill(0x41)
@@ -228,7 +286,7 @@ await test('deterministic validator bundle imports as ESM and emits the frozen r
   assert.equal(artifact.byteLength, PROFILE_VALIDATOR_ARTIFACT_STATUS.artifactBytes)
   assert.equal(bytesToHex(hashPeeritValidatorArtifactV1(artifact)), PROFILE_VALIDATOR_ARTIFACT_STATUS.validatorArtifactHash)
   const module = await import(`data:text/javascript;base64,${Buffer.from(artifact).toString('base64')}`)
-  assert.equal(module.PEERIT_VALIDATOR_PROFILE_BINDING_V1.schemaCount, 77)
+  assert.equal(module.PEERIT_VALIDATOR_PROFILE_BINDING_V1.schemaCount, 78)
   const runtime = module.computePeeritValidatorRuntimeVectorV1()
   assert.equal(runtime.byteLength, 98)
   assert.deepEqual([...runtime.slice(0, 4)], [1, 1, 17, 17])

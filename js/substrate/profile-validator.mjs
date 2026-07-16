@@ -16,6 +16,7 @@ import {
   encodePeeritProfileRecordPrefixFromIr
 } from './profile-codec-ir.mjs'
 import { assertPeeritContextualGraphAuthorityV1 } from './profile-contextual-graph-validator.mjs'
+import { assertPeeritAuthorBindInnerEnvelopeV1 } from './author-bind-inner-envelope-policy.mjs'
 
 const MAX_U64 = (1n << 64n) - 1n
 const LEASE_EPOCH_MILLIS = 21600000n
@@ -401,7 +402,7 @@ function validateRecordSemantics (schemaName, value, context) {
       break
     case 'AuthorBindV1':
       validateCommonSequencePredecessor(value.authorSequence, value.previousAuthorRecordId, schemaName)
-      if (value.innerLength === 0n || value.initialReplicas.some(binding => !bytesEqual(binding.value.logicalHash, value.logicalHash))) failValidator('BAD_AUTHOR_BIND', 'author bind length or replica logical hash is invalid')
+      assertPeeritAuthorBindInnerEnvelopeV1(value)
       break
     case 'RepairAddV1':
       nonzero(value.repairNonce, 'repairNonce')
@@ -579,7 +580,7 @@ export function createPeeritProfileValidatorV1 (compiled, inventory, options = {
 }
 
 export const PEERIT_PROFILE_VALIDATOR_CAPABILITIES_V1 = Object.freeze({
-  schemaCount: 77,
+  schemaCount: 78,
   strictCanonicalEncodeDecode: true,
   boundedDecodeBeforeAllocation: true,
   namedSortProjections: true,

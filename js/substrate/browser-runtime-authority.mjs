@@ -116,9 +116,10 @@ const REQUIRED_CONTROL_EXPORTS = Object.freeze([
   'verifyOperationResult'
 ])
 
-function fail (code, message) {
+function fail (code, message, cause = undefined) {
   const error = new Error(message)
   error.code = code
+  if (cause !== undefined) error.cause = cause
   throw error
 }
 
@@ -363,7 +364,12 @@ async function assemblePeeritBrowserRuntimeAuthorityInternal (input, trusted) {
   const profileSourceBytes = requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.profileSource)
   const profileRegistryBytes = requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.profileRegistry)
   const profileVectorManifestBytes = requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.profileVectorManifest)
-  const registry = decodePeeritProfileRegistry(profileRegistryBytes)
+  let registry
+  try {
+    registry = decodePeeritProfileRegistry(profileRegistryBytes)
+  } catch (cause) {
+    fail('PROFILE_REGISTRY_INVALID', 'profile registry bytes are invalid or non-canonical', cause)
+  }
   if (!bytesEqual(registry.profileSourceBytes, profileSourceBytes)) {
     fail('PROFILE_SOURCE_BINDING_MISMATCH', 'profile registry embeds different source bytes')
   }

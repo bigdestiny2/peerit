@@ -157,14 +157,14 @@ origin-storage eviction remain distinct product blockers. This persistence does
 not pin the production key or final HiveRelay tuple.
 
 The non-fixture `scripts/generate-peerit-profile.mjs` now separately produces
-`protocol/peerit-profile-v1.cenc`, one exact vector for each of the 77 profile
+`protocol/peerit-profile-v1.cenc`, one exact vector for each of the 78 profile
 declarations, and the canonical vector manifest. It embeds and domain-binds the
 exact profile source and verified inventory; the release-control slice's first
 four tags equal the full registry tags. Reproducible `--check`, corruption,
 substitution, ordering, duplicate, truncation, and source/inventory drift tests
 are executable.
 
-All 77 structural codecs and the 234-vector validator artifact now reproduce
+All 78 structural codecs and the 238-vector validator artifact now reproduce
 under Node, Bare, and Chromium. Contextual whole-graph validation of fetched
 evidence, authority chains, threshold proofs, custody, and archive reconstruction
 remains incomplete. The artifacts are not yet composed into the authenticated

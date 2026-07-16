@@ -9,7 +9,7 @@ export const PROFILE_CATEGORIES = Object.freeze([
   Object.freeze({ id: 'qualification-evidence', owner: OWNER.PEERIT, schemaCount: 8 }),
   Object.freeze({ id: 'availability-bootstrap', owner: OWNER.PEERIT, schemaCount: 9 }),
   Object.freeze({ id: 'announcement', owner: OWNER.PEERIT, schemaCount: 1 }),
-  Object.freeze({ id: 'replica-authority', owner: OWNER.PEERIT, schemaCount: 8 }),
+  Object.freeze({ id: 'replica-authority', owner: OWNER.PEERIT, schemaCount: 9 }),
   Object.freeze({ id: 'discovery-index', owner: OWNER.PEERIT, schemaCount: 9 }),
   Object.freeze({ id: 'maintainer-discovery', owner: OWNER.PEERIT, schemaCount: 11 }),
   Object.freeze({ id: 'manifest-authority', owner: OWNER.PEERIT, schemaCount: 1 }),
@@ -47,10 +47,10 @@ const SOURCE_HASHES = Object.freeze({
   InboxStripeBindingV1: '28d110d2e256cbfab0bd12be2303fda0535307f762f9198df3c9d65c7a0da5ac',
   RootRotateV1: '93847bdfd5f4d16c44752028d1a095b8e83a374d0cb9e0da2cc40027e02fe14d',
   PeeritAnnouncementV1: '4671b700aa6fe42f61db81afa1ee61e9e3fd619b76b3e3037fc523424e1022ff',
-  CellReplicaBindingV1: '762f7fb638c98a3402135180f1123a5bb4c958de0581475570a3d2184eb306e6',
+  CellReplicaBindingV1: 'f14b42a1d2497e67ace723a285d7c645719c15e89204b8f3fa863a5b28a6dbf7',
   CoreReplicaBindingV1: '28e84095822c0af86189065babcc7b88ecbce0c105b77c9dcdc995d0fb57bd04',
   ReplicaBindingV1: '1eed230a836b2bdfc1628fd8943970313b9efdd09b46f9d994f413886c3c2b58',
-  AuthorBindV1: 'c2c465bea9fda18ab5efe44553d95bd74724a04bc8961287b4f59e0965e0a7e7',
+  AuthorBindV1: 'f3aea18d72625b87c67e1e18302d4ed23d55c6981f216f595a9239c2905c7297',
   RepairAddV1: '87b4c649b266b9864db88014dc39e207bfa5ca138805b2b25caeea3478dde458',
   ChargedProbeEvidenceV1: '26ef8e5c8981736d00b56a010e1fccebc85eab98b1d8f97144593a650f265c3e',
   RelayProbeEvidenceSetV1: '6e576ac5ee223406a10aa420678cf9dff9792b059104497b46de657f8f96dae9',
@@ -95,7 +95,8 @@ const SOURCE_HASHES = Object.freeze({
   LocalAccountRecordV1: 'f1e84c2f3d8d9fa32ca50ac9821834660dab63e5e900a1d9df04100dbc76bbe9',
   PeeritRecoveryBundleV1: '127b108fd6bb3f05dc0d89d1a2b20268684a07d05ce583b0ad98bcaf6dbcce00',
   DeviceChainStartV1: 'c0bf52a841e40d6a6378b39a5324dd637afb86053253dd7c5b98a38f1356b914',
-  WebAssetManifestV1: 'a27b262741553c97553b588565e74594900ee20d013a7113cbeeea30c7e2df6b'
+  WebAssetManifestV1: 'a27b262741553c97553b588565e74594900ee20d013a7113cbeeea30c7e2df6b',
+  PeeritInnerOperationBatchV1: '480568025f957858f92536a6e928d8332616639f13589e1b90fae255daae97ea'
 })
 
 function shape (ordinal, depth, relativeLine, sha256) {
@@ -160,7 +161,7 @@ export const PROFILE_SCHEMAS = Object.freeze([
   schema('CellReplicaBindingV1', 'replica-authority', ['BlindReceiptV1', 'ReadCellCapV1']),
   schema('CoreReplicaBindingV1', 'replica-authority', ['BlindCoreAckV1', 'BlindCoreReadCapV1']),
   schema('ReplicaBindingV1', 'replica-authority', ['CellReplicaBindingV1', 'CoreReplicaBindingV1'], [], 'tagged-union'),
-  schema('AuthorBindV1', 'replica-authority', ['ReplicaBindingV1']),
+  schema('AuthorBindV1', 'replica-authority', ['CellReplicaBindingV1', 'PeeritInnerOperationBatchV1']),
   schema('RepairAddV1', 'replica-authority', ['ReplicaBindingV1']),
   schema('ChargedProbeEvidenceV1', 'replica-authority'),
   schema('RelayProbeEvidenceSetV1', 'replica-authority', ['ChargedProbeEvidenceV1'], [
@@ -228,7 +229,11 @@ export const PROFILE_SCHEMAS = Object.freeze([
 
   schema('WebAssetManifestV1', 'web-release', [], [
     shape(1, 1, 6, '5cdc031abaa3ce34ca8481ad574ebd2728ecf762a6b3316f4aa2fee3eda29e52')
-  ])
+  ]),
+
+  // Appended to preserve every existing profile tag.  It is intentionally a
+  // local Peerit envelope codec rather than a HiveRelay external wire type.
+  schema('PeeritInnerOperationBatchV1', 'replica-authority')
 ])
 
 function externalType (name, family) {

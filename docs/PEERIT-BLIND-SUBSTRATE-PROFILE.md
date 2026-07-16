@@ -311,10 +311,10 @@ That verifier does not turn fixture placeholders or fixture keys into production
 release inputs.
 
 The non-fixture generator `scripts/generate-peerit-profile.mjs` now checks in
-`protocol/peerit-profile-v1.cenc`, 77 declaration vectors, and
+`protocol/peerit-profile-v1.cenc`, 78 declaration vectors, and
 `protocol/vectors/peerit-profile-v1.manifest.cenc`. The registry embeds and
 domain-binds this exact canonical profile source plus the mechanically verified
-77-declaration inventory, deterministic tags, ownership/categories, dependencies,
+78-declaration inventory, deterministic tags, ownership/categories, dependencies,
 anonymous shapes, external HiveRelay types, closed registries, and bounded codec
 IR. Its
 manifest uses the canonical HiveRelay sorted-path, length, and raw BLAKE2b-256
@@ -767,7 +767,7 @@ The other ownership-only durability/descriptor references likewise create no
 Peerit field codec. The final WIRE tuple and client-schema commitment remain
 separate release inputs; neither can substitute the other.
 
-The registry flag `codecLayoutIrComplete = 1` means only that all 77 declarations
+The registry flag `codecLayoutIrComplete = 1` means only that all 78 declarations
 compile to deterministic tags, field order, primitive widths, optional presence,
 bounded byte/count framing, nesting, and finite maximum encoded lengths. It does
 not mean executable profile codecs are complete. Nonzero/random requirements,
@@ -1370,8 +1370,9 @@ claims, never minimum permission to author, send, acknowledge, or discover. The
 client prefers three distinct relay-continuity identities, witnessed operator
 groups and store IDs; profile-2 members additionally have pairwise-distinct current
 `sharedFailureGroupId` values. One verified compatible relay acknowledgement is
-remote storage and may immediately produce an independently valid author binding.
-Additional replicas are added through repair. The UI reports exact
+remote storage and may begin the bound readback workflow, but cannot by itself
+produce an author binding. Additional replicas are added through repair. The UI
+reports exact
 `relay-acknowledged(n)`, `recently-retrievable(n)`, and
 `externally-witnessed(n)` counters. Only the `POLICY_DURABLE`/`RESILIENT` claim
 requires the configured targets, including
@@ -1752,8 +1753,10 @@ manifest. Any public reader may be `publisherPublicKey`.
 Announcement validity reduces to the publisher signature, exact manifest record
 ID, intrinsic manifest authority, and each claimed replica/readback proof. It has
 no producer release channel, operator-registry, maintainer-quorum, or profile-2
-prerequisite. One verified replica is sufficient for an `AuthorBindV1`;
-additional acknowledgements and profile-2 witnesses change only durability labels.
+prerequisite. One Cell replica that has completed the capability-bound decrypting
+readback is sufficient for an `AuthorBindV1`; a receipt or acknowledgement alone
+is not. Additional acknowledgements and profile-2 witnesses change only durability
+labels.
 
 Any public reader may reannounce an already-authoritative record. Maintainers and
 readers MUST accept a supported intrinsically valid announcement regardless of
@@ -1887,7 +1890,7 @@ CellReplicaBindingV1 {
   relayPublicKey:       32 bytes
   readCapability:       generic ReadCellCapV1
   cellBlobHash:         32 bytes
-  sizeClass:            u8
+  sizeClass:            u8 in 1..5
   allocationEpoch:      u32
   leaseEpoch:           u32
   createPublicKey:      32 bytes
@@ -1924,9 +1927,9 @@ AuthorBindV1 {
   authorSequence:          u64
   previousAuthorRecordId:  optional 32 bytes
   logicalHash:             32 bytes
-  innerCodec:              u16
-  innerLength:             u64
-  initialReplicas:         sorted array[1..16] of tagged ReplicaBindingV1
+  innerCodec:              u16 = 334 // PeeritInnerOperationBatchV1
+  innerLength:             u64 in 8..1048519
+  initialReplicas:         sorted array[1..16] of CellReplicaBindingV1
   authorPublicKey:         32 bytes
   signature:               64 bytes
 }
@@ -2493,7 +2496,7 @@ commit-time dynamic `durabilityProfileHash`/descriptor tuple.
 | `MaintainerSubmitV1` | Root/generation select the addressed discovery index, nonce is nonzero, and the recomputed announcement ID equals the submitted canonical signed bytes. The announcement passes its publisher signature, manifest identity, intrinsic author/causal authority, and every claimed replica proof. Each of zero to three supplied generic append acknowledgements independently maps to the derived stripe, reads back its exact frame hash, and decrypts to that announcement; acknowledgements may qualify propagation/durability but are not content authority. A direct submit is an additional discovery path and neither requires nor substitutes authority from Inbox, release, registry, or profile 2. |
 | `MaintainerSubmitResultV1` | Root, generation, and nonce exactly echo one valid submit; maintainer key equals the selected ingress binding and its result signature verifies. RECEIPT embeds one independently valid receipt whose root/generation/key/announcement ID equal the submit and has zero decision/retry fields; FIXED_REJECTION has no receipt, one pinned code, and zero retry; BUSY has no receipt/decision and a 1..60,000-ms retry. Every other optional-field shape fails. |
 | `MaintainerObservationHeadV1` | Maintainer key/operator group equal the accepted root/registry binding and the head signature verifies. Exactly three Core replica bindings share one Core key, exact logical slice and witnessed terminal head while independently passing the Core row on three live storage groups. Observation sequence/hash equal that terminal canonical observation, time is monotonic and within the proposal bounds, and `observedThroughUnixMillis` reaches the proposal cutoff. |
-| `AuthorBindV1` | Fetched inner bytes reproduce logical hash/codec/length; Peerit author/delegation/target/sequence continuity and signature verify; at least one initial replica independently reconstructs those same bytes and every claimed replica passes its Cell/Core row. Release, migration stage, registry, root, maintainer, profile 2, and discovery presence are deliberately absent from its authority. |
+| `AuthorBindV1` | Its codec is exactly tag 334 and its complete inner envelope is 8..1,048,519 bytes; fetched inner bytes reproduce logical hash/codec/length and the canonical operation batch has one verified author key. Every Cell initial replica uses the same size class and encoding commitment; at least one initial replica independently reconstructs those same bytes and every claimed replica passes its Cell row. Peerit author/delegation/target/sequence continuity and signature verify. Release, migration stage, registry, root, maintainer, profile 2, and discovery presence are deliberately absent from its authority. |
 | `RepairAddV1` | The target authority record already validates and its logical hash is equal; the candidate replica independently passes its Cell/Core row; repair signature and bounded hint lifetime verify; the hint changes no authority/floor/policy field. A later reannouncement may refresh discovery, never this signed repair record or its target authority. |
 | `DiscoverySnapshotV1` | Membership/addition/availability persistent-radix roots and every traversed node reproduce tags, compressed paths, counts, disjoint key ranges, hashes, and their claimed capability qualification. Sequence zero omits previous fields/caps and additions equal the nonempty frontier; later sequence is exactly +1, hash-links prior roots, and membership is the exact prior-set union additions (or canonical zero-addition form). Availability has exactly one latest hash-linked entry per membership key, no extra key, valid status/cap count, and every live cap reconstructs exact tag/record bytes. Current recent bucket/revision/root/skip links agree with timestamp and inclusion decisions. Timestamp/lease bounds, proposal replay/decision root, root/generation, and threshold signatures verify this source's shared commitment. Omission, staleness, or a fork degrades or rejects that discovery source and is auditable censorship evidence; it never invalidates intrinsically valid content found directly or through another source. |
 | `DiscoveryCheckpointV1` | Sequence zero alone omits previous hash; later sequence is exactly +1 and hashes the accepted prior checkpoint commitment. Snapshot hash/sequence/frontier/availability roots equal that snapshot; its caps reconstruct one valid certificate. Proposal caps reconstruct the exact proposal hash; proposal root/generation/checkpoint/previous hashes, candidate snapshot commitment/caps, `checkpointCreatedUnixMillis`, and next-checkpoint caps equal the finalized records. Proposer slot/cutoff, terminal heads through cutoff, complete decision root/counts, and deterministic replay verify. Relative to the prior checkpoint the snapshot tuple is entirely identical for a no-change heartbeat or exactly-next linked. Root/generation, Unix/lease mapping, freshness limits, source-specific floor, and threshold signatures verify. This orders one discovery source only and is never a global authoring or relay-delivery floor. |
@@ -3542,9 +3545,11 @@ boundaries. A crash after preparing or deterministically signing an event resume
 the same exact bytes and event ID. `LOCAL_VISIBLE` requires no network. With zero
 usable relay targets the state is `QUEUED_NO_RELAY`; the client retains the intent
 and continuously accepts newly discovered compatible targets. One independently
-verified relay acknowledgement is sufficient to sign an `AuthorBindV1` and to
-truthfully report that relay acknowledgement. Later replicas and readbacks improve
-only durability labels.
+verified relay acknowledgement is sufficient to truthfully report that relay
+acknowledgement. It is not sufficient to sign an `AuthorBindV1`: before an
+author-chain record is emitted, the client MUST verify a capability-bound Cell
+readback that decrypts to the exact inner envelope named by the binding. Later
+replicas and readbacks improve only durability labels.
 
 Targets are independent. A compatible unregistered HiveRelay may store, return,
 and announce opaque Peerit bytes. Operator registries and durability profiles
@@ -3899,6 +3904,40 @@ release/app/recommended-bootstrap fields equal the pin. For each same-origin
 recommended bootstrap asset, the verifier computes both the listed raw asset hash
 and the distinct domain-separated bootstrap hash from the same exact bytes and
 requires both expected values. Zero recommended bootstraps is valid.
+
+### 9.6 VNext inner operation envelope
+
+`AuthorBindV1.innerCodec = 334` denotes exactly one complete canonical
+`PeeritInnerOperationBatchV1` envelope. It is a local Peerit record codec, never
+a HiveRelay wire type. Its payload is the canonical UTF-8 operation-batch bytes
+whose signed operations all resolve to one author key; mixed-author batches are
+invalid before any Cell is created.
+
+```text
+PeeritInnerOperationBatchV1 {
+  version:                 u8 = 1
+  canonicalOperationBatch: canonical UTF-8 bytes[1..1048512]
+}
+```
+
+The complete envelope is therefore exactly 8..1,048,519 bytes: its profile tag,
+version, fixed u32 payload length, and canonical batch. V1 author bindings are
+Cell-only: each initial Cell stores exactly one logical envelope chunk. The Cell
+`sizeClass` is the binding's padding class; every initial Cell replica for one
+`AuthorBindV1` MUST use the same class and reproduce the same encoding commitment.
+The writer and verifier select the smallest supported class that contains the
+complete envelope. Under the frozen V1 Cell framing, the total Cell classes are
+4,096, 16,384, 65,536, 262,144, and 1,048,576 bytes; after its 33-byte framing
+overhead, their respective inner-envelope capacities are 4,063, 16,351, 65,503,
+262,111, and 1,048,543 bytes. A binding whose `innerLength` selects one class
+but declares another fails. Structural decoding of canonical UTF-8 alone never
+establishes the batch's signed-operation or author proof: issuance and contextual
+acceptance remain unavailable until the capability-bound readback path verifies
+the exact envelope and its operations. A future profile revision may admit
+Core-backed author bindings only after it defines and implements equivalent
+capability-bound decrypting readback proofs. Randomized Cell wrappers, nonces,
+and filler are committed by the authenticated Hive receipt, not folded into this
+portable inner-envelope commitment.
 
 The service worker downloads into a cache named by
 `(releaseSequence, webAssetManifestHash)`, verifies the release authority/pin and

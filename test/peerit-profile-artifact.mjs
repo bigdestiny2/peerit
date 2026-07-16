@@ -82,7 +82,7 @@ function malformedManifest (orderedPaths) {
   return writer.finish()
 }
 
-await test('checked-in full registry and all 77 vectors reproduce from the exact profile and inventory', () => {
+await test('checked-in full registry and all 78 vectors reproduce from the exact profile and inventory', () => {
   const result = verifyPeeritProfileArtifactSet({
     profileSource,
     inventory: PEERIT_PROFILE_INVENTORY,
@@ -90,8 +90,8 @@ await test('checked-in full registry and all 77 vectors reproduce from the exact
     vectorManifestBytes: manifestBytes,
     vectors
   })
-  assert.equal(result.schemaCount, 77)
-  assert.equal(result.vectorCount, 77)
+  assert.equal(result.schemaCount, 78)
+  assert.equal(result.vectorCount, 78)
   assert.equal(result.registryComplete, true)
   assert.equal(result.codecLayoutIrComplete, true)
   assert.equal(result.codecsComplete, true)
@@ -135,8 +135,8 @@ await test('source-order tag allocation is contiguous and pins the four release-
 
 await test('registry captures all ownership, categories, external types, enum values, dependencies, and anonymous shapes', () => {
   const registry = decodePeeritProfileRegistry(registryBytes)
-  assert.equal(registry.schemas.length, 77)
-  assert.equal(registry.schemas.filter(entry => entry.kind === 'record').length, 72)
+  assert.equal(registry.schemas.length, 78)
+  assert.equal(registry.schemas.filter(entry => entry.kind === 'record').length, 73)
   assert.equal(registry.schemas.filter(entry => entry.kind === 'tagged-union').length, 5)
   assert.equal(registry.schemas.reduce((total, entry) => total + entry.inlineShapes.length, 0), 15)
   assert.equal(registry.categories.length, 12)
@@ -155,7 +155,7 @@ await test('registry captures all ownership, categories, external types, enum va
 })
 
 await test('manifest is the exact HiveRelay path/length/raw-BLAKE2b construction', () => {
-  assert.equal(manifestEntries.length, 77)
+  assert.equal(manifestEntries.length, 78)
   assertPeeritProfileVectorManifest(manifestBytes, vectors)
   for (const entry of manifestEntries) {
     const bytes = vectors.get(entry.path)

@@ -51,8 +51,8 @@ test('canonical profile exactly matches the frozen mechanical inventory', () => 
   const result = verifyProfileInventory(profile, PEERIT_PROFILE_INVENTORY)
   assert.equal(result.ok, true)
   assert.deepEqual(result.problems, [])
-  assert.equal(result.declarationCount, 77)
-  assert.equal(result.recordCount, 72)
+  assert.equal(result.declarationCount, 78)
+  assert.equal(result.recordCount, 73)
   assert.equal(result.taggedUnionCount, 5)
   assert.equal(result.inlineShapeCount, 15)
   assert.equal(result.externalTypeCount, 12)
@@ -64,7 +64,7 @@ test('canonical profile exactly matches the frozen mechanical inventory', () => 
     'qualification-evidence': 8,
     'availability-bootstrap': 9,
     announcement: 1,
-    'replica-authority': 8,
+    'replica-authority': 9,
     'discovery-index': 9,
     'maintainer-discovery': 11,
     'manifest-authority': 1,
@@ -111,7 +111,7 @@ test('central write authority is absent and the four independent axes are frozen
   assert.ok(pin)
   assert.ok(authorBind)
   assert.equal(pin.referencedTypes.includes('PeeritMigrationStageV1'), true)
-  assert.deepEqual(authorBind.referencedTypes, ['ReplicaBindingV1'])
+  assert.deepEqual(authorBind.referencedTypes, ['CellReplicaBindingV1', 'PeeritInnerOperationBatchV1'])
 
   const bootstrap = declarationSource(profile, 'AvailabilityBootstrapV1')
   const operatorRegistry = declarationSource(profile, 'PeeritOperatorGroupRegistryV1')
@@ -128,7 +128,7 @@ test('every V1 reference has exactly one Peerit, registry, or HiveRelay owner', 
   for (const entry of PEERIT_PROFILE_INVENTORY.schemas) owners.set(entry.name, entry.owner)
   for (const entry of PEERIT_PROFILE_INVENTORY.externalTypes) owners.set(entry.name, entry.owner)
   for (const entry of PEERIT_PROFILE_INVENTORY.profileRegistries) owners.set(entry.name, entry.owner)
-  assert.equal(owners.size, 92)
+  assert.equal(owners.size, 93)
   for (const name of scan.allReferencedTypes) assert.equal(owners.has(name), true, name)
   assert.equal(scan.allReferencedTypes.length, owners.size)
 })
@@ -256,8 +256,8 @@ test('canonical profile and local publication slices clear only proven blockers 
   assert.equal(PEERIT_PROFILE_STATUS.profileRegistryReady, true)
   assert.equal(PEERIT_PROFILE_STATUS.profileVectorManifestReady, true)
   assert.equal(PEERIT_PROFILE_STATUS.profileArtifact.fixtureOnly, false)
-  assert.equal(PEERIT_PROFILE_STATUS.profileArtifact.schemaCount, 77)
-  assert.equal(PEERIT_PROFILE_STATUS.profileArtifact.vectorCount, 77)
+  assert.equal(PEERIT_PROFILE_STATUS.profileArtifact.schemaCount, 78)
+  assert.equal(PEERIT_PROFILE_STATUS.profileArtifact.vectorCount, 78)
   assert.equal(PEERIT_PROFILE_STATUS.profileArtifact.codecLayoutIrComplete, true)
   assert.equal(PEERIT_PROFILE_STATUS.profileArtifact.boundedStructuralIrReady, true)
   assert.equal(PEERIT_PROFILE_STATUS.profileArtifact.semanticValidationComplete, false)
@@ -270,7 +270,7 @@ test('canonical profile and local publication slices clear only proven blockers 
   assert.equal(PEERIT_PROFILE_STATUS.profileArtifact.crossRuntimeEqualityReady, true)
   assert.equal(PEERIT_PROFILE_STATUS.validatorArtifactReady, true)
   assert.equal(PEERIT_PROFILE_STATUS.validatorVectorManifestReady, true)
-  assert.equal(PEERIT_PROFILE_STATUS.validatorArtifact.vectorCount, 234)
+  assert.equal(PEERIT_PROFILE_STATUS.validatorArtifact.vectorCount, 238)
   assert.equal(PEERIT_PROFILE_STATUS.validatorArtifact.crossRuntimeEqualityReady, true)
   assert.equal(PEERIT_PROFILE_STATUS.profileArtifact.releaseReady, false)
   assert.equal(PEERIT_PROFILE_STATUS.availabilityPolicyReady, true)

@@ -2024,9 +2024,9 @@ export function createPeeritContextualGraphAuditAuthorityV1 (options) {
     recoverCustodyEnvelope (bytes, custodianPrivateKeys, context = {}) {
       return recoverCustodyEnvelope(state, bytes, custodianPrivateKeys, context)
     },
-    validateAuthorChain (bytes, context = {}) {
-      const snapshot = snapshotBytes(bytes, 'author bind')
-      return validateAuthorChain(state, createSession(state, context), state.catalog.AuthorBindV1.decode(snapshot), snapshot)
+    validateAuthorChain () {
+      failGraph('CONTEXTUAL_GRAPH_RUNTIME_UNAVAILABLE',
+        'AuthorBindV1 requires capability-bound Cell readback and operation authority before contextual acceptance')
     },
     validateObservationChain (bytes, context = {}) {
       const snapshot = snapshotBytes(bytes, 'maintainer observation')

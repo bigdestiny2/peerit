@@ -191,6 +191,13 @@ await test('production mode rejects omitted and unbranded contextual graph callb
   )
 })
 
+await test('AuthorBind contextual validation fails closed until Cell readback authority exists', () => {
+  assert.throws(
+    () => graphAuthority(evidenceStore()).validateAuthorChain(new Uint8Array()),
+    error => error.code === 'CONTEXTUAL_GRAPH_RUNTIME_UNAVAILABLE'
+  )
+})
+
 await test('profile pin graph accepts one exact contiguous signed chain', () => {
   const store = evidenceStore()
   const pin0 = makePin(0)

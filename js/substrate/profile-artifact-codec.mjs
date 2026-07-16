@@ -26,7 +26,7 @@ export const PEERIT_PROFILE_REGISTRY_MAGIC = 'PTRPRF01'
 export const PEERIT_PROFILE_VECTOR_MAGIC = 'PTPVEC01'
 export const PEERIT_PROFILE_FORMAT_VERSION = 2
 export const PEERIT_PROFILE_TAG_BASE = 0x0100
-export const PEERIT_PROFILE_SCHEMA_COUNT = 77
+export const PEERIT_PROFILE_SCHEMA_COUNT = 78
 
 export const PROFILE_ARTIFACT_DOMAIN = Object.freeze({
   PROFILE_SPEC_HASH: 'peerit.hiverelay.profile-spec-hash.v1',

@@ -47,12 +47,12 @@ function field (schemaName, fieldName) {
   return value.type
 }
 
-test('all 77 declarations compile to deterministic finite tagged codec IR', () => {
+test('all 78 declarations compile to deterministic finite tagged codec IR', () => {
   assert.equal(ir.version, 1)
   assert.equal(ir.tagEncoding, 'u16be')
   assert.equal(ir.optionalPresenceEncoding, 'u8-0-or-1')
-  assert.equal(ir.schemaCount, 77)
-  assert.equal(ir.boundedSchemaCount, 77)
+  assert.equal(ir.schemaCount, 78)
+  assert.equal(ir.boundedSchemaCount, 78)
   assert.equal(ir.boundedStructuralIrReady, true)
   assert.equal(ir.semanticValidationComplete, false)
   assert.equal(ir.schemas.every(entry => entry.maximumCompleteBytes > 2n), true)
@@ -77,6 +77,31 @@ test('every schema IR has one canonical binary representation and survives stric
   }
 })
 
+test('VNext AuthorBind uses one closed UTF-8 Cell envelope codec', () => {
+  const envelope = codec('PeeritInnerOperationBatchV1')
+  const innerCodec = field('AuthorBindV1', 'innerCodec')
+  const innerLength = field('AuthorBindV1', 'innerLength')
+  const replicas = field('AuthorBindV1', 'initialReplicas')
+  const sizeClass = field('CellReplicaBindingV1', 'sizeClass')
+  const payload = field('PeeritInnerOperationBatchV1', 'canonicalOperationBatch')
+
+  assert.equal(envelope.ordinal, 78)
+  assert.equal(envelope.tag, 334)
+  assert.equal(innerCodec.kind, 'uint')
+  assert.equal(innerCodec.bits, 16)
+  assert.equal(innerCodec.constant, 334n)
+  assert.equal(innerLength.minimum, 8n)
+  assert.equal(innerLength.maximum, 1048519n)
+  assert.equal(replicas.kind, 'array')
+  assert.equal(replicas.value.kind, 'local')
+  assert.equal(replicas.value.name, 'CellReplicaBindingV1')
+  assert.equal(sizeClass.minimum, 1n)
+  assert.equal(sizeClass.maximum, 5n)
+  assert.equal(payload.flavor, 'canonical-utf8')
+  assert.equal(payload.minimum, 1n)
+  assert.equal(payload.maximum, 1048512n)
+})
+
 test('the full registry embeds exact bounded IR and executable codecs without claiming release readiness', () => {
   const artifacts = buildPeeritProfileArtifacts(new TextEncoder().encode(profile), PEERIT_PROFILE_INVENTORY)
   const registry = decodePeeritProfileRegistry(artifacts.registryBytes)
@@ -84,7 +109,7 @@ test('the full registry embeds exact bounded IR and executable codecs without cl
   assert.equal(registry.codecLayoutIrComplete, true)
   assert.equal(registry.codecsComplete, true)
   assert.equal(registry.releaseReady, false)
-  assert.equal(registry.schemas.length, 77)
+  assert.equal(registry.schemas.length, 78)
   for (let index = 0; index < registry.schemas.length; index++) {
     assert.deepEqual(
       encodePeeritProfileSchemaCodecIr(registry.schemas[index].codecIr),

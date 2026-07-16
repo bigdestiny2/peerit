@@ -180,7 +180,15 @@ function buildVectors (codecIr) {
   const positives = new Map()
   for (const schema of codecIr.schemas) {
     const prefix = `${String(schema.ordinal).padStart(4, '0')}-${schema.name}`
-    const positive = catalog[schema.name].encode(fixtures.create(schema.name, schema.ordinal * 1009))
+    const fixture = fixtures.create(schema.name, schema.ordinal * 1009)
+    // Generated positives are structural fixtures, but this record's local
+    // envelope relation is cheap and important enough to keep internally
+    // coherent. Full signed-operation/readback proof is intentionally outside
+    // this generic vector generator.
+    if (schema.name === 'AuthorBindV1') {
+      fixture.logicalHash = new Uint8Array(fixture.initialReplicas[0].logicalHash)
+    }
+    const positive = catalog[schema.name].encode(fixture)
     catalog[schema.name].decode(positive)
     positives.set(schema.name, positive)
     entries.push({ path: `positive/${prefix}.cenc`, bytes: positive })
@@ -204,6 +212,17 @@ function buildVectors (codecIr) {
   const ciphertextLengthOffset = 69
   crossField.set([0, 0, 0, 0, 0, 0, 0, 2], ciphertextLengthOffset)
   entries.push({ path: 'negative/semantic/recovery-length-mismatch.cenc', bytes: crossField })
+
+  const innerPositive = positives.get('PeeritInnerOperationBatchV1')
+  const invalidUtf8 = Uint8Array.of(innerPositive[0], innerPositive[1], innerPositive[2], 0, 0, 0, 1, 0x94)
+  try {
+    catalog.PeeritInnerOperationBatchV1.decode(invalidUtf8)
+    throw new Error('PeeritInnerOperationBatchV1 accepted a malformed UTF-8 payload')
+  } catch (error) {
+    if (error && error.message === 'PeeritInnerOperationBatchV1 accepted a malformed UTF-8 payload') throw error
+    if (!error || error.code !== 'BAD_RELEASE_CONTROL_ENCODING') throw error
+  }
+  entries.push({ path: 'negative/semantic/inner-operation-batch-invalid-utf8.cenc', bytes: invalidUtf8 })
   return entries
 }
 

@@ -14,6 +14,8 @@ import {
   PEERIT_BROWSER_RUNTIME_ASSET_PATHS
 } from '../js/substrate/browser-runtime-authority.mjs'
 import {
+  decodePeeritProfileRegistry,
+  encodePeeritProfileRegistry,
   hashPeeritProfileAbi,
   hashPeeritProfileSpec,
   hashPeeritProfileVectorSet
@@ -127,7 +129,7 @@ const canonicalVector = new Uint8Array(fs.readFileSync(path.join(
   root, 'protocol/validator/vectors/positive/0077-WebAssetManifestV1.cenc')))
 const decodedVector = decodePeeritWebAssetManifestV1(canonicalVector)
 assert.equal(bytesEqual(encodePeeritWebAssetManifestV1(decodedVector), canonicalVector), true,
-  'dedicated WebAssetManifestV1 codec equals the generated all-77 codec vector')
+  'dedicated WebAssetManifestV1 codec equals the generated profile codec vector')
 
 const valid = signedInputs()
 const authority = await assemblePeeritBrowserRuntimeAuthorityNodeTestV1(valid)
@@ -186,7 +188,7 @@ assert.equal(Object.keys(createPeeritProfileCodecCatalogFromIr(
   productionCompiled,
   productionInventory,
   { externalAuthorities: productionExternalAuthorities, production: true }
-)).length, 77)
+)).length, 78)
 const clientArtifacts = {
   formatAuthorityBytes: new Uint8Array(fs.readFileSync(path.join(
     root, 'protocol/external-authority/hiverelay-blind-client-composition-format-v1.cenc'))),
@@ -225,16 +227,34 @@ function changed (value) {
   return output
 }
 
+function divergentProfileRegistry (value) {
+  const registry = decodePeeritProfileRegistry(value)
+  const source = new TextDecoder().decode(registry.profileSourceBytes)
+  const divergent = source.replace(
+    '### 9.6 VNext inner operation envelope',
+    '### 9.6 Browser test divergent VNext inner operation envelope'
+  )
+  assert.notEqual(divergent, source)
+  return encodePeeritProfileRegistry({
+    ...registry,
+    profileSourceBytes: new TextEncoder().encode(divergent)
+  })
+}
+
 for (const assetPath of [
   PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveArtifact,
   PEERIT_BROWSER_RUNTIME_ASSET_PATHS.profileRegistry,
   PEERIT_BROWSER_RUNTIME_ASSET_PATHS.validatorArtifact
 ]) {
   const substitutedAssets = originalAssets()
-  substitutedAssets.set(assetPath, changed(substitutedAssets.get(assetPath)))
+  substitutedAssets.set(assetPath,
+    assetPath === PEERIT_BROWSER_RUNTIME_ASSET_PATHS.profileRegistry
+      ? divergentProfileRegistry(substitutedAssets.get(assetPath))
+      : changed(substitutedAssets.get(assetPath)))
   const substituted = signedInputs(substitutedAssets)
   await assert.rejects(assemblePeeritBrowserRuntimeAuthorityNodeTestV1(substituted), error => [
     'BLIND_CLIENT_BROWSER_ARTIFACT_DRIFT',
+    'PROFILE_REGISTRY_INVALID',
     'PROFILE_SOURCE_BINDING_MISMATCH',
     'PROFILE_VALIDATOR_RUNTIME_BINDING_MISMATCH',
     'BROWSER_RUNTIME_MODULE_IMPORT_FAILED'

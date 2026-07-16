@@ -85,7 +85,11 @@ export function decodeUtf8 (value, field = 'UTF-8 bytes') {
     }
     return decoded
   } catch (error) {
-    if (error && error.code) throw error
+    // `TextDecoder` uses engine-specific error codes (for example Node's
+    // ERR_ENCODING_INVALID_ENCODED_DATA).  They are not protocol outcomes and
+    // must not leak past this boundary or make browser/node rejection behavior
+    // differ. Only our own explicit validation failure is preserved.
+    if (error && error.code === 'BAD_RELEASE_CONTROL_ENCODING') throw error
     failReleaseControl('BAD_RELEASE_CONTROL_ENCODING', `${field} is not valid UTF-8`)
   }
 }

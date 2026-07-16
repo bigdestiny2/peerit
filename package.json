@@ -73,6 +73,7 @@
     "test:peerit-journal": "node test/peerit-journal.mjs",
     "test:peerit-capability-vault": "node test/peerit-capability-vault.mjs",
     "test:peerit-blind-readback": "node test/peerit-blind-cell-readback.mjs",
+    "test:peerit-hiverelay-real-e2e": "node test/peerit-hiverelay-real-e2e.mjs",
     "test:peerit-descriptor-trust": "node test/peerit-descriptor-trust-backend.mjs",
     "test:peerit-pin-history-witness": "node test/peerit-pin-history-witness-backend.mjs",
     "test:peerit-pin-history-witness:browser": "npm run verify:release-control && node scripts/browser-peerit-pin-history-witness.mjs",

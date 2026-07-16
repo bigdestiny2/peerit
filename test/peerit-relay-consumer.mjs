@@ -337,6 +337,8 @@ const fakeControl = Object.freeze({
   BlindDirectHttpClient: FakeDirectClient,
   BlindRelayQualifier: FakeBlindRelayQualifier,
   DescriptorTrustStore: FakeDescriptorTrustStore,
+  createGetCellRequest: async () => Object.freeze({}),
+  openVerifiedCellGetResult: async () => new Uint8Array(),
   createAdmissionParametersRequest ({ profileId, schemeId }) {
     return Object.freeze({
       request: Object.freeze({ profileId, schemeId }),
@@ -436,7 +438,15 @@ const qualificationOptions = {
     supportedTransportProfiles: [{ transportId: 1, transportSupportBit: 1, transportProfileHash: fill(0x82) }],
     requirement: {
       familyId: 2,
-      operationId: 4,
+      operationId: 1,
+      endpointId: 1,
+      requiredRoleBits: 1,
+      privacyProfileBit: 1,
+      transportSupportBit: 1
+    },
+    readRequirement: {
+      familyId: 2,
+      operationId: 2,
       endpointId: 1,
       requiredRoleBits: 1,
       privacyProfileBit: 1,
@@ -461,10 +471,15 @@ const qualificationOptions = {
   }),
   persistPreparedReplica: async () => {},
   persistVerifiedResult: async () => ({ evidenceRef: 'test:verified' }),
+  persistVerifiedReadback: async () => ({ evidenceRef: 'test:readback-verified' }),
   loadPersistedReplica: async () => null,
   async createRelayAdapter (options) {
     const context = fakeControl.verifiedEndpointContext(options.endpoint)
+    const readContext = fakeControl.verifiedEndpointContext(options.readEndpoint)
     assert.ok(same(context.relayPublicKey, options.endpointContext.relayPublicKey))
+    assert.ok(same(readContext.relayPublicKey, options.readEndpointContext.relayPublicKey))
+    assert.equal(readContext.operationId, 2)
+    assert.equal(options.persistVerifiedReadback, qualificationOptions.persistVerifiedReadback)
     createdAdapterContexts.push(context)
     return Object.freeze({
       compatible: true,

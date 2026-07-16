@@ -100,9 +100,39 @@ function contextFingerprint (context) {
   return [targetIdFor(context), context.descriptorHash, context.durabilityProfileId].join(':')
 }
 
-function persistedReplicaPayload (stored, publication, targetId, qualifiedContext) {
+function pairedReadContext (value, relayPublicKey, writeContext) {
+  const readContext = targetContext(value, relayPublicKey)
+  for (const field of [
+    'relayPublicKey', 'storeId', 'continuityRoot', 'durabilityContinuityHash',
+    'descriptorHash'
+  ]) {
+    if (readContext[field] !== writeContext[field]) {
+      throw new TypeError(`read endpoint ${field} does not match the qualified Cell PUT endpoint`)
+    }
+  }
+  for (const field of [
+    'endpointId', 'familyId', 'transportId', 'transportSupportBit',
+    'privacyProfileBit', 'durabilityProfileId'
+  ]) {
+    if (readContext[field] !== writeContext[field]) {
+      throw new TypeError(`read endpoint ${field} does not match the qualified Cell PUT endpoint`)
+    }
+  }
+  if (readContext.operationId === writeContext.operationId) {
+    throw new TypeError('read endpoint must be qualified for a distinct Cell GET operation')
+  }
+  return readContext
+}
+
+function persistedReplicaPayload (stored, publication, targetId, qualifiedContext, qualifiedReadContext = null) {
   if (stored == null) return null
   const payload = stored && stored.payload
+  const legacyReadContext = qualifiedReadContext != null && payload &&
+    payload.readTargetContext == null && (payload.stage === 1 || payload.stage === 2)
+  const readContextMatches = qualifiedReadContext == null
+    ? payload && payload.readTargetContext == null
+    : payload && payload.readTargetContext &&
+      contextFingerprint(payload.readTargetContext) === contextFingerprint(qualifiedReadContext)
   if (!payload || typeof payload !== 'object' ||
       payload.intentId !== publication.intentId ||
       payload.logicalId !== publication.logicalId ||
@@ -114,8 +144,9 @@ function persistedReplicaPayload (stored, publication, targetId, qualifiedContex
       String(payload.targetId || '').toLowerCase() !== targetId ||
       !payload.targetContext ||
       contextFingerprint(payload.targetContext) !== contextFingerprint(qualifiedContext) ||
+      (!readContextMatches && !legacyReadContext) ||
       !payload.prepared || typeof payload.prepared !== 'object' ||
-      (payload.stage !== 1 && payload.stage !== 2)) {
+      (payload.stage !== 1 && payload.stage !== 2 && payload.stage !== 3)) {
     const error = new Error('encrypted persisted Cell replica does not match this exact intent target')
     error.code = 'HIVERELAY_PERSISTED_REPLICA_MISMATCH'
     error.terminal = true
@@ -124,8 +155,29 @@ function persistedReplicaPayload (stored, publication, targetId, qualifiedContex
   return Object.freeze({ stored, payload })
 }
 
-function persistedAcknowledgement (record) {
-  if (!record || record.payload.stage !== 2 ||
+function persistedAcknowledgement (record, publication, requireReadback = false) {
+  if (!record) return null
+  if (record.payload.stage === 3) {
+    if (typeof record.stored.evidenceRef !== 'string' || !record.stored.evidenceRef ||
+        !record.payload.readCapability || !record.payload.readbackResultBytes ||
+        !record.payload.readbackRequestCommitment || !record.payload.readbackInnerBytes ||
+        !equalBytes(record.payload.readbackInnerBytes, publication.innerBytes) ||
+        !equalBytes(record.payload.logicalHash, publication.logicalHash) ||
+        !equalBytes(record.payload.encodingCommitment, publication.encodingCommitment)) {
+      throw terminalError('HIVERELAY_PERSISTED_READBACK_MISMATCH',
+        'encrypted persisted Cell readback does not reproduce this exact VNext envelope')
+    }
+    return Object.freeze({
+      ok: true,
+      acknowledged: true,
+      readbackVerified: true,
+      policyDurable: false,
+      evidenceRef: record.stored.evidenceRef,
+      resultBytes: record.payload.resultBytes || record.payload.readbackResultBytes,
+      readCapability: record.payload.readCapability
+    })
+  }
+  if (requireReadback || record.payload.stage !== 2 ||
       typeof record.stored.evidenceRef !== 'string' || !record.stored.evidenceRef ||
       !record.payload.resultBytes || !record.payload.readCapability) return null
   return Object.freeze({
@@ -234,19 +286,41 @@ export function createBlindCellRelay (options = {}) {
   if (typeof options.persistVerifiedResult !== 'function') {
     throw new TypeError('persistVerifiedResult is required before a blind Cell acknowledgement can count')
   }
+  const readbackInputs = [
+    options.readEndpoint,
+    options.readEndpointContext,
+    options.persistVerifiedReadback
+  ]
+  const readbackConfigured = readbackInputs.some(value => value != null)
+  if (readbackConfigured && readbackInputs.some(value => value == null)) {
+    throw new TypeError('readEndpoint, readEndpointContext, and persistVerifiedReadback must be configured together')
+  }
+  if (readbackConfigured && typeof options.persistVerifiedReadback !== 'function') {
+    throw new TypeError('persistVerifiedReadback must durably commit authenticated Cell GET evidence')
+  }
   const relayPublicKey = bytes(options.relayPublicKey, 'relayPublicKey')
   if (relayPublicKey.byteLength !== 32) throw new TypeError('relayPublicKey must be 32 bytes')
   const qualifiedContext = targetContext(options.endpointContext, relayPublicKey)
+  const qualifiedReadContext = readbackConfigured
+    ? pairedReadContext(options.readEndpointContext, relayPublicKey, qualifiedContext)
+    : null
   const targetId = targetIdFor(qualifiedContext)
   const canonicalTargetId = String(targetId).toLowerCase()
   const loadPersistedReplica = typeof options.loadPersistedReplica === 'function'
     ? options.loadPersistedReplica
     : null
+  if (readbackConfigured && !loadPersistedReplica) {
+    throw new TypeError('loadPersistedReplica is required for non-mutating Cell GET reconciliation')
+  }
   const http = options.httpClient || new api.BlindDirectHttpClient({
     runtime: options.runtime,
     fetch: options.fetch,
     allowInsecureLoopback: options.allowInsecureLoopback === true
   })
+  const readHttp = options.readHttpClient || http
+  if (!readHttp || typeof readHttp.request !== 'function') {
+    throw new TypeError('authenticated Cell GET HTTP client is required')
+  }
   const allocationEpoch = typeof options.allocationEpoch === 'function'
     ? options.allocationEpoch
     : () => Math.floor(Date.now() / 21_600_000)
@@ -266,7 +340,9 @@ export function createBlindCellRelay (options = {}) {
     }
     const control = await controlPromise
     if (!control || typeof control.verifyOperationResult !== 'function' ||
-      typeof control.verifiedEndpointContext !== 'function') {
+      typeof control.verifiedEndpointContext !== 'function' ||
+      (readbackConfigured && (typeof control.createGetCellRequest !== 'function' ||
+        typeof control.openVerifiedCellGetResult !== 'function'))) {
       throw new TypeError('current @hiverelay/blind-client/control namespace is required for delivery')
     }
     return control
@@ -289,12 +365,23 @@ export function createBlindCellRelay (options = {}) {
         error.terminal = true
         throw error
       }
+      if (readbackConfigured) {
+        const currentReadContext = pairedReadContext(
+          control.verifiedEndpointContext(options.readEndpoint), relayPublicKey, currentContext)
+        if (contextFingerprint(currentReadContext) !== contextFingerprint(qualifiedReadContext)) {
+          const error = new Error('qualified relay read endpoint context changed before Cell preparation')
+          error.code = 'HIVERELAY_READ_TARGET_CONTEXT_DRIFT'
+          error.terminal = true
+          throw error
+        }
+      }
       if (loadPersistedReplica) {
         const persisted = persistedReplicaPayload(
           await loadPersistedReplica(publication.intentId, canonicalTargetId),
           publication,
           canonicalTargetId,
-          qualifiedContext
+          qualifiedContext,
+          qualifiedReadContext
         )
         throwIfAborted(attemptSignal)
         if (persisted) return persisted.payload.prepared
@@ -333,6 +420,7 @@ export function createBlindCellRelay (options = {}) {
         encodingCommitment: new Uint8Array(publication.encodingCommitment),
         targetId: canonicalTargetId,
         targetContext: qualifiedContext,
+        readTargetContext: qualifiedReadContext,
         prepared
       }))
       throwIfAborted(attemptSignal)
@@ -343,6 +431,119 @@ export function createBlindCellRelay (options = {}) {
       if (error && error.terminal === true) throw error
       throw retryableNotSent(error)
     } finally {
+      attempt.close()
+    }
+  }
+
+  async function readback (publication, prepared, context = {}) {
+    if (!readbackConfigured) {
+      throw new Error('authenticated Cell GET readback is not configured')
+    }
+    if (!prepared || typeof prepared !== 'object' || !prepared.readCap) {
+      throw terminalError('PEERIT_SUBSTRATE_READ_CAPABILITY_MISSING',
+        'the durable prepared Cell has no read capability for reconciliation')
+    }
+    const control = await loadControl()
+    const currentWriteContext = targetContext(
+      control.verifiedEndpointContext(options.endpoint), relayPublicKey)
+    const currentReadContext = pairedReadContext(
+      control.verifiedEndpointContext(options.readEndpoint), relayPublicKey, currentWriteContext)
+    if (contextFingerprint(currentWriteContext) !== contextFingerprint(qualifiedContext) ||
+        contextFingerprint(currentReadContext) !== contextFingerprint(qualifiedReadContext)) {
+      throw terminalError('HIVERELAY_READ_TARGET_CONTEXT_DRIFT',
+        'qualified Cell PUT/GET endpoint identity changed before authenticated readback')
+    }
+
+    const attempt = attemptTransportContext(options.signal, options.timeoutMillis, context)
+    let opened = null
+    try {
+      throwIfAborted(attempt.signal)
+      const get = await control.createGetCellRequest({
+        runtime: options.runtime,
+        readCap: prepared.readCap,
+        admissionProvider: options.readAdmissionProvider
+      })
+      throwIfAborted(attempt.signal)
+      const response = await readHttp.request({
+        endpoint: options.readEndpoint,
+        ...get.wire,
+        body: get.requestBytes,
+        signal: attempt.signal,
+        timeoutMillis: attempt.timeoutMillis
+      })
+      throwIfAborted(attempt.signal)
+      if (!response || response.ok !== true) {
+        const error = new Error('HiveRelay has not returned the exact Cell for authenticated readback')
+        error.code = 'HIVERELAY_READBACK_PENDING'
+        error.remote = response && response.error
+        throw error
+      }
+
+      let verified
+      let readbackResultBytes
+      try {
+        verified = await control.verifyOperationResult({
+          endpoint: options.readEndpoint,
+          request: get.request,
+          requestCommitment: get.requestCommitment,
+          resultBytes: response.body,
+          externalWitnessVerifier: options.externalWitnessVerifier
+        })
+        readbackResultBytes = verified && typeof verified.snapshotBytes === 'function'
+          ? verified.snapshotBytes()
+          : response.body
+        opened = await control.openVerifiedCellGetResult({
+          verifiedResult: verified,
+          runtime: options.runtime,
+          readCap: prepared.readCap
+        })
+      } catch (cause) {
+        const error = terminalError('PEERIT_SUBSTRATE_READBACK_AUTHENTICATION_FAILED',
+          'Cell GET result failed endpoint binding, result authentication, or capability opening')
+        error.cause = cause
+        throw error
+      }
+      throwIfAborted(attempt.signal)
+      const envelope = publicationCellEnvelope(publication)
+      if (!equalBytes(opened, envelope.innerBytes)) {
+        throw terminalError('PEERIT_SUBSTRATE_READBACK_ENVELOPE_MISMATCH',
+          'decrypted Cell GET bytes do not equal the exact tag-334 VNext envelope')
+      }
+
+      const persisted = await options.persistVerifiedReadback(Object.freeze({
+        intentId: publication.intentId,
+        logicalId: publication.logicalId,
+        innerCodec: publication.innerCodec,
+        innerLength: publication.innerLength,
+        sizeClass: publication.sizeClass,
+        logicalHash: new Uint8Array(publication.logicalHash),
+        encodingCommitment: new Uint8Array(publication.encodingCommitment),
+        targetId: canonicalTargetId,
+        targetContext: qualifiedContext,
+        readTargetContext: qualifiedReadContext,
+        prepared,
+        readCapability: prepared.readCap,
+        readbackRequestBytes: new Uint8Array(get.requestBytes),
+        readbackRequestCommitment: new Uint8Array(get.requestCommitment),
+        readbackResultBytes: new Uint8Array(readbackResultBytes),
+        readbackInnerBytes: new Uint8Array(opened)
+      }))
+      throwIfAborted(attempt.signal)
+      const evidenceRef = typeof persisted === 'string' ? persisted : persisted && persisted.evidenceRef
+      if (typeof evidenceRef !== 'string' || evidenceRef.length < 1 || evidenceRef.length > 512) {
+        throw new Error('authenticated Cell GET evidence was not durably indexed')
+      }
+      return Object.freeze({
+        ok: true,
+        acknowledged: true,
+        readbackVerified: true,
+        policyDurable: false,
+        evidenceRef,
+        resultBytes: new Uint8Array(readbackResultBytes),
+        readCapability: prepared.readCap
+      })
+    } finally {
+      if (opened && typeof opened.fill === 'function') opened.fill(0)
       attempt.close()
     }
   }
@@ -359,16 +560,23 @@ export function createBlindCellRelay (options = {}) {
           await loadPersistedReplica(delivery.intentId, canonicalTargetId),
           delivery,
           canonicalTargetId,
-          qualifiedContext
+          qualifiedContext,
+          qualifiedReadContext
         )
       } catch (error) {
         if (error && error.terminal === true) throw error
         throw retryableNotSent(error)
       }
-      const acknowledged = persistedAcknowledgement(persisted)
+      const acknowledged = persistedAcknowledgement(persisted, delivery, readbackConfigured)
       if (acknowledged) return acknowledged
       if (!persisted) throw retryableNotSent(new Error('durable prepared Cell replica is missing before send'))
       prepared = persisted.payload.prepared
+      // A committed PUT receipt is already a mutation outcome. On restart, go
+      // straight to capability-bound GET; never resend the PUT merely because
+      // the prior process did not finish its readback.
+      if (readbackConfigured && persisted.payload.stage === 2) {
+        return readback(delivery, prepared, context)
+      }
     }
     let control
     try { control = await loadControl() } catch (error) { throw retryableNotSent(error) }
@@ -416,6 +624,7 @@ export function createBlindCellRelay (options = {}) {
       encodingCommitment: new Uint8Array(delivery.encodingCommitment),
       targetId: canonicalTargetId,
       targetContext: qualifiedContext,
+      readTargetContext: qualifiedReadContext,
       prepared,
       resultBytes,
       readCapability: prepared.readCap
@@ -424,6 +633,7 @@ export function createBlindCellRelay (options = {}) {
     if (typeof evidenceRef !== 'string' || evidenceRef.length < 1 || evidenceRef.length > 512) {
       throw new Error('verified blind Cell result was not durably indexed')
     }
+    if (readbackConfigured) return readback(delivery, prepared, context)
     return Object.freeze({
       ok: true,
       acknowledged: true,
@@ -439,14 +649,17 @@ export function createBlindCellRelay (options = {}) {
     const attemptSignal = validSignal(context.signal, 'delivery attempt signal') ||
       validSignal(options.signal, 'relay installation signal')
     throwIfAborted(attemptSignal)
-    if (typeof options.reconcile === 'function') return options.reconcile(publication, context)
+    if (!readbackConfigured && typeof options.reconcile === 'function') {
+      return options.reconcile(publication, context)
+    }
     let persisted
     try {
       persisted = persistedReplicaPayload(
         await loadPersistedReplica(publication.intentId, canonicalTargetId),
         publication,
         canonicalTargetId,
-        qualifiedContext
+        qualifiedContext,
+        qualifiedReadContext
       )
       throwIfAborted(attemptSignal)
     } catch (error) {
@@ -455,8 +668,15 @@ export function createBlindCellRelay (options = {}) {
       // A local vault read failure cannot prove that mutation was unprocessed.
       throw error
     }
-    const acknowledged = persistedAcknowledgement(persisted)
+    const acknowledged = persistedAcknowledgement(persisted, publication, readbackConfigured)
     if (acknowledged) return acknowledged
+    if (readbackConfigured && persisted &&
+        (persisted.payload.stage === 1 || persisted.payload.stage === 2)) {
+      // The prior PUT may have committed even when its response was lost. The
+      // only automatic recovery operation is an authenticated GET for the exact
+      // durable slot/capability. This path never calls send() and never mutates.
+      return readback(publication, persisted.payload.prepared, context)
+    }
     const error = new Error('blind Cell result remains ambiguous; no verified persisted receipt exists')
     error.code = 'HIVERELAY_RESULT_PENDING_UNKNOWN'
     throw error

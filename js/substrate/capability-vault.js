@@ -248,7 +248,8 @@ function assertRecord (record, expectedKey = null) {
   if (!plainObject(record) || record.version !== 1 || !HEX64.test(String(record.recordId || '')) ||
       typeof record.recordKey !== 'string' || (expectedKey != null && record.recordKey !== expectedKey) ||
       !Number.isSafeInteger(record.revision) || record.revision < 1 ||
-      (record.stage !== 1 && record.stage !== 2) || !Number.isSafeInteger(record.createdAt) ||
+      (record.stage !== 1 && record.stage !== 2 && record.stage !== 3) ||
+      !Number.isSafeInteger(record.createdAt) ||
       !Number.isSafeInteger(record.updatedAt) || record.updatedAt < record.createdAt) {
     throw new Error('capability record header is malformed')
   }
@@ -319,10 +320,29 @@ function publicRecord (record, payload) {
     logicalId: payload.logicalId,
     targetId: payload.targetId,
     revision: record.revision,
-    stage: record.stage === 1 ? 'prepared' : 'verified',
+    stage: record.stage === 1
+      ? 'prepared'
+      : record.stage === 2 ? 'verified' : 'readback-verified',
     evidenceRef: evidenceRef(record),
     payload: clone(payload)
   })
+}
+
+function preparedProjection (payload) {
+  const comparable = { ...payload, stage: 1 }
+  delete comparable.resultBytes
+  delete comparable.readCapability
+  delete comparable.readbackRequestBytes
+  delete comparable.readbackRequestCommitment
+  delete comparable.readbackResultBytes
+  delete comparable.readbackInnerBytes
+  return comparable
+}
+
+function matchesPreparedWithReadContextUpgrade (comparable, expected) {
+  if (sameSecretValues(comparable, expected)) return true
+  if (comparable.readTargetContext != null || expected.readTargetContext == null) return false
+  return sameSecretValues({ ...comparable, readTargetContext: expected.readTargetContext }, expected)
 }
 
 function indexedDbKv (idb = globalThis.indexedDB) {
@@ -469,7 +489,8 @@ export function createPeeritCapabilityVault (options = {}) {
   async function persistPreparedReplica (input) {
     const fields = inputFields(input)
     const envelope = envelopeFields(input)
-    if (!plainObject(input.targetContext) || !plainObject(input.prepared)) {
+    if (!plainObject(input.targetContext) || !plainObject(input.prepared) ||
+        (input.readTargetContext != null && !plainObject(input.readTargetContext))) {
       throw new TypeError('prepared capability persistence requires targetContext and prepared objects')
     }
     const recordKey = await recordKeyFor(runtime, fields.intentId, fields.targetId)
@@ -479,6 +500,7 @@ export function createPeeritCapabilityVault (options = {}) {
       ...fields,
       ...envelope,
       targetContext: input.targetContext,
+      readTargetContext: input.readTargetContext || null,
       prepared: input.prepared
     }
     const preparedBytes = encodeSecret(payload)
@@ -500,10 +522,8 @@ export function createPeeritCapabilityVault (options = {}) {
       if (winner.stage === 1 && sameEncodedSecret(winnerPayload, preparedBytes)) {
         return publicRecord(winner, winnerPayload)
       }
-      if (winner.stage === 2) {
-        const comparable = { ...winnerPayload, stage: 1 }
-        delete comparable.resultBytes
-        delete comparable.readCapability
+      if (winner.stage === 2 || winner.stage === 3) {
+        const comparable = preparedProjection(winnerPayload)
         if (sameEncodedSecret(comparable, preparedBytes)) return publicRecord(winner, winnerPayload)
       }
       throw new Error('a different prepared capability record already owns this intent target')
@@ -515,7 +535,8 @@ export function createPeeritCapabilityVault (options = {}) {
   async function persistVerifiedResult (input) {
     const fields = inputFields(input)
     const envelope = envelopeFields(input)
-    if (!plainObject(input.targetContext) || !plainObject(input.prepared)) {
+    if (!plainObject(input.targetContext) || !plainObject(input.prepared) ||
+        (input.readTargetContext != null && !plainObject(input.readTargetContext))) {
       throw new TypeError('verified capability persistence requires targetContext and prepared objects')
     }
     const resultBytes = bytes(input.resultBytes, 'resultBytes')
@@ -530,23 +551,29 @@ export function createPeeritCapabilityVault (options = {}) {
         ...fields,
         ...envelope,
         targetContext: input.targetContext,
+        readTargetContext: input.readTargetContext || null,
         prepared: input.prepared
       }
-      const comparable = { ...current.payload, stage: 1 }
-      delete comparable.resultBytes
-      delete comparable.readCapability
-      if (!sameSecretValues(comparable, expectedPrepared)) {
+      const comparable = preparedProjection(current.payload)
+      if (!matchesPreparedWithReadContextUpgrade(comparable, expectedPrepared)) {
         throw new Error('verified result does not match the durable prepared capability record')
       }
       const payload = {
         ...comparable,
         stage: 2,
+        readTargetContext: input.readTargetContext || null,
         resultBytes,
         readCapability: input.readCapability
       }
       if (current.record.stage === 2) {
         if (sameSecretValues(current.payload, payload)) return publicRecord(current.record, current.payload)
         throw new Error('a conflicting verified result already owns this intent target')
+      }
+      if (current.record.stage === 3) {
+        if (!sameSecretValues(current.payload.readCapability, input.readCapability)) {
+          throw new Error('verified result read capability conflicts with authenticated readback evidence')
+        }
+        return publicRecord(current.record, current.payload)
       }
       if (current.record.revision >= Number.MAX_SAFE_INTEGER) throw new Error('capability record revision is exhausted')
       const observedTimestamp = now()
@@ -570,6 +597,82 @@ export function createPeeritCapabilityVault (options = {}) {
       if (swapped.swapped) return publicRecord(candidate, payload)
     }
     throw new Error('capability record changed too many times during verified-result persistence')
+  }
+
+  async function persistVerifiedReadback (input) {
+    const fields = inputFields(input)
+    const envelope = envelopeFields(input)
+    if (!plainObject(input.targetContext) || !plainObject(input.readTargetContext) ||
+        !plainObject(input.prepared) || !plainObject(input.readCapability)) {
+      throw new TypeError('readback persistence requires PUT/GET contexts, prepared request, and read capability')
+    }
+    if (!sameSecretValues(input.prepared.readCap, input.readCapability)) {
+      throw new Error('readback capability does not match the durable prepared Cell')
+    }
+    const readbackRequestBytes = bytes(input.readbackRequestBytes, 'readbackRequestBytes')
+    const readbackRequestCommitment = bytes(input.readbackRequestCommitment, 'readbackRequestCommitment')
+    const readbackResultBytes = bytes(input.readbackResultBytes, 'readbackResultBytes')
+    const readbackInnerBytes = bytes(input.readbackInnerBytes, 'readbackInnerBytes')
+    if (readbackRequestBytes.byteLength < 1 || readbackRequestCommitment.byteLength !== 32 ||
+        readbackResultBytes.byteLength < 1 || readbackInnerBytes.byteLength !== envelope.innerLength) {
+      throw new TypeError('readback evidence has invalid request, commitment, result, or exact-envelope length')
+    }
+
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const current = await loadRecord(fields)
+      if (!current.record) throw new Error('authenticated readback has no durable prepared capability record')
+      const expectedPrepared = {
+        version: 1,
+        stage: 1,
+        ...fields,
+        ...envelope,
+        targetContext: input.targetContext,
+        readTargetContext: input.readTargetContext,
+        prepared: input.prepared
+      }
+      const comparable = preparedProjection(current.payload)
+      if (!matchesPreparedWithReadContextUpgrade(comparable, expectedPrepared)) {
+        throw new Error('authenticated readback does not match the durable prepared capability record')
+      }
+      if (current.payload.readCapability &&
+          !sameSecretValues(current.payload.readCapability, input.readCapability)) {
+        throw new Error('authenticated readback conflicts with the persisted Cell read capability')
+      }
+      const payload = {
+        ...comparable,
+        stage: 3,
+        readTargetContext: input.readTargetContext,
+        readCapability: input.readCapability,
+        readbackRequestBytes,
+        readbackRequestCommitment,
+        readbackResultBytes,
+        readbackInnerBytes
+      }
+      if (current.payload.resultBytes) payload.resultBytes = current.payload.resultBytes
+      if (current.record.stage === 3) {
+        if (sameSecretValues(current.payload, payload)) return publicRecord(current.record, current.payload)
+        throw new Error('conflicting authenticated readback evidence already owns this intent target')
+      }
+      if (current.record.revision >= Number.MAX_SAFE_INTEGER) throw new Error('capability record revision is exhausted')
+      const observedTimestamp = now()
+      if (!Number.isSafeInteger(observedTimestamp) || observedTimestamp < 0) {
+        throw new Error('capability vault clock is invalid')
+      }
+      const timestamp = Math.max(observedTimestamp, current.record.updatedAt)
+      const candidate = await sealRecord(runtime, {
+        version: 1,
+        recordKey: current.recordKey,
+        recordId: randomId(runtime),
+        revision: current.record.revision + 1,
+        stage: 3,
+        createdAt: current.record.createdAt,
+        updatedAt: timestamp
+      }, payload, current.record.wrapKey)
+      const swapped = await kv.compareAndSwap(
+        current.recordKey, current.record.recordId, current.record.revision, candidate)
+      if (swapped.swapped) return publicRecord(candidate, payload)
+    }
+    throw new Error('capability record changed too many times during readback persistence')
   }
 
   async function load (intentId, targetId) {
@@ -612,6 +715,7 @@ export function createPeeritCapabilityVault (options = {}) {
     available: () => true,
     persistPreparedReplica,
     persistVerifiedResult,
+    persistVerifiedReadback,
     load,
     inspect,
     deleteExact
@@ -623,6 +727,7 @@ export const PEERIT_CAPABILITY_VAULT_STATUS = Object.freeze({
   nonExtractableDeviceKey: true,
   exactPreparedBeforeSend: true,
   verifiedResultBeforeAcknowledgement: true,
+  authenticatedReadbackBeforeAuthorBinding: true,
   atomicMultiTabCas: true,
   browserIndexedDbIntegrationTested: true,
   portableRecoveryBundleIntegrated: false,

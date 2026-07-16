@@ -129,14 +129,36 @@ function positiveInteger (value, field) {
   return value
 }
 
+function exactOperationRequirement (value, field) {
+  if (!value || typeof value !== 'object') throw new TypeError(`${field} is required`)
+  return Object.freeze({
+    familyId: positiveInteger(value.familyId, `${field}.familyId`),
+    operationId: positiveInteger(value.operationId, `${field}.operationId`),
+    endpointId: positiveInteger(value.endpointId, `${field}.endpointId`),
+    requiredRoleBits: positiveInteger(value.requiredRoleBits, `${field}.requiredRoleBits`),
+    privacyProfileBit: positiveInteger(value.privacyProfileBit, `${field}.privacyProfileBit`),
+    transportSupportBit: positiveInteger(value.transportSupportBit, `${field}.transportSupportBit`)
+  })
+}
+
 function exactProfile (value) {
   if (!value || typeof value !== 'object') throw new TypeError('verified Peerit relay profile authority is required')
   if (!Array.isArray(value.supportedProtocolProfiles) || value.supportedProtocolProfiles.length < 1 ||
       !Array.isArray(value.supportedTransportProfiles) || value.supportedTransportProfiles.length < 1) {
     throw new TypeError('verified Peerit protocol and transport profile pins are required')
   }
-  const requirement = value.requirement
-  if (!requirement || typeof requirement !== 'object') throw new TypeError('Peerit relay operation requirement is required')
+  const requirement = exactOperationRequirement(value.requirement, 'requirement')
+  const readRequirement = exactOperationRequirement(value.readRequirement, 'readRequirement')
+  for (const field of [
+    'familyId', 'endpointId', 'requiredRoleBits', 'privacyProfileBit', 'transportSupportBit'
+  ]) {
+    if (readRequirement[field] !== requirement[field]) {
+      throw new TypeError(`readRequirement.${field} must match the Cell PUT endpoint requirement`)
+    }
+  }
+  if (readRequirement.operationId === requirement.operationId) {
+    throw new TypeError('readRequirement must select a distinct Cell GET operation')
+  }
   const admissionProfile = value.admissionProfile
   if (!admissionProfile || typeof admissionProfile !== 'object') {
     throw new TypeError('Peerit signed admission profile pin is required')
@@ -144,14 +166,8 @@ function exactProfile (value) {
   return Object.freeze({
     supportedProtocolProfiles: value.supportedProtocolProfiles,
     supportedTransportProfiles: value.supportedTransportProfiles,
-    requirement: Object.freeze({
-      familyId: positiveInteger(requirement.familyId, 'requirement.familyId'),
-      operationId: positiveInteger(requirement.operationId, 'requirement.operationId'),
-      endpointId: positiveInteger(requirement.endpointId, 'requirement.endpointId'),
-      requiredRoleBits: positiveInteger(requirement.requiredRoleBits, 'requirement.requiredRoleBits'),
-      privacyProfileBit: positiveInteger(requirement.privacyProfileBit, 'requirement.privacyProfileBit'),
-      transportSupportBit: positiveInteger(requirement.transportSupportBit, 'requirement.transportSupportBit')
-    }),
+    requirement,
+    readRequirement,
     describeFamilyId: positiveInteger(value.describeFamilyId, 'profile.describeFamilyId'),
     admissionParametersOperationId: positiveInteger(
       value.admissionParametersOperationId, 'profile.admissionParametersOperationId'),
@@ -182,7 +198,9 @@ function assertControlContract (control) {
     'verifiedEndpointContext',
     'verifiedAdmissionParametersValidity',
     'verifiedHealthValidity',
-    'verifyAdmissionParametersBytes'
+    'verifyAdmissionParametersBytes',
+    'createGetCellRequest',
+    'openVerifiedCellGetResult'
   ]
   if (!control || functions.some(name => typeof control[name] !== 'function')) {
     throw new TypeError('authenticated @hiverelay/blind-client/control browser namespace is required')
@@ -226,6 +244,31 @@ function contextSnapshot (control, endpoint, requirement) {
 
 function identityKey (context) {
   return `${fixedHex(context.continuityRoot)}:${fixedHex(context.storeId)}`
+}
+
+function assertPairedCellEndpointContexts (writeContext, readContext) {
+  for (const field of [
+    'descriptorHash', 'relayPublicKey', 'storeId', 'continuityRoot',
+    'durabilityContinuityHash'
+  ]) {
+    if (!bytesEqual(writeContext[field], readContext[field])) {
+      throw qualificationError('PEERIT_CELL_READ_ENDPOINT_IDENTITY_DRIFT',
+        `qualified Cell GET endpoint changed ${field}`)
+    }
+  }
+  for (const field of [
+    'descriptorSequence', 'familyId', 'endpointId', 'transportId',
+    'transportSupportBit', 'privacyProfileBit', 'durabilityProfileId'
+  ]) {
+    if (writeContext[field] !== readContext[field]) {
+      throw qualificationError('PEERIT_CELL_READ_ENDPOINT_IDENTITY_DRIFT',
+        `qualified Cell GET endpoint changed ${field}`)
+    }
+  }
+  if (writeContext.operationId === readContext.operationId) {
+    throw qualificationError('PEERIT_CELL_READ_ENDPOINT_OPERATION_INVALID',
+      'qualified Cell GET endpoint reused the Cell PUT operation')
+  }
 }
 
 function endpointKey (context) {
@@ -615,9 +658,10 @@ export async function qualifyPermissionlessRelayCandidates (options = {}) {
   }
   if (typeof options.persistPreparedReplica !== 'function' ||
       typeof options.persistVerifiedResult !== 'function' ||
+      typeof options.persistVerifiedReadback !== 'function' ||
       typeof options.loadPersistedReplica !== 'function') {
     throw qualificationError('PEERIT_ENCRYPTED_CAPABILITY_VAULT_REQUIRED',
-      'encrypted prepared/result persistence and crash recovery loading are required')
+      'encrypted prepared/result/readback persistence and crash recovery loading are required')
   }
 
   let trustStore = options.trustStore
@@ -696,20 +740,29 @@ export async function qualifyPermissionlessRelayCandidates (options = {}) {
       })
       const expectedDescriptorHash = bytes(
         candidateValue.expectedDescriptorHash, 'candidate expectedDescriptorHash', 32)
-      const qualified = await awaitAbortable(qualifier.qualifyCandidate({
+      const candidate = {
         canonicalUrl: new TextEncoder().encode(candidateValue.canonicalUrl),
         expectedDescriptorHash,
         continuityRootRelayPublicKey: candidateValue.continuityRootRelayPublicKey == null
           ? null
           : bytes(candidateValue.continuityRootRelayPublicKey, 'candidate continuityRootRelayPublicKey', 32)
-      }, profile.requirement, {
+      }
+      const qualified = await awaitAbortable(qualifier.qualifyCandidate(candidate, profile.requirement, {
         signal: qualificationSignal,
         timeoutMillis: options.timeoutMillis
       }), qualificationSignal)
       const context = contextSnapshot(control, qualified.endpoint, profile.requirement)
+      const readQualified = await awaitAbortable(qualifier.qualifyCandidate(candidate, profile.readRequirement, {
+        signal: qualificationSignal,
+        timeoutMillis: options.timeoutMillis
+      }), qualificationSignal)
+      const readContext = contextSnapshot(control, readQualified.endpoint, profile.readRequirement)
+      assertPairedCellEndpointContexts(context, readContext)
       const descriptorValidity = descriptorValiditySnapshot(control, qualified.trustedDescriptor)
       const healthValidity = healthValiditySnapshot(
         control, qualified.health, qualificationLeaseMillis)
+      const readHealthValidity = healthValiditySnapshot(
+        control, readQualified.health, qualificationLeaseMillis)
       if (context.durabilityProfileId === 2 && typeof options.externalWitnessVerifier !== 'function') {
         throw qualificationError('PEERIT_EXTERNAL_WITNESS_VERIFIER_REQUIRED',
           'durability profile 2 requires an authenticated external commit-witness verifier')
@@ -774,6 +827,8 @@ export async function qualifyPermissionlessRelayCandidates (options = {}) {
         control,
         endpoint: qualified.endpoint,
         endpointContext: context,
+        readEndpoint: readQualified.endpoint,
+        readEndpointContext: readContext,
         relayPublicKey: context.relayPublicKey,
         runtime,
         fetch: options.fetch,
@@ -781,6 +836,7 @@ export async function qualifyPermissionlessRelayCandidates (options = {}) {
         admissionProvider: provider,
         persistPreparedReplica: options.persistPreparedReplica,
         persistVerifiedResult: options.persistVerifiedResult,
+        persistVerifiedReadback: options.persistVerifiedReadback,
         loadPersistedReplica: options.loadPersistedReplica,
         externalWitnessVerifier: options.externalWitnessVerifier,
         timeoutMillis: options.timeoutMillis,
@@ -799,8 +855,12 @@ export async function qualifyPermissionlessRelayCandidates (options = {}) {
       const lease = Object.freeze({
         nowMonotonicMillis: monotonicMillis,
         nowEpoch,
-        healthVerifiedAtMonotonicMillis: healthValidity.verifiedAtMonotonicMillis,
-        healthExpiresAtMonotonicMillis: healthValidity.expiresAtMonotonicMillis,
+        healthVerifiedAtMonotonicMillis: Math.max(
+          healthValidity.verifiedAtMonotonicMillis,
+          readHealthValidity.verifiedAtMonotonicMillis),
+        healthExpiresAtMonotonicMillis: Math.min(
+          healthValidity.expiresAtMonotonicMillis,
+          readHealthValidity.expiresAtMonotonicMillis),
         qualifiedEpoch,
         validFromEpoch: signedValidFromEpoch,
         expiresEpoch: signedExpiresEpoch
@@ -1105,7 +1165,8 @@ export async function installPeeritBlindRelayConsumer (options = {}) {
       indexedDB: options.indexedDB
     })
     if (!capabilityVault || typeof capabilityVault.persistPreparedReplica !== 'function' ||
-        typeof capabilityVault.persistVerifiedResult !== 'function') {
+        typeof capabilityVault.persistVerifiedResult !== 'function' ||
+        typeof capabilityVault.persistVerifiedReadback !== 'function') {
       throw qualificationError('PEERIT_ENCRYPTED_CAPABILITY_VAULT_REQUIRED',
         'encrypted Cell capability persistence is unavailable')
     }
@@ -1128,6 +1189,7 @@ export async function installPeeritBlindRelayConsumer (options = {}) {
         descriptorTrustBackend,
         persistPreparedReplica: capabilityVault.persistPreparedReplica,
         persistVerifiedResult: capabilityVault.persistVerifiedResult,
+        persistVerifiedReadback: capabilityVault.persistVerifiedReadback,
         loadPersistedReplica: capabilityVault.load,
         candidates
       }),

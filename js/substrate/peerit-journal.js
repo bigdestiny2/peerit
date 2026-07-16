@@ -6,6 +6,13 @@
 import { hashHex } from '../crypto.js'
 import { verifyRecord } from '../verify.js'
 import {
+  PEERIT_INNER_OPERATION_BATCH_V1_CODEC,
+  hashPeeritInnerCellEncodingCommitmentV1,
+  hashPeeritInnerLogicalHashV1,
+  hashPeeritInnerOperationIntentIdV1
+} from './peerit-operation-authority-v1.js'
+import { asBytes, bytesEqual } from './release-control-primitives.mjs'
+import {
   IndexedDbJournalBackend,
   JOURNAL_MARKER_KEY,
   JOURNAL_STORES,
@@ -13,11 +20,13 @@ import {
   createMemoryJournalState
 } from './peerit-journal-backend.js'
 
-export const PEERIT_JOURNAL_SCHEMA_VERSION = 2
+export const PEERIT_JOURNAL_SCHEMA_VERSION = 3
 export const LEGACY_SUBSTRATE_STATE_KEY = 'peerit:substrate-sync:v1'
+export const PEERIT_INNER_OPERATION_BATCH_WIRE_FORMAT_V1 = 'peerit-inner-operation-batch-v1'
+export const PEERIT_LEGACY_JSON_QUARANTINE_FORMAT_V1 = 'legacy-json-v1-quarantined'
 
 export const JOURNAL_LIMITS = Object.freeze({
-  maxIntentBytes: 1_100_000,
+  maxIntentBytes: 1_048_519,
   maxIntentBytesTotal: 64 * 1024 * 1024,
   maxIntents: 10_000,
   maxViewRecords: 100_000,
@@ -34,6 +43,7 @@ export const JOURNAL_LIMITS = Object.freeze({
 })
 
 const META_KEY = 'state'
+const PREVIOUS_JOURNAL_SCHEMA_VERSION = 2
 const ACKNOWLEDGED = new Set(['acknowledged', 'readback-verified'])
 const RETRY_DUE_STATES = new Set(['retryable', 'pending-unknown'])
 const TARGET_STATES = Object.freeze([
@@ -44,11 +54,44 @@ const HEX64 = /^[0-9a-f]{64}$/
 
 function clone (value) {
   if (value == null) return value
+  if (value instanceof Uint8Array) return new Uint8Array(value)
+  if (value instanceof ArrayBuffer) return value.slice(0)
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength))
+  }
   if (typeof structuredClone === 'function') return structuredClone(value)
-  return JSON.parse(JSON.stringify(value))
+  if (Array.isArray(value)) return value.map(clone)
+  if (typeof value === 'object') {
+    const output = {}
+    for (const [key, child] of Object.entries(value)) output[key] = clone(child)
+    return output
+  }
+  return value
 }
 
 function byteLength (value) { return new TextEncoder().encode(String(value)).byteLength }
+
+function bytesCopy (value, field) {
+  try { return new Uint8Array(asBytes(value, field)) } catch (cause) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', `${field} must be bytes.`, cause)
+  }
+}
+
+function bytesToHex (value) {
+  let output = ''
+  for (const byte of value) output += byte.toString(16).padStart(2, '0')
+  return output
+}
+
+function intentPayloadByteLength (intent) {
+  if (intent && intent.wireFormat === PEERIT_INNER_OPERATION_BATCH_WIRE_FORMAT_V1) {
+    return Number(intent.innerLength)
+  }
+  if (intent && intent.wireFormat === PEERIT_LEGACY_JSON_QUARANTINE_FORMAT_V1) {
+    return byteLength(intent.legacyOperationBytes)
+  }
+  return byteLength(intent && intent.operationBytes)
+}
 
 function journalError (code, message, cause) {
   const error = new Error(message)
@@ -83,6 +126,8 @@ function emptyMeta () {
     pendingIntentCount: 0,
     dedupeCount: 0,
     intentBytes: 0,
+    quarantinedIntentCount: 0,
+    quarantinedIntentBytes: 0,
     latestIntentId: null,
     latestCreatedAt: 0,
     targetStateCounts: emptyTargetCounts(),
@@ -97,11 +142,40 @@ function validateMeta (value) {
   if (value == null) return emptyMeta()
   const integers = [
     'revision', 'viewRevision', 'viewRecordCount', 'intentCount',
-    'pendingIntentCount', 'dedupeCount', 'intentBytes', 'latestCreatedAt'
+    'pendingIntentCount', 'dedupeCount', 'intentBytes', 'quarantinedIntentCount',
+    'quarantinedIntentBytes', 'latestCreatedAt'
   ]
   if (!value || value.key !== META_KEY || value.schemaVersion !== PEERIT_JOURNAL_SCHEMA_VERSION ||
     integers.some(field => !Number.isSafeInteger(value[field]) || value[field] < 0) ||
     !value.targetStateCounts || typeof value.targetStateCounts !== 'object') {
+    throw journalError('PEERIT_JOURNAL_CORRUPT', 'Peerit journal metadata is corrupt or from an unsupported schema.')
+  }
+  for (const state of TARGET_STATES) {
+    if (!Number.isSafeInteger(value.targetStateCounts[state]) || value.targetStateCounts[state] < 0) {
+      throw journalError('PEERIT_JOURNAL_CORRUPT', `Peerit journal target counter ${state} is corrupt.`)
+    }
+  }
+  if (value.quarantinedIntentCount > value.intentCount) {
+    throw journalError('PEERIT_JOURNAL_CORRUPT', 'Peerit journal quarantine counters are inconsistent.')
+  }
+  if (value.quarantinedIntentBytes > value.intentBytes) {
+    throw journalError('PEERIT_JOURNAL_CORRUPT', 'Peerit journal quarantine byte counters are inconsistent.')
+  }
+  return clone(value)
+}
+
+// Schema V2 carried raw JSON operation strings. It remains recognizable only
+// long enough for an atomic, fail-closed conversion to the local quarantine
+// format below; it is never accepted by ordinary journal mutation paths.
+function validatePreviousMetaForMigration (value) {
+  const integers = [
+    'revision', 'viewRevision', 'viewRecordCount', 'intentCount',
+    'pendingIntentCount', 'dedupeCount', 'intentBytes', 'latestCreatedAt',
+    'createdAt', 'updatedAt'
+  ]
+  if (!value || value.key !== META_KEY || value.schemaVersion !== PREVIOUS_JOURNAL_SCHEMA_VERSION ||
+      integers.some(field => !Number.isSafeInteger(value[field]) || value[field] < 0) ||
+      !value.targetStateCounts || typeof value.targetStateCounts !== 'object') {
     throw journalError('PEERIT_JOURNAL_CORRUPT', 'Peerit journal metadata is corrupt or from an unsupported schema.')
   }
   for (const state of TARGET_STATES) {
@@ -124,6 +198,81 @@ function boundedString (value, field, maximum, { allowEmpty = false } = {}) {
     throw journalError('PEERIT_JOURNAL_LIMIT', `${field} exceeds its journal bound.`)
   }
   return normalized
+}
+
+function normalizedInnerIntent (input, limits) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'VNext intent must be an object.')
+  }
+  if (input.wireFormat != null && input.wireFormat !== PEERIT_INNER_OPERATION_BATCH_WIRE_FORMAT_V1) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'VNext intent wire format is unsupported.')
+  }
+  if (input.innerCodec !== PEERIT_INNER_OPERATION_BATCH_V1_CODEC) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'VNext intent must use PeeritInnerOperationBatchV1.')
+  }
+  const innerBytes = bytesCopy(input.innerBytes, 'innerBytes')
+  const innerLength = typeof input.innerLength === 'bigint' ? Number(input.innerLength) : input.innerLength
+  if (!Number.isSafeInteger(innerLength) || innerLength < 1 || innerLength !== innerBytes.byteLength ||
+      innerLength > limits.maxIntentBytes) {
+    throw journalError('PEERIT_JOURNAL_LIMIT', 'VNext exact inner envelope is outside the active journal bound.')
+  }
+  const logicalHash = bytesCopy(input.logicalHash, 'logicalHash')
+  const encodingCommitment = bytesCopy(input.encodingCommitment, 'encodingCommitment')
+  if (logicalHash.byteLength !== 32 || encodingCommitment.byteLength !== 32 ||
+      !Number.isSafeInteger(input.sizeClass) || input.sizeClass < 1 || input.sizeClass > 5) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'VNext intent commitment metadata has an invalid shape.')
+  }
+  let expectedLogicalHash
+  let expectedEncodingCommitment
+  let expectedIntentHash
+  try {
+    expectedLogicalHash = hashPeeritInnerLogicalHashV1(input.innerCodec, innerBytes)
+    expectedEncodingCommitment = hashPeeritInnerCellEncodingCommitmentV1(
+      input.innerCodec,
+      innerBytes,
+      expectedLogicalHash,
+      input.sizeClass
+    )
+    expectedIntentHash = hashPeeritInnerOperationIntentIdV1(input.innerCodec, innerBytes)
+  } catch (cause) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'VNext inner envelope or commitments are malformed.', cause)
+  }
+  if (!bytesEqual(logicalHash, expectedLogicalHash) || !bytesEqual(encodingCommitment, expectedEncodingCommitment)) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'VNext intent commitments do not reproduce the exact inner envelope.')
+  }
+  const intentId = validateIntentId(input.intentId)
+  const logicalId = validateIntentId(input.logicalId, 'logicalId')
+  if (intentId !== bytesToHex(expectedIntentHash) || logicalId !== bytesToHex(expectedLogicalHash)) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'VNext intent identifiers do not reproduce its exact envelope.')
+  }
+  return Object.freeze({
+    wireFormat: PEERIT_INNER_OPERATION_BATCH_WIRE_FORMAT_V1,
+    innerCodec: input.innerCodec,
+    innerBytes,
+    innerLength,
+    logicalHash,
+    encodingCommitment,
+    sizeClass: input.sizeClass,
+    intentId,
+    logicalId
+  })
+}
+
+function sameInnerIntent (stored, input) {
+  return !!(stored && stored.wireFormat === PEERIT_INNER_OPERATION_BATCH_WIRE_FORMAT_V1 &&
+    stored.innerCodec === input.innerCodec && stored.innerLength === input.innerLength &&
+    stored.sizeClass === input.sizeClass &&
+    bytesEqual(stored.innerBytes, input.innerBytes) &&
+    bytesEqual(stored.logicalHash, input.logicalHash) &&
+    bytesEqual(stored.encodingCommitment, input.encodingCommitment))
+}
+
+function sameInnerDedupe (stored, input) {
+  return !!(stored && stored.wireFormat === PEERIT_INNER_OPERATION_BATCH_WIRE_FORMAT_V1 &&
+    stored.innerCodec === input.innerCodec && stored.innerLength === input.innerLength &&
+    stored.sizeClass === input.sizeClass &&
+    bytesEqual(stored.logicalHash, input.logicalHash) &&
+    bytesEqual(stored.encodingCommitment, input.encodingCommitment))
 }
 
 function targetKey (intentId, targetId) { return `${intentId}\u0000${targetId}` }
@@ -232,6 +381,75 @@ function legacyUnverified (message, cause) {
   return journalError('PEERIT_JOURNAL_LEGACY_UNVERIFIED', message, cause)
 }
 
+async function verifyLegacyIntentForQuarantine (sourceIntentId, legacy, limits, now) {
+  if (!legacy || typeof legacy !== 'object' || Array.isArray(legacy)) {
+    throw legacyUnverified('Legacy intent is not an object.')
+  }
+  const operationBytes = boundedString(legacy.operationBytes, 'legacy operationBytes', limits.maxIntentBytes)
+  let decoded
+  try { decoded = JSON.parse(operationBytes) } catch (error) {
+    throw legacyUnverified('Legacy intent bytes are not valid JSON.', error)
+  }
+  if (!decoded || decoded.version !== 1 || !Array.isArray(decoded.operations) ||
+      decoded.operations.length < 1 || decoded.operations.length > limits.maxRecordsPerIntent ||
+      stableLegacyValue(decoded) !== operationBytes) {
+    throw legacyUnverified('Legacy intent bytes are noncanonical or outside the signed operation bounds.')
+  }
+  const expectedIntentId = await hashHex('peerit.substrate.intent.v1|' + operationBytes)
+  const expectedLogicalId = await hashHex('peerit.substrate.logical.v1|' + operationBytes)
+  const intentId = validateIntentId(legacy.intentId)
+  const logicalId = validateIntentId(legacy.logicalId, 'logicalId')
+  if (String(sourceIntentId).toLowerCase() !== intentId || intentId !== expectedIntentId || logicalId !== expectedLogicalId) {
+    throw legacyUnverified('Legacy intent identifiers do not match the exact signed operation bytes.')
+  }
+  const recordKeys = []
+  const records = []
+  const seen = new Set()
+  for (const operation of decoded.operations) {
+    const key = boundedString(legacyViewKey(operation), 'legacy reduced view key', limits.maxRecordKeyBytes)
+    if (seen.has(key)) throw legacyUnverified('Legacy intent contains duplicate reduced view keys.')
+    seen.add(key)
+    const semanticType = operation.type === 'v2' ? operation.data._t : operation.type
+    if ((await verifyRecord(operation.type, operation.data, semanticType)) !== 'ok') {
+      throw legacyUnverified('Legacy intent contains an unsigned, forged, or owner-mismatched record.')
+    }
+    recordKeys.push(key)
+    records.push({ key, value: clone(operation.data) })
+  }
+  const claimedKeys = Array.isArray(legacy.recordKeys) ? legacy.recordKeys.map(String) : []
+  if (claimedKeys.length !== recordKeys.length || claimedKeys.some((key, index) => key !== recordKeys[index])) {
+    throw legacyUnverified('Legacy intent record keys do not match its verified operation reduction.')
+  }
+  return Object.freeze({
+    intentId,
+    logicalId,
+    operationBytes,
+    recordKeys: Object.freeze(recordKeys),
+    records: Object.freeze(records),
+    createdAt: nonNegativeInteger(legacy.createdAt, now),
+    updatedAt: nonNegativeInteger(legacy.updatedAt, nonNegativeInteger(legacy.createdAt, now))
+  })
+}
+
+function quarantinedLegacyIntent (verified, now) {
+  return {
+    intentId: verified.intentId,
+    logicalId: verified.logicalId,
+    wireFormat: PEERIT_LEGACY_JSON_QUARANTINE_FORMAT_V1,
+    legacyOperationBytes: verified.operationBytes,
+    recordKeys: [...verified.recordKeys],
+    createdAt: verified.createdAt,
+    updatedAt: verified.updatedAt,
+    discoveryState: 'legacy-quarantined',
+    targetCount: 0,
+    acknowledgedTargets: 0,
+    readbackVerified: 0,
+    policyDurable: false,
+    completedAt: 0,
+    quarantinedAt: now
+  }
+}
+
 async function validateLegacyForImport (state, limits, now) {
   const sourceView = Object.entries(state.view)
   const sourceIntents = Object.entries(state.intents)
@@ -247,87 +465,13 @@ async function validateLegacyForImport (state, limits, now) {
     return created || String(left && left.intentId).localeCompare(String(right && right.intentId))
   })
   for (const [sourceIntentId, legacy] of sorted) {
-    if (!legacy || typeof legacy !== 'object' || Array.isArray(legacy)) {
-      throw legacyUnverified('Legacy intent is not an object.')
+    const verified = await verifyLegacyIntentForQuarantine(sourceIntentId, legacy, limits, now)
+    for (const record of verified.records) {
+      reducedView.set(record.key, { key: record.key, value: clone(record.value), intentId: verified.intentId })
     }
-    const operationBytes = boundedString(legacy.operationBytes, 'legacy operationBytes', limits.maxIntentBytes)
-    let decoded
-    try { decoded = JSON.parse(operationBytes) } catch (error) {
-      throw legacyUnverified('Legacy intent bytes are not valid JSON.', error)
-    }
-    if (!decoded || decoded.version !== 1 || !Array.isArray(decoded.operations) ||
-        decoded.operations.length < 1 || decoded.operations.length > limits.maxRecordsPerIntent ||
-        stableLegacyValue(decoded) !== operationBytes) {
-      throw legacyUnverified('Legacy intent bytes are noncanonical or outside the signed operation bounds.')
-    }
-    const expectedIntentId = await hashHex('peerit.substrate.intent.v1|' + operationBytes)
-    const expectedLogicalId = await hashHex('peerit.substrate.logical.v1|' + operationBytes)
-    const intentId = validateIntentId(legacy.intentId)
-    const logicalId = validateIntentId(legacy.logicalId, 'logicalId')
-    if (sourceIntentId !== intentId || intentId !== expectedIntentId || logicalId !== expectedLogicalId) {
-      throw legacyUnverified('Legacy intent identifiers do not match the exact signed operation bytes.')
-    }
-    const recordKeys = []
-    const seen = new Set()
-    for (const operation of decoded.operations) {
-      const key = boundedString(legacyViewKey(operation), 'legacy reduced view key', limits.maxRecordKeyBytes)
-      if (seen.has(key)) throw legacyUnverified('Legacy intent contains duplicate reduced view keys.')
-      seen.add(key)
-      const semanticType = operation.type === 'v2' ? operation.data._t : operation.type
-      if ((await verifyRecord(operation.type, operation.data, semanticType)) !== 'ok') {
-        throw legacyUnverified('Legacy intent contains an unsigned, forged, or owner-mismatched record.')
-      }
-      recordKeys.push(key)
-      reducedView.set(key, { key, value: clone(operation.data), intentId })
-    }
-    const claimedKeys = Array.isArray(legacy.recordKeys) ? legacy.recordKeys.map(String) : []
-    if (claimedKeys.length !== recordKeys.length || claimedKeys.some((key, index) => key !== recordKeys[index])) {
-      throw legacyUnverified('Legacy intent record keys do not match its verified operation reduction.')
-    }
-    const createdAt = nonNegativeInteger(legacy.createdAt, now)
-    const updatedAt = nonNegativeInteger(legacy.updatedAt, createdAt)
-    const targets = Object.entries(legacy.targets || {})
-    if (targets.length > limits.maxTargetsPerIntent) throw journalError('PEERIT_JOURNAL_LIMIT', 'Legacy intent has too many targets.')
-    const normalizedTargets = targets.map(([rawTargetId, rawTarget]) => {
-      if (!rawTarget || typeof rawTarget !== 'object' || Array.isArray(rawTarget)) {
-        throw legacyUnverified('Legacy target state is malformed.')
-      }
-      const targetId = boundedString(rawTargetId, 'legacy targetId', limits.maxTargetIdBytes)
-      const targetUpdatedAt = nonNegativeInteger(rawTarget.updatedAt, updatedAt)
-      return {
-        key: targetKey(intentId, targetId),
-        intentId,
-        targetId,
-        state: 'pending-unknown',
-        attempts: normalizedAttempts(rawTarget.attempts),
-        attemptToken: null,
-        updatedAt: targetUpdatedAt,
-        nextAttemptAt: targetUpdatedAt,
-        leaseUntil: 0,
-        lastError: 'legacy-evidence-quarantined',
-        readbackVerified: false,
-        policyDurable: false,
-        evidenceRef: null
-      }
-    })
-    intentBytes += byteLength(operationBytes)
+    intentBytes += byteLength(verified.operationBytes)
     if (intentBytes > limits.maxIntentBytesTotal) throw journalError('PEERIT_JOURNAL_LIMIT', 'Legacy intent bytes exceed the journal bound.')
-    intents.push({
-      intentId,
-      logicalId,
-      operationBytes,
-      recordKeys,
-      createdAt,
-      updatedAt,
-      discoveryState: 'queued',
-      targetCount: normalizedTargets.length,
-      acknowledgedTargets: 0,
-      readbackVerified: 0,
-      policyDurable: false,
-      completedAt: 0,
-      pendingOrderKey: pendingOrderKey(createdAt, intentId),
-      targets: normalizedTargets
-    })
+    intents.push(quarantinedLegacyIntent(verified, now))
   }
   if (reducedView.size > limits.maxViewRecords) throw journalError('PEERIT_JOURNAL_LIMIT', 'Verified legacy view exceeds its record bound.')
   if (sourceView.length !== reducedView.size || sourceView.some(([key, value]) => {
@@ -337,6 +481,220 @@ async function validateLegacyForImport (state, limits, now) {
     throw legacyUnverified('Legacy materialized view does not exactly equal the verified signed-operation reduction.')
   }
   return { intents, view: [...reducedView.values()], intentBytes }
+}
+
+function migrationCorrupt (message, cause) {
+  return journalError('PEERIT_JOURNAL_CORRUPT', message, cause)
+}
+
+function migrationField (operation, message) {
+  try { return operation() } catch (cause) { throw migrationCorrupt(message, cause) }
+}
+
+function migrationRowsFingerprint (rows) {
+  try {
+    return rows.map(row => `${String(row.key)}\u0000${stableLegacyValue(row.value)}`).join('\n')
+  } catch (cause) {
+    throw migrationCorrupt('Peerit previous journal contains an unserializable stored row.', cause)
+  }
+}
+
+function legacyViewOperation (key, value, limits) {
+  const normalizedKey = migrationField(
+    () => boundedString(key, 'stored legacy view key', limits.maxRecordKeyBytes),
+    'Peerit previous journal has an invalid materialized-view key.'
+  )
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.id == null) {
+    throw migrationCorrupt('Peerit previous journal has an invalid materialized-view value.')
+  }
+  const suffix = '!' + String(value.id)
+  if (!normalizedKey.endsWith(suffix)) {
+    throw migrationCorrupt('Peerit previous journal materialized-view key does not bind its signed record id.')
+  }
+  const encodedType = normalizedKey.slice(0, -suffix.length)
+  const type = encodedType.replace('!', ':')
+  const operation = { type, data: value }
+  if (legacyViewKey(operation) !== normalizedKey) {
+    throw migrationCorrupt('Peerit previous journal materialized-view key is not canonical.')
+  }
+  return operation
+}
+
+async function validatePreviousViewRows (rows, verifiedByIntentRecord, limits) {
+  if (rows.length > limits.maxViewRecords) {
+    throw journalError('PEERIT_JOURNAL_LIMIT', 'Peerit previous journal view exceeds its bounded migration limit.')
+  }
+  for (const row of rows) {
+    const value = row && row.value
+    if (!value || value.key !== row.key || !Number.isSafeInteger(value.updatedAt) || value.updatedAt < 0) {
+      throw migrationCorrupt('Peerit previous journal has a malformed materialized-view row.')
+    }
+    const intentId = migrationField(() => validateIntentId(value.intentId), 'Peerit previous journal view has an invalid intent id.')
+    const operation = legacyViewOperation(row.key, value.value, limits)
+    const semanticType = operation.type === 'v2' ? operation.data._t : operation.type
+    if ((await verifyRecord(operation.type, operation.data, semanticType)) !== 'ok') {
+      throw legacyUnverified('Previous journal materialized view contains an unsigned or forged record.')
+    }
+    const expected = verifiedByIntentRecord.get(`${intentId}\u0000${row.key}`)
+    if (expected && stableLegacyValue(expected) !== stableLegacyValue(value.value)) {
+      throw migrationCorrupt('Peerit previous journal materialized view disagrees with its exact signed operation bytes.')
+    }
+  }
+}
+
+function validatePreviousTargetRows (rows, knownIntentIds, limits) {
+  const counts = emptyTargetCounts()
+  const byIntent = new Map()
+  if (rows.length > limits.maxIntents * limits.maxTargetsPerIntent) {
+    throw journalError('PEERIT_JOURNAL_LIMIT', 'Peerit previous journal target rows exceed their bounded migration limit.')
+  }
+  for (const row of rows) {
+    const target = row && row.value
+    if (!target || typeof target !== 'object' || Array.isArray(target)) {
+      throw migrationCorrupt('Peerit previous journal has a malformed target row.')
+    }
+    const intentId = migrationField(() => validateIntentId(target.intentId), 'Peerit previous journal target has an invalid intent id.')
+    const targetId = migrationField(
+      () => boundedString(target.targetId, 'stored targetId', limits.maxTargetIdBytes),
+      'Peerit previous journal target has an invalid relay id.'
+    )
+    if (!knownIntentIds.has(intentId) || target.key !== row.key || target.key !== targetKey(intentId, targetId) ||
+        !TARGET_STATES.includes(target.state) || !Number.isSafeInteger(target.attempts) || target.attempts < 1 ||
+        !Number.isSafeInteger(target.updatedAt) || target.updatedAt < 0 ||
+        !Number.isSafeInteger(target.nextAttemptAt) || target.nextAttemptAt < 0 ||
+        !Number.isSafeInteger(target.leaseUntil) || target.leaseUntil < 0 ||
+        typeof target.readbackVerified !== 'boolean' || typeof target.policyDurable !== 'boolean' ||
+        (target.attemptToken != null && typeof target.attemptToken !== 'string') ||
+        (target.lastError != null && typeof target.lastError !== 'string') ||
+        (target.evidenceRef != null && typeof target.evidenceRef !== 'string')) {
+      throw migrationCorrupt('Peerit previous journal target row is internally inconsistent.')
+    }
+    const entries = byIntent.get(intentId) || []
+    if (entries.length >= limits.maxTargetsPerIntent) {
+      throw journalError('PEERIT_JOURNAL_LIMIT', 'Peerit previous journal intent exceeds its target bound.')
+    }
+    entries.push(target)
+    byIntent.set(intentId, entries)
+    counts[target.state]++
+  }
+  return { counts, byIntent }
+}
+
+function validatePreviousDedupeRows (rows) {
+  for (const row of rows) {
+    const dedupe = row && row.value
+    if (!dedupe || typeof dedupe !== 'object' || Array.isArray(dedupe) || dedupe.intentId !== row.key) {
+      throw migrationCorrupt('Peerit previous journal has a malformed dedupe row.')
+    }
+    migrationField(() => validateIntentId(dedupe.intentId), 'Peerit previous journal dedupe has an invalid intent id.')
+    migrationField(() => validateIntentId(dedupe.logicalId, 'logicalId'), 'Peerit previous journal dedupe has an invalid logical id.')
+    if (!Number.isSafeInteger(dedupe.expiresAt) || dedupe.expiresAt < 0) {
+      throw migrationCorrupt('Peerit previous journal dedupe expiry is invalid.')
+    }
+  }
+}
+
+async function preparePreviousJournalMigration (snapshot, limits, now) {
+  const previous = validatePreviousMetaForMigration(snapshot.meta)
+  const intentRows = snapshot.intents
+  const viewRows = snapshot.view
+  const targetRows = snapshot.targets
+  const dedupeRows = snapshot.dedupe
+  if (intentRows.length > limits.maxIntents) {
+    throw journalError('PEERIT_JOURNAL_LIMIT', 'Peerit previous journal exceeds its bounded intent migration limit.')
+  }
+  const sorted = [...intentRows].sort((left, right) => {
+    const created = nonNegativeInteger(left.value && left.value.createdAt, now) - nonNegativeInteger(right.value && right.value.createdAt, now)
+    return created || String(left.key).localeCompare(String(right.key))
+  })
+  const verified = []
+  const verifiedByIntentRecord = new Map()
+  let intentBytes = 0
+  for (const row of sorted) {
+    if (!row || !row.value || row.key !== row.value.intentId) {
+      throw migrationCorrupt('Peerit previous journal intent primary key is inconsistent.')
+    }
+    const item = await verifyLegacyIntentForQuarantine(row.key, row.value, limits, now)
+    verified.push({ row, item })
+    for (const record of item.records) verifiedByIntentRecord.set(`${item.intentId}\u0000${record.key}`, record.value)
+    intentBytes += byteLength(item.operationBytes)
+    if (intentBytes > limits.maxIntentBytesTotal) {
+      throw journalError('PEERIT_JOURNAL_LIMIT', 'Peerit previous journal exact bytes exceed the quarantine bound.')
+    }
+  }
+  const knownIntentIds = new Set(verified.map(({ item }) => item.intentId))
+  const targets = validatePreviousTargetRows(targetRows, knownIntentIds, limits)
+  await validatePreviousViewRows(viewRows, verifiedByIntentRecord, limits)
+  validatePreviousDedupeRows(dedupeRows)
+  if (previous.intentCount !== verified.length || previous.viewRecordCount !== viewRows.length ||
+      previous.dedupeCount !== dedupeRows.length || previous.intentBytes !== intentBytes) {
+    throw migrationCorrupt('Peerit previous journal metadata counters disagree with stored rows.')
+  }
+  if ((previous.latestIntentId != null && (!knownIntentIds.has(previous.latestIntentId) ||
+      !HEX64.test(previous.latestIntentId))) ||
+      (previous.legacyImportHash != null && typeof previous.legacyImportHash !== 'string') ||
+      (previous.legacyImportSource != null && typeof previous.legacyImportSource !== 'string')) {
+    throw migrationCorrupt('Peerit previous journal metadata has an invalid retained identity field.')
+  }
+  const pending = verified.filter(({ row }) => {
+    const count = row.value.acknowledgedTargets
+    return !Number.isSafeInteger(count) || count < 0 || count === 0
+  }).length
+  if (previous.pendingIntentCount !== pending) {
+    throw migrationCorrupt('Peerit previous journal pending-intent counter disagrees with stored rows.')
+  }
+  for (const state of TARGET_STATES) {
+    if (previous.targetStateCounts[state] !== targets.counts[state]) {
+      throw migrationCorrupt('Peerit previous journal target-state counters disagree with stored rows.')
+    }
+  }
+  for (const { row, item } of verified) {
+    const targetRowsForIntent = targets.byIntent.get(item.intentId) || []
+    const acknowledged = targetRowsForIntent.filter(target => ACKNOWLEDGED.has(target.state)).length
+    const readback = targetRowsForIntent.filter(target => target.state === 'readback-verified').length
+    const durable = targetRowsForIntent.some(target => target.policyDurable === true)
+    if (!Number.isSafeInteger(row.value.targetCount) || row.value.targetCount !== targetRowsForIntent.length ||
+        !Number.isSafeInteger(row.value.acknowledgedTargets) || row.value.acknowledgedTargets !== acknowledged ||
+        !Number.isSafeInteger(row.value.readbackVerified) || row.value.readbackVerified !== readback ||
+        row.value.policyDurable !== durable || !Number.isSafeInteger(row.value.completedAt) || row.value.completedAt < 0) {
+      throw migrationCorrupt('Peerit previous journal intent counters disagree with its target rows.')
+    }
+  }
+  const latest = verified.reduce((current, candidate) => {
+    if (!current || candidate.item.createdAt > current.item.createdAt ||
+        (candidate.item.createdAt === current.item.createdAt && candidate.item.intentId > current.item.intentId)) return candidate
+    return current
+  }, null)
+  if (previous.revision >= Number.MAX_SAFE_INTEGER) throw migrationCorrupt('Peerit previous journal revision cannot be migrated safely.')
+  const meta = emptyMeta()
+  meta.revision = previous.revision + 1
+  meta.viewRevision = previous.viewRevision
+  meta.viewRecordCount = viewRows.length
+  meta.intentCount = verified.length
+  meta.pendingIntentCount = 0
+  meta.dedupeCount = 0
+  meta.intentBytes = intentBytes
+  meta.quarantinedIntentCount = verified.length
+  meta.quarantinedIntentBytes = intentBytes
+  meta.latestIntentId = latest ? latest.item.intentId : null
+  meta.latestCreatedAt = latest ? latest.item.createdAt : 0
+  meta.legacyImportHash = typeof previous.legacyImportHash === 'string' ? previous.legacyImportHash : null
+  meta.legacyImportSource = typeof previous.legacyImportSource === 'string' ? previous.legacyImportSource : null
+  meta.createdAt = previous.createdAt
+  meta.updatedAt = now
+  return Object.freeze({
+    meta,
+    intents: Object.freeze(verified.map(({ item }) => quarantinedLegacyIntent(item, now))),
+    targetKeys: Object.freeze(targetRows.map(row => row.key)),
+    dedupeKeys: Object.freeze(dedupeRows.map(row => row.key)),
+    fingerprints: Object.freeze({
+      meta: stableLegacyValue(snapshot.meta),
+      intents: migrationRowsFingerprint(intentRows),
+      view: migrationRowsFingerprint(viewRows),
+      targets: migrationRowsFingerprint(targetRows),
+      dedupe: migrationRowsFingerprint(dedupeRows)
+    })
+  })
 }
 
 function readLegacyStorage (storage) {
@@ -384,6 +742,7 @@ export class PeeritJournal {
     if (opened && opened.unavailable) {
       throw journalError('PEERIT_JOURNAL_STORAGE_UNAVAILABLE', 'IndexedDB is unavailable; Peerit will not downgrade signed intents to memory.')
     }
+    const migrated = !this.dormant && await this._migratePreviousJournal()
     let schemaRaw = null
     if (!this.dormant && this.backend.hasStore('state')) {
       schemaRaw = await this.backend.transaction(['state'], 'readonly', async tx => {
@@ -418,7 +777,55 @@ export class PeeritJournal {
       }
     }
     if (!this.dormant) await this.summary()
-    return { dormant: this.dormant, imported: source != null, cleanupWarning: this.failure }
+    return { dormant: this.dormant, imported: source != null, migrated, cleanupWarning: this.failure }
+  }
+
+  async _migratePreviousJournal () {
+    const stores = Object.values(JOURNAL_STORES)
+    const snapshot = await this.backend.transaction(stores, 'readonly', async tx => {
+      const meta = await tx.get(JOURNAL_STORES.META, META_KEY)
+      if (meta == null || meta.schemaVersion === PEERIT_JOURNAL_SCHEMA_VERSION) return { meta }
+      return {
+        meta,
+        intents: await tx.scan(JOURNAL_STORES.INTENTS),
+        view: await tx.scan(JOURNAL_STORES.VIEW),
+        targets: await tx.scan(JOURNAL_STORES.TARGETS),
+        dedupe: await tx.scan(JOURNAL_STORES.DEDUPE)
+      }
+    })
+    if (snapshot.meta == null) return false
+    if (snapshot.meta.schemaVersion === PEERIT_JOURNAL_SCHEMA_VERSION) {
+      validateMeta(snapshot.meta)
+      return false
+    }
+    const plan = await preparePreviousJournalMigration(snapshot, this.limits, this.clock())
+    return this._transaction(stores, 'readwrite', 'previous journal quarantine migration', async tx => {
+      const currentMeta = await tx.get(JOURNAL_STORES.META, META_KEY)
+      if (currentMeta && currentMeta.schemaVersion === PEERIT_JOURNAL_SCHEMA_VERSION) {
+        validateMeta(currentMeta)
+        return false
+      }
+      validatePreviousMetaForMigration(currentMeta)
+      const current = {
+        meta: currentMeta,
+        intents: await tx.scan(JOURNAL_STORES.INTENTS),
+        view: await tx.scan(JOURNAL_STORES.VIEW),
+        targets: await tx.scan(JOURNAL_STORES.TARGETS),
+        dedupe: await tx.scan(JOURNAL_STORES.DEDUPE)
+      }
+      if (stableLegacyValue(current.meta) !== plan.fingerprints.meta ||
+          migrationRowsFingerprint(current.intents) !== plan.fingerprints.intents ||
+          migrationRowsFingerprint(current.view) !== plan.fingerprints.view ||
+          migrationRowsFingerprint(current.targets) !== plan.fingerprints.targets ||
+          migrationRowsFingerprint(current.dedupe) !== plan.fingerprints.dedupe) {
+        throw migrationCorrupt('Peerit previous journal changed during its fail-closed quarantine migration.')
+      }
+      for (const intent of plan.intents) await tx.put(JOURNAL_STORES.INTENTS, intent)
+      for (const key of plan.targetKeys) await tx.delete(JOURNAL_STORES.TARGETS, key)
+      for (const key of plan.dedupeKeys) await tx.delete(JOURNAL_STORES.DEDUPE, key)
+      await tx.put(JOURNAL_STORES.META, plan.meta)
+      return true
+    })
   }
 
   async _transaction (stores, mode, context, operation) {
@@ -466,17 +873,13 @@ export class PeeritJournal {
         meta.viewRecordCount++
       }
       for (const verifiedIntent of verified.intents) {
-        const { targets, ...intent } = verifiedIntent
-        for (const target of targets) {
-          await tx.put(JOURNAL_STORES.TARGETS, target)
-          bumpTargetCount(meta, null, target.state)
-        }
-        await tx.put(JOURNAL_STORES.INTENTS, intent)
+        await tx.put(JOURNAL_STORES.INTENTS, verifiedIntent)
         meta.intentCount++
-        meta.pendingIntentCount++
-        if (intent.createdAt >= meta.latestCreatedAt) {
-          meta.latestCreatedAt = intent.createdAt
-          meta.latestIntentId = intent.intentId
+        meta.quarantinedIntentCount++
+        meta.quarantinedIntentBytes += byteLength(verifiedIntent.legacyOperationBytes)
+        if (verifiedIntent.createdAt >= meta.latestCreatedAt) {
+          meta.latestCreatedAt = verifiedIntent.createdAt
+          meta.latestIntentId = verifiedIntent.intentId
         }
       }
       meta.intentBytes = verified.intentBytes
@@ -486,9 +889,8 @@ export class PeeritJournal {
   }
 
   async commitIntent (input) {
-    const intentId = validateIntentId(input.intentId)
-    const logicalId = validateIntentId(input.logicalId, 'logicalId')
-    const operationBytes = boundedString(input.operationBytes, 'operationBytes', this.limits.maxIntentBytes)
+    const payload = normalizedInnerIntent(input, this.limits)
+    const { intentId } = payload
     const records = Array.isArray(input.records) ? input.records : []
     if (!records.length || records.length > this.limits.maxRecordsPerIntent) {
       throw journalError('PEERIT_JOURNAL_LIMIT', 'Intent record count is outside journal bounds.')
@@ -507,14 +909,28 @@ export class PeeritJournal {
     ], 'readwrite', 'local intent commit', async tx => {
       const existing = await tx.get(JOURNAL_STORES.INTENTS, intentId)
       if (existing) {
-        if (existing.operationBytes !== operationBytes) throw journalError('PEERIT_JOURNAL_CORRUPT', 'Intent hash collision or journal corruption.')
+        if (!sameInnerIntent(existing, payload)) {
+          throw journalError('PEERIT_JOURNAL_CORRUPT', 'Intent hash collision or journal corruption.')
+        }
         return { duplicate: true, compacted: false, queued: existing.acknowledgedTargets === 0, viewRevision: null }
       }
       const dedupe = await tx.get(JOURNAL_STORES.DEDUPE, intentId)
-      if (dedupe) return { duplicate: true, compacted: true, queued: false, viewRevision: null }
+      if (dedupe) {
+        if (!sameInnerDedupe(dedupe, payload)) {
+          throw journalError('PEERIT_JOURNAL_CORRUPT', 'Compacted intent identity does not match the exact VNext envelope.')
+        }
+        return { duplicate: true, compacted: true, queued: false, viewRevision: null }
+      }
       const meta = validateMeta(await tx.get(JOURNAL_STORES.META, META_KEY))
-      if (meta.intentCount >= this.limits.maxIntents) throw journalError('PEERIT_JOURNAL_LIMIT', 'Peerit has reached its bounded active-intent limit.')
-      if (meta.intentBytes + byteLength(operationBytes) > this.limits.maxIntentBytesTotal) {
+      if (meta.intentCount - meta.quarantinedIntentCount >= this.limits.maxIntents) {
+        throw journalError('PEERIT_JOURNAL_LIMIT', 'Peerit has reached its bounded active-intent limit.')
+      }
+      // Historical raw-JSON rows are held in a distinct, bounded quarantine so
+      // a prior release cannot strand an otherwise valid VNext author behind
+      // its old relay queue. The new active envelope budget is independent.
+      const activeIntentBytes = meta.intentBytes - meta.quarantinedIntentBytes
+      if (activeIntentBytes < 0) throw journalError('PEERIT_JOURNAL_CORRUPT', 'Peerit active-intent byte counters underflowed.')
+      if (activeIntentBytes + payload.innerLength > this.limits.maxIntentBytesTotal) {
         throw journalError('PEERIT_JOURNAL_LIMIT', 'Peerit has reached its bounded exact-intent byte limit.')
       }
       let newViewRecords = 0
@@ -524,9 +940,7 @@ export class PeeritJournal {
       }
       const now = this.clock()
       const intent = {
-        intentId,
-        logicalId,
-        operationBytes,
+        ...payload,
         recordKeys: normalizedRecords.map(record => record.key),
         createdAt,
         updatedAt: now,
@@ -547,7 +961,7 @@ export class PeeritJournal {
       meta.viewRecordCount += newViewRecords
       meta.intentCount++
       meta.pendingIntentCount++
-      meta.intentBytes += byteLength(operationBytes)
+      meta.intentBytes += payload.innerLength
       if (createdAt >= meta.latestCreatedAt) {
         meta.latestCreatedAt = createdAt
         meta.latestIntentId = intentId
@@ -904,12 +1318,19 @@ export class PeeritJournal {
         await tx.put(JOURNAL_STORES.DEDUPE, {
           intentId: intent.intentId,
           logicalId: intent.logicalId,
+          wireFormat: intent.wireFormat,
+          innerCodec: intent.innerCodec,
+          innerLength: intent.innerLength,
+          logicalHash: clone(intent.logicalHash),
+          encodingCommitment: clone(intent.encodingCommitment),
+          sizeClass: intent.sizeClass,
           completedAt: intent.completedAt,
           expiresAt: now + dedupeRetention
         })
         await tx.delete(JOURNAL_STORES.INTENTS, intent.intentId)
         meta.intentCount--
-        meta.intentBytes -= byteLength(intent.operationBytes)
+        meta.intentBytes -= intentPayloadByteLength(intent)
+        if (meta.intentBytes < 0) throw journalError('PEERIT_JOURNAL_CORRUPT', 'Peerit exact-intent byte counter underflowed.')
         meta.dedupeCount++
         compacted++
       }

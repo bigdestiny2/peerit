@@ -9,16 +9,19 @@
 // are used only to fence identity lifecycle sessions; publication correctness
 // does not depend on navigator.locks being present.
 
-import { hashHex } from '../crypto.js'
 import {
   LEGACY_SUBSTRATE_STATE_KEY,
+  PEERIT_INNER_OPERATION_BATCH_WIRE_FORMAT_V1,
   PeeritJournal,
   createIndexedDbPeeritJournal
 } from './peerit-journal.js'
 import {
   PEERIT_INNER_OPERATION_BATCH_V1_DEFAULT_MAX_RECORD_KEY_BYTES,
-  normalizePeeritSignedOperationBatchV1
+  createPeeritInnerOperationBatchV1,
+  decodePeeritInnerOperationBatchV1,
+  hashPeeritInnerOperationIntentIdV1
 } from './peerit-operation-authority-v1.js'
+import { bytesEqual } from './release-control-primitives.mjs'
 import { isPeeritVerifiedRelayAdapter } from './relay-consumer.js'
 
 export const SUBSTRATE_STATE_KEY = LEGACY_SUBSTRATE_STATE_KEY
@@ -35,7 +38,7 @@ function clone (value) {
 
 async function normalizePublicationBatch (operations, options = undefined) {
   try {
-    return await normalizePeeritSignedOperationBatchV1(operations, options)
+    return await createPeeritInnerOperationBatchV1(operations, options)
   } catch (cause) {
     // Retain the public sync-boundary error vocabulary for callers that already
     // distinguish malformed/unsigned records from a cryptographically bad
@@ -54,6 +57,12 @@ async function normalizePublicationBatch (operations, options = undefined) {
     }
     throw cause
   }
+}
+
+function hex (value) {
+  let output = ''
+  for (const byte of value) output += byte.toString(16).padStart(2, '0')
+  return output
 }
 
 function emptySummary () {
@@ -257,23 +266,49 @@ function attemptOwnerId () {
   return [...bytes].map(value => value.toString(16).padStart(2, '0')).join('')
 }
 
-function publicationPayload (entry, targetId) {
-  let decoded
-  try { decoded = JSON.parse(entry.operationBytes) } catch (cause) {
-    const error = new Error('Peerit publication intent bytes are corrupt.')
-    error.code = 'PEERIT_SUBSTRATE_INTENT_CORRUPT'
-    error.cause = cause
+async function publicationPayload (entry, targetId) {
+  const terminal = (code, message, cause = undefined) => {
+    const error = new Error(message)
+    error.code = code
+    error.terminal = true
+    if (cause !== undefined) error.cause = cause
     throw error
   }
-  if (!decoded || decoded.version !== 1 || !Array.isArray(decoded.operations)) {
-    const error = new Error('Peerit publication intent bytes have an unsupported shape.')
-    error.code = 'PEERIT_SUBSTRATE_INTENT_CORRUPT'
-    throw error
+  if (!entry || entry.wireFormat !== PEERIT_INNER_OPERATION_BATCH_WIRE_FORMAT_V1) {
+    terminal('PEERIT_SUBSTRATE_LEGACY_INTENT_QUARANTINED', 'A retired raw-JSON intent cannot be sent through the VNext Cell path.')
+  }
+  let decoded
+  try {
+    decoded = await decodePeeritInnerOperationBatchV1(entry.innerCodec, entry.innerBytes)
+  } catch (cause) {
+    terminal('PEERIT_SUBSTRATE_INTENT_CORRUPT', 'Peerit VNext intent bytes are corrupt or unverifiable.', cause)
+  }
+  const expectedIntentId = hex(hashPeeritInnerOperationIntentIdV1(decoded.innerCodec, decoded.innerBytes))
+  let exactMetadata
+  try {
+    exactMetadata = entry.intentId === expectedIntentId && entry.logicalId === hex(decoded.logicalHash) &&
+      Number.isSafeInteger(entry.innerLength) && entry.innerLength === Number(decoded.innerLength) &&
+      entry.innerCodec === decoded.innerCodec && entry.sizeClass === decoded.sizeClass &&
+      bytesEqual(entry.innerBytes, decoded.innerBytes) &&
+      bytesEqual(entry.logicalHash, decoded.logicalHash) &&
+      bytesEqual(entry.encodingCommitment, decoded.encodingCommitment) &&
+      Array.isArray(entry.recordKeys) && entry.recordKeys.length === decoded.operationWireKeys.length &&
+      entry.recordKeys.every((key, index) => key === decoded.operationWireKeys[index])
+  } catch (cause) {
+    terminal('PEERIT_SUBSTRATE_INTENT_CORRUPT', 'Peerit VNext intent metadata is not a valid exact-envelope value.', cause)
+  }
+  if (!exactMetadata) {
+    terminal('PEERIT_SUBSTRATE_INTENT_CORRUPT', 'Peerit VNext intent metadata does not reproduce its exact Cell envelope.')
   }
   return Object.freeze({
     intentId: entry.intentId,
     logicalId: entry.logicalId,
-    operationBytes: new TextEncoder().encode(entry.operationBytes),
+    innerCodec: decoded.innerCodec,
+    innerBytes: decoded.innerBytes,
+    innerLength: Number(decoded.innerLength),
+    sizeClass: decoded.sizeClass,
+    logicalHash: decoded.logicalHash,
+    encodingCommitment: decoded.encodingCommitment,
     operations: clone(decoded.operations),
     recordKeys: [...entry.recordKeys],
     targetId
@@ -421,10 +456,9 @@ export class PeeritSubstrateSync {
       error.cause = this._localFailure
       throw error
     }
-    // VNext's narrow operation authority preserves the existing canonical
-    // journal bytes while rejecting mixed authors, duplicate reductions,
-    // noncanonical JSON, and unclosed v2 semantic types before the journal's
-    // failure latch can be tripped.
+    // VNext validates and snapshots the exact tag-334 bytes before anything
+    // enters the journal. The relay path receives these bytes verbatim; it is
+    // never allowed to reconstruct a Cell payload from raw operation JSON.
     const journalKeyLimit = this.journal && this.journal.limits && this.journal.limits.maxRecordKeyBytes
     const batch = await normalizePublicationBatch(operations, {
       maxRecordKeyBytes: Number.isSafeInteger(journalKeyLimit) && journalKeyLimit > 0
@@ -432,14 +466,26 @@ export class PeeritSubstrateSync {
         : PEERIT_INNER_OPERATION_BATCH_V1_DEFAULT_MAX_RECORD_KEY_BYTES
     })
     const normalized = batch.operations
-    const exact = batch.canonicalOperationBatch
-    const intentId = await hashHex('peerit.substrate.intent.v1|' + exact)
-    const logicalId = await hashHex('peerit.substrate.logical.v1|' + exact)
+    const journalIntentLimit = this.journal && this.journal.limits && this.journal.limits.maxIntentBytes
+    if (Number.isSafeInteger(journalIntentLimit) && journalIntentLimit > 0 &&
+        Number(batch.innerLength) > journalIntentLimit) {
+      const error = new Error('Peerit signed publication exceeds the active exact-intent journal bound.')
+      error.code = 'PEERIT_SUBSTRATE_INTENT_TOO_LARGE'
+      throw error
+    }
+    const intentId = hex(hashPeeritInnerOperationIntentIdV1(batch.innerCodec, batch.innerBytes))
+    const logicalId = hex(batch.logicalHash)
     const keys = normalized.map(viewKey)
     const commit = () => this.journal.commitIntent({
       intentId,
       logicalId,
-      operationBytes: exact,
+      wireFormat: PEERIT_INNER_OPERATION_BATCH_WIRE_FORMAT_V1,
+      innerCodec: batch.innerCodec,
+      innerBytes: batch.innerBytes,
+      innerLength: Number(batch.innerLength),
+      logicalHash: batch.logicalHash,
+      encodingCommitment: batch.encodingCommitment,
+      sizeClass: batch.sizeClass,
       records: normalized.map((operation, index) => ({ key: keys[index], value: operation.data })),
       createdAt: this.clock(),
       discoveryState: 'queued'
@@ -598,7 +644,7 @@ export class PeeritSubstrateSync {
     try {
       const current = await this.journal.getIntent(intentId)
       if (!current) throw new Error('Peerit publication intent disappeared from its local journal')
-      const payload = publicationPayload(current, relay.id)
+      const payload = await publicationPayload(current, relay.id)
       let result
       if (reconcile) {
         result = await withDeadline(this.deliveryAttemptTimeoutMs, context => relay.reconcile(payload, context))

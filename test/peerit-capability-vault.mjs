@@ -12,6 +12,14 @@ function packet (suffix = 1) {
   return {
     intentId: `intent-${suffix}`,
     logicalId: `logical-${suffix}`,
+    // The vault persists the exact Cell envelope identity beside the encrypted
+    // capability.  These are deliberately stable for a fixture instance so a
+    // retry proves byte-bound idempotence rather than relying on legacy JSON.
+    innerCodec: 334,
+    innerLength: 8 + suffix,
+    sizeClass: 1,
+    logicalHash: new Uint8Array(32).fill(0x80 + suffix),
+    encodingCommitment: new Uint8Array(32).fill(0xa0 + suffix),
     targetId: `cell-v1:relay-${suffix}:store-${suffix}`,
     targetContext: {
       relayPublicKey: new Uint8Array(32).fill(0x10 + suffix),

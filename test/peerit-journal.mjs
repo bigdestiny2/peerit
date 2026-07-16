@@ -7,9 +7,18 @@ import { genKeyPair, hashHex, ready as cryptoReady, sign } from '../js/crypto.js
 import {
   LEGACY_SUBSTRATE_STATE_KEY,
   JOURNAL_STORES,
+  PEERIT_INNER_OPERATION_BATCH_WIRE_FORMAT_V1,
+  PEERIT_LEGACY_JSON_QUARANTINE_FORMAT_V1,
   createMemoryJournalState,
   createMemoryPeeritJournal
 } from '../js/substrate/peerit-journal.js'
+import {
+  PEERIT_INNER_OPERATION_BATCH_V1_CODEC,
+  hashPeeritInnerCellEncodingCommitmentV1,
+  hashPeeritInnerLogicalHashV1,
+  hashPeeritInnerOperationIntentIdV1
+} from '../js/substrate/peerit-operation-authority-v1.js'
+import { peeritAuthorBindCellSizeClassForInnerLengthV1 } from '../js/substrate/author-bind-inner-envelope-policy.mjs'
 
 let passed = 0
 function ok (condition, message) {
@@ -18,7 +27,11 @@ function ok (condition, message) {
   console.log('  ✓ ' + message)
 }
 
-function id (number) { return Number(number).toString(16).padStart(64, '0') }
+const textEncoder = new TextEncoder()
+
+function hex (value) {
+  return Array.from(value, byte => byte.toString(16).padStart(2, '0')).join('')
+}
 
 function stable (value) {
   if (value === null) return 'null'
@@ -28,12 +41,55 @@ function stable (value) {
   return '{' + keys.map(key => JSON.stringify(key) + ':' + stable(value[key])).join(',') + '}'
 }
 
+function fixtureEnvelope (number, options = {}) {
+  // The journal owns durable exact-byte identity and commitments, while the
+  // sync authority owns the signed operation validation before these bytes can
+  // reach it. Keep journal fixtures deliberately structural, but use the real
+  // tag-334 VNext frame and commitment functions so they cannot accidentally
+  // exercise the retired raw-JSON path.
+  const payload = options.innerPayload == null
+    ? stable({ version: 1, operations: [{ type: 'post', data: { id: String(number) } }] })
+    : options.innerPayload
+  const payloadBytes = typeof payload === 'string'
+    ? textEncoder.encode(payload)
+    : new Uint8Array(payload)
+  const innerBytes = new Uint8Array(7 + payloadBytes.byteLength)
+  innerBytes[0] = (PEERIT_INNER_OPERATION_BATCH_V1_CODEC >>> 8) & 0xff
+  innerBytes[1] = PEERIT_INNER_OPERATION_BATCH_V1_CODEC & 0xff
+  innerBytes[2] = 1
+  innerBytes[3] = (payloadBytes.byteLength >>> 24) & 0xff
+  innerBytes[4] = (payloadBytes.byteLength >>> 16) & 0xff
+  innerBytes[5] = (payloadBytes.byteLength >>> 8) & 0xff
+  innerBytes[6] = payloadBytes.byteLength & 0xff
+  innerBytes.set(payloadBytes, 7)
+  const innerLength = innerBytes.byteLength
+  const sizeClass = peeritAuthorBindCellSizeClassForInnerLengthV1(BigInt(innerLength))
+  const logicalHash = hashPeeritInnerLogicalHashV1(PEERIT_INNER_OPERATION_BATCH_V1_CODEC, innerBytes)
+  const encodingCommitment = hashPeeritInnerCellEncodingCommitmentV1(
+    PEERIT_INNER_OPERATION_BATCH_V1_CODEC,
+    innerBytes,
+    logicalHash,
+    sizeClass
+  )
+  return {
+    wireFormat: PEERIT_INNER_OPERATION_BATCH_WIRE_FORMAT_V1,
+    innerCodec: PEERIT_INNER_OPERATION_BATCH_V1_CODEC,
+    innerBytes,
+    innerLength,
+    logicalHash,
+    encodingCommitment,
+    sizeClass,
+    intentId: hex(hashPeeritInnerOperationIntentIdV1(PEERIT_INNER_OPERATION_BATCH_V1_CODEC, innerBytes)),
+    logicalId: hex(logicalHash)
+  }
+}
+
+function id (number) { return fixtureEnvelope(number).intentId }
+
 function intent (number, options = {}) {
   const key = options.key || `post!${number}`
   return {
-    intentId: id(number),
-    logicalId: id(number + 10_000),
-    operationBytes: options.operationBytes || JSON.stringify({ version: 1, operations: [{ type: 'post', data: { id: String(number) } }] }),
+    ...fixtureEnvelope(number, options),
     records: options.records || [{ key, value: { id: String(number), body: options.body || `record ${number}` } }],
     createdAt: options.createdAt == null ? number : options.createdAt,
     discoveryState: 'queued'
@@ -80,11 +136,21 @@ async function main () {
   ok(shared.writeTransactions === 0 && (await journal.summary()).intentCount === 0,
     'fresh journal readiness and status perform no write transaction')
 
-  await journal.commitIntent(intent(1))
+  const firstIntent = intent(1)
+  const firstEnvelope = new Uint8Array(firstIntent.innerBytes)
+  await journal.commitIntent(firstIntent)
+  firstIntent.innerBytes[7] ^= 0xff
   const reloaded = createMemoryPeeritJournal({ shared })
   await reloaded.ready()
   ok((await reloaded.getView('post!1')).body === 'record 1' && (await reloaded.summary()).intentCount === 1,
     'an atomic intent/view commit survives a new journal instance')
+  const persistedFirst = await reloaded.getIntent(id(1))
+  ok(persistedFirst.wireFormat === PEERIT_INNER_OPERATION_BATCH_WIRE_FORMAT_V1 &&
+    persistedFirst.innerCodec === PEERIT_INNER_OPERATION_BATCH_V1_CODEC &&
+    persistedFirst.innerLength === firstEnvelope.byteLength &&
+    Buffer.from(persistedFirst.innerBytes).equals(Buffer.from(firstEnvelope)) &&
+    persistedFirst.sizeClass === peeritAuthorBindCellSizeClassForInnerLengthV1(BigInt(firstEnvelope.byteLength)),
+  'the journal preserves and defensively copies the exact VNext tag-334 envelope bytes')
 
   const beforeCrash = await reloaded.summary()
   shared.failNextCommit = Object.assign(new Error('simulated process loss before commit'), { code: 'SIMULATED_CRASH' })
@@ -158,12 +224,30 @@ async function main () {
   )
   passed++
   await assert.rejects(
-    () => bounded.commitIntent(intent(31, { operationBytes: 'x'.repeat(129) })),
+    () => bounded.commitIntent(intent(31, { innerPayload: 'x'.repeat(129) })),
     error => error && error.code === 'PEERIT_JOURNAL_LIMIT'
   )
   passed++
+  const tamperedCommitment = intent(32)
+  tamperedCommitment.encodingCommitment[0] ^= 0xff
+  await assert.rejects(
+    () => bounded.commitIntent(tamperedCommitment),
+    error => error && error.code === 'PEERIT_JOURNAL_BAD_INPUT'
+  )
+  passed++
+  const retiredRaw = fixtureEnvelope(33)
+  await assert.rejects(
+    () => bounded.commitIntent({
+      intentId: retiredRaw.intentId,
+      logicalId: retiredRaw.logicalId,
+      operationBytes: stable({ version: 1, operations: [{ type: 'post', data: { id: '33' } }] }),
+      records: [{ key: 'post!33', value: { id: '33' } }]
+    }),
+    error => error && error.code === 'PEERIT_JOURNAL_BAD_INPUT'
+  )
+  passed++
   ok((await bounded.summary()).intentCount === 0,
-    'record-count and exact-byte bounds reject oversized authoring before any commit')
+    'record-count, exact-byte, commitment, and retired raw-JSON inputs reject before any commit')
 
   const corruptState = createMemoryJournalState()
   const corrupt = createMemoryPeeritJournal({ shared: corruptState })
@@ -278,13 +362,13 @@ async function main () {
     })
   }
   for (let number = 100; number < 100 + oldCount; number++) await queueRetry(number, 1)
+  const oldIntentIds = new Set(Array.from({ length: oldCount }, (_, index) => id(100 + index)))
   const seenOld = new Set()
   for (let round = 0; round < 4; round++) {
     for (let arrival = 0; arrival < 4; arrival++) await queueRetry(200 + round * 4 + arrival, 10 + round)
     const page = await fairness.listRetryIntentIds({ now: 100, targetIds: ['fair-relay'], limit: 12 })
     for (const intentId of page.intentIds) {
-      const number = Number.parseInt(intentId, 16)
-      if (number >= 100 && number < 100 + oldCount) seenOld.add(intentId)
+      if (oldIntentIds.has(intentId)) seenOld.add(intentId)
       const token = await fairness.claimTarget({
         intentId,
         targetId: 'fair-relay',
@@ -387,21 +471,110 @@ async function main () {
   ok(importResult.imported === true && legacyStorage.getItem(LEGACY_SUBSTRATE_STATE_KEY) == null &&
     (await imported.getView(legacyViewKey)).name === 'migrated in browser',
   'a cryptographically verified legacy reduction imports once and its source is removed only after success')
-  ok(importedIntent.targets['old-relay'].state === 'pending-unknown' &&
-    importedIntent.targets['old-relay'].attempts === 1 &&
-    importedIntent.targets['old-relay'].updatedAt === 6 &&
-    importedIntent.targets['old-relay'].nextAttemptAt === 6 &&
-    importedIntent.targets['old-relay'].attemptToken == null &&
-    importedIntent.targets['old-relay'].evidenceRef == null &&
-    importedIntent.targets['old-relay'].readbackVerified === false &&
-    importedIntent.targets['old-relay'].policyDurable === false &&
-    importedIntent.acknowledgedTargets === 0 && importedIntent.policyDurable === false &&
-    (await imported.summary()).pendingIntentCount === 1,
-  'fabricated legacy receipts and durability claims are quarantined while scheduling fields normalize deterministically')
+  const importedSummary = await imported.summary()
+  ok(importedIntent.wireFormat === PEERIT_LEGACY_JSON_QUARANTINE_FORMAT_V1 &&
+    importedIntent.legacyOperationBytes === legacyOperationBytes &&
+    importedIntent.discoveryState === 'legacy-quarantined' &&
+    importedIntent.targetCount === 0 && importedIntent.acknowledgedTargets === 0 &&
+    importedIntent.policyDurable === false && importedIntent.pendingOrderKey == null &&
+    Object.keys(importedIntent.targets).length === 0 &&
+    importedSummary.pendingIntentCount === 0 && importedSummary.quarantinedIntentCount === 1 &&
+    importedSummary.quarantinedIntentBytes === textEncoder.encode(legacyOperationBytes).byteLength &&
+    !(await imported.listIntentIds({ limit: 10 })).intentIds.includes(legacyIntentId),
+  'legacy raw bytes are retained only as quarantined local history, never as relay-deliverable work')
   const importedReload = createMemoryPeeritJournal({ shared: importedState, legacyStorage })
   await importedReload.ready()
   ok((await importedReload.summary()).intentCount === 1,
     'reload after migration cannot duplicate imported intents or view records')
+
+  const storedV2State = createMemoryJournalState()
+  const storedV2 = createMemoryPeeritJournal({ shared: storedV2State })
+  const storedV2TargetId = 'retired-relay'
+  storedV2.backend.corrupt(JOURNAL_STORES.META, 'state', {
+    key: 'state',
+    schemaVersion: 2,
+    revision: 7,
+    viewRevision: 3,
+    viewRecordCount: 1,
+    intentCount: 1,
+    pendingIntentCount: 1,
+    dedupeCount: 1,
+    intentBytes: textEncoder.encode(legacyOperationBytes).byteLength,
+    latestIntentId: legacyIntentId,
+    latestCreatedAt: 5,
+    targetStateCounts: {
+      preparing: 0,
+      delivering: 0,
+      'pending-unknown': 1,
+      retryable: 0,
+      terminal: 0,
+      acknowledged: 0,
+      'readback-verified': 0
+    },
+    legacyImportHash: null,
+    legacyImportSource: null,
+    createdAt: 5,
+    updatedAt: 6
+  })
+  storedV2.backend.corrupt(JOURNAL_STORES.VIEW, legacyViewKey, {
+    key: legacyViewKey,
+    value: legacyRecord,
+    intentId: legacyIntentId,
+    updatedAt: 6
+  })
+  storedV2.backend.corrupt(JOURNAL_STORES.INTENTS, legacyIntentId, {
+    intentId: legacyIntentId,
+    logicalId: legacyLogicalId,
+    operationBytes: legacyOperationBytes,
+    recordKeys: [legacyViewKey],
+    createdAt: 5,
+    updatedAt: 6,
+    discoveryState: 'queued',
+    targetCount: 1,
+    acknowledgedTargets: 0,
+    readbackVerified: 0,
+    policyDurable: false,
+    completedAt: 0,
+    pendingOrderKey: `0000000000000005!${legacyIntentId}`
+  })
+  storedV2.backend.corrupt(JOURNAL_STORES.TARGETS, `${legacyIntentId}\u0000${storedV2TargetId}`, {
+    key: `${legacyIntentId}\u0000${storedV2TargetId}`,
+    intentId: legacyIntentId,
+    targetId: storedV2TargetId,
+    state: 'pending-unknown',
+    attempts: 1,
+    attemptToken: null,
+    updatedAt: 6,
+    nextAttemptAt: 6,
+    leaseUntil: 0,
+    lastError: 'old raw delivery',
+    readbackVerified: false,
+    policyDurable: false,
+    evidenceRef: null
+  })
+  storedV2.backend.corrupt(JOURNAL_STORES.DEDUPE, legacyIntentId, {
+    intentId: legacyIntentId,
+    logicalId: legacyLogicalId,
+    operationBytes: legacyOperationBytes,
+    compactedAt: 6,
+    expiresAt: 9_999
+  })
+  const v2Migrated = createMemoryPeeritJournal({ shared: storedV2State, clock: () => 1234 })
+  await v2Migrated.ready()
+  const v2MigratedIntent = await v2Migrated.getIntent(legacyIntentId)
+  const v2MigratedSummary = await v2Migrated.summary()
+  ok(v2MigratedIntent.wireFormat === PEERIT_LEGACY_JSON_QUARANTINE_FORMAT_V1 &&
+    v2MigratedIntent.legacyOperationBytes === legacyOperationBytes &&
+    v2MigratedIntent.quarantinedAt === 1234 && v2MigratedIntent.pendingOrderKey == null &&
+    Object.keys(v2MigratedIntent.targets).length === 0 &&
+    (await v2Migrated.getView(legacyViewKey)).name === 'migrated in browser' &&
+    v2MigratedSummary.schemaVersion === 3 && v2MigratedSummary.intentCount === 1 &&
+    v2MigratedSummary.pendingIntentCount === 0 && v2MigratedSummary.dedupeCount === 0 &&
+    v2MigratedSummary.quarantinedIntentCount === 1 &&
+    v2MigratedSummary.quarantinedIntentBytes === textEncoder.encode(legacyOperationBytes).byteLength &&
+    (await v2Migrated.listIntentIds({ limit: 10 })).intentIds.length === 0 &&
+    (await v2Migrated.listRetryIntentIds({ now: 1234, targetIds: [storedV2TargetId], reconcileTargetIds: [storedV2TargetId] })).intentIds.length === 0,
+  'stored V2 raw work is atomically quarantined, while validated local view history remains readable')
 
   const forgedView = structuredClone(legacy)
   forgedView.view['profile!forged'] = { id: 'forged', author: legacyKeys.pubHex, name: 'unsigned injection' }

@@ -438,6 +438,19 @@ export function hashPeeritInnerLogicalHashV1 (innerCodec, innerBytes) {
   ))
 }
 
+// A local queue identity is intentionally distinct from logicalHash. It binds
+// the exact VNext envelope under the journal namespace, so a retired raw-JSON
+// intent can never collide with or masquerade as a Cell-ready intent.
+export function hashPeeritInnerOperationIntentIdV1 (innerCodec, innerBytes) {
+  const { bytes } = assertEnvelopeHeader(innerCodec, innerBytes)
+  return blake2b256(concatBytes(
+    asciiBytes('peerit.substrate.intent.v2'),
+    u16Bytes(innerCodec),
+    u64Bytes(bytes.byteLength),
+    bytes
+  ))
+}
+
 export function hashPeeritInnerCellEncodingCommitmentV1 (innerCodec, innerBytes, logicalHash, sizeClass) {
   const { bytes } = assertEnvelopeHeader(innerCodec, innerBytes)
   const expectedLogicalHash = hashPeeritInnerLogicalHashV1(innerCodec, bytes)

@@ -436,6 +436,26 @@ export function createPeeritCapabilityVault (options = {}) {
     }
   }
 
+  function envelopeFields (input) {
+    if (!Number.isSafeInteger(input.innerCodec) || input.innerCodec !== 334 ||
+        !Number.isSafeInteger(input.innerLength) || input.innerLength < 8 || input.innerLength > 1_048_519 ||
+        !Number.isSafeInteger(input.sizeClass) || input.sizeClass < 1 || input.sizeClass > 5) {
+      throw new TypeError('capability persistence requires exact VNext envelope metadata')
+    }
+    const logicalHash = bytes(input.logicalHash, 'logicalHash')
+    const encodingCommitment = bytes(input.encodingCommitment, 'encodingCommitment')
+    if (logicalHash.byteLength !== 32 || encodingCommitment.byteLength !== 32) {
+      throw new TypeError('capability persistence requires 32-byte VNext commitments')
+    }
+    return {
+      innerCodec: input.innerCodec,
+      innerLength: input.innerLength,
+      sizeClass: input.sizeClass,
+      logicalHash,
+      encodingCommitment
+    }
+  }
+
   async function loadRecord (fields) {
     const recordKey = await recordKeyFor(runtime, fields.intentId, fields.targetId)
     const record = await kv.get(recordKey)
@@ -448,6 +468,7 @@ export function createPeeritCapabilityVault (options = {}) {
 
   async function persistPreparedReplica (input) {
     const fields = inputFields(input)
+    const envelope = envelopeFields(input)
     if (!plainObject(input.targetContext) || !plainObject(input.prepared)) {
       throw new TypeError('prepared capability persistence requires targetContext and prepared objects')
     }
@@ -456,6 +477,7 @@ export function createPeeritCapabilityVault (options = {}) {
       version: 1,
       stage: 1,
       ...fields,
+      ...envelope,
       targetContext: input.targetContext,
       prepared: input.prepared
     }
@@ -492,6 +514,7 @@ export function createPeeritCapabilityVault (options = {}) {
 
   async function persistVerifiedResult (input) {
     const fields = inputFields(input)
+    const envelope = envelopeFields(input)
     if (!plainObject(input.targetContext) || !plainObject(input.prepared)) {
       throw new TypeError('verified capability persistence requires targetContext and prepared objects')
     }
@@ -505,6 +528,7 @@ export function createPeeritCapabilityVault (options = {}) {
         version: 1,
         stage: 1,
         ...fields,
+        ...envelope,
         targetContext: input.targetContext,
         prepared: input.prepared
       }

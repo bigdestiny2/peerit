@@ -10,7 +10,15 @@ import { ready as cryptoReady } from '../js/crypto.js'
 import { resolveRuntime } from '../js/runtime.js'
 import { createSync, memoryStorage } from '../js/sync.js'
 import { createBlindCellRelay } from '../js/substrate/blind-client-relay.js'
-import { createMemoryJournalState, createMemoryPeeritJournal } from '../js/substrate/peerit-journal.js'
+import {
+  PEERIT_INNER_OPERATION_BATCH_WIRE_FORMAT_V1,
+  createMemoryJournalState,
+  createMemoryPeeritJournal
+} from '../js/substrate/peerit-journal.js'
+import {
+  createPeeritInnerOperationBatchV1,
+  hashPeeritInnerOperationIntentIdV1
+} from '../js/substrate/peerit-operation-authority-v1.js'
 import { publicationModeLabel, publicationNetSegments, publicationUiState } from '../js/substrate/publication-status.js'
 
 let passed = 0
@@ -63,6 +71,52 @@ async function signedOperation (identity, name) {
     _alg: signature.algorithm
   })
   return { type: 'profile', data }
+}
+
+function hex (value) {
+  let output = ''
+  for (const byte of value) output += byte.toString(16).padStart(2, '0')
+  return output
+}
+
+function equalBytes (left, right) {
+  if (left.byteLength !== right.byteLength) return false
+  let different = 0
+  for (let index = 0; index < left.byteLength; index++) different |= left[index] ^ right[index]
+  return different === 0
+}
+
+// Direct relay tests must use the same immutable VNext Cell envelope that the
+// sync boundary persists.  This prevents a test fixture from accidentally
+// asserting that the adapter accepts the retired raw-JSON delivery surface.
+async function vnextPublication (operation) {
+  const envelope = await createPeeritInnerOperationBatchV1([operation])
+  const innerBytes = envelope.innerBytes
+  const logicalHash = envelope.logicalHash
+  return Object.freeze({
+    wireFormat: PEERIT_INNER_OPERATION_BATCH_WIRE_FORMAT_V1,
+    intentId: hex(hashPeeritInnerOperationIntentIdV1(envelope.innerCodec, innerBytes)),
+    logicalId: hex(logicalHash),
+    innerCodec: envelope.innerCodec,
+    innerBytes,
+    innerLength: Number(envelope.innerLength),
+    sizeClass: envelope.sizeClass,
+    logicalHash,
+    encodingCommitment: envelope.encodingCommitment,
+    operations: envelope.operations,
+    recordKeys: envelope.operationWireKeys
+  })
+}
+
+function journalInputForPublication (publication, createdAt) {
+  return {
+    ...publication,
+    records: publication.operations.map((operation, index) => ({
+      key: publication.recordKeys[index],
+      value: operation.data
+    })),
+    createdAt
+  }
 }
 
 async function main () {
@@ -434,12 +488,17 @@ async function main () {
 
   console.log('\n— blind-client control code is lazy and persistence precedes HTTP —')
   const order = []
+  const preparedCellInputs = []
   let controlLoads = 0
   let verifications = 0
   const base = {
     maximumCellContentBytes: () => 4096,
-    async createCellReplica () {
+    async createCellReplica (options) {
       order.push('prepare')
+      preparedCellInputs.push({
+        structuredContent: new Uint8Array(options.structuredContent),
+        sizeClass: options.sizeClass
+      })
       return {
         request: Object.freeze({ familyId: 1, operationId: 1 }),
         requestBytes: new Uint8Array([1, 2, 3]),
@@ -497,10 +556,21 @@ async function main () {
     }
   })
   ok(controlLoads === 0, 'constructing a blind relay for lurker mode does not load the writer/control subpath')
-  await blindRelay.deliver({ intentId: 'i1', logicalId: 'l1', operationBytes: new Uint8Array([1]), operations: [], recordKeys: [] })
-  await blindRelay.deliver({ intentId: 'i2', logicalId: 'l2', operationBytes: new Uint8Array([2]), operations: [], recordKeys: [] })
+  const firstRelayPublication = await vnextPublication(await signedOperation(identity, 'direct blind relay first envelope'))
+  const secondRelayPublication = await vnextPublication(await signedOperation(identity, 'direct blind relay second envelope'))
+  await blindRelay.deliver(firstRelayPublication)
+  await blindRelay.deliver(secondRelayPublication)
   ok(controlLoads === 1 && verifications === 2,
     'explicit delivery lazily loads @hiverelay/blind-client/control once and verifies every result')
+  ok(preparedCellInputs.length === 2 &&
+    preparedCellInputs.every((prepared, index) => {
+      const publication = index === 0 ? firstRelayPublication : secondRelayPublication
+      return prepared.sizeClass === publication.sizeClass &&
+        equalBytes(prepared.structuredContent, publication.innerBytes) &&
+        prepared.structuredContent[0] === 0x01 && prepared.structuredContent[1] === 0x4e &&
+        prepared.structuredContent[2] === 0x01
+    }),
+  'the relay creates Cells from the exact tag-334 VNext envelope bytes and mandated size class')
   const firstPersist = order.indexOf('persist')
   const firstHttp = order.indexOf('http')
   ok(firstPersist >= 0 && firstPersist < firstHttp,
@@ -509,14 +579,9 @@ async function main () {
     'a verified receipt and read capability are durably indexed before the adapter returns an acknowledgement')
 
   const hungAdapterJournal = createMemoryPeeritJournal({ shared: createMemoryJournalState() })
-  const hungIntentId = 'a'.repeat(64)
-  await hungAdapterJournal.commitIntent({
-    intentId: hungIntentId,
-    logicalId: 'b'.repeat(64),
-    operationBytes: JSON.stringify({ version: 1, operations: [{ type: 'timeout-regression' }] }),
-    records: [{ key: 'post!hung-adapter', value: { id: 'hung-adapter' } }],
-    createdAt: 1
-  })
+  const hungPublication = await vnextPublication(await signedOperation(identity, 'hung adapter timeout regression'))
+  const hungIntentId = hungPublication.intentId
+  await hungAdapterJournal.commitIntent(journalInputForPublication(hungPublication, 1))
   let hungRequestSignal = null
   let hungRequestTimeout = null
   let hungRequestAborted = 0
@@ -622,11 +687,12 @@ async function main () {
       }
     }
   })
+  const retryPublication = await vnextPublication(await signedOperation(identity, 'retryable direct envelope'))
   await assert.rejects(
-    () => retryableRelay.deliver({ intentId: 'i3', logicalId: 'l3', operationBytes: new Uint8Array([3]), operations: [], recordKeys: [] }),
+    () => retryableRelay.deliver(retryPublication),
     error => error && error.code === 'RETRYABLE_NOT_SENT' && error.definitelyNotProcessed === true
   )
-  await retryableRelay.deliver({ intentId: 'i3', logicalId: 'l3', operationBytes: new Uint8Array([3]), operations: [], recordKeys: [] })
+  await retryableRelay.deliver(retryPublication)
   ok(transientLoads === 2,
     'a pre-network control-load failure is safely retryable and does not poison the lazy loader cache')
 
@@ -680,13 +746,7 @@ async function main () {
       verifyOperationResult: () => ({ snapshotBytes: () => new Uint8Array([8]) })
     })
   })
-  const resumedPublication = {
-    intentId: 'resume-intent',
-    logicalId: 'resume-logical',
-    operationBytes: new Uint8Array([4]),
-    operations: [],
-    recordKeys: []
-  }
+  const resumedPublication = await vnextPublication(await signedOperation(identity, 'prepared replica resume envelope'))
   const beforeCrash = createResumeRelay()
   const firstPrepared = await beforeCrash.prepare(resumedPublication)
   const afterCrash = createResumeRelay()

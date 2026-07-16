@@ -19,6 +19,26 @@ function bytes (value, field) {
   throw new TypeError(`${field} must be bytes`)
 }
 
+function equalBytes (left, right) {
+  try {
+    const a = bytes(left, 'left bytes')
+    const b = bytes(right, 'right bytes')
+    if (a.byteLength !== b.byteLength) return false
+    let difference = 0
+    for (let index = 0; index < a.byteLength; index++) difference |= a[index] ^ b[index]
+    return difference === 0
+  } catch {
+    return false
+  }
+}
+
+function terminalError (code, message) {
+  const error = new Error(message)
+  error.code = code
+  error.terminal = true
+  return error
+}
+
 function hex (value) {
   const input = bytes(value, 'relayPublicKey')
   let output = ''
@@ -86,6 +106,11 @@ function persistedReplicaPayload (stored, publication, targetId, qualifiedContex
   if (!payload || typeof payload !== 'object' ||
       payload.intentId !== publication.intentId ||
       payload.logicalId !== publication.logicalId ||
+      payload.innerCodec !== publication.innerCodec ||
+      payload.innerLength !== publication.innerLength ||
+      payload.sizeClass !== publication.sizeClass ||
+      !equalBytes(payload.logicalHash, publication.logicalHash) ||
+      !equalBytes(payload.encodingCommitment, publication.encodingCommitment) ||
       String(payload.targetId || '').toLowerCase() !== targetId ||
       !payload.targetContext ||
       contextFingerprint(payload.targetContext) !== contextFingerprint(qualifiedContext) ||
@@ -114,12 +139,26 @@ function persistedAcknowledgement (record) {
   })
 }
 
-function chooseSizeClass (api, content) {
-  if (typeof api.maximumCellContentBytes !== 'function') return 5
-  for (let sizeClass = 1; sizeClass <= 5; sizeClass++) {
-    if (content.byteLength <= api.maximumCellContentBytes(sizeClass)) return sizeClass
+function publicationCellEnvelope (publication) {
+  if (!publication || typeof publication !== 'object') {
+    throw terminalError('PEERIT_SUBSTRATE_ENVELOPE_REQUIRED', 'VNext Cell delivery requires a verified inner envelope.')
   }
-  throw new Error('Peerit signed publication exceeds the maximum blind Cell size')
+  let innerBytes
+  try { innerBytes = bytes(publication.innerBytes, 'innerBytes') } catch (cause) {
+    throw terminalError('PEERIT_SUBSTRATE_ENVELOPE_INVALID', 'VNext Cell delivery bytes are invalid.')
+  }
+  let validCommitments = false
+  try {
+    validCommitments = bytes(publication.logicalHash, 'logicalHash').byteLength === 32 &&
+      bytes(publication.encodingCommitment, 'encodingCommitment').byteLength === 32
+  } catch {}
+  if (publication.innerCodec !== 334 || !Number.isSafeInteger(publication.innerLength) ||
+      publication.innerLength !== innerBytes.byteLength || !Number.isSafeInteger(publication.sizeClass) ||
+      publication.sizeClass < 1 || publication.sizeClass > 5 ||
+      !validCommitments) {
+    throw terminalError('PEERIT_SUBSTRATE_ENVELOPE_INVALID', 'VNext Cell delivery envelope metadata is invalid.')
+  }
+  return Object.freeze({ innerBytes: new Uint8Array(innerBytes), sizeClass: publication.sizeClass })
 }
 
 function retryableNotSent (cause) {
@@ -260,8 +299,16 @@ export function createBlindCellRelay (options = {}) {
         throwIfAborted(attemptSignal)
         if (persisted) return persisted.payload.prepared
       }
-      const structuredContent = bytes(publication.operationBytes, 'operationBytes')
-      const sizeClass = options.sizeClass || chooseSizeClass(api, structuredContent)
+      const envelope = publicationCellEnvelope(publication)
+      if (options.sizeClass != null && options.sizeClass !== envelope.sizeClass) {
+        throw terminalError('PEERIT_SUBSTRATE_SIZE_CLASS_MISMATCH', 'Configured Cell size class disagrees with the verified VNext envelope.')
+      }
+      if (typeof api.maximumCellContentBytes === 'function' &&
+          envelope.innerBytes.byteLength > api.maximumCellContentBytes(envelope.sizeClass)) {
+        throw terminalError('PEERIT_SUBSTRATE_SIZE_CLASS_UNSUPPORTED', 'Relay client cannot hold the verified VNext envelope in its required Cell class.')
+      }
+      const structuredContent = envelope.innerBytes
+      const sizeClass = envelope.sizeClass
       const prepared = await api.createCellReplica({
         runtime: options.runtime,
         relayPublicKey,
@@ -279,6 +326,11 @@ export function createBlindCellRelay (options = {}) {
       await options.persistPreparedReplica(Object.freeze({
         intentId: publication.intentId,
         logicalId: publication.logicalId,
+        innerCodec: publication.innerCodec,
+        innerLength: publication.innerLength,
+        sizeClass: publication.sizeClass,
+        logicalHash: new Uint8Array(publication.logicalHash),
+        encodingCommitment: new Uint8Array(publication.encodingCommitment),
         targetId: canonicalTargetId,
         targetContext: qualifiedContext,
         prepared
@@ -357,6 +409,11 @@ export function createBlindCellRelay (options = {}) {
     const persisted = await options.persistVerifiedResult(Object.freeze({
       intentId: delivery.intentId,
       logicalId: delivery.logicalId,
+      innerCodec: delivery.innerCodec,
+      innerLength: delivery.innerLength,
+      sizeClass: delivery.sizeClass,
+      logicalHash: new Uint8Array(delivery.logicalHash),
+      encodingCommitment: new Uint8Array(delivery.encodingCommitment),
       targetId: canonicalTargetId,
       targetContext: qualifiedContext,
       prepared,

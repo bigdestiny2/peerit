@@ -20,8 +20,19 @@ export const JOURNAL_STORES = Object.freeze({
 
 function clone (value) {
   if (value == null) return value
+  if (value instanceof Uint8Array) return new Uint8Array(value)
+  if (value instanceof ArrayBuffer) return value.slice(0)
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength))
+  }
   if (typeof structuredClone === 'function') return structuredClone(value)
-  return JSON.parse(JSON.stringify(value))
+  if (Array.isArray(value)) return value.map(clone)
+  if (typeof value === 'object') {
+    const output = {}
+    for (const [key, child] of Object.entries(value)) output[key] = clone(child)
+    return output
+  }
+  return value
 }
 
 function compare (left, right) {
@@ -53,18 +64,50 @@ function inQuery (value, query = {}) {
   return true
 }
 
+const SIZE_ENCODER = new TextEncoder()
+
+// The memory backend models quota pressure. JSON.stringify serializes a
+// Uint8Array as a large object of decimal properties, which makes the model
+// diverge badly from IndexedDB once the journal stores exact Cell bytes. Keep
+// this deliberately conservative and deterministic instead: byte views cost
+// their real byte length plus a tiny type envelope, while ordinary JSON values
+// retain their normal UTF-8 representation cost.
+function encodedValueSize (value, seen = new Set()) {
+  if (value == null || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
+    return SIZE_ENCODER.encode(JSON.stringify(value)).byteLength
+  }
+  if (value instanceof Uint8Array) return 8 + value.byteLength
+  if (value instanceof ArrayBuffer) return 8 + value.byteLength
+  if (ArrayBuffer.isView(value)) return 8 + value.byteLength
+  if (typeof value === 'bigint') return SIZE_ENCODER.encode(`${value}n`).byteLength
+  if (typeof value !== 'object') return SIZE_ENCODER.encode(String(value)).byteLength
+  if (seen.has(value)) throw new TypeError('journal rows must not contain cyclic values')
+  seen.add(value)
+  let total
+  if (Array.isArray(value)) {
+    total = 2
+    for (const child of value) total += 1 + encodedValueSize(child, seen)
+  } else {
+    total = 2
+    for (const [key, child] of Object.entries(value)) {
+      total += 2 + SIZE_ENCODER.encode(JSON.stringify(key)).byteLength + encodedValueSize(child, seen)
+    }
+  }
+  seen.delete(value)
+  return total
+}
+
 function encodedSize (stores) {
   let total = 0
-  const encoder = new TextEncoder()
   for (const [name, rows] of stores) {
-    total += encoder.encode(name).byteLength
-    for (const [key, value] of rows) total += encoder.encode(String(key) + JSON.stringify(value)).byteLength
+    total += SIZE_ENCODER.encode(name).byteLength
+    for (const [key, value] of rows) total += encodedRowSize(key, value)
   }
   return total
 }
 
 function encodedRowSize (key, value) {
-  return new TextEncoder().encode(String(key) + JSON.stringify(value)).byteLength
+  return SIZE_ENCODER.encode(String(key)).byteLength + encodedValueSize(value)
 }
 
 function quotaError () {

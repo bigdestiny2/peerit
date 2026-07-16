@@ -10,11 +10,31 @@ import {
   genKeyPair,
   isSecure,
   ready as cryptoReady,
-  sign as edSign
+  sign as edSign,
+  signBytes
 } from '../crypto.js'
 import { verifiedIdentityEntry } from '../identity-primitives.js'
 
 const NAMESPACE = 'peerit'
+const AUTHOR_BIND_DOMAIN = new TextEncoder().encode('peerit.hiverelay.author-bind.v1')
+const MAX_AUTHOR_BIND_PREFIX_BYTES = 2 * 1024 * 1024
+
+function authorBindPrefix (value) {
+  if (!(value instanceof Uint8Array)) {
+    const error = new TypeError('AuthorBindV1 signing prefix must be a Uint8Array')
+    error.code = 'PEERIT_AUTHOR_BIND_PREFIX_INVALID'
+    throw error
+  }
+  if (value.byteLength < 1 || value.byteLength > MAX_AUTHOR_BIND_PREFIX_BYTES) {
+    const error = new RangeError('AuthorBindV1 signing prefix is outside the bounded protocol range')
+    error.code = 'PEERIT_AUTHOR_BIND_PREFIX_INVALID'
+    throw error
+  }
+  const output = new Uint8Array(AUTHOR_BIND_DOMAIN.byteLength + value.byteLength)
+  output.set(AUTHOR_BIND_DOMAIN)
+  output.set(value, AUTHOR_BIND_DOMAIN.byteLength)
+  return output
+}
 
 function publicIdentity (entry) {
   return Object.freeze({
@@ -132,6 +152,26 @@ export class PeeritLocalIdentityV1 {
       namespace: NAMESPACE,
       algorithm: 'ed25519'
     })
+  }
+
+  // Fixed-domain binary signing for the AuthorBindV1 authority only.  This is
+  // intentionally not a generic signing escape hatch: callers cannot choose a
+  // domain or pass an app-envelope string in place of canonical record bytes.
+  async signAuthorBindV1 (prefix) {
+    await this.ready()
+    const entry = this._entry
+    if (!entry) {
+      const error = new Error('No active durable identity')
+      error.code = 'PEERIT_DURABLE_IDENTITY_REQUIRED'
+      throw error
+    }
+    const signature = await signBytes(entry.seed, authorBindPrefix(prefix))
+    if (this._entry !== entry || this._entry.pubkey !== entry.pubkey) {
+      const error = new Error('Active durable identity changed while AuthorBindV1 was signing')
+      error.code = 'PEERIT_AUTHOR_BIND_IDENTITY_CHANGED'
+      throw error
+    }
+    return new Uint8Array(signature)
   }
 }
 

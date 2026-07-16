@@ -19,6 +19,15 @@ const fromHex = (h) => { const a = new Uint8Array(h.length / 2); for (let i = 0;
 const concat = (a, b) => { const u = new Uint8Array(a.length + b.length); u.set(a, 0); u.set(b, a.length); return u }
 const utf8 = (s) => new TextEncoder().encode(s)
 
+function rawBytes (value, field) {
+  if (!(value instanceof Uint8Array)) {
+    const error = new TypeError(`${field} must be a Uint8Array`)
+    error.code = 'PEERIT_CRYPTO_BYTES_REQUIRED'
+    throw error
+  }
+  return new Uint8Array(value)
+}
+
 let backend = null // 'subtle' | 'node' | 'none'
 let nodeCrypto = null
 let _ready = null
@@ -99,6 +108,52 @@ export async function verify (pubHex, message, sigHex) {
     if (backend === 'subtle') return await globalThis.crypto.subtle.verify({ name: 'Ed25519' }, await subtlePub(pubHex), fromHex(sigHex), utf8(message))
     if (backend === 'node') return nodeCrypto.verify(null, utf8(message), nodePub(pubHex), Buffer.from(sigHex, 'hex'))
   } catch { return false }
+  return false
+}
+
+// Sign an exact binary preimage.  Protocol records such as AuthorBindV1 have
+// canonical binary prefixes; they must never be routed through the legacy app
+// envelope above or coerced through UTF-8 text.
+export async function signBytes (seedHex, input) {
+  await ready()
+  const message = rawBytes(input, 'signature input')
+  try {
+    if (backend === 'subtle') {
+      return new Uint8Array(await globalThis.crypto.subtle.sign(
+        { name: 'Ed25519' }, await subtlePriv(seedHex), message))
+    }
+    if (backend === 'node') {
+      return new Uint8Array(nodeCrypto.sign(null, Buffer.from(message), nodePriv(seedHex)))
+    }
+  } catch (cause) {
+    const error = new Error('Secure Ed25519 binary signing failed.')
+    error.code = 'PEERIT_CRYPTO_SECURE_SIGNATURE_UNAVAILABLE'
+    error.cause = cause
+    throw error
+  }
+  const error = new Error('Secure Ed25519 binary signing is unavailable.')
+  error.code = 'PEERIT_CRYPTO_SECURE_SIGNATURE_UNAVAILABLE'
+  throw error
+}
+
+// Verify an exact binary preimage.  This is deliberately separate from the
+// historical text-signing API so callers cannot silently change domains.
+export async function verifyBytes (pubHex, input, signature) {
+  await ready()
+  let message
+  let sig
+  try {
+    message = rawBytes(input, 'verification input')
+    sig = rawBytes(signature, 'signature')
+    if (sig.byteLength !== 64 || typeof pubHex !== 'string' || !/^[0-9a-f]{64}$/i.test(pubHex)) return false
+    if (backend === 'subtle') {
+      return await globalThis.crypto.subtle.verify(
+        { name: 'Ed25519' }, await subtlePub(pubHex), sig, message)
+    }
+    if (backend === 'node') return nodeCrypto.verify(null, Buffer.from(message), nodePub(pubHex), Buffer.from(sig))
+  } catch {
+    return false
+  }
   return false
 }
 

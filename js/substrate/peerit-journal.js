@@ -1088,7 +1088,12 @@ export class PeeritJournal {
         return null
       }
       if (!before && intent.targetCount >= this.limits.maxTargetsPerIntent) {
-        throw journalError('PEERIT_JOURNAL_LIMIT', 'Intent target count reached its bound.')
+        // Target history is audit evidence and is never silently deleted to make
+        // room for a rotating relay. Exhaustion is an ordinary non-claim result:
+        // callers surface it as a bounded repair blocker while local authoring
+        // and future intents remain live. This check is inside the transaction,
+        // so a cross-tab last-slot race is also nonfatal.
+        return null
       }
       if (before && RETRY_DUE_STATES.has(before.state) &&
           nonNegativeInteger(before.nextAttemptAt, 0) > options.now) return null
@@ -1105,6 +1110,22 @@ export class PeeritJournal {
         nextAttemptAt: 0,
         lastError: null,
         readbackVerified: before && before.readbackVerified === true,
+        lastReadbackVerifiedAt: before && Number.isSafeInteger(before.lastReadbackVerifiedAt)
+          ? before.lastReadbackVerifiedAt
+          : null,
+        lastReadbackEvidenceRef: (before && before.lastReadbackEvidenceRef) || null,
+        lastReadbackEvidenceRevision: before && Number.isSafeInteger(before.lastReadbackEvidenceRevision)
+          ? before.lastReadbackEvidenceRevision
+          : 0,
+        readbackCurrentInvalidated: before && before.readbackCurrentInvalidated === true,
+        readbackRepairNeeded: before && before.readbackRepairNeeded === true,
+        readbackRevalidationAttempts: before && Number.isSafeInteger(before.readbackRevalidationAttempts)
+          ? before.readbackRevalidationAttempts
+          : 0,
+        readbackRevalidationNextAttemptAt: before && Number.isSafeInteger(before.readbackRevalidationNextAttemptAt)
+          ? before.readbackRevalidationNextAttemptAt
+          : 0,
+        lastReadbackError: (before && before.lastReadbackError) || null,
         policyDurable: before && before.policyDurable === true,
         evidenceRef: (before && before.evidenceRef) || null
       }
@@ -1146,6 +1167,20 @@ export class PeeritJournal {
       target.nextAttemptAt = 0
       target.lastError = null
       target.readbackVerified = options.readbackVerified === true
+      target.lastReadbackVerifiedAt = target.readbackVerified &&
+        Number.isSafeInteger(options.readbackVerifiedAt) && options.readbackVerifiedAt >= 0
+        ? options.readbackVerifiedAt
+        : null
+      target.lastReadbackEvidenceRef = target.lastReadbackVerifiedAt != null ? evidenceRef : null
+      target.lastReadbackEvidenceRevision = target.lastReadbackVerifiedAt != null &&
+        Number.isSafeInteger(options.readbackEvidenceRevision) && options.readbackEvidenceRevision >= 1
+        ? options.readbackEvidenceRevision
+        : 0
+      target.readbackCurrentInvalidated = false
+      target.readbackRepairNeeded = false
+      target.readbackRevalidationAttempts = 0
+      target.readbackRevalidationNextAttemptAt = 0
+      target.lastReadbackError = null
       target.policyDurable = options.policyDurable === true
       target.evidenceRef = evidenceRef
       await tx.put(JOURNAL_STORES.TARGETS, target)
@@ -1163,6 +1198,66 @@ export class PeeritJournal {
         intent.discoveryState = options.discoveryState.slice(0, 128)
       }
       intent.updatedAt = options.now
+      return true
+    })
+  }
+
+  // A historical verified GET remains an auditable receipt, but current
+  // retrievability is a separate, expiring fact. Revalidation updates only that
+  // fact in the same transaction as its repair/backoff marker; it never rewrites
+  // the acknowledgement state and cannot authorize another PUT.
+  async recordReadbackRevalidation (options) {
+    const now = Number.isSafeInteger(options.now) && options.now >= 0
+      ? options.now
+      : null
+    if (now == null) {
+      throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'readback revalidation requires a non-negative now timestamp.')
+    }
+    const success = options.success === true
+    const evidenceRef = success
+      ? boundedString(options.evidenceRef, 'readback evidenceRef', this.limits.maxEvidenceRefBytes)
+      : null
+    const evidenceRevision = success && Number.isSafeInteger(options.evidenceRevision) && options.evidenceRevision >= 1
+      ? options.evidenceRevision
+      : null
+    if (success && evidenceRevision == null) {
+      throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'readback revalidation requires a positive evidence revision.')
+    }
+    return this._mutateTarget('readback revalidation', options, async ({ target, intent, tx }) => {
+      if (target.state !== 'readback-verified' || target.readbackVerified !== true) return false
+      if (success) {
+        const currentRevision = nonNegativeInteger(target.lastReadbackEvidenceRevision, 0)
+        if (evidenceRevision <= currentRevision) return false
+        target.lastReadbackVerifiedAt = now
+        target.lastReadbackEvidenceRef = evidenceRef
+        target.lastReadbackEvidenceRevision = evidenceRevision
+        target.readbackCurrentInvalidated = false
+        target.readbackRepairNeeded = false
+        target.readbackRevalidationAttempts = 0
+        target.readbackRevalidationNextAttemptAt = 0
+        target.lastReadbackError = null
+      } else {
+        const expectedEvidenceRevision = Number.isSafeInteger(options.expectedEvidenceRevision) &&
+          options.expectedEvidenceRevision >= 0
+          ? options.expectedEvidenceRevision
+          : null
+        if (expectedEvidenceRevision == null ||
+            nonNegativeInteger(target.lastReadbackEvidenceRevision, 0) !== expectedEvidenceRevision) return false
+        const attempts = Math.min(
+          MAX_INDEX_NUMBER,
+          nonNegativeInteger(target.readbackRevalidationAttempts, 0) + 1
+        )
+        target.readbackCurrentInvalidated = true
+        target.readbackRepairNeeded = options.repairNeeded === true
+        target.readbackRevalidationAttempts = attempts
+        target.readbackRevalidationNextAttemptAt = target.readbackRepairNeeded
+          ? 0
+          : retryDueAt(options, attempts)
+        target.lastReadbackError = String(options.lastError || 'readback-revalidation-failed').slice(0, 160)
+      }
+      target.updatedAt = now
+      intent.updatedAt = now
+      await tx.put(JOURNAL_STORES.TARGETS, target)
       return true
     })
   }

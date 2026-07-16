@@ -428,6 +428,8 @@ const activeCandidates = collectPermissionlessRelayCandidates({
 const createdAdapterContexts = []
 let qualificationClock = 1000
 let qualificationEpoch = 101
+let readbackRevalidationGate = null
+let deliveryReadbackGate = null
 const qualificationOptions = {
   control: fakeControl,
   cryptoRuntime: { randomBytes: length => new Uint8Array(length).fill(0x55) },
@@ -483,8 +485,29 @@ const qualificationOptions = {
     createdAdapterContexts.push(context)
     return Object.freeze({
       compatible: true,
-      deliver: async () => ({ ok: true }),
-      reconcile: async () => ({ ok: true })
+      async deliver () {
+        if (deliveryReadbackGate) await deliveryReadbackGate
+        return {
+          ok: true,
+          acknowledged: true,
+          readbackVerified: true,
+          readbackRevalidated: true,
+          readbackEvidenceRevision: 3,
+          evidenceRef: 'test:delivery-live-get'
+        }
+      },
+      reconcile: async () => ({ ok: true }),
+      async revalidateReadback () {
+        if (readbackRevalidationGate) await readbackRevalidationGate
+        return {
+          ok: true,
+          acknowledged: true,
+          readbackVerified: true,
+          readbackRevalidated: true,
+          readbackEvidenceRevision: 4,
+          evidenceRef: 'test:live-get'
+        }
+      }
     })
   }
 }
@@ -525,10 +548,30 @@ assert.equal(isPeeritVerifiedRelayAdapter({ deliver: async () => ({ ok: true }) 
 assert.match(qualified.adapters[0].id, new RegExp(`${asHex(valid.root)}:${asHex(valid.storeId)}`))
 assert.ok(!qualified.adapters[0].id.includes(asHex(forkA.root)), 'a fork removes its earlier provisional adapter')
 await qualified.adapters[0].deliver({})
+let releaseDeliveryReadback
+deliveryReadbackGate = new Promise(resolve => { releaseDeliveryReadback = resolve })
+const inFlightDeliveryReadback = qualified.adapters[0].deliver({})
+await Promise.resolve()
 qualificationClock = 601000
+releaseDeliveryReadback()
+await assert.rejects(inFlightDeliveryReadback, error =>
+  error && error.code === 'PEERIT_RELAY_QUALIFICATION_EXPIRED' && error.definitelyNotProcessed !== true)
+deliveryReadbackGate = null
+qualificationClock = 1000
+let releaseReadback
+readbackRevalidationGate = new Promise(resolve => { releaseReadback = resolve })
+const inFlightReadback = qualified.adapters[0].revalidateReadback({})
+await Promise.resolve()
+qualificationClock = 601000
+releaseReadback()
+await assert.rejects(inFlightReadback, error =>
+  error && error.code === 'PEERIT_RELAY_QUALIFICATION_EXPIRED' && error.definitelyNotProcessed !== true)
+readbackRevalidationGate = null
 await assert.rejects(qualified.adapters[0].deliver({}), error =>
   error && error.code === 'PEERIT_RELAY_QUALIFICATION_EXPIRED' && error.definitelyNotProcessed === true)
 await assert.rejects(qualified.adapters[0].reconcile({}), error =>
+  error && error.code === 'PEERIT_RELAY_QUALIFICATION_EXPIRED' && error.definitelyNotProcessed !== true)
+await assert.rejects(qualified.adapters[0].revalidateReadback({}), error =>
   error && error.code === 'PEERIT_RELAY_QUALIFICATION_EXPIRED' && error.definitelyNotProcessed !== true)
 
 qualificationClock = 1000

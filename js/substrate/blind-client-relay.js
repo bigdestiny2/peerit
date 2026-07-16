@@ -11,6 +11,9 @@
 // generated read/write capabilities are durably retained.
 
 const CONTROL_MODULE = '@hiverelay/blind-client/control'
+// Frozen BlindErrorV1 ABI value. Keep this local to the adapter until the
+// browser-safe base namespace exports the protocol registry directly.
+const HIVERELAY_BLIND_ERROR_NOT_FOUND = 13
 
 function bytes (value, field) {
   if (value instanceof Uint8Array) return value
@@ -100,6 +103,18 @@ function contextFingerprint (context) {
   return [targetIdFor(context), context.descriptorHash, context.durabilityProfileId].join(':')
 }
 
+function linkedDescriptorContext (left, right) {
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false
+  const leftComparable = { ...left }
+  const rightComparable = { ...right }
+  delete leftComparable.descriptorHash
+  delete rightComparable.descriptorHash
+  const leftKeys = Object.keys(leftComparable).sort()
+  const rightKeys = Object.keys(rightComparable).sort()
+  return leftKeys.length === rightKeys.length &&
+    leftKeys.every((key, index) => key === rightKeys[index] && leftComparable[key] === rightComparable[key])
+}
+
 function pairedReadContext (value, relayPublicKey, writeContext) {
   const readContext = targetContext(value, relayPublicKey)
   for (const field of [
@@ -132,7 +147,8 @@ function persistedReplicaPayload (stored, publication, targetId, qualifiedContex
   const readContextMatches = qualifiedReadContext == null
     ? payload && payload.readTargetContext == null
     : payload && payload.readTargetContext &&
-      contextFingerprint(payload.readTargetContext) === contextFingerprint(qualifiedReadContext)
+      (contextFingerprint(payload.readTargetContext) === contextFingerprint(qualifiedReadContext) ||
+        linkedDescriptorContext(payload.readTargetContext, qualifiedReadContext))
   if (!payload || typeof payload !== 'object' ||
       payload.intentId !== publication.intentId ||
       payload.logicalId !== publication.logicalId ||
@@ -143,7 +159,8 @@ function persistedReplicaPayload (stored, publication, targetId, qualifiedContex
       !equalBytes(payload.encodingCommitment, publication.encodingCommitment) ||
       String(payload.targetId || '').toLowerCase() !== targetId ||
       !payload.targetContext ||
-      contextFingerprint(payload.targetContext) !== contextFingerprint(qualifiedContext) ||
+      (contextFingerprint(payload.targetContext) !== contextFingerprint(qualifiedContext) &&
+        !linkedDescriptorContext(payload.targetContext, qualifiedContext)) ||
       (!readContextMatches && !legacyReadContext) ||
       !payload.prepared || typeof payload.prepared !== 'object' ||
       (payload.stage !== 1 && payload.stage !== 2 && payload.stage !== 3)) {
@@ -173,6 +190,7 @@ function persistedAcknowledgement (record, publication, requireReadback = false)
       readbackVerified: true,
       policyDurable: false,
       evidenceRef: record.stored.evidenceRef,
+      readbackEvidenceRevision: record.stored.revision,
       resultBytes: record.payload.resultBytes || record.payload.readbackResultBytes,
       readCapability: record.payload.readCapability
     })
@@ -474,8 +492,17 @@ export function createBlindCellRelay (options = {}) {
       throwIfAborted(attempt.signal)
       if (!response || response.ok !== true) {
         const error = new Error('HiveRelay has not returned the exact Cell for authenticated readback')
-        error.code = 'HIVERELAY_READBACK_PENDING'
-        error.remote = response && response.error
+        const remote = response && response.error
+        error.code = remote && remote.code === HIVERELAY_BLIND_ERROR_NOT_FOUND
+          ? 'HIVERELAY_READBACK_NOT_FOUND'
+          : remote && remote.retryable === 0
+            ? 'HIVERELAY_READBACK_TERMINAL'
+            : 'HIVERELAY_READBACK_PENDING'
+        error.remote = remote
+        if (error.code === 'HIVERELAY_READBACK_NOT_FOUND' || error.code === 'HIVERELAY_READBACK_TERMINAL') {
+          error.terminal = true
+          error.definitiveAbsence = error.code === 'HIVERELAY_READBACK_NOT_FOUND'
+        }
         throw error
       }
 
@@ -530,13 +557,21 @@ export function createBlindCellRelay (options = {}) {
       }))
       throwIfAborted(attempt.signal)
       const evidenceRef = typeof persisted === 'string' ? persisted : persisted && persisted.evidenceRef
+      const evidenceRevision = persisted && Number.isSafeInteger(persisted.revision) && persisted.revision >= 1
+        ? persisted.revision
+        : null
       if (typeof evidenceRef !== 'string' || evidenceRef.length < 1 || evidenceRef.length > 512) {
         throw new Error('authenticated Cell GET evidence was not durably indexed')
+      }
+      if (evidenceRevision == null) {
+        throw new Error('authenticated Cell GET evidence has no monotonic vault revision')
       }
       return Object.freeze({
         ok: true,
         acknowledged: true,
         readbackVerified: true,
+        readbackRevalidated: true,
+        readbackEvidenceRevision: evidenceRevision,
         policyDurable: false,
         evidenceRef,
         resultBytes: new Uint8Array(readbackResultBytes),
@@ -682,6 +717,32 @@ export function createBlindCellRelay (options = {}) {
     throw error
   }
 
+  async function revalidateReadback (publication, context = {}) {
+    const attemptSignal = validSignal(context.signal, 'readback revalidation signal') ||
+      validSignal(options.signal, 'relay installation signal')
+    throwIfAborted(attemptSignal)
+    if (!readbackConfigured || !loadPersistedReplica) {
+      throw terminalError('PEERIT_SUBSTRATE_READ_CAPABILITY_MISSING',
+        'authenticated Cell GET revalidation has no durable read capability')
+    }
+    const persisted = persistedReplicaPayload(
+      await loadPersistedReplica(publication.intentId, canonicalTargetId),
+      publication,
+      canonicalTargetId,
+      qualifiedContext,
+      qualifiedReadContext
+    )
+    throwIfAborted(attemptSignal)
+    if (!persisted || !persisted.payload.prepared || !persisted.payload.prepared.readCap) {
+      throw terminalError('PEERIT_SUBSTRATE_READ_CAPABILITY_MISSING',
+        'the historical Cell acknowledgement has no matching durable read capability')
+    }
+    // Deliberately bypass persistedAcknowledgement(): a cached stage-3 receipt is
+    // historical evidence, not a current availability check. This path always
+    // performs a new capability-bound GET and never sends or regenerates a PUT.
+    return readback(publication, persisted.payload.prepared, context)
+  }
+
   return Object.freeze({
     id: canonicalTargetId,
     compatible: options.compatible !== false,
@@ -691,6 +752,7 @@ export function createBlindCellRelay (options = {}) {
       const prepared = await prepare(publication, context)
       return send({ ...publication, prepared }, context)
     },
-    reconcile: typeof options.reconcile === 'function' || loadPersistedReplica ? reconcile : undefined
+    reconcile: typeof options.reconcile === 'function' || loadPersistedReplica ? reconcile : undefined,
+    revalidateReadback: readbackConfigured && loadPersistedReplica ? revalidateReadback : undefined
   })
 }

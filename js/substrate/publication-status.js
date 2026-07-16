@@ -31,16 +31,32 @@ export function publicationUiState (status) {
     copy = 'Saved locally. A relay outcome is unknown, so Peerit is reconciling the exact request without creating another event.'
   } else if (relay.state === 'target-rejected') {
     copy = 'Saved locally. The selected relay returned a terminal rejection; Peerit will keep the event and may use another compatible target.'
+  } else if (relay.state === 'repair-needed') {
+    copy = 'Saved locally. A historical relay receipt no longer proves current retrieval; Peerit has marked this replica for safe repair without blindly resending it.'
+  } else if (relay.state === 'target-budget-exhausted') {
+    copy = 'Saved locally. This event retained its full bounded relay audit history, so Peerit will not silently delete receipts or backfill it to another rotating target.'
+  } else if (relay.state === 'historically-acknowledged') {
+    copy = 'Saved locally. Peerit retains a historical relay receipt, but no currently qualified relay proves that copy is still available.'
+  } else if (relay.state === 'revalidation-pending') {
+    copy = 'Saved locally. Peerit has a historical relay receipt and is waiting for a fresh authenticated retrieval check.'
   } else if (relay.state === 'delivering' || relay.state === 'queued') {
     copy = 'Saved locally. Relay delivery is in progress; durability and discovery update independently.'
   } else if (relay.state === 'relay-acknowledged') {
-    const count = Number(relay.acknowledgedTargets) || 1
+    const count = Number(relay.activeAcknowledgedTargets) || 1
     copy = `Saved locally; ${count} compatible relay${count === 1 ? '' : 's'} acknowledged storage. Durability and discovery remain separate claims.`
   }
 
   return Object.freeze({
     authoringReady,
-    tone: authoringReady && relay.state !== 'pending-unknown' ? 'normal' : 'warn',
+    tone: authoringReady && ![
+      'pending-unknown',
+      'repair-needed',
+      'target-budget-exhausted',
+      'historically-acknowledged',
+      'revalidation-pending'
+    ].includes(relay.state)
+      ? 'normal'
+      : 'warn',
     copy,
     localState: local.state,
     relayState: relay.state,

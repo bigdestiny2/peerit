@@ -198,6 +198,26 @@ async function main () {
   ok((await concurrentA.getIntent(id(10))).targets['same-relay'].evidenceRef === 'verified:cross-instance',
     'verified acknowledgement evidence is durable and visible to another instance')
 
+  for (let index = 1; index < 15; index++) {
+    assert.ok(await concurrentA.claimTarget({
+      intentId: id(10),
+      targetId: `prefill-relay-${index}`,
+      state: 'delivering',
+      attemptToken: `prefill-owner-${index}`,
+      leaseUntil: 3000,
+      now: 3
+    }))
+  }
+  const lastSlotClaims = await Promise.all([
+    concurrentA.claimTarget({ intentId: id(10), targetId: 'last-slot-relay-a', state: 'delivering', attemptToken: 'last-slot-owner-a', leaseUntil: 3000, now: 3 }),
+    concurrentB.claimTarget({ intentId: id(10), targetId: 'last-slot-relay-b', state: 'delivering', attemptToken: 'last-slot-owner-b', leaseUntil: 3000, now: 3 })
+  ])
+  const cappedIntent = await concurrentA.getIntent(id(10))
+  ok(lastSlotClaims.filter(Boolean).length === 1 &&
+    cappedIntent.targetCount === 16 &&
+    Number(Boolean(cappedIntent.targets['last-slot-relay-a'])) + Number(Boolean(cappedIntent.targets['last-slot-relay-b'])) === 1,
+  'different-target cross-instance claims contend transactionally for the final bounded audit slot')
+
   console.log('\n— quota, corruption, and explicit bounds —')
   const quotaState = createMemoryJournalState()
   const quotaJournal = createMemoryPeeritJournal({ shared: quotaState })

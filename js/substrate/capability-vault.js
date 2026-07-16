@@ -336,13 +336,27 @@ function preparedProjection (payload) {
   delete comparable.readbackRequestCommitment
   delete comparable.readbackResultBytes
   delete comparable.readbackInnerBytes
+  delete comparable.readbackVerifiedAt
   return comparable
 }
 
 function matchesPreparedWithReadContextUpgrade (comparable, expected) {
   if (sameSecretValues(comparable, expected)) return true
-  if (comparable.readTargetContext != null || expected.readTargetContext == null) return false
-  return sameSecretValues({ ...comparable, readTargetContext: expected.readTargetContext }, expected)
+  const upgraded = { ...comparable }
+  if (upgraded.readTargetContext == null && expected.readTargetContext != null) {
+    upgraded.readTargetContext = expected.readTargetContext
+  }
+  for (const field of ['targetContext', 'readTargetContext']) {
+    const current = upgraded[field]
+    const next = expected[field]
+    if (current == null || next == null) continue
+    const currentComparable = { ...current }
+    const nextComparable = { ...next }
+    delete currentComparable.descriptorHash
+    delete nextComparable.descriptorHash
+    if (sameSecretValues(currentComparable, nextComparable)) upgraded[field] = next
+  }
+  return sameSecretValues(upgraded, expected)
 }
 
 function indexedDbKv (idb = globalThis.indexedDB) {
@@ -561,6 +575,7 @@ export function createPeeritCapabilityVault (options = {}) {
       const payload = {
         ...comparable,
         stage: 2,
+        targetContext: input.targetContext,
         readTargetContext: input.readTargetContext || null,
         resultBytes,
         readCapability: input.readCapability
@@ -641,6 +656,7 @@ export function createPeeritCapabilityVault (options = {}) {
       const payload = {
         ...comparable,
         stage: 3,
+        targetContext: input.targetContext,
         readTargetContext: input.readTargetContext,
         readCapability: input.readCapability,
         readbackRequestBytes,
@@ -650,15 +666,33 @@ export function createPeeritCapabilityVault (options = {}) {
       }
       if (current.payload.resultBytes) payload.resultBytes = current.payload.resultBytes
       if (current.record.stage === 3) {
-        if (sameSecretValues(current.payload, payload)) return publicRecord(current.record, current.payload)
-        throw new Error('conflicting authenticated readback evidence already owns this intent target')
+        const currentEvidence = { ...current.payload }
+        delete currentEvidence.readbackVerifiedAt
+        if (sameSecretValues(currentEvidence, payload)) return publicRecord(current.record, current.payload)
+        // A fresh GET uses a fresh client nonce and therefore produces different
+        // authenticated request/result bytes. The prepared Cell, target contexts,
+        // exact envelope and read capability were all compared above, so this is
+        // a bounded CAS refresh of current evidence rather than conflicting
+        // ownership or a capability change.
       }
       if (current.record.revision >= Number.MAX_SAFE_INTEGER) throw new Error('capability record revision is exhausted')
       const observedTimestamp = now()
       if (!Number.isSafeInteger(observedTimestamp) || observedTimestamp < 0) {
         throw new Error('capability vault clock is invalid')
       }
-      const timestamp = Math.max(observedTimestamp, current.record.updatedAt)
+      const previousReadbackAt = Number.isSafeInteger(current.payload.readbackVerifiedAt) &&
+        current.payload.readbackVerifiedAt >= 0
+        ? current.payload.readbackVerifiedAt
+        : -1
+      if (previousReadbackAt >= Number.MAX_SAFE_INTEGER) {
+        throw new Error('capability readback verification clock is exhausted')
+      }
+      const timestamp = Math.max(
+        observedTimestamp,
+        current.record.updatedAt,
+        previousReadbackAt + 1
+      )
+      payload.readbackVerifiedAt = timestamp
       const candidate = await sealRecord(runtime, {
         version: 1,
         recordKey: current.recordKey,

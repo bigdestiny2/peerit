@@ -53,7 +53,14 @@ function contexts () {
   }
 }
 
-function harness ({ ambiguousPut = false, mismatch = false, tamper = false } = {}) {
+function harness ({
+  ambiguousPut = false,
+  mismatch = false,
+  tamper = false,
+  notFoundAfter = Infinity,
+  remoteErrorAfter = Infinity,
+  remoteRetryable = 0
+} = {}) {
   const kv = memoryCapabilityVaultKv()
   const vault = createPeeritCapabilityVault({ kv, crypto: globalThis.crypto, now: () => 100 })
   const endpointContexts = contexts()
@@ -62,6 +69,7 @@ function harness ({ ambiguousPut = false, mismatch = false, tamper = false } = {
   const calls = []
   let committedInner = null
   let losePutResponse = ambiguousPut
+  let getRequests = 0
 
   const readCap = Object.freeze({
     version: 1,
@@ -93,10 +101,11 @@ function harness ({ ambiguousPut = false, mismatch = false, tamper = false } = {
     },
     async createGetCellRequest ({ readCap: attemptedReadCap }) {
       assert.deepEqual(attemptedReadCap.storageSlot, readCap.storageSlot)
+      getRequests++
       return Object.freeze({
         request: Object.freeze({ version: 1, storageSlot: attemptedReadCap.storageSlot }),
-        requestBytes: new Uint8Array([0x47, 0x45, 0x54]),
-        requestCommitment: fill(0x51),
+        requestBytes: new Uint8Array([0x47, 0x45, 0x54, getRequests]),
+        requestCommitment: fill(0x50 + getRequests),
         wire: Object.freeze({ familyId: 2, operationId: 2, expectedResultBodyBytes: 1 })
       })
     },
@@ -131,6 +140,12 @@ function harness ({ ambiguousPut = false, mismatch = false, tamper = false } = {
       }
       assert.equal(endpoint, getEndpoint)
       calls.push('GET')
+      if (getRequests > notFoundAfter) {
+        return Object.freeze({ ok: false, error: Object.freeze({ code: 13, retryable: 0 }) })
+      }
+      if (getRequests > remoteErrorAfter) {
+        return Object.freeze({ ok: false, error: Object.freeze({ code: 6, retryable: remoteRetryable }) })
+      }
       return Object.freeze({ ok: true, body: new Uint8Array([0x80]) })
     }
   })
@@ -159,7 +174,11 @@ function harness ({ ambiguousPut = false, mismatch = false, tamper = false } = {
       prepared
     })
   }
-  return { calls, createRelay, endpointContexts, kv, seedLegacyPrepared, vault }
+  const rotateDescriptor = value => {
+    endpointContexts.put = Object.freeze({ ...endpointContexts.put, descriptorHash: fill(value) })
+    endpointContexts.get = Object.freeze({ ...endpointContexts.get, descriptorHash: fill(value) })
+  }
+  return { calls, createRelay, endpointContexts, kv, rotateDescriptor, seedLegacyPrepared, vault }
 }
 
 {
@@ -167,6 +186,7 @@ function harness ({ ambiguousPut = false, mismatch = false, tamper = false } = {
   const test = harness()
   const result = await test.createRelay().deliver(value)
   assert.equal(result.readbackVerified, true)
+  assert.equal(result.readbackRevalidated, true)
   assert.deepEqual(test.calls, ['PUT', 'GET'])
 
   const stored = await test.vault.load(value.intentId, test.createRelay().id)
@@ -178,7 +198,72 @@ function harness ({ ambiguousPut = false, mismatch = false, tamper = false } = {
 
   const recovered = await test.createRelay().reconcile(value)
   assert.equal(recovered.readbackVerified, true)
+  assert.notEqual(recovered.readbackRevalidated, true,
+    'a cached stage-3 acknowledgement is historical and carries no live-GET marker')
   assert.deepEqual(test.calls, ['PUT', 'GET'], 'durable readback evidence avoids every later network request')
+
+  const refreshed = await test.createRelay().revalidateReadback(value)
+  assert.equal(refreshed.readbackRevalidated, true)
+  assert.deepEqual(test.calls, ['PUT', 'GET', 'GET'],
+    'forced revalidation bypasses the cached receipt and performs a new capability-bound GET')
+  const refreshedRecord = await test.vault.load(value.intentId, test.createRelay().id)
+  assert.equal(refreshedRecord.revision, 4)
+  assert.equal(refreshedRecord.payload.readbackVerifiedAt, 101,
+    'fresh nonce/result evidence advances the encrypted stage-3 CAS monotonically')
+}
+
+{
+  const value = publication(6)
+  const test = harness()
+  await assert.rejects(test.createRelay().revalidateReadback(value), error =>
+    error && error.code === 'PEERIT_SUBSTRATE_READ_CAPABILITY_MISSING' && error.terminal === true)
+  assert.deepEqual(test.calls, [], 'missing persisted capability fails before any GET')
+}
+
+{
+  const value = publication(7)
+  const test = harness({ notFoundAfter: 1 })
+  await test.createRelay().deliver(value)
+  await assert.rejects(test.createRelay().revalidateReadback(value), error =>
+    error && error.code === 'HIVERELAY_READBACK_NOT_FOUND' &&
+      error.definitiveAbsence === true && error.remote.code === 13)
+  assert.deepEqual(test.calls, ['PUT', 'GET', 'GET'],
+    'frozen BlindErrorV1 NOT_FOUND=13 is surfaced as definitive authenticated absence')
+}
+
+{
+  const value = publication(8)
+  const test = harness({ remoteErrorAfter: 1, remoteRetryable: 0 })
+  await test.createRelay().deliver(value)
+  await assert.rejects(test.createRelay().revalidateReadback(value), error =>
+    error && error.code === 'HIVERELAY_READBACK_TERMINAL' &&
+      error.terminal === true && error.definitiveAbsence === false)
+}
+
+{
+  const value = publication(9)
+  const test = harness({ remoteErrorAfter: 1, remoteRetryable: 1 })
+  await test.createRelay().deliver(value)
+  await assert.rejects(test.createRelay().revalidateReadback(value), error =>
+    error && error.code === 'HIVERELAY_READBACK_PENDING' && error.terminal !== true)
+}
+
+{
+  const value = publication(10)
+  const test = harness()
+  const first = test.createRelay()
+  await first.deliver(value)
+  test.rotateDescriptor(0x25)
+  const refreshed = test.createRelay()
+  assert.equal(refreshed.id, first.id,
+    'a linked descriptor refresh retains the same relay/store target identity')
+  const result = await refreshed.revalidateReadback(value)
+  assert.equal(result.readbackRevalidated, true)
+  assert.deepEqual(test.calls, ['PUT', 'GET', 'GET'],
+    'same-target descriptor refresh upgrades contexts through GET without another PUT')
+  const stored = await test.vault.load(value.intentId, refreshed.id)
+  assert.equal(stored.payload.targetContext.descriptorHash, hex(fill(0x25)))
+  assert.equal(stored.payload.readTargetContext.descriptorHash, hex(fill(0x25)))
 }
 
 {

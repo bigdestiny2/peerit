@@ -374,8 +374,13 @@ function brandedAdapter (adapter, context, lease) {
       // A reconcile call represents an already-ambiguous earlier send. If its
       // qualification expires, it must remain pending-unknown; it is never a
       // definitely-not-processed retry signal.
-      assertFresh(name !== 'reconcile')
-      return adapter[name](...args)
+      assertFresh(name !== 'reconcile' && name !== 'revalidateReadback')
+      const value = await adapter[name](...args)
+      // A GET that began under a valid health lease is historical evidence if
+      // the lease expires while it is in flight. It must not become a current
+      // availability claim until a newly qualified adapter checks again.
+      if (value && value.readbackRevalidated === true) assertFresh(false)
+      return value
     }
     : undefined
   // Adapter construction may itself take long enough to cross a signed or
@@ -387,7 +392,8 @@ function brandedAdapter (adapter, context, lease) {
     deliver: bind('deliver'),
     prepare: bind('prepare'),
     send: bind('send'),
-    reconcile: bind('reconcile')
+    reconcile: bind('reconcile'),
+    revalidateReadback: bind('revalidateReadback')
   })
   VERIFIED_RELAY_ADAPTERS.add(result)
   return result

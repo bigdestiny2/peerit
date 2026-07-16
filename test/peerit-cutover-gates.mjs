@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { SUBSTRATE_SITE_FILES } from '../publish.mjs'
 import { releaseConfig, verifyIndexConfig, verifyManifestConfig } from '../scripts/verify-deployed-web.mjs'
@@ -115,14 +116,19 @@ const officialConfig = readFileSync(new URL('../deploy/web-release.json', import
 const officialRelease = JSON.parse(officialConfig)
 const consumedSigningRequest = JSON.parse(readFileSync(
   new URL('../deploy/web-signing-request.json', import.meta.url), 'utf8'))
-const trackedWebManifest = JSON.parse(readFileSync(
-  new URL('../web/asset-manifest.json', import.meta.url), 'utf8'))
+const trackedWebManifestBytes = readFileSync(
+  new URL('../web/asset-manifest.json', import.meta.url))
+const trackedWebManifest = JSON.parse(trackedWebManifestBytes)
 assert.ok(officialRelease.releaseSequence >= PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE)
-assert.equal(consumedSigningRequest.releaseSequence, 6,
-  'the immutable sequence-6 signing request remains tracked as consumed history')
-assert.equal(trackedWebManifest.releaseSequence, 6,
-  'the tracked sequence-6 web directory remains historical and is never a replacement candidate')
-assert.notEqual(trackedWebManifest.releaseSequence, officialRelease.releaseSequence)
+assert.equal(consumedSigningRequest.releaseSequence, trackedWebManifest.releaseSequence,
+  'the immutable signing request remains bound to the tracked prior-release artifact')
+assert.equal(consumedSigningRequest.manifestSha256,
+  createHash('sha256').update(trackedWebManifestBytes).digest('hex'),
+  'the immutable signing request still hashes the exact tracked prior-release manifest')
+assert.ok(trackedWebManifest.releaseSequence < officialRelease.releaseSequence,
+  'the tracked prior-release web directory is never reused as the replacement candidate')
+assert.notEqual(trackedWebManifest.webRelease?.transport, 'blind-substrate',
+  'the tracked prior release remains explicitly distinguishable from the replacement transport')
 const render = readFileSync(new URL('../render.yaml', import.meta.url), 'utf8')
 const renderHeaderPolicy = readFileSync(new URL('../deploy/render-security-headers.json', import.meta.url), 'utf8')
 for (const source of [officialConfig, render, renderHeaderPolicy]) {

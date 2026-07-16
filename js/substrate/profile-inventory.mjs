@@ -268,11 +268,11 @@ export const EXTERNAL_HIVERELAY_TYPES = Object.freeze([
 ])
 
 export const EXTERNAL_HIVERELAY_CODEC_IMPORTS = Object.freeze([
-  externalCodecImport('BlindCoreAckV1', 'CORE', 1, 16384, 'WIRE_TUPLE_V1', 'wire-v1:470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9:aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d:7943626bb0e9ffc0886a13e3b6532aa3ebfd60a3c26e4ff0c5842743ae788d07'),
+  externalCodecImport('BlindCoreAckV1', 'CORE', 1, 16384, 'WIRE_TUPLE_V1', 'wire-v1:470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9:aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d:09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78'),
   externalCodecImport('BlindCoreReadCapV1', 'CORE', 1, 8192, 'CLIENT_COMPOSITION_V1', 'client-composition-v1:5637708aff4a6e93a6ff3a2f96361aa0b1597c229346e124eebeb2d7618ae09a:ea176ea78a611256689604541e55ba420d426dda2fa4dd64fb3ac9ac7503934d'),
-  externalCodecImport('BlindReceiptV1', 'CELL', 1, 16384, 'WIRE_TUPLE_V1', 'wire-v1:470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9:aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d:7943626bb0e9ffc0886a13e3b6532aa3ebfd60a3c26e4ff0c5842743ae788d07'),
-  externalCodecImport('InboxAppendAckV1', 'INBOX', 1, 16384, 'WIRE_TUPLE_V1', 'wire-v1:470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9:aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d:7943626bb0e9ffc0886a13e3b6532aa3ebfd60a3c26e4ff0c5842743ae788d07'),
-  externalCodecImport('InboxReceiptV1', 'INBOX', 1, 16384, 'WIRE_TUPLE_V1', 'wire-v1:470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9:aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d:7943626bb0e9ffc0886a13e3b6532aa3ebfd60a3c26e4ff0c5842743ae788d07'),
+  externalCodecImport('BlindReceiptV1', 'CELL', 1, 16384, 'WIRE_TUPLE_V1', 'wire-v1:470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9:aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d:09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78'),
+  externalCodecImport('InboxAppendAckV1', 'INBOX', 1, 16384, 'WIRE_TUPLE_V1', 'wire-v1:470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9:aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d:09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78'),
+  externalCodecImport('InboxReceiptV1', 'INBOX', 1, 16384, 'WIRE_TUPLE_V1', 'wire-v1:470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9:aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d:09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78'),
   externalCodecImport('ReadCellCapV1', 'CELL', 99, 131, 'CLIENT_COMPOSITION_V1', 'client-composition-v1:5637708aff4a6e93a6ff3a2f96361aa0b1597c229346e124eebeb2d7618ae09a:ea176ea78a611256689604541e55ba420d426dda2fa4dd64fb3ac9ac7503934d')
 ])
 

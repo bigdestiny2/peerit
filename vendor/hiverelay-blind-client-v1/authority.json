@@ -4,14 +4,14 @@
   "upstreamPackage": "@hiverelay/blind-client",
   "upstreamArtifactPath": "browser-artifacts/blind-client-control-v1.mjs",
   "artifactPath": "vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs",
-  "artifactLength": 244795,
-  "artifactHash": "30bcbde57251dd47018b980eaf3dba69de3afcb44ccf6930f7bddd89b708fba3",
-  "manifestHash": "a1915b2e2e05a08f08a3f6915ab3d093dfb7671b2e454286dc7bfddb46a12834",
-  "sourceClosureHash": "1ee52e78ef044d375707ff2bc9596755785ccaff74d69833ecf6dc0d6a53dac4",
+  "artifactLength": 248195,
+  "artifactHash": "967cbc42a3583ef158045dfdf6afd82f672153c117236a928bc2c2684776b008",
+  "manifestHash": "a9eec068b64e919260f0b52223caa6e394b497bda8a465d567221eed00e01255",
+  "sourceClosureHash": "7a8670a9fd27cb7ff04b9fe9c25679dbf260d0f8e3321543ec3d333ba9fe4a02",
   "wireTuple": {
     "specHash": "470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9",
     "abiHash": "aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d",
-    "vectorSetHash": "7943626bb0e9ffc0886a13e3b6532aa3ebfd60a3c26e4ff0c5842743ae788d07"
+    "vectorSetHash": "09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78"
   },
   "clientComposition": {
     "formatHash": "5637708aff4a6e93a6ff3a2f96361aa0b1597c229346e124eebeb2d7618ae09a",

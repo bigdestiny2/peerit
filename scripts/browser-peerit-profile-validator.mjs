@@ -29,7 +29,7 @@ try {
   }, { artifact, expected })
   if (result.schemaCount !== 78 || !result.runtimeVectorEqual ||
       result.vectorSetHash !== '84d0cfd27a3b078ea839b2ec35ae9df7dd4ab619faa39dd8bef805f0c2b1c77c' ||
-      result.profileSpecHash !== '6778d221a5ec5da2b12783900e8990049dafff9147311e4f67ba52252bbaf1f9') {
+      result.profileSpecHash !== '931a85e29eb3767d8d2a1920d7e127cf20d708cce6975d967522fd07f475f473') {
     throw new Error(`Chromium validator runtime drift: ${JSON.stringify(result)}`)
   }
   process.stdout.write(`${JSON.stringify({ schema: 'PeeritValidatorChromiumRuntimeV1', ...result })}\n`)

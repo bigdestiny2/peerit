@@ -23,6 +23,13 @@
     import { MaterializedIndex } from './js/materialized-index.js'
     import { createIndexedDbPeeritJournal } from './js/substrate/peerit-journal.js'
     import { sha256 } from './js/vendor/noble-hashes/sha2.js'
+    import {
+      PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2,
+      PEERIT_LAB_OPERATION_SHAPE_V2,
+      createStructuralPeeritVnextJournalIntent,
+      inspectStructuralPeeritVnextJournalIntent,
+      isStructuralPeeritVnextJournalInspectionEvidence
+    } from './test/fixtures/peerit-vnext-journal-fixture.mjs'
 
     const output = document.querySelector('#result')
     const query = new URLSearchParams(location.search)
@@ -33,14 +40,20 @@
       }
       return value
     }
-    const options = {
+    const options = Object.freeze({
       intents: bounded('intents', 1000, 10000),
       records: bounded('records', 10000, 100000),
       communities: bounded('communities', 100, 10000),
       pageSize: bounded('page', 1000, 1000)
-    }
+    })
     const profile = query.get('profile') || 'smoke'
     if (profile !== 'smoke' && profile !== 'full') throw new Error('profile must be smoke or full')
+    const profileWorkloads = Object.freeze({
+      smoke: Object.freeze({ intents: 100, records: 1000, communities: 20, pageSize: 100 }),
+      full: Object.freeze({ intents: 10000, records: 100000, communities: 100, pageSize: 256 })
+    })
+    const exactProfileWorkload = Object.entries(profileWorkloads[profile])
+      .every(([key, value]) => options[key] === value)
     const recordsPerIntent = Math.ceil(options.records / options.intents)
     if (recordsPerIntent > 64) throw new Error('workload exceeds 64 records per intent')
 
@@ -119,6 +132,11 @@
       await journal.ready()
       const commitTimes = []
       let recordNumber = 0
+      let firstIntentId = null
+      let lastIntentId = null
+      let verifiedVnextEnvelopeCount = 0
+      let firstGeneratedEnvelope = null
+      let lastGeneratedEnvelope = null
       const startedAt = performance.now()
       for (let intentNumber = 0; intentNumber < options.intents; intentNumber++) {
         const records = []
@@ -137,21 +155,22 @@
           })
           recordNumber++
         }
-        const before = performance.now()
-        await journal.commitIntent({
-          intentId: id(intentNumber + 1),
-          logicalId: id(intentNumber + 20000),
-          operationBytes: JSON.stringify({
-            version: 1,
-            operations: records.map(record => ({
-              type: 'browser-scale-record',
-              key: record.key,
-              data: record.value
-            }))
-          }),
+        const intent = createStructuralPeeritVnextJournalIntent({
+          operations: records.map(record => ({
+            type: 'post',
+            data: { ...record.value, id: record.key.slice('post!'.length) }
+          })),
           records,
           createdAt: intentNumber + 1
         })
+        const envelopeInspection = inspectStructuralPeeritVnextJournalIntent(intent)
+        if (envelopeInspection.verified) verifiedVnextEnvelopeCount++
+        if (firstGeneratedEnvelope == null) firstGeneratedEnvelope = envelopeInspection
+        lastGeneratedEnvelope = envelopeInspection
+        if (firstIntentId == null) firstIntentId = intent.intentId
+        lastIntentId = intent.intentId
+        const before = performance.now()
+        await journal.commitIntent(intent)
         commitTimes.push(performance.now() - before)
         if ((intentNumber + 1) % 100 === 0) {
           update(`committed ${intentNumber + 1}/${options.intents} intents\n${recordNumber}/${options.records} records`)
@@ -181,12 +200,25 @@
       const indexWallMs = performance.now() - indexStartedAt
       const initialViewSha256 = initialDigest.finish()
       const summary = await journal.summary()
+      const intentEnvelope = {
+        operationShape: PEERIT_LAB_OPERATION_SHAPE_V2,
+        journalIntentShape: PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2,
+        verifiedVnextEnvelopeCount,
+        firstGeneratedEnvelope,
+        lastGeneratedEnvelope,
+        firstBeforeReopen: inspectStructuralPeeritVnextJournalIntent(await journal.getIntent(firstIntentId)),
+        lastBeforeReopen: inspectStructuralPeeritVnextJournalIntent(await journal.getIntent(lastIntentId)),
+        firstAfterReopen: null,
+        lastAfterReopen: null
+      }
       const count = await journal.countView('post!')
       await journal.close()
 
       const reopened = makeJournal()
       await reopened.ready()
       const reopenedSummary = await reopened.summary()
+      intentEnvelope.firstAfterReopen = inspectStructuralPeeritVnextJournalIntent(await reopened.getIntent(firstIntentId))
+      intentEnvelope.lastAfterReopen = inspectStructuralPeeritVnextJournalIntent(await reopened.getIntent(lastIntentId))
       const reopenedCount = await reopened.countView('post!')
       const reopenedDigest = createRowDigest()
       let reopenedRows = 0
@@ -211,6 +243,21 @@
       const page = timing(pageTimes)
       const longTask = timing(longTasks)
       const gates = [
+        {
+          id: 'EXACT_PROFILE_WORKLOAD',
+          passed: exactProfileWorkload,
+          observed: options,
+          expected: profileWorkloads[profile]
+        },
+        {
+          id: 'VNEXT_INTENT_ENVELOPE',
+          passed: intentEnvelope.operationShape === PEERIT_LAB_OPERATION_SHAPE_V2 &&
+            intentEnvelope.journalIntentShape === PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2 &&
+            intentEnvelope.verifiedVnextEnvelopeCount === options.intents &&
+            ['firstGeneratedEnvelope', 'lastGeneratedEnvelope', 'firstBeforeReopen',
+              'lastBeforeReopen', 'firstAfterReopen', 'lastAfterReopen']
+              .every(key => isStructuralPeeritVnextJournalInspectionEvidence(intentEnvelope[key]))
+        },
         { id: 'EXACT_COUNTS', passed: summary.intentCount === options.intents && summary.viewRecordCount === options.records && count === options.records },
         { id: 'REOPEN_PERSISTENCE', passed: reopenedSummary.intentCount === options.intents && reopenedSummary.viewRecordCount === options.records && !!lastRecord },
         { id: 'REOPEN_RECOUNT_DIGEST', passed: reopenedCount === options.records && reopenedRows === options.records && reopenedViewSha256 === initialViewSha256 },
@@ -227,7 +274,15 @@
         evidenceClass: 'MEASURED_LOCAL_BROWSER_INDEXEDDB',
         claimBoundary: 'One local desktop browser build on one machine; not other engines, mobile, crash recovery, quota exhaustion, network, or mainnet evidence.',
         profile,
-        operationShape: 'exact-generated-record-operations-v1',
+        operationShape: PEERIT_LAB_OPERATION_SHAPE_V2,
+        journalIntentShape: PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2,
+        workloadDefinition: {
+          schema: 'peerit-browser-page-scale-workload-v2',
+          generator: 'sequential-vnext-journal-intents-round-robin-communities-v2',
+          operationShape: PEERIT_LAB_OPERATION_SHAPE_V2,
+          journalIntentShape: PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2
+        },
+        intentEnvelope,
         userAgent: navigator.userAgent,
         workload: options,
         summary: {
@@ -262,7 +317,7 @@
         gates,
         blockers,
         localBrowserRunReady: blockers.length === 0,
-        localBrowserGateReady: profile === 'full' && blockers.length === 0,
+        localBrowserGateReady: profile === 'full' && exactProfileWorkload && blockers.length === 0,
         releaseReady: false,
         releaseBlockers: [
           'OTHER_DESKTOP_BROWSER_ENGINES_UNRUN',
@@ -284,6 +339,8 @@
         evidenceClass: 'MEASURED_LOCAL_BROWSER_INDEXEDDB',
         claimBoundary: 'One local desktop browser build on one machine; not other engines, mobile, crash recovery, quota exhaustion, network, or mainnet evidence.',
         profile,
+        operationShape: PEERIT_LAB_OPERATION_SHAPE_V2,
+        journalIntentShape: PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2,
         localBrowserRunReady: false,
         localBrowserGateReady: false,
         releaseReady: false,

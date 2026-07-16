@@ -15,6 +15,13 @@ import {
   createMemoryJournalState,
   createMemoryPeeritJournal
 } from '../js/substrate/peerit-journal.js'
+import {
+  PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2,
+  PEERIT_LAB_OPERATION_SHAPE_V2,
+  createStructuralPeeritVnextJournalIntent,
+  inspectStructuralPeeritVnextJournalIntent,
+  isStructuralPeeritVnextJournalInspectionEvidence
+} from '../test/fixtures/peerit-vnext-journal-fixture.mjs'
 
 export const RETRY_FAIRNESS_FULL_TARGETS = JOURNAL_LIMITS.maxIntents
 
@@ -63,24 +70,31 @@ function parseArgs (argv) {
   return options
 }
 
-function id (number) { return Number(number).toString(16).padStart(64, '0') }
-
 function fairnessFixture (targets) {
   const shared = createMemoryJournalState()
   const intents = shared.stores.get(JOURNAL_STORES.INTENTS)
   const targetRows = shared.stores.get(JOURNAL_STORES.TARGETS)
   const targetByIntent = new Map()
-  const encoder = new TextEncoder()
+  const intentIds = []
   let intentBytes = 0
+  let verifiedVnextEnvelopeCount = 0
+  let firstGeneratedEnvelope = null
+  let lastGeneratedEnvelope = null
   for (let index = 0; index < targets; index++) {
-    const intentId = id(index)
+    const envelope = createStructuralPeeritVnextJournalIntent({
+      operations: [{ type: 'post', data: { id: `retry!${index}`, index } }],
+      createdAt: index + 1
+    })
+    const envelopeInspection = inspectStructuralPeeritVnextJournalIntent(envelope)
+    if (envelopeInspection.verified) verifiedVnextEnvelopeCount++
+    if (index === 0) firstGeneratedEnvelope = envelopeInspection
+    lastGeneratedEnvelope = envelopeInspection
+    const { intentId } = envelope
     const retryTarget = index % 2 === 0 ? 'retry-a' : 'retry-b'
-    const operationBytes = JSON.stringify({ version: 1, operations: [{ index }] })
+    intentIds.push(intentId)
     targetByIntent.set(intentId, retryTarget)
     intents.set(intentId, {
-      intentId,
-      logicalId: id(index + targets),
-      operationBytes,
+      ...envelope,
       recordKeys: [],
       createdAt: index + 1,
       updatedAt: 1,
@@ -121,11 +135,11 @@ function fairnessFixture (targets) {
       policyDurable: false,
       lastError: 'fairness-fixture'
     })
-    intentBytes += encoder.encode(operationBytes).byteLength
+    intentBytes += envelope.innerLength
   }
   shared.stores.get(JOURNAL_STORES.META).set('state', {
     key: 'state',
-    schemaVersion: 2,
+    schemaVersion: 3,
     revision: 1,
     viewRevision: 0,
     viewRecordCount: 0,
@@ -133,7 +147,9 @@ function fairnessFixture (targets) {
     pendingIntentCount: 0,
     dedupeCount: 0,
     intentBytes,
-    latestIntentId: id(targets - 1),
+    quarantinedIntentCount: 0,
+    quarantinedIntentBytes: 0,
+    latestIntentId: intentIds[intentIds.length - 1],
     latestCreatedAt: targets,
     targetStateCounts: {
       preparing: 0,
@@ -152,7 +168,15 @@ function fairnessFixture (targets) {
   shared.encodedBytes = null
   return {
     shared,
-    targetByIntent
+    targetByIntent,
+    intentIds,
+    envelopeEvidence: {
+      verifiedVnextEnvelopeCount,
+      firstGeneratedEnvelope,
+      lastGeneratedEnvelope,
+      firstStoredEnvelope: null,
+      lastStoredEnvelope: null
+    }
   }
 }
 
@@ -182,6 +206,10 @@ export function isRetryTargetIndex10kFairnessProven (report) {
   return !!(report &&
     report.schema === 'peerit-retry-fairness-lab-v1' &&
     report.evidenceClass === 'MEASURED_LOCAL_NODE_MEMORY_BACKEND' &&
+    report.operationShape === PEERIT_LAB_OPERATION_SHAPE_V2 &&
+    report.journalIntentShape === PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2 &&
+    report.workloadDefinition && report.workloadDefinition.schema === 'peerit-retry-fairness-workload-v2' &&
+    report.workloadDefinition.generator === 'direct-bounded-vnext-journal-state-alternating-pending-unknown-v2' &&
     report.workload && report.workload.targets === RETRY_FAIRNESS_FULL_TARGETS &&
     Number.isSafeInteger(report.workload.batchSize) && report.workload.batchSize > 0 &&
     report.workload.batchSize <= JOURNAL_LIMITS.deliveryBatch &&
@@ -189,6 +217,9 @@ export function isRetryTargetIndex10kFairnessProven (report) {
     report.summary.claimsSucceeded === report.summary.selectedRows &&
     report.summary.selectedRows >= RETRY_FAIRNESS_FULL_TARGETS &&
     report.summary.selectedRows <= Math.ceil(RETRY_FAIRNESS_FULL_TARGETS / report.workload.batchSize) * report.workload.batchSize &&
+    report.envelopeEvidence && report.envelopeEvidence.verifiedVnextEnvelopeCount === RETRY_FAIRNESS_FULL_TARGETS &&
+    ['firstGeneratedEnvelope', 'lastGeneratedEnvelope', 'firstStoredEnvelope', 'lastStoredEnvelope']
+      .every(key => isStructuralPeeritVnextJournalInspectionEvidence(report.envelopeEvidence[key])) &&
     report.localGateReady === true &&
     Array.isArray(report.gates) && report.gates.length > 0 && report.gates.every(gate => gate && gate.passed === true) &&
     Array.isArray(report.blockers) && report.blockers.length === 0)
@@ -208,12 +239,14 @@ export async function runPeeritRetryFairnessLab (rawOptions = {}) {
 
   let logicalClock = 1
   const workloadDefinition = {
-    schema: 'peerit-retry-fairness-workload-v1',
+    schema: 'peerit-retry-fairness-workload-v2',
     targets: options.targets,
     lanes: ['retry-a', 'retry-b'],
     batchSize: options.batchSize,
     clock: 'monotonic-logical-v1',
-    generator: 'direct-bounded-journal-state-alternating-pending-unknown-v1'
+    operationShape: PEERIT_LAB_OPERATION_SHAPE_V2,
+    journalIntentShape: PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2,
+    generator: 'direct-bounded-vnext-journal-state-alternating-pending-unknown-v2'
   }
   const workloadSha256 = createHash('sha256').update(JSON.stringify(workloadDefinition)).digest('hex')
   const startedAt = performance.now()
@@ -252,6 +285,12 @@ export async function runPeeritRetryFairnessLab (rawOptions = {}) {
     await journal.ready()
     readyMs = performance.now() - readyStarted
     initialSummary = await journal.summary()
+    fixture.envelopeEvidence.firstStoredEnvelope = inspectStructuralPeeritVnextJournalIntent(
+      await journal.getIntent(fixture.intentIds[0])
+    )
+    fixture.envelopeEvidence.lastStoredEnvelope = inspectStructuralPeeritVnextJournalIntent(
+      await journal.getIntent(fixture.intentIds[fixture.intentIds.length - 1])
+    )
 
     while (seen.size < options.targets && rounds < maximumRounds) {
       rounds++
@@ -309,7 +348,7 @@ export async function runPeeritRetryFairnessLab (rawOptions = {}) {
       }
     }
 
-    const finalIntentId = id(options.targets - 1)
+    const finalIntentId = fixture.intentIds[fixture.intentIds.length - 1]
     const finalTargetId = fixture.targetByIntent.get(finalIntentId)
     const finalClaimAt = ++logicalClock
     const finalToken = await journal.claimTarget({
@@ -339,6 +378,21 @@ export async function runPeeritRetryFairnessLab (rawOptions = {}) {
       passed: initialSummary != null && initialSummary.intentCount === options.targets,
       observed: initialSummary && initialSummary.intentCount,
       expected: options.targets
+    },
+    {
+      id: 'VNEXT_INTENT_ENVELOPES_EXACT',
+      passed: fixture != null &&
+        fixture.envelopeEvidence.verifiedVnextEnvelopeCount === options.targets &&
+        ['firstGeneratedEnvelope', 'lastGeneratedEnvelope', 'firstStoredEnvelope', 'lastStoredEnvelope']
+          .every(key => isStructuralPeeritVnextJournalInspectionEvidence(fixture.envelopeEvidence[key])),
+      observed: fixture && {
+        verifiedVnextEnvelopeCount: fixture.envelopeEvidence.verifiedVnextEnvelopeCount,
+        firstGeneratedVerified: fixture.envelopeEvidence.firstGeneratedEnvelope?.verified === true,
+        lastGeneratedVerified: fixture.envelopeEvidence.lastGeneratedEnvelope?.verified === true,
+        firstStoredVerified: fixture.envelopeEvidence.firstStoredEnvelope?.verified === true,
+        lastStoredVerified: fixture.envelopeEvidence.lastStoredEnvelope?.verified === true
+      },
+      expected: { verifiedVnextEnvelopeCount: options.targets, allBoundaryEnvelopesVerified: true }
     },
     {
       id: 'COMPLETED_INTENT_COUNT_EXACT',
@@ -394,6 +448,8 @@ export async function runPeeritRetryFairnessLab (rawOptions = {}) {
   const report = {
     schema: 'peerit-retry-fairness-lab-v1',
     evidenceClass: 'MEASURED_LOCAL_NODE_MEMORY_BACKEND',
+    operationShape: PEERIT_LAB_OPERATION_SHAPE_V2,
+    journalIntentShape: PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2,
     claimBoundary: 'Local Node memory-backend compound-index evidence only; not browser/IndexedDB, disk, crash, multi-process, network, or production evidence.',
     environment: {
       runtime: 'node',
@@ -408,6 +464,13 @@ export async function runPeeritRetryFairnessLab (rawOptions = {}) {
       batchSize: options.batchSize,
       maximumRounds,
       maxElapsedMs: options.maxElapsedMs
+    },
+    envelopeEvidence: fixture?.envelopeEvidence ?? {
+      verifiedVnextEnvelopeCount: 0,
+      firstGeneratedEnvelope: null,
+      lastGeneratedEnvelope: null,
+      firstStoredEnvelope: null,
+      lastStoredEnvelope: null
     },
     summary: {
       uniqueTargetsSeen: seen.size,

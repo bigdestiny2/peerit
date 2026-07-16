@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import {
   BROWSER_SCALE_PROFILES,
   browserScaleEvidenceDigest,
@@ -10,6 +11,48 @@ import {
 } from '../scripts/browser-peerit-scale-matrix.mjs'
 
 const smoke = BROWSER_SCALE_PROFILES.smoke
+const operationShape = 'peerit-unsigned-structural-operation-records-v2'
+const journalIntentShape = 'peerit-inner-operation-batch-v1-derived-journal-intent-v2'
+
+function envelopeEvidence (seed) {
+  const logicalHash = seed.repeat(64).slice(0, 64)
+  const commitment = (seed === 'a' ? 'b' : 'c').repeat(64)
+  const intentId = (seed === 'a' ? 'd' : 'e').repeat(64)
+  return {
+    operationShape,
+    journalIntentShape,
+    wireFormat: 'peerit-inner-operation-batch-v1',
+    innerCodec: 334,
+    codecBytesHex: '014e',
+    version: 1,
+    declaredPayloadLength: 93,
+    payloadLength: 93,
+    innerLength: 100,
+    sizeClass: 1,
+    smallestSizeClass: 1,
+    logicalHashHex: logicalHash,
+    recomputedLogicalHashHex: logicalHash,
+    encodingCommitmentHex: commitment,
+    recomputedEncodingCommitmentHex: commitment,
+    intentId,
+    recomputedIntentId: intentId,
+    logicalId: logicalHash,
+    checks: {
+      wireFormat: true,
+      innerCodec: true,
+      codecBytes: true,
+      version: true,
+      payloadLength: true,
+      innerLength: true,
+      smallestSizeClass: true,
+      logicalHash: true,
+      encodingCommitment: true,
+      intentId: true,
+      logicalId: true
+    },
+    verified: true
+  }
+}
 
 assert.deepEqual(parseArgs([]), {
   engines: ['chromium', 'firefox', 'webkit'],
@@ -45,7 +88,25 @@ const fixture = {
   evidenceClass: 'MEASURED_LOCAL_BROWSER_INDEXEDDB',
   claimBoundary: 'One local desktop browser build; not other engines, mobile, crash recovery, quota exhaustion, network, or mainnet evidence.',
   profile: 'smoke',
-  operationShape: 'exact-generated-record-operations-v1',
+  operationShape,
+  journalIntentShape,
+  workloadDefinition: {
+    schema: 'peerit-browser-page-scale-workload-v2',
+    generator: 'sequential-vnext-journal-intents-round-robin-communities-v2',
+    operationShape,
+    journalIntentShape
+  },
+  intentEnvelope: {
+    operationShape,
+    journalIntentShape,
+    verifiedVnextEnvelopeCount: smoke.intents,
+    firstGeneratedEnvelope: envelopeEvidence('a'),
+    lastGeneratedEnvelope: envelopeEvidence('f'),
+    firstBeforeReopen: envelopeEvidence('a'),
+    lastBeforeReopen: envelopeEvidence('f'),
+    firstAfterReopen: envelopeEvidence('a'),
+    lastAfterReopen: envelopeEvidence('f')
+  },
   workload: {
     intents: smoke.intents,
     records: smoke.records,
@@ -72,6 +133,8 @@ const fixture = {
     longTask: { count: 0, maxMs: 4 }
   },
   gates: [
+    'EXACT_PROFILE_WORKLOAD',
+    'VNEXT_INTENT_ENVELOPE',
     'EXACT_COUNTS',
     'REOPEN_PERSISTENCE',
     'REOPEN_RECOUNT_DIGEST',
@@ -156,14 +219,53 @@ const sampleFailure = validatePageReport({ report: missingSamples, workload: smo
 assert.equal(sampleFailure.passed, false)
 assert.ok(sampleFailure.blockers.includes('METRIC_SAMPLE_COUNTS'))
 
+const wrongShape = structuredClone(fixture)
+wrongShape.journalIntentShape = 'raw-json-intent-v1'
+assert.ok(validatePageReport({ report: wrongShape, workload: smoke, bodyStatus: 'passed' }).blockers
+  .includes('PAGE_JOURNAL_INTENT_SHAPE'))
+
+const tamperedEnvelope = structuredClone(fixture)
+tamperedEnvelope.intentEnvelope.lastAfterReopen.logicalHashHex = '0'.repeat(64)
+assert.ok(validatePageReport({ report: tamperedEnvelope, workload: smoke, bodyStatus: 'passed' }).blockers
+  .includes('PAGE_VNEXT_ENVELOPE'))
+
+const tinyFull = structuredClone(fixture)
+tinyFull.profile = 'full'
+tinyFull.localBrowserGateReady = true
+const tinyFullFailure = validatePageReport({ report: tinyFull, workload: smoke, profile: 'full', bodyStatus: 'passed' })
+assert.equal(tinyFullFailure.passed, false)
+assert.ok(tinyFullFailure.blockers.includes('PROFILE_WORKLOAD_EXACT'),
+  'a full-profile URL carrying the smoke workload must fail closed')
+
 const evidenceBody = {
   schema: 'peerit-browser-scale-matrix-v1',
   evidenceClass: 'MEASURED_LOCAL_DESKTOP_BROWSER_INDEXEDDB_PLAYWRIGHT',
+  operationShape,
+  journalIntentShape,
   evidenceDigestAlgorithm: 'sha256-canonical-json-v1',
   startedAt: '2026-07-12T00:00:00.000Z',
+  profile: 'smoke',
+  workloadDefinition: {
+    schema: 'peerit-browser-scale-workload-v2',
+    profile: 'smoke',
+    intents: smoke.intents,
+    records: smoke.records,
+    communities: smoke.communities,
+    pageSize: smoke.pageSize,
+    operationShape,
+    journalIntentShape,
+    generator: 'sequential-vnext-journal-intents-round-robin-communities-v2'
+  },
+  workload: {
+    intents: smoke.intents,
+    records: smoke.records,
+    communities: smoke.communities,
+    pageSize: smoke.pageSize
+  },
   results: [{ engine: 'chromium', status: 'passed', metrics: { records: 1000 } }],
   releaseReady: false
 }
+evidenceBody.workloadSha256 = createHash('sha256').update(JSON.stringify(evidenceBody.workloadDefinition)).digest('hex')
 const sealedEvidence = { ...evidenceBody, evidenceDigest: browserScaleEvidenceDigest(evidenceBody) }
 assert.equal(verifyBrowserScaleEvidence(sealedEvidence).verified, true)
 assert.equal(verifyBrowserScaleEvidence(sealedEvidence).checksumVerified, true)
@@ -171,15 +273,7 @@ assert.equal(verifyBrowserScaleEvidence(sealedEvidence).verificationClass, 'CONT
 assert.equal(verifyBrowserScaleEvidence(sealedEvidence).authentic, false)
 assert.equal(verifyBrowserScaleEvidence(sealedEvidence).authorizesRelease, false)
 
-const reorderedEvidence = {
-  evidenceDigest: sealedEvidence.evidenceDigest,
-  releaseReady: sealedEvidence.releaseReady,
-  results: sealedEvidence.results,
-  startedAt: sealedEvidence.startedAt,
-  evidenceDigestAlgorithm: sealedEvidence.evidenceDigestAlgorithm,
-  evidenceClass: sealedEvidence.evidenceClass,
-  schema: sealedEvidence.schema
-}
+const reorderedEvidence = Object.fromEntries(Object.entries(sealedEvidence).reverse())
 assert.equal(verifyBrowserScaleEvidence(reorderedEvidence).verified, true,
   'canonical hashing must not depend on object key insertion order')
 
@@ -193,6 +287,11 @@ const missingDigest = structuredClone(sealedEvidence)
 delete missingDigest.evidenceDigest
 assert.equal(verifyBrowserScaleEvidence(missingDigest).verified, false)
 assert.ok(verifyBrowserScaleEvidence(missingDigest).blockers.includes('EVIDENCE_DIGEST_MISSING_OR_MALFORMED'))
+
+const rawJsonEvidence = structuredClone(sealedEvidence)
+rawJsonEvidence.operationShape = 'raw-json-v1'
+rawJsonEvidence.evidenceDigest = browserScaleEvidenceDigest(rawJsonEvidence)
+assert.ok(verifyBrowserScaleEvidence(rawJsonEvidence).blockers.includes('EVIDENCE_OPERATION_SHAPE_INVALID'))
 
 assert.equal(fixture.releaseReady, false)
 console.log('browser-peerit-scale-matrix: CLI, evidence boundary, counts, diagnostics, and threshold fail-closed checks passed')

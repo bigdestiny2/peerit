@@ -7,11 +7,18 @@ import { createServer } from 'node:net'
 import { dirname, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
+import {
+  PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2,
+  PEERIT_LAB_OPERATION_SHAPE_V2,
+  isStructuralPeeritVnextJournalInspectionEvidence
+} from '../test/fixtures/peerit-vnext-journal-fixture.mjs'
 
 const HOST = '127.0.0.1'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const ALL_ENGINES = Object.freeze(['chromium', 'firefox', 'webkit'])
 const EXPECTED_PAGE_GATES = Object.freeze([
+  'EXACT_PROFILE_WORKLOAD',
+  'VNEXT_INTENT_ENVELOPE',
   'EXACT_COUNTS',
   'REOPEN_PERSISTENCE',
   'REOPEN_RECOUNT_DIGEST',
@@ -86,6 +93,22 @@ export function verifyBrowserScaleEvidence (report) {
     }
   }
   if (report.schema !== 'peerit-browser-scale-matrix-v1') blockers.push('EVIDENCE_SCHEMA_INVALID')
+  if (report.operationShape !== PEERIT_LAB_OPERATION_SHAPE_V2) blockers.push('EVIDENCE_OPERATION_SHAPE_INVALID')
+  if (report.journalIntentShape !== PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2) blockers.push('EVIDENCE_JOURNAL_INTENT_SHAPE_INVALID')
+  if (report.workloadDefinition?.schema !== 'peerit-browser-scale-workload-v2' ||
+      report.workloadDefinition?.generator !== 'sequential-vnext-journal-intents-round-robin-communities-v2' ||
+      report.workloadDefinition?.operationShape !== PEERIT_LAB_OPERATION_SHAPE_V2 ||
+      report.workloadDefinition?.journalIntentShape !== PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2) {
+    blockers.push('EVIDENCE_WORKLOAD_IDENTITY_INVALID')
+  }
+  if (report.workloadDefinition && report.workloadSha256 !== createHash('sha256').update(JSON.stringify(report.workloadDefinition)).digest('hex')) {
+    blockers.push('EVIDENCE_WORKLOAD_DIGEST_MISMATCH')
+  }
+  const profileWorkload = BROWSER_SCALE_PROFILES[report.profile]
+  if (!profileWorkload || !sameWorkload(report.workload, profileWorkload) ||
+      !sameWorkload(report.workloadDefinition, profileWorkload)) {
+    blockers.push('EVIDENCE_PROFILE_WORKLOAD_INVALID')
+  }
   if (report.evidenceDigestAlgorithm !== 'sha256-canonical-json-v1') blockers.push('EVIDENCE_DIGEST_ALGORITHM_INVALID')
   const observedDigest = typeof report.evidenceDigest === 'string' ? report.evidenceDigest : null
   if (!observedDigest || !/^[0-9a-f]{64}$/.test(observedDigest)) blockers.push('EVIDENCE_DIGEST_MISSING_OR_MALFORMED')
@@ -239,6 +262,23 @@ export function validatePageReport ({ report, workload, profile = 'smoke', diagn
     : [])
   const summary = report && report.summary
   const timing = report && report.timing
+  const profileWorkload = BROWSER_SCALE_PROFILES[profile]
+  const exactProfileWorkload = profileWorkload != null &&
+    sameWorkload(workload, profileWorkload) && sameWorkload(report && report.workload, profileWorkload)
+  const intentEnvelope = report && report.intentEnvelope
+  const envelopeBoundaries = intentEnvelope && [
+    intentEnvelope.firstGeneratedEnvelope,
+    intentEnvelope.lastGeneratedEnvelope,
+    intentEnvelope.firstBeforeReopen,
+    intentEnvelope.lastBeforeReopen,
+    intentEnvelope.firstAfterReopen,
+    intentEnvelope.lastAfterReopen
+  ]
+  const exactVnextEnvelope = intentEnvelope != null && profileWorkload != null &&
+    intentEnvelope.operationShape === PEERIT_LAB_OPERATION_SHAPE_V2 &&
+    intentEnvelope.journalIntentShape === PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2 &&
+    intentEnvelope.verifiedVnextEnvelopeCount === profileWorkload.intents &&
+    envelopeBoundaries.every(isStructuralPeeritVnextJournalInspectionEvidence)
   const exactCounts = summary != null &&
     summary.intents === workload.intents &&
     summary.records === workload.records &&
@@ -270,15 +310,24 @@ export function validatePageReport ({ report, workload, profile = 'smoke', diagn
     gate('PAGE_EVIDENCE_CLASS', report && report.evidenceClass === 'MEASURED_LOCAL_BROWSER_INDEXEDDB', report && report.evidenceClass),
     gate('PAGE_CLAIM_BOUNDARY', pageClaimBoundary, claimBoundary),
     gate('PAGE_PROFILE', report && report.profile === profile, report && report.profile),
-    gate('PAGE_OPERATION_SHAPE', report && report.operationShape === 'exact-generated-record-operations-v1', report && report.operationShape),
+    gate('PAGE_OPERATION_SHAPE', report && report.operationShape === PEERIT_LAB_OPERATION_SHAPE_V2, report && report.operationShape),
+    gate('PAGE_JOURNAL_INTENT_SHAPE', report && report.journalIntentShape === PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2, report && report.journalIntentShape),
+    gate('PAGE_WORKLOAD_IDENTITY', report &&
+      report.workloadDefinition?.schema === 'peerit-browser-page-scale-workload-v2' &&
+      report.workloadDefinition?.generator === 'sequential-vnext-journal-intents-round-robin-communities-v2' &&
+      report.workloadDefinition?.operationShape === PEERIT_LAB_OPERATION_SHAPE_V2 &&
+      report.workloadDefinition?.journalIntentShape === PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2),
+    gate('PROFILE_WORKLOAD_EXACT', exactProfileWorkload, { observed: report && report.workload, expected: profileWorkload }),
     gate('WORKLOAD_MATCH', sameWorkload(report && report.workload, workload)),
+    gate('PAGE_VNEXT_ENVELOPE', exactVnextEnvelope, intentEnvelope),
     gate('EXACT_COUNTS', exactCounts, summary || null),
     gate('METRIC_SAMPLE_COUNTS', metricSampleCounts),
     gate('EXPECTED_PAGE_GATES_PASS', expectedPageGatesPass),
     gate('THRESHOLDS_PASS', pageThresholds),
     gate('PAGE_BLOCKERS_EMPTY', Array.isArray(report && report.blockers) && report.blockers.length === 0, report && report.blockers),
     gate('PAGE_LOCAL_RUN_READY', report && report.localBrowserRunReady === true),
-    gate('PAGE_FULL_GATE_BOUNDARY', report && report.localBrowserGateReady === (profile === 'full')),
+    gate('PAGE_FULL_GATE_BOUNDARY', report && report.localBrowserGateReady ===
+      (profile === 'full' && exactProfileWorkload && report.localBrowserRunReady === true)),
     gate('PAGE_RELEASE_BOUNDARY', report && report.releaseReady === false),
     gate('BODY_STATUS_PASSED', bodyStatus === 'passed', bodyStatus),
     gate('NO_CONSOLE_ERRORS', consoleErrors.length === 0, consoleErrors),
@@ -466,18 +515,22 @@ export async function runBrowserScaleMatrix (options) {
     'PRODUCTION_BROWSER_SCALE_UNRUN'
   ]
   const workloadDefinition = {
-    schema: 'peerit-browser-scale-workload-v1',
+    schema: 'peerit-browser-scale-workload-v2',
     profile: options.profile,
     intents: workload.intents,
     records: workload.records,
     communities: workload.communities,
     pageSize: workload.pageSize,
-    generator: 'sequential-intents-round-robin-communities-v1'
+    operationShape: PEERIT_LAB_OPERATION_SHAPE_V2,
+    journalIntentShape: PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2,
+    generator: 'sequential-vnext-journal-intents-round-robin-communities-v2'
   }
   const workloadSha256 = createHash('sha256').update(JSON.stringify(workloadDefinition)).digest('hex')
   const report = {
     schema: 'peerit-browser-scale-matrix-v1',
     evidenceClass: 'MEASURED_LOCAL_DESKTOP_BROWSER_INDEXEDDB_PLAYWRIGHT',
+    operationShape: PEERIT_LAB_OPERATION_SHAPE_V2,
+    journalIntentShape: PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2,
     evidenceDigestAlgorithm: 'sha256-canonical-json-v1',
     evidenceDigestPurpose: 'content-address-only-not-authenticity-or-release-authorization',
     claimBoundary: 'Local headless desktop Playwright engines on one machine only; not mobile, crash recovery, quota exhaustion, network, multi-host, or production evidence.',

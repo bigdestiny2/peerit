@@ -31,6 +31,7 @@ for (const forbiddenFile of [
   'js/lazy-pool.js',
   'js/dht-bundle.js',
   'js/shard-roster.js',
+  'test/fixtures/peerit-vnext-journal-fixture.mjs',
   'config/shard-roster.public.json',
   'config/seed-snapshot.json'
 ]) assert.equal(served.has(forbiddenFile), false, `${forbiddenFile} is outside the replacement artifact`)
@@ -217,6 +218,8 @@ assert.equal(existsSync(join(output, 'js', 'sync.js')), false)
 assert.equal(existsSync(join(output, 'js', 'pear-api.js')), false)
 assert.equal(existsSync(join(output, 'js', 'blind-dealer.mjs')), false)
 assert.equal(existsSync(join(output, 'js', 'data-dispersal.js')), false)
+assert.equal(existsSync(join(output, 'test', 'fixtures', 'peerit-vnext-journal-fixture.mjs')), false,
+  'unsigned structural lab fixture is absent from the production build output')
 
 const productEntry = readFileSync(join(output, 'js', 'substrate', 'app-entry.js'), 'utf8')
 assert.match(productEntry, /createPeeritProductRuntimeV1/)

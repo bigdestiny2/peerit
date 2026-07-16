@@ -22,6 +22,13 @@ import {
   isRetryTargetIndex10kFairnessProven,
   runPeeritRetryFairnessLab
 } from './peerit-retry-fairness-lab.mjs'
+import {
+  PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2,
+  PEERIT_LAB_OPERATION_SHAPE_V2,
+  createStructuralPeeritVnextJournalIntent,
+  inspectStructuralPeeritVnextJournalIntent,
+  isStructuralPeeritVnextJournalInspectionEvidence
+} from '../test/fixtures/peerit-vnext-journal-fixture.mjs'
 
 const DEFAULTS = Object.freeze({
   intents: 500,
@@ -151,23 +158,31 @@ async function exerciseJournal (options) {
   const recordsPerIntent = Math.ceil(options.viewRecords / options.intents)
   const commitTimes = []
   let recordIndex = 0
+  let firstIntentId = null
+  let lastIntentId = null
+  let verifiedVnextEnvelopeCount = 0
+  let firstGeneratedEnvelope = null
+  let lastGeneratedEnvelope = null
   for (let intentIndex = 0; intentIndex < options.intents; intentIndex++) {
     const records = []
     while (records.length < recordsPerIntent && recordIndex < options.viewRecords) {
       records.push(recordFor(recordIndex++, options.communities))
     }
-    const intentId = deterministicId('intent', intentIndex)
-    const operationBytes = JSON.stringify({
-      version: 1,
-      operations: [{ type: 'synthetic-scale-records', first: intentIndex * recordsPerIntent, count: records.length }]
-    })
-    const result = await timed(() => journal.commitIntent({
-      intentId,
-      logicalId: deterministicId('logical', intentIndex),
-      operationBytes,
+    const intent = createStructuralPeeritVnextJournalIntent({
+      operations: records.map(record => ({
+        type: 'post',
+        data: { ...record.value, id: record.key.slice('post!'.length) }
+      })),
       records,
       createdAt: intentIndex + 1
-    }))
+    })
+    const envelopeInspection = inspectStructuralPeeritVnextJournalIntent(intent)
+    if (envelopeInspection.verified) verifiedVnextEnvelopeCount++
+    if (firstGeneratedEnvelope == null) firstGeneratedEnvelope = envelopeInspection
+    lastGeneratedEnvelope = envelopeInspection
+    if (firstIntentId == null) firstIntentId = intent.intentId
+    lastIntentId = intent.intentId
+    const result = await timed(() => journal.commitIntent(intent))
     commitTimes.push(result.elapsedMs)
   }
 
@@ -195,6 +210,8 @@ async function exerciseJournal (options) {
   } while (ranged < options.viewRecords)
 
   const summary = await journal.summary()
+  const firstBeforeReopen = inspectStructuralPeeritVnextJournalIntent(await journal.getIntent(firstIntentId))
+  const lastBeforeReopen = inspectStructuralPeeritVnextJournalIntent(await journal.getIntent(lastIntentId))
   const wake = await journal.nextWake({
     now,
     reconcileTargetIds: [],
@@ -202,10 +219,28 @@ async function exerciseJournal (options) {
     retryMaxMs: 60_000
   })
   await journal.close()
+  const reopenedJournal = createMemoryPeeritJournal({ shared, clock: () => now++ })
+  await reopenedJournal.ready()
+  const reopenedSummary = await reopenedJournal.summary()
+  const firstAfterReopen = inspectStructuralPeeritVnextJournalIntent(await reopenedJournal.getIntent(firstIntentId))
+  const lastAfterReopen = inspectStructuralPeeritVnextJournalIntent(await reopenedJournal.getIntent(lastIntentId))
+  await reopenedJournal.close()
   return {
     backend: 'deterministic-node-memory',
+    intentEnvelope: {
+      operationShape: PEERIT_LAB_OPERATION_SHAPE_V2,
+      journalIntentShape: PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2,
+      verifiedVnextEnvelopeCount,
+      firstGeneratedEnvelope,
+      lastGeneratedEnvelope,
+      firstBeforeReopen,
+      lastBeforeReopen,
+      firstAfterReopen,
+      lastAfterReopen
+    },
     writeTransactions: shared.writeTransactions,
     summary,
+    reopenedSummary,
     scannedIntentIds: scanned,
     rangedViewRecords: ranged,
     nextWakeWithoutTargets: wake,
@@ -242,6 +277,18 @@ function exerciseMaterializedIndex (options) {
 
 function localGates (options, journal, index, retryFairness, memory) {
   const checks = [
+    {
+      id: 'JOURNAL_VNEXT_INTENT_ENVELOPE',
+      passed: journal.intentEnvelope.operationShape === PEERIT_LAB_OPERATION_SHAPE_V2 &&
+        journal.intentEnvelope.journalIntentShape === PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2 &&
+        journal.intentEnvelope.verifiedVnextEnvelopeCount === options.intents &&
+        ['firstGeneratedEnvelope', 'lastGeneratedEnvelope', 'firstBeforeReopen',
+          'lastBeforeReopen', 'firstAfterReopen', 'lastAfterReopen']
+          .every(key => isStructuralPeeritVnextJournalInspectionEvidence(journal.intentEnvelope[key])) &&
+        journal.reopenedSummary.intentCount === journal.summary.intentCount &&
+        journal.reopenedSummary.viewRecordCount === journal.summary.viewRecordCount,
+      observed: journal.intentEnvelope
+    },
     {
       id: 'JOURNAL_COUNT_EXACT',
       passed: journal.summary.intentCount === options.intents &&
@@ -307,6 +354,16 @@ function localGates (options, journal, index, retryFairness, memory) {
 
 export async function runPeeritScaleLab (rawOptions = {}) {
   const options = { ...DEFAULTS, ...rawOptions }
+  const workloadDefinition = {
+    schema: 'peerit-node-scale-workload-v2',
+    generator: 'sequential-vnext-journal-intents-round-robin-communities-v2',
+    operationShape: PEERIT_LAB_OPERATION_SHAPE_V2,
+    journalIntentShape: PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2,
+    intents: options.intents,
+    viewRecords: options.viewRecords,
+    communities: options.communities,
+    pageSize: options.pageSize
+  }
   const before = process.memoryUsage()
   const journal = await exerciseJournal(options)
   const index = exerciseMaterializedIndex(options)
@@ -345,6 +402,8 @@ export async function runPeeritScaleLab (rawOptions = {}) {
   return {
     schema: 'peerit-scale-lab-v1',
     evidenceClass: 'MEASURED_LOCAL_NODE_MEMORY_BACKEND',
+    operationShape: PEERIT_LAB_OPERATION_SHAPE_V2,
+    journalIntentShape: PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2,
     claimBoundary: 'Not browser/IndexedDB, network, disk, multi-process, or production capacity evidence.',
     environment: {
       runtime: 'node',
@@ -352,6 +411,8 @@ export async function runPeeritScaleLab (rawOptions = {}) {
       platform: process.platform,
       arch: process.arch
     },
+    workloadDefinition,
+    workloadSha256: createHash('sha256').update(JSON.stringify(workloadDefinition)).digest('hex'),
     workload: {
       intents: options.intents,
       viewRecords: options.viewRecords,

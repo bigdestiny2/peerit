@@ -14,6 +14,10 @@ import { dirname, join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import {
+  PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2,
+  PEERIT_LAB_OPERATION_SHAPE_V2
+} from '../test/fixtures/peerit-vnext-journal-fixture.mjs'
 
 const HOST = '127.0.0.1'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -82,6 +86,8 @@ export function verifyPersistenceFaultEvidence (report) {
   }
   if (report.schema !== 'peerit-browser-persistence-fault-v1') blockers.push('EVIDENCE_SCHEMA_INVALID')
   if (report.evidenceClass !== 'MEASURED_LOCAL_CHROMIUM_PROCESS_CRASH_AND_INJECTED_QUOTA') blockers.push('EVIDENCE_CLASS_INVALID')
+  if (report.operationShape !== PEERIT_LAB_OPERATION_SHAPE_V2) blockers.push('OPERATION_SHAPE_INVALID')
+  if (report.journalIntentShape !== PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2) blockers.push('JOURNAL_INTENT_SHAPE_INVALID')
   if (report.checksumAlgorithm !== 'sha256-canonical-json-v1') blockers.push('CHECKSUM_ALGORITHM_INVALID')
   if (!Object.hasOwn(PERSISTENCE_FAULT_PROFILES, report.profile)) blockers.push('PROFILE_INVALID')
   if (report.authenticityProven !== false) blockers.push('AUTHENTICITY_BOUNDARY_INVALID')
@@ -304,6 +310,7 @@ async function verifyGatePage (page, baseUrl, timeoutMs) {
 async function sourceBindings (baseUrl) {
   const files = [
     'journal-persistence-fault-gate.html',
+    'test/fixtures/peerit-vnext-journal-fixture.mjs',
     'js/substrate/peerit-journal.js',
     'js/substrate/peerit-journal-backend.js'
   ]
@@ -340,7 +347,8 @@ async function runCrashPhase ({ playwright, baseUrl, userDataDir, workload, time
     const evaluation = first.page.evaluate(async options => {
       const modulePath = '/js/substrate/peerit-journal.js'
       const { createIndexedDbPeeritJournal } = await import(modulePath)
-      const id = number => Number(number).toString(16).padStart(64, '0')
+      const fixturePath = '/test/fixtures/peerit-vnext-journal-fixture.mjs'
+      const { createStructuralPeeritVnextJournalIntent } = await import(fixturePath)
       const deleteDatabase = name => new Promise((resolve, reject) => {
         const request = globalThis.indexedDB.deleteDatabase(name)
         request.onsuccess = () => resolve()
@@ -352,13 +360,14 @@ async function runCrashPhase ({ playwright, baseUrl, userDataDir, workload, time
           key: `fault!${intentNumber}!${recordNumber}`,
           value: { intentNumber, recordNumber, body: `committed-${intentNumber}-${recordNumber}` }
         }))
-        return {
-          intentId: id(intentNumber),
-          logicalId: id(intentNumber + 100000),
-          operationBytes: JSON.stringify({ version: 1, operations: records.map(record => ({ type: 'fault-record', data: record.value })) }),
+        return createStructuralPeeritVnextJournalIntent({
+          operations: records.map(record => ({
+            type: 'post',
+            data: { ...record.value, id: record.key }
+          })),
           records,
           createdAt: intentNumber
-        }
+        })
       }
       const scan = async journal => {
         const rows = []
@@ -429,19 +438,26 @@ async function runCrashPhase ({ playwright, baseUrl, userDataDir, workload, time
       const recovered = await second.page.evaluate(async options => {
         const modulePath = '/js/substrate/peerit-journal.js'
         const { createIndexedDbPeeritJournal } = await import(modulePath)
-        const id = number => Number(number).toString(16).padStart(64, '0')
+        const fixturePath = '/test/fixtures/peerit-vnext-journal-fixture.mjs'
+        const { createStructuralPeeritVnextJournalIntent } = await import(fixturePath)
         const inputFor = (intentNumber, recordCount) => {
           const records = Array.from({ length: recordCount }, (_, recordNumber) => ({
             key: `fault!${intentNumber}!${recordNumber}`,
             value: { intentNumber, recordNumber, body: `committed-${intentNumber}-${recordNumber}` }
           }))
-          return {
-            intentId: id(intentNumber),
-            logicalId: id(intentNumber + 100000),
-            operationBytes: JSON.stringify({ version: 1, operations: records.map(record => ({ type: 'fault-record', data: record.value })) }),
+          return createStructuralPeeritVnextJournalIntent({
+            operations: records.map(record => ({
+              type: 'post',
+              data: { ...record.value, id: record.key }
+            })),
             records,
             createdAt: intentNumber
-          }
+          })
+        }
+        const digestRows = async rows => {
+          const bytes = new TextEncoder().encode(JSON.stringify(rows))
+          return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+            .map(value => value.toString(16).padStart(2, '0')).join('')
         }
         const scan = async journal => {
           const rows = []
@@ -452,10 +468,7 @@ async function runCrashPhase ({ playwright, baseUrl, userDataDir, workload, time
             rows.push(...page)
             after = page[page.length - 1].key
           }
-          const bytes = new TextEncoder().encode(JSON.stringify(rows))
-          const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
-            .map(value => value.toString(16).padStart(2, '0')).join('')
-          return { rows, digest }
+          return { rows, digest: await digestRows(rows) }
         }
         const compactSummary = value => ({
           revision: value.revision,
@@ -473,16 +486,23 @@ async function runCrashPhase ({ playwright, baseUrl, userDataDir, workload, time
         })
         await journal.ready()
         const crashNumber = options.baselineIntents + 1
-        const crashIntent = await journal.getIntent(id(crashNumber))
+        const crashInput = inputFor(crashNumber, options.crashRecords)
+        const crashIntent = await journal.getIntent(crashInput.intentId)
         const outcome = crashIntent ? 'committed' : 'rolled-back'
         const expectedIntentCount = options.baselineIntents + (crashIntent ? 1 : 0)
         const expectedViewCount = options.baselineIntents + (crashIntent ? options.crashRecords : 0)
         let prefixExact = true
+        const committedPrefixRows = []
         for (let number = 1; number <= options.baselineIntents; number++) {
-          const intent = await journal.getIntent(id(number))
+          const intent = await journal.getIntent(inputFor(number, 1).intentId)
           const row = await journal.getView(`fault!${number}!0`)
           if (!intent || !row || row.intentNumber !== number) prefixExact = false
+          if (row) committedPrefixRows.push({ key: `fault!${number}!0`, value: row })
         }
+        committedPrefixRows.sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0)
+        const committedPrefixDigest = await digestRows(committedPrefixRows)
+        const committedPrefixDigestMatches = committedPrefixRows.length === options.baselineIntents &&
+          committedPrefixDigest === options.baselineDigest
         let crashRowsPresent = 0
         for (let recordNumber = 0; recordNumber < options.crashRecords; recordNumber++) {
           const row = await journal.getView(`fault!${crashNumber}!${recordNumber}`)
@@ -494,9 +514,29 @@ async function runCrashPhase ({ playwright, baseUrl, userDataDir, workload, time
           summary.viewRecordCount === expectedViewCount && scanned.rows.length === expectedViewCount &&
           crashRowsPresent === (crashIntent ? options.crashRecords : 0)
         const continuationNumber = crashIntent ? crashNumber + 1 : crashNumber
-        await journal.commitIntent(inputFor(continuationNumber, crashIntent ? 1 : options.crashRecords))
-        const continued = await journal.getIntent(id(continuationNumber))
+        const continuationRecordCount = crashIntent ? 1 : options.crashRecords
+        const continuationInput = inputFor(continuationNumber, continuationRecordCount)
+        const expectedAfterContinue = {
+          revision: summary.revision + 1,
+          viewRevision: summary.viewRevision + 1,
+          viewRecordCount: summary.viewRecordCount + continuationRecordCount,
+          intentCount: summary.intentCount + 1,
+          pendingIntentCount: summary.pendingIntentCount + 1,
+          intentBytes: summary.intentBytes + continuationInput.innerLength,
+          latestIntentId: continuationInput.intentId
+        }
+        await journal.commitIntent(continuationInput)
+        const continued = await journal.getIntent(continuationInput.intentId)
         const afterContinue = await journal.summary()
+        let continuationRowsExact = true
+        for (let recordNumber = 0; recordNumber < continuationRecordCount; recordNumber++) {
+          const row = await journal.getView(`fault!${continuationNumber}!${recordNumber}`)
+          if (!row || row.intentNumber !== continuationNumber || row.recordNumber !== recordNumber ||
+              row.body !== `committed-${continuationNumber}-${recordNumber}`) continuationRowsExact = false
+        }
+        const compactAfterContinue = compactSummary(afterContinue)
+        const continuationMetadataMatches = Object.keys(expectedAfterContinue)
+          .every(key => compactAfterContinue[key] === expectedAfterContinue[key])
         await journal.close()
         return {
           outcome,
@@ -506,13 +546,26 @@ async function runCrashPhase ({ playwright, baseUrl, userDataDir, workload, time
           scannedCount: scanned.rows.length,
           scannedDigest: scanned.digest,
           prefixExact,
+          committedPrefixCount: committedPrefixRows.length,
+          committedPrefixDigest,
+          baselineDigest: options.baselineDigest,
+          committedPrefixDigestMatches,
           crashRowsPresent,
           atomic,
           continuationNumber,
+          continuationRecordCount,
           continued: !!continued,
-          afterContinue: compactSummary(afterContinue)
+          continuationRowsExact,
+          expectedAfterContinue,
+          afterContinue: compactAfterContinue,
+          continuationMetadataMatches
         }
-      }, { dbName: workload.dbName, baselineIntents: workload.baselineIntents, crashRecords: workload.crashRecords })
+      }, {
+        dbName: workload.dbName,
+        baselineIntents: workload.baselineIntents,
+        crashRecords: workload.crashRecords,
+        baselineDigest: baselineEvent.scanned.digest
+      })
       return {
         baseline: baselineEvent,
         putEvent,
@@ -539,7 +592,8 @@ async function runQuotaPhase ({ playwright, baseUrl, userDataDir, workload, time
     const baseline = await instance.page.evaluate(async dbName => {
       const modulePath = '/js/substrate/peerit-journal.js'
       const { createIndexedDbPeeritJournal } = await import(modulePath)
-      const id = number => Number(number).toString(16).padStart(64, '0')
+      const fixturePath = '/test/fixtures/peerit-vnext-journal-fixture.mjs'
+      const { createStructuralPeeritVnextJournalIntent } = await import(fixturePath)
       const deleteDatabase = name => new Promise((resolve, reject) => {
         const request = globalThis.indexedDB.deleteDatabase(name)
         request.onsuccess = () => resolve()
@@ -553,13 +607,12 @@ async function runQuotaPhase ({ playwright, baseUrl, userDataDir, workload, time
         dbName
       })
       await journal.ready()
-      await journal.commitIntent({
-        intentId: id(800001),
-        logicalId: id(900001),
-        operationBytes: JSON.stringify({ version: 1, operations: [{ type: 'quota-baseline' }] }),
-        records: [{ key: 'quota!baseline', value: { durable: true } }],
+      const records = [{ key: 'quota!baseline', value: { durable: true } }]
+      await journal.commitIntent(createStructuralPeeritVnextJournalIntent({
+        operations: [{ type: 'post', data: { id: 'quota!baseline', durable: true } }],
+        records,
         createdAt: 1
-      })
+      }))
       const summary = await journal.summary()
       await journal.close()
       return {
@@ -583,7 +636,8 @@ async function runQuotaPhase ({ playwright, baseUrl, userDataDir, workload, time
     const attempted = await instance.page.evaluate(async options => {
       const modulePath = '/js/substrate/peerit-journal.js'
       const { createIndexedDbPeeritJournal } = await import(modulePath)
-      const id = number => Number(number).toString(16).padStart(64, '0')
+      const fixturePath = '/test/fixtures/peerit-vnext-journal-fixture.mjs'
+      const { createStructuralPeeritVnextJournalIntent } = await import(fixturePath)
       const journal = createIndexedDbPeeritJournal({
         indexedDB: globalThis.indexedDB,
         IDBKeyRange: globalThis.IDBKeyRange,
@@ -602,22 +656,26 @@ async function runQuotaPhase ({ playwright, baseUrl, userDataDir, workload, time
       let error = null
       const originalPut = globalThis.IDBObjectStore.prototype.put
       let putCount = 0
+      let injectedAtPut = null
       globalThis.IDBObjectStore.prototype.put = function (...args) {
         putCount++
-        if (putCount === 2) throw new DOMException('injected browser quota boundary', 'QuotaExceededError')
+        if (putCount === 2) {
+          injectedAtPut = putCount
+          throw new DOMException('injected browser quota boundary', 'QuotaExceededError')
+        }
         return Reflect.apply(originalPut, this, args)
       }
+      const records = Array.from({ length: 16 }, (_, number) => ({
+        key: `quota!failed!${number}`,
+        value: { number, payload: payload.slice(number * 256, number * 256 + 256) }
+      }))
+      const input = createStructuralPeeritVnextJournalIntent({
+        operations: [{ type: 'post', data: { id: 'quota!failed', payload } }],
+        records,
+        createdAt: 2
+      })
       try {
-        await journal.commitIntent({
-          intentId: id(800002),
-          logicalId: id(900002),
-          operationBytes: JSON.stringify({ version: 1, operations: [{ type: 'quota-pressure', payload }] }),
-          records: Array.from({ length: 16 }, (_, number) => ({
-            key: `quota!failed!${number}`,
-            value: { number, payload: payload.slice(number * 256, number * 256 + 256) }
-          })),
-          createdAt: 2
-        })
+        await journal.commitIntent(input)
       } catch (caught) {
         error = {
           code: (caught && caught.code) || null,
@@ -628,12 +686,18 @@ async function runQuotaPhase ({ playwright, baseUrl, userDataDir, workload, time
         globalThis.IDBObjectStore.prototype.put = originalPut
       }
       const summary = await journal.summary()
-      const intent = await journal.getIntent(id(800002))
+      const intent = await journal.getIntent(input.intentId)
       const baselineRow = await journal.getView('quota!baseline')
-      const failedRow = await journal.getView('quota!failed!0')
+      let failedRowsPresent = 0
+      for (let number = 0; number < records.length; number++) {
+        if (await journal.getView(`quota!failed!${number}`)) failedRowsPresent++
+      }
       await journal.close()
       return {
         error,
+        putCount,
+        injectedAtPut,
+        hookFiredExactlyOnSecondPut: putCount === 2 && injectedAtPut === 2,
         summary: {
           revision: summary.revision,
           viewRevision: summary.viewRevision,
@@ -645,48 +709,77 @@ async function runQuotaPhase ({ playwright, baseUrl, userDataDir, workload, time
         },
         intentPresent: !!intent,
         baselinePresent: !!baselineRow,
-        failedRowPresent: !!failedRow
+        baselineRowExact: baselineRow?.durable === true,
+        failedRowsPresent,
+        attemptedIntentId: input.intentId,
+        attemptedIntentBytes: input.innerLength
       }
     }, { dbName: workload.quotaDbName, payloadBytes: workload.quotaPayloadBytes })
 
     await session.send('Storage.overrideQuotaForOrigin', { origin })
     const restored = await session.send('Storage.getUsageAndQuota', { origin })
     await session.detach()
-    const continued = await instance.page.evaluate(async dbName => {
+    const continued = await instance.page.evaluate(async options => {
       const modulePath = '/js/substrate/peerit-journal.js'
       const { createIndexedDbPeeritJournal } = await import(modulePath)
-      const id = number => Number(number).toString(16).padStart(64, '0')
+      const fixturePath = '/test/fixtures/peerit-vnext-journal-fixture.mjs'
+      const { createStructuralPeeritVnextJournalIntent } = await import(fixturePath)
       const journal = createIndexedDbPeeritJournal({
         indexedDB: globalThis.indexedDB,
         IDBKeyRange: globalThis.IDBKeyRange,
-        dbName
+        dbName: options.dbName
       })
       await journal.ready()
-      await journal.commitIntent({
-        intentId: id(800003),
-        logicalId: id(900003),
-        operationBytes: JSON.stringify({ version: 1, operations: [{ type: 'quota-continued' }] }),
-        records: [{ key: 'quota!continued', value: { durable: true } }],
+      const records = [{ key: 'quota!continued', value: { durable: true } }]
+      const input = createStructuralPeeritVnextJournalIntent({
+        operations: [{ type: 'post', data: { id: 'quota!continued', durable: true } }],
+        records,
         createdAt: 3
       })
+      const beforeSummary = await journal.summary()
+      const compact = value => ({
+        revision: value.revision,
+        viewRevision: value.viewRevision,
+        viewRecordCount: value.viewRecordCount,
+        intentCount: value.intentCount,
+        pendingIntentCount: value.pendingIntentCount,
+        intentBytes: value.intentBytes,
+        latestIntentId: value.latestIntentId
+      })
+      const before = compact(beforeSummary)
+      const baselineMetadataMatchesBefore = Object.keys(options.baseline)
+        .every(key => before[key] === options.baseline[key])
+      const expectedSummary = {
+        revision: options.baseline.revision + 1,
+        viewRevision: options.baseline.viewRevision + 1,
+        viewRecordCount: options.baseline.viewRecordCount + 1,
+        intentCount: options.baseline.intentCount + 1,
+        pendingIntentCount: options.baseline.pendingIntentCount + 1,
+        intentBytes: options.baseline.intentBytes + input.innerLength,
+        latestIntentId: input.intentId
+      }
+      await journal.commitIntent(input)
       const summary = await journal.summary()
       const row = await journal.getView('quota!continued')
       const baselineRow = await journal.getView('quota!baseline')
+      const compactedSummary = compact(summary)
+      const metadataMatches = Object.keys(expectedSummary)
+        .every(key => compactedSummary[key] === expectedSummary[key])
       await journal.close()
       return {
-        summary: {
-          revision: summary.revision,
-          viewRevision: summary.viewRevision,
-          viewRecordCount: summary.viewRecordCount,
-          intentCount: summary.intentCount,
-          pendingIntentCount: summary.pendingIntentCount,
-          intentBytes: summary.intentBytes,
-          latestIntentId: summary.latestIntentId
-        },
+        before,
+        baselineMetadataMatchesBefore,
+        expectedSummary,
+        summary: compactedSummary,
+        metadataMatches,
         continuedPresent: !!row,
-        baselinePresent: !!baselineRow
+        continuedRowExact: row?.durable === true,
+        baselinePresent: !!baselineRow,
+        baselineRowExact: baselineRow?.durable === true,
+        continuedIntentId: input.intentId,
+        continuedIntentBytes: input.innerLength
       }
-    }, workload.quotaDbName)
+    }, { dbName: workload.quotaDbName, baseline })
     return { baseline, before, overrideBytes, overridden, attempted, restored, continued }
   } finally {
     await closeChromium(instance)
@@ -695,6 +788,21 @@ async function runQuotaPhase ({ playwright, baseUrl, userDataDir, workload, time
 
 function gate (id, passed, detail) {
   return detail === undefined ? { id, passed: passed === true } : { id, passed: passed === true, detail }
+}
+
+const COMPACT_SUMMARY_KEYS = Object.freeze([
+  'revision',
+  'viewRevision',
+  'viewRecordCount',
+  'intentCount',
+  'pendingIntentCount',
+  'intentBytes',
+  'latestIntentId'
+])
+
+function exactCompactSummary (actual, expected) {
+  return actual != null && expected != null &&
+    COMPACT_SUMMARY_KEYS.every(key => actual[key] === expected[key])
 }
 
 export async function runBrowserPersistenceFaultLab (rawOptions = {}) {
@@ -734,9 +842,10 @@ export async function runBrowserPersistenceFaultLab (rawOptions = {}) {
       workload,
       timeoutMs
     })
-    const quotaRolledBack = quota.attempted.summary.intentCount === quota.baseline.intentCount &&
-      quota.attempted.summary.viewRecordCount === quota.baseline.viewRecordCount &&
-      quota.attempted.intentPresent === false && quota.attempted.failedRowPresent === false
+    const rollbackMetadataMatches = exactCompactSummary(quota.attempted.summary, quota.baseline)
+    const quotaRolledBack = rollbackMetadataMatches && quota.attempted.intentPresent === false &&
+      quota.attempted.failedRowsPresent === 0
+    quota.attempted.rollbackMetadataMatches = rollbackMetadataMatches
     const gates = [
       gate('OWNED_SOURCE_MODULES', sources.every(value => value.exact), sources),
       gate('REAL_BROWSER_PROCESS_SIGKILL', crash.killIssued && crash.exit.signal === 'SIGKILL' && crash.exit.exited, crash.exit),
@@ -746,26 +855,54 @@ export async function runBrowserPersistenceFaultLab (rawOptions = {}) {
       }),
       gate('COMMITTED_PREFIX_ATOMIC', crash.recovered.atomic && crash.recovered.prefixExact, crash.recovered),
       gate('REOPEN_RECOUNT_AND_DIGEST', crash.recovered.scannedCount === crash.recovered.expectedViewCount &&
-        /^[0-9a-f]{64}$/.test(crash.recovered.scannedDigest), {
+        /^[0-9a-f]{64}$/.test(crash.recovered.scannedDigest) &&
+        crash.recovered.committedPrefixCount === workload.baselineIntents &&
+        crash.recovered.committedPrefixDigestMatches === true &&
+        crash.recovered.committedPrefixDigest === crash.baseline.scanned.digest, {
         count: crash.recovered.scannedCount,
-        digest: crash.recovered.scannedDigest
+        digest: crash.recovered.scannedDigest,
+        committedPrefixCount: crash.recovered.committedPrefixCount,
+        committedPrefixDigest: crash.recovered.committedPrefixDigest,
+        capturedBaselineDigest: crash.baseline.scanned.digest
       }),
-      gate('CONTINUE_AFTER_CRASH', crash.recovered.continued === true, crash.recovered.afterContinue),
+      gate('CONTINUE_AFTER_CRASH', crash.recovered.continued === true &&
+        crash.recovered.continuationRowsExact === true &&
+        crash.recovered.continuationMetadataMatches === true &&
+        exactCompactSummary(crash.recovered.afterContinue, crash.recovered.expectedAfterContinue), {
+        continued: crash.recovered.continued,
+        continuationRowsExact: crash.recovered.continuationRowsExact,
+        expectedAfterContinue: crash.recovered.expectedAfterContinue,
+        afterContinue: crash.recovered.afterContinue
+      }),
       gate('CDP_QUOTA_OVERRIDE_OBSERVED', quota.overridden.overrideActive === true && quota.overridden.quota === quota.overrideBytes, {
         before: quota.before,
         overridden: quota.overridden
       }),
-      gate('INJECTED_QUOTA_ERROR_MAPPED', quota.attempted.error && quota.attempted.error.code === 'PEERIT_JOURNAL_QUOTA', quota.attempted.error),
+      gate('INJECTED_QUOTA_ERROR_MAPPED', quota.attempted.error &&
+        quota.attempted.error.code === 'PEERIT_JOURNAL_QUOTA' &&
+        quota.attempted.hookFiredExactlyOnSecondPut === true &&
+        quota.attempted.putCount === 2 && quota.attempted.injectedAtPut === 2, {
+        error: quota.attempted.error,
+        putCount: quota.attempted.putCount,
+        injectedAtPut: quota.attempted.injectedAtPut
+      }),
       gate('INJECTED_QUOTA_TRANSACTION_ROLLED_BACK', quotaRolledBack, quota.attempted),
-      gate('COMMITTED_ROWS_SURVIVE_INJECTED_QUOTA', quota.attempted.baselinePresent === true && quota.continued.baselinePresent === true),
+      gate('COMMITTED_ROWS_SURVIVE_INJECTED_QUOTA', quota.attempted.baselinePresent === true &&
+        quota.attempted.baselineRowExact === true && quota.continued.baselinePresent === true &&
+        quota.continued.baselineRowExact === true),
       gate('CONTINUE_AFTER_INJECTED_QUOTA', quota.restored.overrideActive === false &&
-        quota.continued.continuedPresent === true && quota.continued.summary.intentCount === quota.baseline.intentCount + 1,
+        quota.continued.baselineMetadataMatchesBefore === true &&
+        quota.continued.continuedPresent === true && quota.continued.continuedRowExact === true &&
+        quota.continued.metadataMatches === true &&
+        exactCompactSummary(quota.continued.summary, quota.continued.expectedSummary),
       { restored: quota.restored, continued: quota.continued })
     ]
     const blockers = gates.filter(value => !value.passed).map(value => value.id)
     const body = {
       schema: 'peerit-browser-persistence-fault-v1',
       evidenceClass: 'MEASURED_LOCAL_CHROMIUM_PROCESS_CRASH_AND_INJECTED_QUOTA',
+      operationShape: PEERIT_LAB_OPERATION_SHAPE_V2,
+      journalIntentShape: PEERIT_LAB_JOURNAL_INTENT_SHAPE_V2,
       checksumAlgorithm: 'sha256-canonical-json-v1',
       authenticityProven: false,
       claimBoundary: 'Measured on one local Chromium build and two isolated local filesystem profiles; not Firefox, not WebKit, not mobile, not production, not real quota exhaustion, not physical power loss, and not authenticity evidence.',

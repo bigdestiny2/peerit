@@ -31,6 +31,8 @@ function fixture (profile = 'full') {
   const body = {
     schema: 'peerit-browser-persistence-fault-v1',
     evidenceClass: 'MEASURED_LOCAL_CHROMIUM_PROCESS_CRASH_AND_INJECTED_QUOTA',
+    operationShape: 'peerit-unsigned-structural-operation-records-v2',
+    journalIntentShape: 'peerit-inner-operation-batch-v1-derived-journal-intent-v2',
     checksumAlgorithm: 'sha256-canonical-json-v1',
     authenticityProven: false,
     claimBoundary: 'Measured on one local Chromium build and two isolated local filesystem profiles; not Firefox, not WebKit, not mobile, not production, not real quota exhaustion, and not authenticity evidence.',
@@ -78,5 +80,10 @@ const falseAuthenticity = fixture()
 falseAuthenticity.authenticityProven = true
 falseAuthenticity.contentChecksum = persistenceFaultContentChecksum(falseAuthenticity)
 assert.ok(verifyPersistenceFaultEvidence(falseAuthenticity).blockers.includes('AUTHENTICITY_BOUNDARY_INVALID'))
+
+const rawJsonShape = fixture()
+rawJsonShape.journalIntentShape = 'raw-json-intent-v1'
+rawJsonShape.contentChecksum = persistenceFaultContentChecksum(rawJsonShape)
+assert.ok(verifyPersistenceFaultEvidence(rawJsonShape).blockers.includes('JOURNAL_INTENT_SHAPE_INVALID'))
 
 console.log('browser-peerit-persistence-fault: CLI, checksum, claim boundary, and fail-closed gate checks passed')

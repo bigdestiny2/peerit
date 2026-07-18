@@ -67,7 +67,8 @@
     "ship:live": "node ship.mjs --publish",
     "publish:local": "node publish.mjs --local",
     "publish:raw": "node publish.mjs",
-    "publish": "node ship.mjs --publish"
+    "publish": "node ship.mjs --publish",
+    "postinstall": "patch-package"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.12.1",
@@ -79,15 +80,17 @@
     "b4a": "1.8.1",
     "buffer": "5.1.0",
     "compact-encoding": "3.3.0",
-    "corestore": "6.18.4",
+    "corestore": "7.11.0",
+    "corestore6": "npm:corestore@6.18.4",
     "esbuild": "0.28.1",
     "hyperbee": "2.27.3",
-    "hypercore": "10.38.2",
+    "hypercore": "11.33.5",
     "hyperswarm": "4.17.0",
     "playwright": "1.61.1",
     "protomux": "3.11.0",
     "random-access-memory": "6.2.1",
     "random-access-web": "2.0.3",
-    "sodium-javascript": "0.8.0"
+    "sodium-javascript": "0.8.0",
+    "patch-package": "8.0.1"
   }
 }

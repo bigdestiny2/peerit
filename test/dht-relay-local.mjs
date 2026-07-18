@@ -30,7 +30,7 @@ if (_wd.unref) _wd.unref()
 let deps
 try {
   const [Corestore, Hyperswarm, Hyperbee, Protomux, b4a, cenc, RAM, createTestnet, wsMod, RelayDHT, WSStream] = await Promise.all([
-    import('corestore'), import('hyperswarm'), import('hyperbee'), import('protomux'),
+    import('corestore6'), import('hyperswarm'), import('hyperbee'), import('protomux'),
     import('b4a'), import('compact-encoding'), import('random-access-memory'), import('@hyperswarm/testnet'),
     import('ws'), import('@hyperswarm/dht-relay'), import('@hyperswarm/dht-relay/ws')
   ]).then((m) => m.map((x) => x.default || x))

@@ -345,16 +345,20 @@ node build-web.mjs --relay https://relay.peerit.site --readonly false \
 ```
 
 Exact pins used by the browser DHT bundle:
-`@hyperswarm/dht-relay@0.4.3`, `corestore@6.18.4`, `hypercore@10.38.2`,
-`hyperbee@2.27.3`, `hyperswarm@4.17.0`, `protomux@3.11.0`, `b4a@1.8.1`,
+`@hyperswarm/dht-relay@0.4.3`, `corestore@6.18.4` + `hypercore@10.38.2` (via the
+`corestore6` npm alias — see the note below), `hyperbee@2.27.3`,
+`hyperswarm@4.17.0`, `protomux@3.11.0`, `b4a@1.8.1`,
 `compact-encoding@3.3.0`, `random-access-web@2.0.3`,
 `random-access-memory@6.2.1`, `sodium-javascript@0.8.0`, `buffer@5.1.0`, and
 `esbuild@0.24.2`.
 
-Critical pin note (2026-07-01): keep `corestore` on 6.x and `hypercore` on 10.x,
-the random-access-storage era. Unpinned `npm install corestore` can select newer
-file-storage-oriented releases that pull Node `fs`/`path`/RocksDB code and will
-not browser-bundle.
+Pin note (updated 2026-07-17): the repo's direct `corestore`/`hypercore` pins
+sit at the ecosystem baseline (`corestore@7.11.0`, `hypercore@11.33.5`). The
+browser DHT bundle still REQUIRES the random-access-storage era (corestore 6.x +
+hypercore 10.x) — newer file-storage-oriented releases pull Node
+`fs`/`path`/RocksDB code and will not browser-bundle — so `js/dht-transport.js`
+imports `corestore6` (`npm:corestore@6.18.4`, which carries its own nested
+hypercore 10). Do not "upgrade" the alias; it is deliberate.
 
 **Validation status (2026-07-01):**
 - ✅ **DHT web build smoke:** `node test/dht-build.mjs` runs

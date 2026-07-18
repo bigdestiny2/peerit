@@ -246,8 +246,9 @@ the analysis's sharpest "still centralized" finding.
 ### Phase E — Tier 2: browser-owned cores + blind dht-relay pipe · HEAVY / NEEDS LIVE VALIDATION
 The "removes plaintext from the transport" tier. Ship best-effort with `/api` fallback.
 - Make `build-web --dht-relay` real: esbuild `js/dht-transport.js` with the exact
-  DHT devDependency pins (`@hyperswarm/dht-relay@0.4.3`, `corestore@6.18.4`,
-  `hypercore@10.38.2`, `hyperbee@2.27.3`, `hyperswarm@4.17.0`,
+  DHT devDependency pins (`@hyperswarm/dht-relay@0.4.3`, `corestore@6.18.4` +
+  `hypercore@10.38.2` via the `corestore6` npm alias, `hyperbee@2.27.3`,
+  `hyperswarm@4.17.0`,
   `protomux@3.11.0`, `b4a@1.8.1`, `random-access-web@2.0.3`,
   `compact-encoding@3.3.0`, `sodium-javascript@0.8.0`, `buffer@5.1.0`,
   `esbuild@0.24.2`) → ship the generated `web/js/dht-bundle.js`.
@@ -257,8 +258,9 @@ The "removes plaintext from the transport" tier. Ship best-effort with `/api` fa
   injects `compact-encoding`'s `raw`), the browser storage is a random-access-web factory, and
   `test/dht-build.mjs` proves `build-web --dht-relay` generates, CSP-allows, and manifest-hashes
   the real browser bundle — but ONLY with the pinned **corestore 6.x + hypercore 10.x**
-  (newer file-storage-oriented releases pull Node `fs`/`path`/RocksDB code and won't
-  browser-bundle). `npm run test:dht-live` (`test/dht-live.mjs`) then runs
+  (since 2026-07-17 reached through the `corestore6` npm alias; the repo's direct
+  pins are at the corestore 7 / hypercore 11 baseline. Newer file-storage-oriented
+  releases pull Node `fs`/`path`/RocksDB code and won't browser-bundle). `npm run test:dht-live` (`test/dht-live.mjs`) then runs
   two real `BridgeGossipSync` peers over the REAL corestore/hyperswarm/protomux/hypercore-
   replication stack on a `@hyperswarm/testnet` DHT and they CONVERGE — the codec + adapter are
   proven on the real wire, no fakes. **Remaining (real hardware only):** the browser runtime

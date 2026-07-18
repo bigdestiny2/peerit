@@ -32,7 +32,7 @@ export async function createDhtTransport ({ relayWsUrl, storage = 'peerit-dht', 
   // is harmless to load there; the caller falls back to the /api relay on throw).
   const [{ default: DHT }, { default: WSStream }, { default: Hyperswarm }, { default: Corestore }, { default: Hyperbee }, { default: Protomux }, { default: b4a }, cencMod, { default: RAW }] = await Promise.all([
     import('@hyperswarm/dht-relay'), import('@hyperswarm/dht-relay/ws'),
-    import('hyperswarm'), import('corestore'), import('hyperbee'), import('protomux'), import('b4a'), import('compact-encoding'), import('random-access-web')
+    import('hyperswarm'), import('corestore6'), import('hyperbee'), import('protomux'), import('b4a'), import('compact-encoding'), import('random-access-web')
   ])
 
   const ws = new WebSocket(relayWsUrl)
@@ -53,8 +53,10 @@ export async function createDhtTransport ({ relayWsUrl, storage = 'peerit-dht', 
   // Corestore over IndexedDB in the browser. MUST be a random-access-web FACTORY,
   // not a path string (a string selects a file backend → needs fs). REQUIRES
   // corestore ~6.x + hypercore ~10.x (the random-access era); corestore 7's
-  // hypercore-storage is Node-file-oriented and won't browser-bundle. See the
-  // pinned build recipe in docs/WEB-DEPLOYMENT.md.
+  // hypercore-storage is Node-file-oriented and won't browser-bundle. The repo's
+  // main pins are at the hypercore 11 / corestore 7 baseline, so this path imports
+  // the RAS-era stack through the `corestore6` npm alias (package.json).
+  // See the pinned build recipe in docs/WEB-DEPLOYMENT.md.
   const store = new Corestore(RAW(storage))
   await store.ready()
 

@@ -7,7 +7,8 @@
 // channel sharing one muxer), and the compact-encoding.raw wire codec (the fix for
 // the pass-through fake). If alice's post reaches bob here, the wire is real.
 //
-// Not part of `npm test`: needs the heavy DHT deps (corestore@6 hypercore@10
+// Not part of `npm test`: needs the heavy DHT deps (corestore@6 hypercore@10 —
+// via the `corestore6` npm alias, the random-access era this path requires —
 // hyperbee@2 hyperswarm@4 protomux b4a compact-encoding @hyperswarm/testnet
 // random-access-memory). Skips cleanly (exit 0) if they're absent.
 //   node test/dht-live.mjs
@@ -18,7 +19,7 @@ import { createHash } from 'node:crypto'
 let deps
 try {
   const [Corestore, Hyperswarm, Hyperbee, Protomux, b4a, cenc, RAM, createTestnet] = await Promise.all([
-    import('corestore'), import('hyperswarm'), import('hyperbee'), import('protomux'),
+    import('corestore6'), import('hyperswarm'), import('hyperbee'), import('protomux'),
     import('b4a'), import('compact-encoding'), import('random-access-memory'), import('@hyperswarm/testnet')
   ]).then((m) => m.map((x) => x.default || x))
   deps = { Corestore, Hyperswarm, Hyperbee, Protomux, b4a, cenc, RAM, createTestnet }

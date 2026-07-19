@@ -26,7 +26,7 @@ import {
   verifyPeeritPortablePinHistoryV1
 } from './portable-pin-history.mjs'
 import { hashPeeritLegacyRkPostureV1 } from './legacy-rk-posture.mjs'
-import { peeritRecoveryBundleContractHashV1 } from './peerit-recovery-bundle-v1.mjs'
+import { peeritRecoveryBundleContractHashV2 } from './peerit-recovery-bundle-v1.mjs'
 import {
   decodePeeritWebAssetManifestV1,
   hashPeeritWebAssetManifestV1
@@ -324,9 +324,9 @@ export async function verifyPeeritProductionReleaseBindingV1 (input, options = {
       `production binding ${label} differs from the frozen external authority`)
   }
 
-  requireEqual(binding.recoveryContractHash, peeritRecoveryBundleContractHashV1(),
+  requireEqual(binding.recoveryContractHash, peeritRecoveryBundleContractHashV2(),
     'PRODUCTION_RELEASE_BINDING_RECOVERY_MISMATCH',
-    'production binding does not name the exact PeeritRecoveryBundleV1 contract')
+    'production binding does not name the exact PeeritRecoveryContractV2')
   requireEqual(binding.legacyRkPostureHash, hashPeeritLegacyRkPostureV1(),
     'PRODUCTION_RELEASE_BINDING_LEGACY_RK_MISMATCH',
     'production binding does not preserve the public/reachable legacy RK posture')

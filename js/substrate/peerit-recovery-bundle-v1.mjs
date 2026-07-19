@@ -15,6 +15,16 @@ import {
   utf8Bytes
 } from './release-control-primitives.mjs'
 import { verifyPeeritPortablePinHistoryV1 } from './portable-pin-history.mjs'
+import {
+  hashPeeritValidatorArtifactV1,
+  hashPeeritValidatorVectorSetV1
+} from './validator-artifact.mjs'
+import {
+  PEERIT_VALIDATOR_PROFILE_BINDING_V1,
+  authenticatePeeritProfileExternalCodecAuthorityV1,
+  createPeeritValidatorV1
+} from '../../protocol/validator/peerit-validator-v1.bare.mjs'
+import { PEERIT_PROFILE_INVENTORY } from './profile-inventory.mjs'
 
 // The frozen profile owns PeeritRecoveryBundleV1. Its authenticated plaintext
 // and portable release contract intentionally advance to V2: V1 plaintext must
@@ -22,6 +32,7 @@ import { verifyPeeritPortablePinHistoryV1 } from './portable-pin-history.mjs'
 export const PEERIT_RECOVERY_BUNDLE_MAGIC_V1 = 'PEERITRB'
 export const PEERIT_RECOVERY_PAYLOAD_MAGIC_V2 = 'PEERITR2'
 export const PEERIT_RECOVERY_RECORD_MAGIC_V2 = 'PEERITRR'
+export const PEERIT_RECOVERY_OPERATIONAL_RECORD_MAGIC_V1 = 'PEERITOS'
 export const PEERIT_RECOVERY_COLLISION_SET_MAGIC_V1 = 'PEERITCS'
 export const PEERIT_RECOVERY_CRYPTO_SUITE_V1 =
   'argon2id-v1.3+xchacha20poly1305-ietf'
@@ -46,6 +57,7 @@ export const PEERIT_RECOVERY_LIMITS_V2 = Object.freeze({
   maximumRecordsPerSection: 4096,
   maximumRecordBytes: 4194304,
   maximumOperationalBytes: 1048576,
+  maximumOperationalRecordBytes: 1049088,
   maximumCoreSignedHeadBytes: 4096
 })
 
@@ -56,8 +68,8 @@ export const PEERIT_RECOVERY_RECORD_TYPE_V2 = Object.freeze({
   PENDING_CELL_INTENT: 16,
   RECEIPT: 17,
   DISCOVERY_FLOOR: 18,
-  VERIFIED_INDEX_ROOT: 19,
-  AUTHENTICATED_CURSOR: 20,
+  LAST_LOCALLY_VERIFIED_INDEX_ROOT: 19,
+  LAST_LOCALLY_AUTHENTICATED_CURSOR: 20,
   REPAIR_BACKLOG: 21,
   WITNESSED_FLOOR: 22
 })
@@ -69,6 +81,18 @@ export const PEERIT_RECOVERY_FLOOR_KIND_V1 = Object.freeze({
   ROOT: 4,
   HEAD: 5,
   DISCOVERY: 6
+})
+
+export const PEERIT_RECOVERY_OPERATIONAL_RECORD_TYPE_V1 = Object.freeze({
+  WITNESSED_CORE_HEAD: 1,
+  INNER_ENVELOPE_BINDING: 2,
+  CELL_REPLICA_BINDING: 3,
+  CELL_REQUEST_BINDING: 4,
+  RECEIPT_RESULT_BINDING: 5,
+  DISCOVERY_BUCKET_TUPLE: 6,
+  LAST_LOCALLY_VERIFIED_INDEX_ROOT_REFERENCE: 7,
+  LAST_LOCALLY_AUTHENTICATED_CURSOR_REFERENCE: 8,
+  REPAIR_REQUEST_BINDING: 9
 })
 
 export const PEERIT_RECOVERY_PROFILE_BINDING_V2 = Object.freeze({
@@ -88,7 +112,134 @@ export const PEERIT_RECOVERY_PROFILE_BINDING_V2 = Object.freeze({
     'b0cfcbe4deebd25632edb53c570ca9b05a1e0544532af4091ca8c43249994f9b'
 })
 
+export const PEERIT_RECOVERY_OPERATIONAL_COMMITMENT_DOMAINS_V1 =
+  Object.freeze({
+    witnessedCoreHead: 'peerit.recovery.witnessed-core-head.v1',
+    innerEnvelope: 'peerit.recovery.inner-envelope.v1',
+    cellReplica: 'peerit.recovery.cell-replica.v1',
+    cellRequest: 'peerit.recovery.cell-request.v1',
+    receiptResult: 'peerit.recovery.receipt-result.v1',
+    discoveryBucket: 'peerit.recovery.discovery-bucket.v1',
+    lastLocallyVerifiedIndexRoot: 'peerit.recovery.last-locally-verified-index-root-reference.v1',
+    lastLocallyAuthenticatedCursor: 'peerit.recovery.last-locally-authenticated-cursor-reference.v1',
+    repairRequest: 'peerit.recovery.repair-request.v1'
+  })
+
 const TYPES = PEERIT_RECOVERY_RECORD_TYPE_V2
+const OPERATIONAL_TYPES = PEERIT_RECOVERY_OPERATIONAL_RECORD_TYPE_V1
+const OPERATIONAL_RECORD_FIELDS = Object.freeze({
+  [OPERATIONAL_TYPES.WITNESSED_CORE_HEAD]: Object.freeze({
+    name: 'WitnessedCoreHeadReferenceV1',
+    fields: Object.freeze([
+      Object.freeze({ name: 'corePublicKey', kind: 'fixed32' }),
+      Object.freeze({ name: 'fork', kind: 'u64' }),
+      Object.freeze({ name: 'length', kind: 'u64' }),
+      Object.freeze({ name: 'headHash', kind: 'fixed32' }),
+      Object.freeze({ name: 'signerPublicKey', kind: 'fixed32' }),
+      Object.freeze({ name: 'signature', kind: 'fixed64' })
+    ])
+  }),
+  [OPERATIONAL_TYPES.INNER_ENVELOPE_BINDING]: Object.freeze({
+    name: 'InnerEnvelopeBindingV1',
+    fields: Object.freeze([
+      Object.freeze({ name: 'logicalIntentId', kind: 'fixed32' }),
+      Object.freeze({ name: 'operationKind', kind: 'u8', minimum: 1, maximum: 4 }),
+      Object.freeze({ name: 'targetId', kind: 'fixed32' }),
+      Object.freeze({ name: 'envelopeCommitment', kind: 'fixed32' }),
+      Object.freeze({ name: 'cipherSuite', kind: 'u8', minimum: 1, maximum: 1 }),
+      Object.freeze({ name: 'envelopeNonce', kind: 'fixed24' }),
+      Object.freeze({
+        name: 'sealedEnvelope',
+        kind: 'ciphertextU32',
+        minimum: 16,
+        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalBytes
+      })
+    ])
+  }),
+  [OPERATIONAL_TYPES.CELL_REPLICA_BINDING]: Object.freeze({
+    name: 'CellReplicaBindingV1',
+    fields: Object.freeze([
+      Object.freeze({ name: 'targetId', kind: 'fixed32' }),
+      Object.freeze({ name: 'relayPublicKey', kind: 'fixed32' }),
+      Object.freeze({ name: 'storeId', kind: 'fixed32' }),
+      Object.freeze({ name: 'replicaCiphertextHash', kind: 'fixed32' }),
+      Object.freeze({ name: 'replicaByteLength', kind: 'u64' }),
+      Object.freeze({ name: 'cipherSuite', kind: 'u8', minimum: 1, maximum: 1 }),
+      Object.freeze({ name: 'replicaNonce', kind: 'fixed24' }),
+      Object.freeze({
+        name: 'sealedReplica',
+        kind: 'ciphertextU32',
+        minimum: 16,
+        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalBytes
+      })
+    ])
+  }),
+  [OPERATIONAL_TYPES.CELL_REQUEST_BINDING]: Object.freeze({
+    name: 'CellRequestBindingV1',
+    fields: Object.freeze([
+      Object.freeze({ name: 'logicalIntentId', kind: 'fixed32' }),
+      Object.freeze({ name: 'operationKind', kind: 'u8', minimum: 1, maximum: 4 }),
+      Object.freeze({ name: 'targetId', kind: 'fixed32' }),
+      Object.freeze({ name: 'requestCommitment', kind: 'fixed32' }),
+      Object.freeze({ name: 'spendBindingHash', kind: 'optional32' }),
+      Object.freeze({ name: 'expectedRevision', kind: 'u64' })
+    ])
+  }),
+  [OPERATIONAL_TYPES.RECEIPT_RESULT_BINDING]: Object.freeze({
+    name: 'ReceiptResultBindingV1',
+    fields: Object.freeze([
+      Object.freeze({ name: 'intentRecordId', kind: 'fixed32' }),
+      Object.freeze({ name: 'requestCommitment', kind: 'fixed32' }),
+      Object.freeze({ name: 'status', kind: 'u8', minimum: 1, maximum: 3 }),
+      Object.freeze({ name: 'commitSequence', kind: 'u64' }),
+      Object.freeze({ name: 'commitDescriptorHash', kind: 'fixed32' }),
+      Object.freeze({ name: 'resultCommitment', kind: 'fixed32' })
+    ])
+  }),
+  [OPERATIONAL_TYPES.DISCOVERY_BUCKET_TUPLE]: Object.freeze({
+    name: 'DiscoveryBucketTupleV1',
+    fields: Object.freeze([
+      Object.freeze({ name: 'sourceId', kind: 'fixed32' }),
+      Object.freeze({ name: 'checkpointSequence', kind: 'u64' }),
+      Object.freeze({ name: 'checkpointHash', kind: 'fixed32' }),
+      Object.freeze({ name: 'bucketId', kind: 'fixed32' }),
+      Object.freeze({ name: 'bucketRootHash', kind: 'fixed32' })
+    ])
+  }),
+  [OPERATIONAL_TYPES.LAST_LOCALLY_VERIFIED_INDEX_ROOT_REFERENCE]: Object.freeze({
+    name: 'LastLocallyVerifiedIndexRootReferenceV1',
+    fields: Object.freeze([
+      Object.freeze({ name: 'indexId', kind: 'fixed32' }),
+      Object.freeze({ name: 'rootSequence', kind: 'u64' }),
+      Object.freeze({ name: 'rootHash', kind: 'fixed32' }),
+      Object.freeze({ name: 'referenceCommitment', kind: 'fixed32' })
+    ])
+  }),
+  [OPERATIONAL_TYPES.LAST_LOCALLY_AUTHENTICATED_CURSOR_REFERENCE]: Object.freeze({
+    name: 'LastLocallyAuthenticatedCursorReferenceV1',
+    fields: Object.freeze([
+      Object.freeze({ name: 'cursorKind', kind: 'u8', minimum: 1, maximum: 4 }),
+      Object.freeze({ name: 'cursorId', kind: 'fixed32' }),
+      Object.freeze({ name: 'sourcePublicKey', kind: 'fixed32' }),
+      Object.freeze({ name: 'sequence', kind: 'u64' }),
+      Object.freeze({ name: 'entryHash', kind: 'fixed32' }),
+      Object.freeze({ name: 'referenceCommitment', kind: 'fixed32' })
+    ])
+  }),
+  [OPERATIONAL_TYPES.REPAIR_REQUEST_BINDING]: Object.freeze({
+    name: 'RepairRequestBindingV1',
+    fields: Object.freeze([
+      Object.freeze({ name: 'targetId', kind: 'fixed32' }),
+      Object.freeze({ name: 'reason', kind: 'u8', minimum: 1, maximum: 8 }),
+      Object.freeze({ name: 'floorSequence', kind: 'u64' }),
+      Object.freeze({ name: 'expectedHash', kind: 'fixed32' }),
+      Object.freeze({ name: 'destinationHash', kind: 'fixed32' }),
+      Object.freeze({ name: 'capabilityRecordId', kind: 'fixed32' }),
+      Object.freeze({ name: 'requestCommitment', kind: 'fixed32' })
+    ])
+  })
+})
+
 const RECORD_FIELDS = Object.freeze({
   [TYPES.PUBLIC_READ_CAPABILITY]: Object.freeze({
     name: 'PublicReadCapabilityV2',
@@ -122,7 +273,7 @@ const RECORD_FIELDS = Object.freeze({
       Object.freeze({ name: 'witnessedFork', kind: 'u64' }),
       Object.freeze({ name: 'witnessedLength', kind: 'u64' }),
       Object.freeze({
-        name: 'witnessedSignedHead',
+        name: 'witnessedHeadRecord',
         kind: 'bytesU16',
         minimum: 1,
         maximum: PEERIT_RECOVERY_LIMITS_V2.maximumCoreSignedHeadBytes
@@ -143,26 +294,26 @@ const RECORD_FIELDS = Object.freeze({
       Object.freeze({ name: 'locatorHash', kind: 'fixed32' }),
       Object.freeze({ name: 'managementCapabilityRecordId', kind: 'fixed32' }),
       Object.freeze({
-        name: 'innerEnvelopeBytes',
+        name: 'innerEnvelopeRecord',
         kind: 'bytesU32',
         minimum: 1,
-        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalBytes
+        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalRecordBytes
       }),
-      Object.freeze({ name: 'innerEnvelopeHash', kind: 'fixed32' }),
+      Object.freeze({ name: 'innerEnvelopeRecordHash', kind: 'fixed32' }),
       Object.freeze({
-        name: 'replicaBytes',
+        name: 'replicaRecord',
         kind: 'bytesU32',
         minimum: 1,
-        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalBytes
+        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalRecordBytes
       }),
-      Object.freeze({ name: 'replicaHash', kind: 'fixed32' }),
+      Object.freeze({ name: 'replicaRecordHash', kind: 'fixed32' }),
       Object.freeze({
-        name: 'requestBytes',
+        name: 'requestRecord',
         kind: 'bytesU32',
         minimum: 1,
-        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalBytes
+        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalRecordBytes
       }),
-      Object.freeze({ name: 'requestBytesHash', kind: 'fixed32' }),
+      Object.freeze({ name: 'requestRecordHash', kind: 'fixed32' }),
       Object.freeze({ name: 'requestCommitment', kind: 'fixed32' }),
       Object.freeze({ name: 'spendBindingHash', kind: 'optional32' }),
       Object.freeze({ name: 'expectedRevision', kind: 'u64' })
@@ -180,12 +331,12 @@ const RECORD_FIELDS = Object.freeze({
       Object.freeze({ name: 'commitDescriptorHash', kind: 'fixed32' }),
       Object.freeze({ name: 'durabilityProfileHash', kind: 'fixed32' }),
       Object.freeze({
-        name: 'resultBytes',
+        name: 'resultRecord',
         kind: 'bytesU32',
         minimum: 1,
-        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalBytes
+        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalRecordBytes
       }),
-      Object.freeze({ name: 'resultBytesHash', kind: 'fixed32' })
+      Object.freeze({ name: 'resultRecordHash', kind: 'fixed32' })
     ])
   }),
   [TYPES.DISCOVERY_FLOOR]: Object.freeze({
@@ -195,31 +346,31 @@ const RECORD_FIELDS = Object.freeze({
       Object.freeze({ name: 'checkpointSequence', kind: 'u64' }),
       Object.freeze({ name: 'checkpointHash', kind: 'fixed32' }),
       Object.freeze({
-        name: 'recentBucketTupleBytes',
+        name: 'recentBucketTupleRecord',
         kind: 'bytesU32',
         minimum: 1,
-        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalBytes
+        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalRecordBytes
       }),
-      Object.freeze({ name: 'recentBucketTupleHash', kind: 'fixed32' })
+      Object.freeze({ name: 'recentBucketTupleRecordHash', kind: 'fixed32' })
     ])
   }),
-  [TYPES.VERIFIED_INDEX_ROOT]: Object.freeze({
-    name: 'VerifiedIndexRootV2',
+  [TYPES.LAST_LOCALLY_VERIFIED_INDEX_ROOT]: Object.freeze({
+    name: 'LastLocallyVerifiedIndexRootV2',
     fields: Object.freeze([
       Object.freeze({ name: 'indexId', kind: 'fixed32' }),
       Object.freeze({ name: 'rootSequence', kind: 'u64' }),
       Object.freeze({ name: 'rootHash', kind: 'fixed32' }),
       Object.freeze({
-        name: 'rootRecordBytes',
+        name: 'rootReferenceRecord',
         kind: 'bytesU32',
         minimum: 1,
-        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalBytes
+        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalRecordBytes
       }),
-      Object.freeze({ name: 'rootRecordBytesHash', kind: 'fixed32' })
+      Object.freeze({ name: 'rootReferenceRecordHash', kind: 'fixed32' })
     ])
   }),
-  [TYPES.AUTHENTICATED_CURSOR]: Object.freeze({
-    name: 'AuthenticatedCursorV2',
+  [TYPES.LAST_LOCALLY_AUTHENTICATED_CURSOR]: Object.freeze({
+    name: 'LastLocallyAuthenticatedCursorV2',
     fields: Object.freeze([
       Object.freeze({ name: 'cursorKind', kind: 'u8', minimum: 1, maximum: 4 }),
       Object.freeze({ name: 'cursorId', kind: 'fixed32' }),
@@ -227,12 +378,12 @@ const RECORD_FIELDS = Object.freeze({
       Object.freeze({ name: 'sequence', kind: 'u64' }),
       Object.freeze({ name: 'entryHash', kind: 'fixed32' }),
       Object.freeze({
-        name: 'authenticatedCursorBytes',
+        name: 'cursorReferenceRecord',
         kind: 'bytesU32',
         minimum: 1,
-        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalBytes
+        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalRecordBytes
       }),
-      Object.freeze({ name: 'authenticatedCursorBytesHash', kind: 'fixed32' })
+      Object.freeze({ name: 'cursorReferenceRecordHash', kind: 'fixed32' })
     ])
   }),
   [TYPES.REPAIR_BACKLOG]: Object.freeze({
@@ -245,12 +396,12 @@ const RECORD_FIELDS = Object.freeze({
       Object.freeze({ name: 'destinationHash', kind: 'fixed32' }),
       Object.freeze({ name: 'capabilityRecordId', kind: 'fixed32' }),
       Object.freeze({
-        name: 'repairRequestBytes',
+        name: 'repairRequestRecord',
         kind: 'bytesU32',
         minimum: 1,
-        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalBytes
+        maximum: PEERIT_RECOVERY_LIMITS_V2.maximumOperationalRecordBytes
       }),
-      Object.freeze({ name: 'repairRequestBytesHash', kind: 'fixed32' })
+      Object.freeze({ name: 'repairRequestRecordHash', kind: 'fixed32' })
     ])
   }),
   [TYPES.WITNESSED_FLOOR]: Object.freeze({
@@ -274,8 +425,8 @@ const PAYLOAD_FIELDS_V2 = Object.freeze([
   'receiptRecords',
   'witnessedFloorRecords',
   'discoveryFloorRecords',
-  'verifiedIndexRootRecords',
-  'authenticatedCursorRecords',
+  'lastLocallyVerifiedIndexRootRecords',
+  'lastLocallyAuthenticatedCursorRecords',
   'repairBacklogRecords',
   'retiredDeviceChainIds'
 ])
@@ -311,13 +462,13 @@ const PAYLOAD_SECTIONS_V2 = Object.freeze([
     sort: 'recordId'
   }),
   Object.freeze({
-    field: 'verifiedIndexRootRecords',
-    allowedTypes: Object.freeze([TYPES.VERIFIED_INDEX_ROOT]),
+    field: 'lastLocallyVerifiedIndexRootRecords',
+    allowedTypes: Object.freeze([TYPES.LAST_LOCALLY_VERIFIED_INDEX_ROOT]),
     sort: 'recordId'
   }),
   Object.freeze({
-    field: 'authenticatedCursorRecords',
-    allowedTypes: Object.freeze([TYPES.AUTHENTICATED_CURSOR]),
+    field: 'lastLocallyAuthenticatedCursorRecords',
+    allowedTypes: Object.freeze([TYPES.LAST_LOCALLY_AUTHENTICATED_CURSOR]),
     sort: 'recordId'
   }),
   Object.freeze({
@@ -361,26 +512,93 @@ const OPERATIONAL_BYTES_HASH_DOMAIN_V2 =
 const COLLISION_SET_HASH_DOMAIN_V1 = 'peerit.recovery-collision-set.v1'
 const PROFILE_AUTHORITIES = new WeakMap()
 const COLLISION_SETS = new WeakMap()
+const UINT8_ARRAY = Uint8Array
+const UINT8_ARRAY_PROTOTYPE = Uint8Array.prototype
+const UINT8_ARRAY_FILL = Uint8Array.prototype.fill
+const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype)
+const TYPED_ARRAY_BUFFER =
+  Object.getOwnPropertyDescriptor(TYPED_ARRAY_PROTOTYPE, 'buffer').get
+const TYPED_ARRAY_BYTE_OFFSET =
+  Object.getOwnPropertyDescriptor(TYPED_ARRAY_PROTOTYPE, 'byteOffset').get
+const TYPED_ARRAY_BYTE_LENGTH =
+  Object.getOwnPropertyDescriptor(TYPED_ARRAY_PROTOTYPE, 'byteLength').get
+const DATA_VIEW_BUFFER =
+  Object.getOwnPropertyDescriptor(DataView.prototype, 'buffer').get
+const DATA_VIEW_BYTE_OFFSET =
+  Object.getOwnPropertyDescriptor(DataView.prototype, 'byteOffset').get
+const DATA_VIEW_BYTE_LENGTH =
+  Object.getOwnPropertyDescriptor(DataView.prototype, 'byteLength').get
+const ARRAY_BUFFER_BYTE_LENGTH =
+  Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get
 
 function fail (code, message) {
   failReleaseControl(code, message)
 }
 
+function intrinsicByteWindow (input) {
+  try {
+    const buffer = Reflect.apply(TYPED_ARRAY_BUFFER, input, [])
+    const byteOffset = Reflect.apply(TYPED_ARRAY_BYTE_OFFSET, input, [])
+    const byteLength = Reflect.apply(TYPED_ARRAY_BYTE_LENGTH, input, [])
+    return {
+      buffer,
+      byteOffset,
+      byteLength,
+      bytes: new UINT8_ARRAY(buffer, byteOffset, byteLength)
+    }
+  } catch {}
+  try {
+    const buffer = Reflect.apply(DATA_VIEW_BUFFER, input, [])
+    const byteOffset = Reflect.apply(DATA_VIEW_BYTE_OFFSET, input, [])
+    const byteLength = Reflect.apply(DATA_VIEW_BYTE_LENGTH, input, [])
+    return {
+      buffer,
+      byteOffset,
+      byteLength,
+      bytes: new UINT8_ARRAY(buffer, byteOffset, byteLength)
+    }
+  } catch {}
+  try {
+    const byteLength = Reflect.apply(ARRAY_BUFFER_BYTE_LENGTH, input, [])
+    return {
+      buffer: input,
+      byteOffset: 0,
+      byteLength,
+      bytes: new UINT8_ARRAY(input)
+    }
+  } catch {}
+  return null
+}
+
+function wipeByteWindow (input) {
+  try {
+    const window = intrinsicByteWindow(input)
+    if (window == null) return false
+    const completeBackingBuffer = new UINT8_ARRAY(window.buffer)
+    Reflect.apply(UINT8_ARRAY_FILL, completeBackingBuffer, [0])
+    return true
+  } catch {
+    return false
+  }
+}
+
 function wipe (input, seen = new Set()) {
-  if (input == null || (typeof input !== 'object' && typeof input !== 'function') ||
-      seen.has(input)) return
-  seen.add(input)
-  if (input instanceof Uint8Array) {
+  try {
+    if (input == null ||
+        (typeof input !== 'object' && typeof input !== 'function') ||
+        seen.has(input)) return
+    seen.add(input)
+    if (wipeByteWindow(input)) return
+    let descriptors = null
     try {
-      input.fill(0)
-    } catch {}
-    return
-  }
-  for (const descriptor of Object.values(
-    Object.getOwnPropertyDescriptors(input)
-  )) {
-    if (Object.hasOwn(descriptor, 'value')) wipe(descriptor.value, seen)
-  }
+      descriptors = Object.getOwnPropertyDescriptors(input)
+    } catch {
+      return
+    }
+    for (const descriptor of Object.values(descriptors)) {
+      if (Object.hasOwn(descriptor, 'value')) wipe(descriptor.value, seen)
+    }
+  } catch {}
 }
 
 function exactObject (input, fields, name, code = 'BAD_RECOVERY_PAYLOAD') {
@@ -471,6 +689,10 @@ function canonicalField (value, descriptor, field) {
   switch (descriptor.kind) {
     case 'fixed32':
       return fixed(value, 32, field)
+    case 'fixed64':
+      return fixed(value, 64, field)
+    case 'fixed24':
+      return fixed(value, 24, field)
     case 'optional32':
       return value == null ? null : fixed(value, 32, field)
     case 'u8':
@@ -481,12 +703,18 @@ function canonicalField (value, descriptor, field) {
     case 'u64':
       return asU64(value, field)
     case 'bytesU16':
-    case 'bytesU32': {
+    case 'bytesU32':
+    case 'ciphertextU32': {
       const bytes = new Uint8Array(asBytes(value, field))
       if (bytes.byteLength < descriptor.minimum ||
           bytes.byteLength > descriptor.maximum) {
         wipe(bytes)
         fail('BAD_RECOVERY_RECORD', `${field} byte length is invalid`)
+      }
+      if (descriptor.kind === 'ciphertextU32' && isAllZero(bytes)) {
+        wipe(bytes)
+        fail('BAD_RECOVERY_OPERATIONAL_RECORD',
+          `${field} sealed ciphertext is all zero`)
       }
       return bytes
     }
@@ -499,6 +727,12 @@ function writeField (writer, value, descriptor, field) {
   switch (descriptor.kind) {
     case 'fixed32':
       writer.fixed(value, 32, field)
+      break
+    case 'fixed64':
+      writer.fixed(value, 64, field)
+      break
+    case 'fixed24':
+      writer.fixed(value, 24, field)
       break
     case 'optional32':
       writer.optionalFixed(value, 32, field)
@@ -519,6 +753,7 @@ function writeField (writer, value, descriptor, field) {
       writer.bytesU16(value, descriptor.minimum, descriptor.maximum, field)
       break
     case 'bytesU32':
+    case 'ciphertextU32':
       writer.u32(value.byteLength, `${field} length`)
       writer.fixed(value, value.byteLength, field)
       break
@@ -529,6 +764,10 @@ function readField (reader, descriptor, field) {
   switch (descriptor.kind) {
     case 'fixed32':
       return reader.fixed(32, field)
+    case 'fixed64':
+      return reader.fixed(64, field)
+    case 'fixed24':
+      return reader.fixed(24, field)
     case 'optional32':
       return reader.optionalFixed(32, field)
     case 'u8':
@@ -541,7 +780,8 @@ function readField (reader, descriptor, field) {
       return reader.u64(field)
     case 'bytesU16':
       return reader.bytesU16(descriptor.minimum, descriptor.maximum, field)
-    case 'bytesU32': {
+    case 'bytesU32':
+    case 'ciphertextU32': {
       const length = reader.u32(`${field} length`)
       if (length < descriptor.minimum || length > descriptor.maximum) {
         fail('BAD_RECOVERY_RECORD', `${field} byte length is invalid`)
@@ -550,6 +790,509 @@ function readField (reader, descriptor, field) {
     }
     default:
       fail('BAD_RECOVERY_RECORD', `${field} has an unknown field codec`)
+  }
+}
+
+function operationalCommitmentRule (type) {
+  const domains = PEERIT_RECOVERY_OPERATIONAL_COMMITMENT_DOMAINS_V1
+  return {
+    [OPERATIONAL_TYPES.WITNESSED_CORE_HEAD]: {
+      field: 'headHash',
+      domain: domains.witnessedCoreHead,
+      committedFields: [
+        'corePublicKey',
+        'fork',
+        'length',
+        'signerPublicKey',
+        'signature'
+      ]
+    },
+    [OPERATIONAL_TYPES.INNER_ENVELOPE_BINDING]: {
+      field: 'envelopeCommitment',
+      domain: domains.innerEnvelope,
+      committedFields: [
+        'logicalIntentId',
+        'operationKind',
+        'targetId',
+        'cipherSuite',
+        'envelopeNonce',
+        'sealedEnvelope'
+      ]
+    },
+    [OPERATIONAL_TYPES.CELL_REPLICA_BINDING]: {
+      field: 'replicaCiphertextHash',
+      domain: domains.cellReplica,
+      committedFields: [
+        'targetId',
+        'relayPublicKey',
+        'storeId',
+        'replicaByteLength',
+        'cipherSuite',
+        'replicaNonce',
+        'sealedReplica'
+      ]
+    },
+    [OPERATIONAL_TYPES.CELL_REQUEST_BINDING]: {
+      field: 'requestCommitment',
+      domain: domains.cellRequest,
+      committedFields: [
+        'logicalIntentId',
+        'operationKind',
+        'targetId',
+        'spendBindingHash',
+        'expectedRevision'
+      ]
+    },
+    [OPERATIONAL_TYPES.RECEIPT_RESULT_BINDING]: {
+      field: 'resultCommitment',
+      domain: domains.receiptResult,
+      committedFields: [
+        'intentRecordId',
+        'requestCommitment',
+        'status',
+        'commitSequence',
+        'commitDescriptorHash'
+      ]
+    },
+    [OPERATIONAL_TYPES.DISCOVERY_BUCKET_TUPLE]: {
+      field: 'bucketRootHash',
+      domain: domains.discoveryBucket,
+      committedFields: [
+        'sourceId',
+        'checkpointSequence',
+        'checkpointHash',
+        'bucketId'
+      ]
+    },
+    [OPERATIONAL_TYPES.LAST_LOCALLY_VERIFIED_INDEX_ROOT_REFERENCE]: {
+      field: 'referenceCommitment',
+      domain: domains.lastLocallyVerifiedIndexRoot,
+      committedFields: ['indexId', 'rootSequence', 'rootHash']
+    },
+    [OPERATIONAL_TYPES.LAST_LOCALLY_AUTHENTICATED_CURSOR_REFERENCE]: {
+      field: 'referenceCommitment',
+      domain: domains.lastLocallyAuthenticatedCursor,
+      committedFields: [
+        'cursorKind',
+        'cursorId',
+        'sourcePublicKey',
+        'sequence',
+        'entryHash'
+      ]
+    },
+    [OPERATIONAL_TYPES.REPAIR_REQUEST_BINDING]: {
+      field: 'requestCommitment',
+      domain: domains.repairRequest,
+      committedFields: [
+        'targetId',
+        'reason',
+        'floorSequence',
+        'expectedHash',
+        'destinationHash',
+        'capabilityRecordId'
+      ]
+    }
+  }[type] || null
+}
+
+function operationalCommitment (value, domain, fieldNames) {
+  const definition = OPERATIONAL_RECORD_FIELDS[value.type]
+  let bytes = null
+  try {
+    const writer = new CanonicalWriter()
+    writer.u8(value.type, `${definition.name} commitment type`)
+    writer.u8(1, `${definition.name} commitment version`)
+    for (const fieldName of fieldNames) {
+      const descriptor = definition.fields.find(
+        field => field.name === fieldName
+      )
+      if (descriptor == null) {
+        fail('BAD_RECOVERY_OPERATIONAL_RECORD',
+          `${definition.name} commitment field is unknown`)
+      }
+      writeField(
+        writer,
+        value[fieldName],
+        descriptor,
+        `${definition.name}.${fieldName}`
+      )
+    }
+    bytes = writer.finish()
+    return domainLengthHash(domain, bytes)
+  } finally {
+    wipe(bytes)
+  }
+}
+
+export function derivePeeritRecoveryOperationalCommitmentV1 (type, input) {
+  const definition = OPERATIONAL_RECORD_FIELDS[type]
+  const rule = operationalCommitmentRule(type)
+  if (definition == null || rule == null) {
+    fail('RECOVERY_OPERATIONAL_RECORD_TYPE_FORBIDDEN',
+      'cannot derive a commitment for an unknown operational type')
+  }
+  const value = exactObject(
+    input,
+    rule.committedFields,
+    `${definition.name} commitment input`,
+    'BAD_RECOVERY_OPERATIONAL_RECORD'
+  )
+  const canonical = { type, version: 1 }
+  try {
+    for (const fieldName of rule.committedFields) {
+      const descriptor = definition.fields.find(
+        field => field.name === fieldName
+      )
+      canonical[fieldName] = canonicalField(
+        value[fieldName],
+        descriptor,
+        `${definition.name}.${fieldName}`
+      )
+    }
+    if (type === OPERATIONAL_TYPES.CELL_REPLICA_BINDING &&
+        canonical.replicaByteLength !==
+          BigInt(canonical.sealedReplica.byteLength)) {
+      fail('RECOVERY_OPERATIONAL_COMMITMENT_MISMATCH',
+        'CellReplicaBindingV1.replicaByteLength is not exact')
+    }
+    return operationalCommitment(
+      canonical,
+      rule.domain,
+      rule.committedFields
+    )
+  } finally {
+    wipe(canonical)
+  }
+}
+
+function requireOperationalCommitment (
+  value,
+  field,
+  domain,
+  committedFields
+) {
+  let expected = null
+  try {
+    expected = operationalCommitment(value, domain, committedFields)
+    if (!bytesEqual(value[field], expected)) {
+      fail('RECOVERY_OPERATIONAL_COMMITMENT_MISMATCH',
+        `${OPERATIONAL_RECORD_FIELDS[value.type].name}.${field} is not derived from its exact safe fields`)
+    }
+  } finally {
+    wipe(expected)
+  }
+}
+
+function validateOperationalCommitments (value) {
+  const rule = operationalCommitmentRule(value.type)
+  if (rule == null) {
+    fail('RECOVERY_OPERATIONAL_RECORD_TYPE_FORBIDDEN',
+      'operational commitment type is unknown')
+  }
+  if (value.type === OPERATIONAL_TYPES.CELL_REPLICA_BINDING &&
+      value.replicaByteLength !== BigInt(value.sealedReplica.byteLength)) {
+    fail('RECOVERY_OPERATIONAL_COMMITMENT_MISMATCH',
+      'CellReplicaBindingV1.replicaByteLength is not exact')
+  }
+  requireOperationalCommitment(
+    value,
+    rule.field,
+    rule.domain,
+    rule.committedFields
+  )
+}
+
+function canonicalOperationalRecord (input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    fail('BAD_RECOVERY_OPERATIONAL_RECORD',
+      'PeeritRecoveryOperationalRecordV1 must be a plain object')
+  }
+  const typeDescriptor = Object.getOwnPropertyDescriptor(input, 'type')
+  const definition = typeDescriptor &&
+    Object.hasOwn(typeDescriptor, 'value') &&
+    Number.isSafeInteger(typeDescriptor.value)
+    ? OPERATIONAL_RECORD_FIELDS[typeDescriptor.value]
+    : null
+  if (definition == null) {
+    fail('RECOVERY_OPERATIONAL_RECORD_TYPE_FORBIDDEN',
+      'operational records admit only the closed safe type registry')
+  }
+  const fields = ['type', 'version', ...definition.fields.map(field => field.name)]
+  const value = exactObject(
+    input,
+    fields,
+    definition.name,
+    'BAD_RECOVERY_OPERATIONAL_RECORD'
+  )
+  if (value.version !== 1) {
+    fail('BAD_RECOVERY_OPERATIONAL_RECORD',
+      `${definition.name} version must be 1`)
+  }
+  const output = { type: value.type, version: 1 }
+  try {
+    for (const descriptor of definition.fields) {
+      output[descriptor.name] = canonicalField(
+        value[descriptor.name],
+        descriptor,
+        `${definition.name}.${descriptor.name}`
+      )
+    }
+    validateOperationalCommitments(output)
+    return output
+  } catch (error) {
+    wipe(output)
+    if (error?.code === 'BAD_RECOVERY_OPERATIONAL_RECORD' ||
+        error?.code === 'RECOVERY_OPERATIONAL_COMMITMENT_MISMATCH' ||
+        error?.code === 'RECOVERY_OPERATIONAL_RECORD_TYPE_FORBIDDEN') {
+      throw error
+    }
+    fail('BAD_RECOVERY_OPERATIONAL_RECORD',
+      `${definition.name} contains a noncanonical field`)
+  }
+}
+
+function writeOperationalRecord (value) {
+  const definition = OPERATIONAL_RECORD_FIELDS[value.type]
+  const writer = new CanonicalWriter()
+  writer.literalAscii(
+    PEERIT_RECOVERY_OPERATIONAL_RECORD_MAGIC_V1,
+    'PeeritRecoveryOperationalRecordV1 magic'
+  )
+  writer.u8(value.type, 'PeeritRecoveryOperationalRecordV1 type')
+  writer.u8(1, 'PeeritRecoveryOperationalRecordV1 version')
+  for (const descriptor of definition.fields) {
+    writeField(
+      writer,
+      value[descriptor.name],
+      descriptor,
+      `${definition.name}.${descriptor.name}`
+    )
+  }
+  return writer.finish()
+}
+
+export function encodePeeritRecoveryOperationalRecordV1 (input) {
+  let value = null
+  try {
+    value = canonicalOperationalRecord(input)
+    return writeOperationalRecord(value)
+  } catch (error) {
+    if (error?.code === 'BAD_RECOVERY_OPERATIONAL_RECORD' ||
+        error?.code === 'RECOVERY_OPERATIONAL_COMMITMENT_MISMATCH' ||
+        error?.code === 'RECOVERY_OPERATIONAL_RECORD_TYPE_FORBIDDEN') {
+      throw error
+    }
+    fail('BAD_RECOVERY_OPERATIONAL_RECORD',
+      'PeeritRecoveryOperationalRecordV1 encoding failed closed')
+  } finally {
+    wipe(value)
+  }
+}
+
+export function decodePeeritRecoveryOperationalRecordV1 (input) {
+  let bytes = null
+  let raw = null
+  let value = null
+  let canonicalBytes = null
+  try {
+    bytes = new UINT8_ARRAY(asBytes(
+      input,
+      'PeeritRecoveryOperationalRecordV1 bytes'
+    ))
+    if (bytes.byteLength < 11 ||
+        bytes.byteLength >
+          PEERIT_RECOVERY_LIMITS_V2.maximumOperationalRecordBytes) {
+      fail('BAD_RECOVERY_OPERATIONAL_RECORD',
+        'PeeritRecoveryOperationalRecordV1 size is invalid')
+    }
+    const reader = new CanonicalReader(bytes)
+    reader.expectLiteralAscii(
+      PEERIT_RECOVERY_OPERATIONAL_RECORD_MAGIC_V1,
+      'PeeritRecoveryOperationalRecordV1 magic'
+    )
+    const type = reader.u8('PeeritRecoveryOperationalRecordV1 type')
+    const version = reader.u8('PeeritRecoveryOperationalRecordV1 version')
+    const definition = OPERATIONAL_RECORD_FIELDS[type]
+    if (definition == null) {
+      fail('RECOVERY_OPERATIONAL_RECORD_TYPE_FORBIDDEN',
+        'unknown operational record type is forbidden')
+    }
+    raw = { type, version }
+    for (const descriptor of definition.fields) {
+      raw[descriptor.name] = readField(
+        reader,
+        descriptor,
+        `${definition.name}.${descriptor.name}`
+      )
+    }
+    reader.expectEnd('PeeritRecoveryOperationalRecordV1')
+    value = canonicalOperationalRecord(raw)
+    canonicalBytes = writeOperationalRecord(value)
+    if (!bytesEqual(bytes, canonicalBytes)) {
+      fail('BAD_RECOVERY_OPERATIONAL_RECORD',
+        'PeeritRecoveryOperationalRecordV1 is noncanonical')
+    }
+    const output = {
+      type,
+      typeName: definition.name,
+      version: 1
+    }
+    for (const descriptor of definition.fields) {
+      const field = value[descriptor.name]
+      output[descriptor.name] = field instanceof Uint8Array
+        ? new Uint8Array(field)
+        : field
+    }
+    return Object.freeze(output)
+  } catch (error) {
+    if (error?.code === 'BAD_RECOVERY_OPERATIONAL_RECORD' ||
+        error?.code === 'RECOVERY_OPERATIONAL_COMMITMENT_MISMATCH' ||
+        error?.code === 'RECOVERY_OPERATIONAL_RECORD_TYPE_FORBIDDEN') {
+      throw error
+    }
+    fail('BAD_RECOVERY_OPERATIONAL_RECORD',
+      'PeeritRecoveryOperationalRecordV1 decoding failed closed')
+  } finally {
+    wipe(bytes)
+    wipe(raw)
+    wipe(value)
+    wipe(canonicalBytes)
+  }
+}
+
+function requireOperationalRecord (bytes, type, matches, field) {
+  let value = null
+  try {
+    value = decodePeeritRecoveryOperationalRecordV1(bytes)
+    if (value.type !== type) {
+      fail('RECOVERY_OPERATIONAL_RECORD_TYPE_CONFUSION',
+        `${field} has the wrong closed operational record type`)
+    }
+    if (!matches(value)) {
+      fail('RECOVERY_OPERATIONAL_RECORD_BINDING_MISMATCH',
+        `${field} does not match its enclosing recovery record`)
+    }
+  } finally {
+    wipe(value)
+  }
+}
+
+function validateOperationalFields (record) {
+  switch (record.type) {
+    case TYPES.CORE_READ_CAPABILITY:
+      requireOperationalRecord(
+        record.witnessedHeadRecord,
+        OPERATIONAL_TYPES.WITNESSED_CORE_HEAD,
+        value =>
+          bytesEqual(value.corePublicKey, record.corePublicKey) &&
+          value.fork === record.witnessedFork &&
+          value.length === record.witnessedLength,
+        'CoreReadCapabilityV2.witnessedHeadRecord'
+      )
+      break
+    case TYPES.PENDING_CELL_INTENT:
+      requireOperationalRecord(
+        record.innerEnvelopeRecord,
+        OPERATIONAL_TYPES.INNER_ENVELOPE_BINDING,
+        value =>
+          bytesEqual(value.logicalIntentId, record.logicalIntentId) &&
+          value.operationKind === record.operationKind &&
+          bytesEqual(value.targetId, record.targetId),
+        'PendingCellIntentV2.innerEnvelopeRecord'
+      )
+      requireOperationalRecord(
+        record.replicaRecord,
+        OPERATIONAL_TYPES.CELL_REPLICA_BINDING,
+        value =>
+          bytesEqual(value.targetId, record.targetId) &&
+          bytesEqual(value.relayPublicKey, record.relayPublicKey) &&
+          bytesEqual(value.storeId, record.storeId),
+        'PendingCellIntentV2.replicaRecord'
+      )
+      requireOperationalRecord(
+        record.requestRecord,
+        OPERATIONAL_TYPES.CELL_REQUEST_BINDING,
+        value =>
+          bytesEqual(value.logicalIntentId, record.logicalIntentId) &&
+          value.operationKind === record.operationKind &&
+          bytesEqual(value.targetId, record.targetId) &&
+          bytesEqual(value.requestCommitment, record.requestCommitment) &&
+          ((value.spendBindingHash == null) ===
+            (record.spendBindingHash == null)) &&
+          (value.spendBindingHash == null ||
+            bytesEqual(value.spendBindingHash, record.spendBindingHash)) &&
+          value.expectedRevision === record.expectedRevision,
+        'PendingCellIntentV2.requestRecord'
+      )
+      break
+    case TYPES.RECEIPT:
+      requireOperationalRecord(
+        record.resultRecord,
+        OPERATIONAL_TYPES.RECEIPT_RESULT_BINDING,
+        value =>
+          bytesEqual(value.intentRecordId, record.intentRecordId) &&
+          bytesEqual(value.requestCommitment, record.requestCommitment) &&
+          value.status === record.status &&
+          value.commitSequence === record.commitSequence &&
+          bytesEqual(
+            value.commitDescriptorHash,
+            record.commitDescriptorHash
+          ),
+        'RecoveryReceiptV2.resultRecord'
+      )
+      break
+    case TYPES.DISCOVERY_FLOOR:
+      requireOperationalRecord(
+        record.recentBucketTupleRecord,
+        OPERATIONAL_TYPES.DISCOVERY_BUCKET_TUPLE,
+        value =>
+          bytesEqual(value.sourceId, record.sourceId) &&
+          value.checkpointSequence === record.checkpointSequence &&
+          bytesEqual(value.checkpointHash, record.checkpointHash),
+        'RecoveryDiscoveryFloorV2.recentBucketTupleRecord'
+      )
+      break
+    case TYPES.LAST_LOCALLY_VERIFIED_INDEX_ROOT:
+      requireOperationalRecord(
+        record.rootReferenceRecord,
+        OPERATIONAL_TYPES.LAST_LOCALLY_VERIFIED_INDEX_ROOT_REFERENCE,
+        value =>
+          bytesEqual(value.indexId, record.indexId) &&
+          value.rootSequence === record.rootSequence &&
+          bytesEqual(value.rootHash, record.rootHash),
+        'LastLocallyVerifiedIndexRootV2.rootReferenceRecord'
+      )
+      break
+    case TYPES.LAST_LOCALLY_AUTHENTICATED_CURSOR:
+      requireOperationalRecord(
+        record.cursorReferenceRecord,
+        OPERATIONAL_TYPES.LAST_LOCALLY_AUTHENTICATED_CURSOR_REFERENCE,
+        value =>
+          value.cursorKind === record.cursorKind &&
+          bytesEqual(value.cursorId, record.cursorId) &&
+          bytesEqual(value.sourcePublicKey, record.sourcePublicKey) &&
+          value.sequence === record.sequence &&
+          bytesEqual(value.entryHash, record.entryHash),
+        'LastLocallyAuthenticatedCursorV2.cursorReferenceRecord'
+      )
+      break
+    case TYPES.REPAIR_BACKLOG:
+      requireOperationalRecord(
+        record.repairRequestRecord,
+        OPERATIONAL_TYPES.REPAIR_REQUEST_BINDING,
+        value =>
+          bytesEqual(value.targetId, record.targetId) &&
+          value.reason === record.reason &&
+          value.floorSequence === record.floorSequence &&
+          bytesEqual(value.expectedHash, record.expectedHash) &&
+          bytesEqual(value.destinationHash, record.destinationHash) &&
+          bytesEqual(
+            value.capabilityRecordId,
+            record.capabilityRecordId
+          ),
+        'RepairBacklogEntryV2.repairRequestRecord'
+      )
+      break
   }
 }
 
@@ -599,26 +1342,27 @@ function canonicalRecord (input) {
         }
       }
     }
+    validateOperationalFields(output)
     const operationalPairs = {
       [TYPES.PENDING_CELL_INTENT]: [
-        ['innerEnvelopeBytes', 'innerEnvelopeHash'],
-        ['replicaBytes', 'replicaHash'],
-        ['requestBytes', 'requestBytesHash']
+        ['innerEnvelopeRecord', 'innerEnvelopeRecordHash'],
+        ['replicaRecord', 'replicaRecordHash'],
+        ['requestRecord', 'requestRecordHash']
       ],
       [TYPES.RECEIPT]: [
-        ['resultBytes', 'resultBytesHash']
+        ['resultRecord', 'resultRecordHash']
       ],
       [TYPES.DISCOVERY_FLOOR]: [
-        ['recentBucketTupleBytes', 'recentBucketTupleHash']
+        ['recentBucketTupleRecord', 'recentBucketTupleRecordHash']
       ],
-      [TYPES.VERIFIED_INDEX_ROOT]: [
-        ['rootRecordBytes', 'rootRecordBytesHash']
+      [TYPES.LAST_LOCALLY_VERIFIED_INDEX_ROOT]: [
+        ['rootReferenceRecord', 'rootReferenceRecordHash']
       ],
-      [TYPES.AUTHENTICATED_CURSOR]: [
-        ['authenticatedCursorBytes', 'authenticatedCursorBytesHash']
+      [TYPES.LAST_LOCALLY_AUTHENTICATED_CURSOR]: [
+        ['cursorReferenceRecord', 'cursorReferenceRecordHash']
       ],
       [TYPES.REPAIR_BACKLOG]: [
-        ['repairRequestBytes', 'repairRequestBytesHash']
+        ['repairRequestRecord', 'repairRequestRecordHash']
       ]
     }[value.type] || []
     for (const [bytesField, hashField] of operationalPairs) {
@@ -933,10 +1677,10 @@ function writePayload (value) {
     'witnessedFloorRecords')
   writeRecordSection(writer, value.discoveryFloorRecords,
     'discoveryFloorRecords')
-  writeRecordSection(writer, value.verifiedIndexRootRecords,
-    'verifiedIndexRootRecords')
-  writeRecordSection(writer, value.authenticatedCursorRecords,
-    'authenticatedCursorRecords')
+  writeRecordSection(writer, value.lastLocallyVerifiedIndexRootRecords,
+    'lastLocallyVerifiedIndexRootRecords')
+  writeRecordSection(writer, value.lastLocallyAuthenticatedCursorRecords,
+    'lastLocallyAuthenticatedCursorRecords')
   writeRecordSection(writer, value.repairBacklogRecords,
     'repairBacklogRecords')
   writeIdentifiers(writer, value.retiredDeviceChainIds, 'retiredDeviceChainId')
@@ -1060,13 +1804,13 @@ export function decodePeeritRecoveryPayloadV2 (input) {
       reader,
       'discoveryFloorRecords'
     )
-    raw.verifiedIndexRootRecords = readRecordSection(
+    raw.lastLocallyVerifiedIndexRootRecords = readRecordSection(
       reader,
-      'verifiedIndexRootRecords'
+      'lastLocallyVerifiedIndexRootRecords'
     )
-    raw.authenticatedCursorRecords = readRecordSection(
+    raw.lastLocallyAuthenticatedCursorRecords = readRecordSection(
       reader,
-      'authenticatedCursorRecords'
+      'lastLocallyAuthenticatedCursorRecords'
     )
     raw.repairBacklogRecords = readRecordSection(
       reader,
@@ -1278,46 +2022,51 @@ function cryptoRuntime (input) {
   return input
 }
 
-function visibleProviderBytes (value) {
+function ownedProviderBytes (
+  value,
+  length,
+  field,
+  borrowed = [],
+  allZeroCode = 'RECOVERY_CRYPTO_PROVIDER_ABI_VIOLATION'
+) {
+  let window = null
+  let exact = false
+  let aliases = false
   try {
-    if (value instanceof Uint8Array) return value
-    if (value instanceof ArrayBuffer) return new Uint8Array(value)
-    if (ArrayBuffer.isView(value)) {
-      return new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
-    }
+    window = intrinsicByteWindow(value)
+    exact = window != null &&
+      Object.getPrototypeOf(value) === UINT8_ARRAY_PROTOTYPE &&
+      window.byteOffset === 0 &&
+      window.byteLength ===
+        Reflect.apply(ARRAY_BUFFER_BYTE_LENGTH, window.buffer, []) &&
+      window.byteLength === length
+    aliases = exact && borrowed.some(input => {
+      const borrowedWindow = intrinsicByteWindow(input)
+      return borrowedWindow != null && borrowedWindow.buffer === window.buffer
+    })
   } catch {}
-  return null
-}
-
-function ownedProviderBytes (value, length, field, borrowed = []) {
-  const visible = visibleProviderBytes(value)
-  const exact = value instanceof Uint8Array &&
-    Object.getPrototypeOf(value) === Uint8Array.prototype &&
-    value.buffer instanceof ArrayBuffer &&
-    value.byteOffset === 0 &&
-    value.byteLength === value.buffer.byteLength &&
-    value.byteLength === length
-  const aliases = exact && borrowed.some(input =>
-    input instanceof Uint8Array && input.buffer === value.buffer)
   if (!exact || aliases) {
-    wipe(visible)
+    wipe(value)
     fail('RECOVERY_CRYPTO_PROVIDER_ABI_VIOLATION',
       `${field} must transfer a fresh unaliased whole-buffer Uint8Array(${length})`)
+  }
+  if (isAllZero(window.bytes)) {
+    wipeByteWindow(value)
+    fail(allZeroCode, `${field} provider output is all zero`)
   }
   return value
 }
 
-async function random (runtime, length, field) {
+async function random (runtime, length, field, borrowed = []) {
   let output = null
   try {
     output = ownedProviderBytes(
       await runtime.randomBytes(length),
       length,
-      field
+      field,
+      borrowed,
+      'RECOVERY_RANDOMNESS_FAILURE'
     )
-    if (isAllZero(output)) {
-      fail('RECOVERY_RANDOMNESS_FAILURE', `${field} randomness is all zero`)
-    }
     const transferred = output
     output = null
     return transferred
@@ -1369,12 +2118,9 @@ async function derivePublicKey (runtime, seed, field) {
       await runtime.deriveEd25519PublicKey(providerSeed),
       32,
       field,
-      [providerSeed]
+      [providerSeed],
+      'RECOVERY_ACCOUNT_IDENTITY_MISMATCH'
     )
-    if (isAllZero(output)) {
-      fail('RECOVERY_ACCOUNT_IDENTITY_MISMATCH',
-        `${field} provider output is all zero`)
-    }
     const transferred = output
     output = null
     return transferred
@@ -1577,43 +2323,120 @@ function profileBindingSnapshot (input) {
   }
 }
 
+function recoveryExternalArtifactSnapshot (input, kind) {
+  const fields = kind === 'WIRE_TUPLE_V1'
+    ? ['specBytes', 'abiBytes', 'vectorManifestBytes']
+    : ['formatAuthorityBytes', 'vectorManifestBytes']
+  const value = exactObject(
+    input,
+    fields,
+    `${kind} recovery profile artifacts`,
+    'RECOVERY_PROFILE_AUTHORITY_MISMATCH'
+  )
+  const output = Object.create(null)
+  try {
+    for (const field of fields) {
+      output[field] = new Uint8Array(asBytes(
+        value[field],
+        `${kind}.${field}`
+      ))
+    }
+    return output
+  } catch (error) {
+    wipe(output)
+    throw error
+  }
+}
+
 export function createPeeritRecoveryProfileAuthorityV2 (input) {
   const value = exactObject(
     input,
     [
-      'profileBinding',
-      'validatorArtifactHash',
-      'validatorVectorSetHash',
-      'validator'
+      'validatorArtifactBytes',
+      'validatorVectorManifestBytes',
+      'wireArtifacts',
+      'clientArtifacts'
     ],
     'PeeritRecoveryProfileAuthorityV2',
     'RECOVERY_PROFILE_AUTHORITY_MISMATCH'
   )
   let binding = null
+  let artifactBytes = null
+  let vectorBytes = null
   let artifactHash = null
   let vectorHash = null
+  let wireArtifacts = null
+  let clientArtifacts = null
+  let externalAuthorities = null
+  let validator = null
   let absentBytes = null
   let presentBytes = null
   try {
-    binding = profileBindingSnapshot(value.profileBinding)
+    binding = profileBindingSnapshot(PEERIT_VALIDATOR_PROFILE_BINDING_V1)
+    artifactBytes = new Uint8Array(asBytes(
+      value.validatorArtifactBytes,
+      'authenticated validator artifact bytes'
+    ))
+    vectorBytes = new Uint8Array(asBytes(
+      value.validatorVectorManifestBytes,
+      'authenticated validator vector manifest bytes'
+    ))
     artifactHash = asExpectedHash(
-      value.validatorArtifactHash,
+      hashPeeritValidatorArtifactV1(artifactBytes),
       PEERIT_RECOVERY_PROFILE_BINDING_V2.validatorArtifactHash,
       'validatorArtifactHash'
     )
     vectorHash = asExpectedHash(
-      value.validatorVectorSetHash,
+      hashPeeritValidatorVectorSetV1(vectorBytes),
       PEERIT_RECOVERY_PROFILE_BINDING_V2.validatorVectorSetHash,
       'validatorVectorSetHash'
     )
-    if (!value.validator || typeof value.validator !== 'object' ||
-        typeof value.validator.validate !== 'function' ||
-        !value.validator.catalog ||
-        typeof value.validator.catalog !== 'object') {
+    try {
+      wireArtifacts = recoveryExternalArtifactSnapshot(
+        value.wireArtifacts,
+        'WIRE_TUPLE_V1'
+      )
+      clientArtifacts = recoveryExternalArtifactSnapshot(
+        value.clientArtifacts,
+        'CLIENT_COMPOSITION_V1'
+      )
+      externalAuthorities = Object.create(null)
+      for (const row of PEERIT_PROFILE_INVENTORY.externalCodecImports) {
+        externalAuthorities[row.name] =
+          authenticatePeeritProfileExternalCodecAuthorityV1({
+            name: row.name,
+            authorityKind: row.authorityKind,
+            authorityBinding: row.tupleBinding,
+            artifacts: row.authorityKind === 'WIRE_TUPLE_V1'
+              ? wireArtifacts
+              : clientArtifacts,
+            assertCanonical (bytes, name) {
+              if (name !== row.name || !(bytes instanceof Uint8Array)) {
+                fail('RECOVERY_PROFILE_AUTHORITY_MISMATCH',
+                  'external profile codec invocation is not exact')
+              }
+            }
+          })
+      }
+      validator = createPeeritValidatorV1({
+        externalAuthorities: Object.freeze(externalAuthorities)
+      })
+    } catch (cause) {
+      const error = new Error(
+        'exact authenticated profile validator authorities are required'
+      )
+      error.code = 'RECOVERY_PROFILE_AUTHORITY_MISMATCH'
+      error.cause = cause
+      throw error
+    }
+    if (!validator || typeof validator !== 'object' ||
+        typeof validator.validate !== 'function' ||
+        !validator.catalog ||
+        typeof validator.catalog !== 'object') {
       fail('RECOVERY_PROFILE_AUTHORITY_MISMATCH',
         'exact authenticated profile validator is required')
     }
-    const codec = value.validator.catalog.DeviceChainStartV1
+    const codec = validator.catalog.DeviceChainStartV1
     if (!codec ||
         codec.tag !== PEERIT_RECOVERY_PROFILE_BINDING_V2.deviceChainStartTag ||
         codec.maximumCompleteBytes !==
@@ -1651,26 +2474,32 @@ export function createPeeritRecoveryProfileAuthorityV2 (input) {
       fail('RECOVERY_PROFILE_AUTHORITY_MISMATCH',
         'DeviceChainStartV1 codec accepted trailing bytes')
     }
-    const authority = Object.freeze({
+    const authorityMetadata = Object.freeze({
       version: 2,
       profileId: PEERIT_RECOVERY_PROFILE_BINDING_V2.profileId,
-      profileSpecHash: new Uint8Array(binding.profileSpecHash),
-      inventoryCommitment: new Uint8Array(binding.inventoryCommitment),
-      validatorArtifactHash: new Uint8Array(artifactHash),
-      validatorVectorSetHash: new Uint8Array(vectorHash),
+      profileSpecHashHex: bytesToHex(binding.profileSpecHash),
+      inventoryCommitmentHex: bytesToHex(binding.inventoryCommitment),
+      validatorArtifactHashHex: bytesToHex(artifactHash),
+      validatorVectorSetHashHex: bytesToHex(vectorHash),
       deviceChainStartTag:
         PEERIT_RECOVERY_PROFILE_BINDING_V2.deviceChainStartTag
     })
+    const authority = Object.freeze({ ...authorityMetadata })
     PROFILE_AUTHORITIES.set(authority, Object.freeze({
+      metadata: authorityMetadata,
       encode: codec.encode.bind(codec),
       decode: codec.decode.bind(codec),
-      validate: value.validator.validate.bind(value.validator)
+      validate: validator.validate.bind(validator)
     }))
     return authority
   } finally {
     wipe(binding)
+    wipe(artifactBytes)
+    wipe(vectorBytes)
     wipe(artifactHash)
     wipe(vectorHash)
+    wipe(wireArtifacts)
+    wipe(clientArtifacts)
     wipe(absentBytes)
     wipe(presentBytes)
   }
@@ -1683,6 +2512,32 @@ function requireProfileAuthority (input) {
       'a module-branded exact recovery profile authority is required')
   }
   return value
+}
+
+export function decodePeeritRecoveryDeviceChainStartV1 (
+  profileAuthority,
+  input
+) {
+  const authority = requireProfileAuthority(profileAuthority)
+  let bytes = null
+  let value = null
+  let canonicalBytes = null
+  try {
+    bytes = new Uint8Array(asBytes(
+      input,
+      'authenticated DeviceChainStartV1 bytes'
+    ))
+    value = authority.decode(bytes)
+    canonicalBytes = authority.encode(value)
+    if (!bytesEqual(bytes, canonicalBytes)) {
+      fail('RECOVERY_DEVICE_CHAIN_START_INVALID',
+        'DeviceChainStartV1 bytes are not canonical under the pinned validator')
+    }
+    return value
+  } finally {
+    wipe(bytes)
+    wipe(canonicalBytes)
+  }
 }
 
 function floors (input, field, minimum = 0) {
@@ -2009,7 +2864,10 @@ async function createDeviceChainStart (
   let message = null
   let signature = null
   let finalBytes = null
+  let independentlyDecoded = null
+  let independentlyEncoded = null
   let validated = null
+  let validatedEncoded = null
   try {
     const base = {
       version: 1,
@@ -2058,9 +2916,20 @@ async function createDeviceChainStart (
     } finally {
       wipe(complete)
     }
+    independentlyDecoded = profileAuthority.decode(finalBytes)
+    independentlyEncoded = profileAuthority.encode(independentlyDecoded)
+    if (!bytesEqual(independentlyEncoded, finalBytes)) {
+      fail('RECOVERY_DEVICE_CHAIN_START_INVALID',
+        'pinned DeviceChainStartV1 codec did not reproduce signed bytes')
+    }
     validated = profileAuthority.validate('DeviceChainStartV1', finalBytes)
-    const value = validated?.value
+    const validatedValue = validated?.value
+    if (validatedValue != null) {
+      validatedEncoded = profileAuthority.encode(validatedValue)
+    }
+    const value = validatedValue
     if (!value ||
+        !bytesEqual(validatedEncoded, finalBytes) ||
         !bytesEqual(value.accountPublicKey, accountPublicKey) ||
         !bytesEqual(value.deviceChainId, deviceChainId) ||
         !bytesEqual(value.newTransportCorePublicKey, newTransportPublicKey) ||
@@ -2085,7 +2954,10 @@ async function createDeviceChainStart (
     wipe(message)
     wipe(signature)
     wipe(finalBytes)
+    wipe(independentlyDecoded)
+    wipe(independentlyEncoded)
     wipe(validated)
+    wipe(validatedEncoded)
   }
 }
 
@@ -2121,7 +2993,7 @@ export async function exportPeeritRecoveryBundleV1 (
     salt = await random(runtime, PEERIT_RECOVERY_KDF_V1.saltBytes,
       'recovery salt')
     nonce = await random(runtime, PEERIT_RECOVERY_KDF_V1.nonceBytes,
-      'recovery nonce')
+      'recovery nonce', [salt])
     key = await deriveKey(runtime, passphrase, salt)
     const provisional = {
       magic: PEERIT_RECOVERY_BUNDLE_MAGIC_V1,
@@ -2237,7 +3109,12 @@ export async function importPeeritRecoveryBundleV1 (
       fail('RECOVERY_CLONED_WRITER_REJECTED',
         'restore transport identity collides with account or local writer history')
     }
-    deviceChainId = await random(runtime, 32, 'fresh device chain ID')
+    deviceChainId = await random(
+      runtime,
+      32,
+      'fresh device chain ID',
+      [deviceTransportSeed]
+    )
     if (containsId(collision.activeDeviceChainIds, deviceChainId) ||
         containsId(collision.retiredDeviceChainIds, deviceChainId) ||
         containsId(payload.retiredDeviceChainIds, deviceChainId)) {
@@ -2321,6 +3198,33 @@ const CONTRACT_ABI_V2 = deepFreeze({
     publishedLogicalIds: 'strict sorted unique nonzero bytes[32]',
     retiredDeviceChainIds: 'strict sorted unique nonzero bytes[32]'
   },
+  operationalRecord: {
+    magic: PEERIT_RECOVERY_OPERATIONAL_RECORD_MAGIC_V1,
+    version: 1,
+    layout: [
+      'magic[8]',
+      'type:u8',
+      'version:u8',
+      'exact-closed-type-fields',
+      'no extensions or trailing bytes'
+    ],
+    types: Object.entries(OPERATIONAL_RECORD_FIELDS)
+      .map(([type, definition]) => ({
+        type: Number(type),
+        name: definition.name,
+        fields: definition.fields
+      })),
+    exactReconstruction:
+      'decode then encode must reproduce every admitted operational record byte-for-byte',
+    authorityBoundary:
+      'requests/results/proofs/cursors/repair contain only closed safe fields and reference capability IDs; exact envelope/replica content is admitted only as sealed ciphertext with explicit suite and nonce',
+    commitmentDomains:
+      PEERIT_RECOVERY_OPERATIONAL_COMMITMENT_DOMAINS_V1,
+    commitmentBoundary:
+      'every local commitment and replica byte length is recomputed from the exact canonical safe fields; witnessed-head, last-locally-verified-index-root, and last-locally-authenticated-cursor references are AEAD-protected recovery snapshots whose self-commitments detect corruption but do not independently verify external signatures/proofs; ciphertext is type-distinct and never treated as request authority',
+    provenanceBoundary:
+      'external signature, index-proof, and cursor-authenticator verification happens before snapshot creation in the owning subsystem and must be repeated after recovery before external state is trusted'
+  },
   recordEnvelope: {
     magic: PEERIT_RECOVERY_RECORD_MAGIC_V2,
     version: 2,
@@ -2338,7 +3242,7 @@ const CONTRACT_ABI_V2 = deepFreeze({
     recordIdRecipe: 'domainLengthHash(type:u8||version:u8||recordHash)',
     operationalBytesHashDomain: OPERATIONAL_BYTES_HASH_DOMAIN_V2,
     operationalBytesHashRecipe:
-      'domainLengthHash(ASCII(fieldName)||exactOperationalBytes)',
+      'domainLengthHash(ASCII(fieldName)||exactCanonicalOperationalRecordBytes)',
     unknownTypes: 'forbidden',
     types: Object.entries(RECORD_FIELDS).map(([type, definition]) => ({
       type: Number(type),
@@ -2372,7 +3276,7 @@ const CONTRACT_ABI_V2 = deepFreeze({
     inputOwnership:
       'provider borrows caller copies only for the awaited call',
     cleanup:
-      'all caller passphrase/key/plaintext/seed/message copies wipe in immediate finally; invalid outputs wipe before throw'
+      'all caller passphrase/key/plaintext/seed/message copies wipe in immediate finally; malformed outputs recursively wipe byte views reachable through own data descriptors, including their complete backing ArrayBuffers, with captured non-dispatching Uint8Array intrinsics before throw; accessor-only and Proxy-hidden targets are outside the provider ABI and not claimed; cleanup never masks the original rejection'
   },
   collisionSet: {
     magic: PEERIT_RECOVERY_COLLISION_SET_MAGIC_V1,
@@ -2386,6 +3290,12 @@ const CONTRACT_ABI_V2 = deepFreeze({
   freshChain: {
     profileBinding: PEERIT_RECOVERY_PROFILE_BINDING_V2,
     profileAuthorityBrandRequired: true,
+    profileAuthorityConstruction:
+      'hash exact validator bundle and vector-manifest bytes, authenticate exact WIRE/client artifacts internally, use the module-minted validator factory from the signed-loader/build-authenticated runtime mirror that qualification proves byte-identical to the pinned bundle, and never accept caller codecs or caller authority functions',
+    visibleAuthorityMetadata:
+      'immutable lowercase-hex strings and scalar values only; canonical metadata and codec authority remain in the module-private brand',
+    independentDecode:
+      'every signed DeviceChainStartV1 is independently decoded/re-encoded, validator-returned value decoded/re-encoded, and both byte-identical to the signed result before return',
     signatureDomain: PEERIT_DEVICE_CHAIN_START_SIGNATURE_DOMAIN_V1,
     collisionIdentity: 'derived Ed25519 transport public key',
     result: [
@@ -2408,6 +3318,15 @@ const CONTRACT_ABI_V2 = deepFreeze({
 
 export const PEERIT_RECOVERY_GOLDEN_VECTOR_MANIFEST_V2 = deepFreeze({
   vectorSet: 'PeeritRecoveryContractV2/2026-07-19',
+  canonicalFixtureArtifact: {
+    path: 'protocol/vectors/peerit-recovery-contract-v2.manifest.json',
+    schema: 'PeeritRecoveryCanonicalFixtureArtifactV2',
+    byteLength: 112005,
+    sha256:
+      '59cd46981b56a0f17f7428bea3f53812a57fe6b1aec77c05b520d7794810185e',
+    serialization:
+      'UTF-8 JSON plus one LF; exact inputs and outputs use lowercase hex and u64 decimal tags'
+  },
   fixtureHashDomains: {
     typedRecordSetHash: 'peerit.recovery-golden-record-set.v2',
     payloadHash: 'peerit.recovery-golden-payload.v2',
@@ -2417,18 +3336,66 @@ export const PEERIT_RECOVERY_GOLDEN_VECTOR_MANIFEST_V2 = deepFreeze({
   },
   fixtures: {
     typedRecordSetHash:
-      '7a51a6642e8861a58d3e6d49de1c032f3c1be824131ead5d2b825b58fd6dcb4b',
+      '66f235780ad822c55cdca89666eff64b8fbd100563d26efe450b9faca11eadc0',
     payloadHash:
-      '856db5dc15f2d7b37fc270f18f9f8b58cf2340a87eb07ca29b7b75cf6819959a',
+      'e7ed926febc88197edbaa7be5a2d9b3ea0d4fc8bff6abde930051c56267c3703',
     outerBundleHash:
-      '43f1e7f1a77ed95be77d35fa81fb7ef7251ec5207b905bbb6185e6c9e41d3ebd',
+      'fa9978eca8f17db9124ddb1fb927ee42b73f889d796e0d6ff3b5268fec473c51',
     collisionSetHash:
       '3372a4569321ee31aee8755433f3690fb82dc00a07a2d0a3aaea1535cd0048ac',
     deviceChainStartHash:
       'd0c7e219ea54021bc938bcd2f5206b88d389d5c03839151c042c88e58ae6cf1c'
   },
+  exactRecipes: {
+    operationalInputs:
+      'artifact.inputs.operationalRecords plus artifact.exactBytes.operationalRecords',
+    typedInputs:
+      'artifact.inputs.typedRecords plus artifact.exactBytes.typedRecords',
+    payloadAndOuter:
+      'artifact.inputs.payload plus exact portablePinHistoryRecordHex, payloadHex, and outerBundleHex',
+    collision:
+      'artifact.recipes.collisionSet and artifact.expected.hashes.collisionSetHash',
+    merge:
+      'artifact.recipes.merge with exact expected sequence and fork error',
+    profileAuthority:
+      'artifact.recipes.profileAuthority with exact path/raw-SHA/domain-hash rows for validator, runtime mirror, WIRE and client artifacts; byte-identical signed-loader/build boundary; internal authority construction; and caller substitution forbidden',
+    crypto:
+      'artifact.recipes.provider with exact passphrase, randomness, KDF, IV, AAD, and tag recipes',
+    negativeCases:
+      'artifact.negativeCases gives a positive base reference, deterministic mutation/recomputation recipe, and exact expected code or bounded accepted outcome for every claimed adversarial boundary'
+  },
+  expectedErrorCodes: {
+    credentialInsideOuterOperationalRecord:
+      'BAD_RECOVERY_OPERATIONAL_RECORD',
+    operationalCommitmentMismatch:
+      'RECOVERY_OPERATIONAL_COMMITMENT_MISMATCH',
+    wrongUnderlyingOperationalType:
+      'RECOVERY_OPERATIONAL_RECORD_TYPE_CONFUSION',
+    underlyingBindingMismatch:
+      'RECOVERY_OPERATIONAL_RECORD_BINDING_MISMATCH',
+    noncanonicalUnderlyingRecord: 'BAD_RECOVERY_OPERATIONAL_RECORD',
+    trailingUnderlyingRecord: 'BAD_RECOVERY_OPERATIONAL_RECORD',
+    fabricatedProfileCodec: 'RECOVERY_PROFILE_AUTHORITY_MISMATCH',
+    substitutedValidatorArtifact: 'RECOVERY_PROFILE_AUTHORITY_MISMATCH',
+    substitutedExternalAuthorityArtifact:
+      'RECOVERY_PROFILE_AUTHORITY_MISMATCH',
+    missingProfileAuthority: 'RECOVERY_PROFILE_AUTHORITY_REQUIRED',
+    missingCollisionSet: 'RECOVERY_COLLISION_SET_REQUIRED',
+    activeWriterCollision: 'RECOVERY_CLONED_WRITER_REJECTED',
+    retiredWriterCollision: 'RECOVERY_CLONED_WRITER_REJECTED',
+    activeChainCollision: 'RECOVERY_CLONED_CHAIN_REJECTED',
+    retiredChainCollision: 'RECOVERY_CLONED_CHAIN_REJECTED',
+    providerMalformedOutput: 'RECOVERY_CRYPTO_PROVIDER_ABI_VIOLATION',
+    providerAllZeroRandom: 'RECOVERY_RANDOMNESS_FAILURE',
+    providerAllZeroPublicKey: 'RECOVERY_ACCOUNT_IDENTITY_MISMATCH',
+    floorFork: 'RECOVERY_FLOOR_FORK',
+    authenticationFailure: 'RECOVERY_AUTHENTICATION_FAILED'
+  },
   requiredPositiveCases: [
     'all-ten-record-types-round-trip',
+    'all-nine-operational-record-types-byte-for-byte-round-trip',
+    'sealed-envelope-and-replica-content-byte-for-byte-reconstruction',
+    'recomputed-local-reference-mutations-remain-canonical-without-claiming-external-provenance',
     'payload-v2-round-trip',
     'outer-v1-authenticates-payload-v2',
     'portable-pin-history-node-and-browser',
@@ -2439,6 +3406,13 @@ export const PEERIT_RECOVERY_GOLDEN_VECTOR_MANIFEST_V2 = deepFreeze({
     'payload-v1-cross-decode',
     'unknown-writer-record-type',
     'extra-secret-field',
+    'credential-bytes-instead-of-each-closed-operational-record',
+    'all-nine-operational-commitment-substitutions',
+    'replica-ciphertext-length-substitution',
+    'near-limit-sealed-replica-round-trip',
+    'wrong-underlying-operational-type',
+    'underlying-operational-binding-mismatch',
+    'underlying-operational-noncanonical-or-trailing',
     'section-type-confusion',
     'record-trailing-byte',
     'record-wrong-hash',
@@ -2452,9 +3426,13 @@ export const PEERIT_RECOVERY_GOLDEN_VECTOR_MANIFEST_V2 = deepFreeze({
     'active-chain-collision',
     'retired-chain-collision',
     'profile-authority-omitted',
+    'fabricated-self-consistent-profile-codec',
+    'validator-artifact-substitution',
+    'external-authority-artifact-substitution',
+    'visible-profile-authority-metadata-mutation',
     'device-chain-start-binding',
     'passphrase-empty-invalid-unicode-nonnfc-overbound',
-    'provider-output-type-length-alias',
+    'provider-output-subclass-wrong-prototype-offset-arraybuffer-dataview-nestedwrapper-allzero-alias',
     'portable-history-trailing-root-terminal-transition-order'
   ],
   requiredCleanupCases: [
@@ -2469,7 +3447,29 @@ export const PEERIT_RECOVERY_GOLDEN_VECTOR_MANIFEST_V2 = deepFreeze({
     'collision-validation-failure',
     'sign-failure',
     'profile-validation-failure'
-  ]
+  ],
+  requiredCleanupMatrix: {
+    boundaries: [
+      'random',
+      'kdf',
+      'public-key',
+      'encrypt',
+      'decrypt',
+      'sign'
+    ],
+    malformedForms: [
+      'subclass',
+      'wrong-prototype',
+      'offset-view',
+      'array-buffer',
+      'data-view',
+      'nested-wrapper',
+      'all-zero',
+      'alias'
+    ],
+    retainedReferenceExpectation:
+      'all byte views reachable through own data descriptors have their complete backing ArrayBuffers zero before rejection; accessor-only and Proxy-hidden targets are outside the provider ABI'
+  }
 })
 
 export function peeritRecoveryBundleContractBytesV2 () {
@@ -2487,11 +3487,24 @@ export function peeritRecoveryGoldenVectorManifestBytesV2 () {
 }
 
 export function peeritRecoveryBundleContractHashV2 () {
+  return hashPeeritRecoveryContractArtifactsV2(
+    peeritRecoveryBundleContractBytesV2(),
+    peeritRecoveryGoldenVectorManifestBytesV2()
+  )
+}
+
+export function hashPeeritRecoveryContractArtifactsV2 (
+  contractBytes,
+  goldenManifestBytes
+) {
   return domainLengthHash(
     'peerit.recovery-bundle-contract.v2',
     concatBytes(
-      peeritRecoveryBundleContractBytesV2(),
-      peeritRecoveryGoldenVectorManifestBytesV2()
+      asBytes(contractBytes, 'PeeritRecoveryContractV2 ABI bytes'),
+      asBytes(
+        goldenManifestBytes,
+        'PeeritRecoveryContractV2 golden manifest bytes'
+      )
     )
   )
 }

@@ -7,7 +7,7 @@
     "unmodifiedWebBuildModules": true
   },
   "hiverelay": {
-    "root": "/Users/localllm/Projects/pear-ecosystem/00-core/hiverelay",
+    "root": "~/pear-ecosystem/00-core/hiverelay",
     "mode": "local-hiverelay-relayapi",
     "relay": "http://127.0.0.1:50128"
   },

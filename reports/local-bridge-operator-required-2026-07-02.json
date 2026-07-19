@@ -9,7 +9,7 @@
     "a": "hyper://ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4/#/bridge-proof/bp20260702?role=a",
     "b": "hyper://ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4/#/bridge-proof/bp20260702?role=b"
   },
-  "guideFile": "/Users/localllm/Projects/pear-ecosystem/02-apps/peerit/.deploy/local-bridge-proof-bp20260702.html",
+  "guideFile": "~/pear-ecosystem/02-apps/peerit/.deploy/local-bridge-proof-bp20260702.html",
   "headlessChecks": [
     {
       "label": "headless gates",

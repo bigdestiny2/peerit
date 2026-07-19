@@ -1,7 +1,7 @@
 {
   "kind": "reader-bundle-live",
   "generatedAt": "2026-07-05T15:02:22.769Z",
-  "rosterPath": "/Users/localllm/.hiverelay-shard-cohort/roster.json",
+  "rosterPath": "~/.hiverelay-shard-cohort/roster.json",
   "cohort": {
     "threshold": 2,
     "count": 3,

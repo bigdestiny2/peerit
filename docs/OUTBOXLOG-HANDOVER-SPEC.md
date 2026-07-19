@@ -122,9 +122,9 @@ The app supplies **client-side only**: record schema, key derivation (`type!id`)
 
 ## 10. Reference files (absolute)
 
-- Gate: `/Users/localllm/Projects/pear-ecosystem/02-apps/peerit-relay/test/wire-conformance.mjs` (`runWireConformance`)
-- Engine: `/Users/localllm/Projects/pear-ecosystem/02-apps/peerit-relay/lib/core-memory.mjs`
-- Wire/HTTP: `/Users/localllm/Projects/pear-ecosystem/02-apps/peerit-relay/lib/server.mjs`
+- Gate: `~/pear-ecosystem/02-apps/peerit-relay/test/wire-conformance.mjs` (`runWireConformance`)
+- Engine: `~/pear-ecosystem/02-apps/peerit-relay/lib/core-memory.mjs`
+- Wire/HTTP: `~/pear-ecosystem/02-apps/peerit-relay/lib/server.mjs`
 - Client canon/verify/model: `…/02-apps/peerit/js/canon.js`, `…/js/verify.js`, `…/js/model.js`, `…/js/pear-api.js`
 - HiveRelay reuse: `…/00-core/hiverelay/packages/core/core/services/provider.js`, `…/relay-node/api.js` (locate the current poker mount), `…/core/plugin-loader.js`, `…/packages/services/builtin/poker/{signed-log.js,persistence-hypercore.js,http-adapter.js}`
-- Plan + threat model: `/Users/localllm/Projects/pear-ecosystem/02-apps/peerit/docs/HIVERELAY-OUTBOXLOG-PLAN.md`
+- Plan + threat model: `~/pear-ecosystem/02-apps/peerit/docs/HIVERELAY-OUTBOXLOG-PLAN.md`

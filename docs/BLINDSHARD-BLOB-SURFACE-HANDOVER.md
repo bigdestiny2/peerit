@@ -18,7 +18,7 @@
 **Audience:** HiveRelay agents (the `00-core/hiverelay` fleet).
 **Consumer:** peerit `feat/web-deployment` client (`js/box.js`, `js/shard.js` — already built).
 **Status:** buildable. This is the ONE net-new relay capability BlindShard needs; every other piece is client-side and done.
-**Design source:** `/Users/localllm/Desktop/Faceless/BLINDSHARD-DESIGN.md` §3a, §4 net-new #5, §5 Phase 3, §6 risks 2/8.
+**Design source:** `~/Desktop/Faceless/BLINDSHARD-DESIGN.md` §3a, §4 net-new #5, §5 Phase 3, §6 risks 2/8.
 
 > **Thesis (do not overclaim — design §2 "HONEST LIMIT", §6.1):** this surface makes a relay hold, at rest, only opaque content-hash-addressed ciphertext fragments — fewer than K of any item, no key, no manifest, no author linkage. It is **non-readability-in-isolation + deniability**, NOT confidentiality. A relay that ALSO mirrors the outbox and crawls shards defeats blindness (§6.2). Keep manifests OFF this tier.
 
@@ -181,7 +181,7 @@ A peerit `shard.js` **encode → disperse → gather-K-from-distinct-relays → 
 
 ## Cited files
 
-- Design: `/Users/localllm/Desktop/Faceless/BLINDSHARD-DESIGN.md` §2, §3a, §4 (#3, #5, #6, #8), §5 Phase 3, §6 (risks 1/2/4/5/7/8).
+- Design: `~/Desktop/Faceless/BLINDSHARD-DESIGN.md` §2, §3a, §4 (#3, #5, #6, #8), §5 Phase 3, §6 (risks 1/2/4/5/7/8).
 - `packages/core/core/custody-signing.js:10-32` (FORBIDDEN_KEYS), `:56-176` (signable fields), `:205-267` (intent/receipt), `:411,932-939` (secret reject), `:437,751,825` (field types).
 - `packages/client/custody.js:1-25,36-58` (client duplicate of FORBIDDEN_KEYS — must mirror).
 - `packages/core/core/relay-node/app-lifecycle.js:149-247` (`seedApp` blind ingestion).

@@ -4,7 +4,7 @@
 > `scripts/browser-smoke.mjs` and exposed through `npm run test:browser`.
 > This file remains as historical evidence for the original manual proof.
 
-Source root: `/Users/localllm/Projects/pear-ecosystem/02-apps/peerit`
+Source root: `~/pear-ecosystem/02-apps/peerit`
 
 ## Scope
 

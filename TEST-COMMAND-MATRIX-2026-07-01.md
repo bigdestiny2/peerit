@@ -1,6 +1,6 @@
 # Peerit Test Command Matrix - 2026-07-01
 
-Source root: `/Users/localllm/Projects/pear-ecosystem/02-apps/peerit`
+Source root: `~/pear-ecosystem/02-apps/peerit`
 
 Peerit is still a dependency-free P2P site at runtime. The default suite stays
 pure Node, while browser and availability checks are now explicit operator gates

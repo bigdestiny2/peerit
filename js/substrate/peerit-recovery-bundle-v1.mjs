@@ -522,6 +522,8 @@ const TYPED_ARRAY_BYTE_OFFSET =
   Object.getOwnPropertyDescriptor(TYPED_ARRAY_PROTOTYPE, 'byteOffset').get
 const TYPED_ARRAY_BYTE_LENGTH =
   Object.getOwnPropertyDescriptor(TYPED_ARRAY_PROTOTYPE, 'byteLength').get
+const TYPED_ARRAY_LENGTH =
+  Object.getOwnPropertyDescriptor(TYPED_ARRAY_PROTOTYPE, 'length').get
 const DATA_VIEW_BUFFER =
   Object.getOwnPropertyDescriptor(DataView.prototype, 'buffer').get
 const DATA_VIEW_BYTE_OFFSET =
@@ -530,6 +532,8 @@ const DATA_VIEW_BYTE_LENGTH =
   Object.getOwnPropertyDescriptor(DataView.prototype, 'byteLength').get
 const ARRAY_BUFFER_BYTE_LENGTH =
   Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get
+const ARRAY_BUFFER_TRANSFER =
+  Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'transfer')?.value
 
 function fail (code, message) {
   failReleaseControl(code, message)
@@ -540,10 +544,12 @@ function intrinsicByteWindow (input) {
     const buffer = Reflect.apply(TYPED_ARRAY_BUFFER, input, [])
     const byteOffset = Reflect.apply(TYPED_ARRAY_BYTE_OFFSET, input, [])
     const byteLength = Reflect.apply(TYPED_ARRAY_BYTE_LENGTH, input, [])
+    const indexedLength = Reflect.apply(TYPED_ARRAY_LENGTH, input, [])
     return {
       buffer,
       byteOffset,
       byteLength,
+      indexedLength,
       bytes: new UINT8_ARRAY(buffer, byteOffset, byteLength)
     }
   } catch {}
@@ -555,6 +561,7 @@ function intrinsicByteWindow (input) {
       buffer,
       byteOffset,
       byteLength,
+      indexedLength: null,
       bytes: new UINT8_ARRAY(buffer, byteOffset, byteLength)
     }
   } catch {}
@@ -564,6 +571,7 @@ function intrinsicByteWindow (input) {
       buffer: input,
       byteOffset: 0,
       byteLength,
+      indexedLength: null,
       bytes: new UINT8_ARRAY(input)
     }
   } catch {}
@@ -573,32 +581,77 @@ function intrinsicByteWindow (input) {
 function wipeByteWindow (input) {
   try {
     const window = intrinsicByteWindow(input)
-    if (window == null) return false
+    if (window == null) return null
     const completeBackingBuffer = new UINT8_ARRAY(window.buffer)
     Reflect.apply(UINT8_ARRAY_FILL, completeBackingBuffer, [0])
+    return window
+  } catch {
+    return null
+  }
+}
+
+function transferAndWipeIndexedBuffer (window) {
+  try {
+    if (window?.indexedLength == null) return true
+    const transferred = Reflect.apply(
+      ARRAY_BUFFER_TRANSFER,
+      window.buffer,
+      []
+    )
+    const transferredBytes = new UINT8_ARRAY(transferred)
+    Reflect.apply(UINT8_ARRAY_FILL, transferredBytes, [0])
     return true
   } catch {
+    wipeByteWindow(window?.bytes)
     return false
   }
 }
 
-function wipe (input, seen = new Set()) {
+function wipe (
+  input,
+  seen = new Set(),
+  inspectMalformedByteRootDescriptors = false
+) {
   try {
     if (input == null ||
         (typeof input !== 'object' && typeof input !== 'function') ||
         seen.has(input)) return
     seen.add(input)
-    if (wipeByteWindow(input)) return
-    let descriptors = null
+    const intrinsicWindow = intrinsicByteWindow(input)
+    if (intrinsicWindow != null &&
+        inspectMalformedByteRootDescriptors &&
+        intrinsicWindow.indexedLength != null) {
+      if (!transferAndWipeIndexedBuffer(intrinsicWindow)) return
+    } else {
+      const byteWindow = wipeByteWindow(input)
+      if (byteWindow != null && !inspectMalformedByteRootDescriptors) return
+    }
+    let keys = null
     try {
-      descriptors = Object.getOwnPropertyDescriptors(input)
+      keys = Reflect.ownKeys(input)
     } catch {
       return
     }
-    for (const descriptor of Object.values(descriptors)) {
-      if (Object.hasOwn(descriptor, 'value')) wipe(descriptor.value, seen)
+    // Transfer detaches malformed integer-indexed roots before key discovery.
+    // Their generated numeric index surface is therefore absent; only
+    // ordinary own data descriptors remain to inspect recursively.
+    for (let index = 0; index < keys.length; index++) {
+      let descriptor = null
+      try {
+        descriptor = Object.getOwnPropertyDescriptor(input, keys[index])
+      } catch {
+        continue
+      }
+      if (descriptor == null) continue
+      if (Object.hasOwn(descriptor, 'value')) {
+        wipe(descriptor.value, seen, inspectMalformedByteRootDescriptors)
+      }
     }
   } catch {}
+}
+
+function wipeMalformedProviderOutput (input) {
+  wipe(input, new Set(), true)
 }
 
 function exactObject (input, fields, name, code = 'BAD_RECOVERY_PAYLOAD') {
@@ -2007,7 +2060,8 @@ export function peeritRecoveryPassphraseBytesV1 (input) {
 }
 
 function cryptoRuntime (input) {
-  if (!input ||
+  if (typeof ARRAY_BUFFER_TRANSFER !== 'function' ||
+      !input ||
       input.recoveryAlgorithm !== PEERIT_RECOVERY_CRYPTO_SUITE_V1 ||
       typeof input.randomBytes !== 'function' ||
       typeof input.deriveArgon2id !== 'function' ||
@@ -2046,12 +2100,12 @@ function ownedProviderBytes (
     })
   } catch {}
   if (!exact || aliases) {
-    wipe(value)
+    wipeMalformedProviderOutput(value)
     fail('RECOVERY_CRYPTO_PROVIDER_ABI_VIOLATION',
       `${field} must transfer a fresh unaliased whole-buffer Uint8Array(${length})`)
   }
   if (isAllZero(window.bytes)) {
-    wipeByteWindow(value)
+    wipeMalformedProviderOutput(value)
     fail(allZeroCode, `${field} provider output is all zero`)
   }
   return value
@@ -3273,10 +3327,12 @@ const CONTRACT_ABI_V2 = deepFreeze({
     ],
     outputOwnership:
       'fresh unaliased exact-prototype whole-buffer Uint8Array transfers to caller',
+    runtimeRequirement:
+      'captured intrinsic ArrayBuffer.prototype.transfer is required; SharedArrayBuffer outputs are rejected and only their directly reachable backing bytes are claimed wiped',
     inputOwnership:
       'provider borrows caller copies only for the awaited call',
     cleanup:
-      'all caller passphrase/key/plaintext/seed/message copies wipe in immediate finally; malformed outputs recursively wipe byte views reachable through own data descriptors, including their complete backing ArrayBuffers, with captured non-dispatching Uint8Array intrinsics before throw; accessor-only and Proxy-hidden targets are outside the provider ABI and not claimed; cleanup never masks the original rejection'
+      'all caller passphrase/key/plaintext/seed/message copies wipe in immediate finally; malformed outputs recursively wipe byte views reachable through own data descriptors, including their complete backing ArrayBuffers, with captured non-dispatching Uint8Array intrinsics before throw; malformed transferable integer-indexed roots transfer/detach before the same-length transferred buffer is zeroed and bounded ordinary-own-descriptor discovery begins, so generated numeric indices are never enumerated; ArrayBuffer.prototype.transfer is a qualified runtime requirement; non-transferable SharedArrayBuffer-root descriptor recursion, accessor-only values and Proxy-hidden targets are outside the provider ABI and not claimed; cleanup never masks the original rejection'
   },
   collisionSet: {
     magic: PEERIT_RECOVERY_COLLISION_SET_MAGIC_V1,
@@ -3321,9 +3377,9 @@ export const PEERIT_RECOVERY_GOLDEN_VECTOR_MANIFEST_V2 = deepFreeze({
   canonicalFixtureArtifact: {
     path: 'protocol/vectors/peerit-recovery-contract-v2.manifest.json',
     schema: 'PeeritRecoveryCanonicalFixtureArtifactV2',
-    byteLength: 112005,
+    byteLength: 123758,
     sha256:
-      '59cd46981b56a0f17f7428bea3f53812a57fe6b1aec77c05b520d7794810185e',
+      '5ec246ffa6ee0c2126193e29c4cc64146f77764ec02044bc3fc8b6930b26fb25',
     serialization:
       'UTF-8 JSON plus one LF; exact inputs and outputs use lowercase hex and u64 decimal tags'
   },
@@ -3432,7 +3488,8 @@ export const PEERIT_RECOVERY_GOLDEN_VECTOR_MANIFEST_V2 = deepFreeze({
     'visible-profile-authority-metadata-mutation',
     'device-chain-start-binding',
     'passphrase-empty-invalid-unicode-nonnfc-overbound',
-    'provider-output-subclass-wrong-prototype-offset-arraybuffer-dataview-nestedwrapper-allzero-alias',
+    'provider-output-subclass-wrong-prototype-offset-arraybuffer-dataview-nestedwrapper-allzero-alias-plus-hybrid-byte-roots-with-separate-owned-buffers',
+    'near-maximum-malformed-typed-array-cleanup-without-index-key-enumeration',
     'portable-history-trailing-root-terminal-transition-order'
   ],
   requiredCleanupCases: [
@@ -3465,10 +3522,18 @@ export const PEERIT_RECOVERY_GOLDEN_VECTOR_MANIFEST_V2 = deepFreeze({
       'data-view',
       'nested-wrapper',
       'all-zero',
-      'alias'
+      'alias',
+      'hybrid-subclass',
+      'hybrid-wrong-prototype',
+      'hybrid-data-view',
+      'hybrid-array-buffer',
+      'shared-array-buffer'
     ],
     retainedReferenceExpectation:
-      'all byte views reachable through own data descriptors have their complete backing ArrayBuffers zero before rejection; accessor-only and Proxy-hidden targets are outside the provider ABI'
+      'all byte views reachable through own data descriptors have their complete backing ArrayBuffers zero or detached with the same-length transferred bytes zeroed before rejection; malformed transferable integer-indexed roots detach before own-key discovery so numeric indices are not enumerated; ArrayBuffer.prototype.transfer is required; non-transferable SharedArrayBuffer-root descriptor recursion, accessor-only values and Proxy-hidden targets are outside the provider ABI',
+    nearMaximumIndexedRootBytes: 16777216,
+    maximumCleanupBudgetMillis: 5000,
+    maximumCleanupHeapDeltaBytes: 67108864
   }
 })
 

@@ -46,6 +46,7 @@ export const PEERIT_OPERATION_TYPES_V1 = Object.freeze([
   'modaction',
   'post',
   'profile',
+  'report',
   'vote'
 ])
 

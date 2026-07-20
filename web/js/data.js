@@ -6,9 +6,16 @@
 import {
   keys, id as mkid, TYPE, MOD, modOverlay, resolveMods,
   CONTENT_PROTOCOL, CONTENT_MOD_ACTIONS, USER_MOD_ACTIONS,
+  REPORT_REASONS, REPORT_VERDICT,
   contentId, hasValidContentId, makeContentRef, validContentNonce
 } from './model.js'
 import { tally as tallyVotes } from './ranking.js'
+import {
+  aggregateReports,
+  applyModerationPolicy,
+  cleanModerationView,
+  eligibleCommunityAuthors
+} from './moderation.js'
 import { canonical, expectedKey, expectedKeyV2, ownerOf } from './canon.js'
 import { seal, unseal } from './seal.js'
 import { uid, isValidSlug, normalizeSlug, safeUserUrl } from './util.js'
@@ -35,6 +42,7 @@ const WRITE_INTENT_METHODS = Object.freeze([
   'createCommunity', 'updateCommunity',
   'submitPost', 'editPost', 'deletePost', 'repairDispersal',
   'addComment', 'editComment', 'deleteComment', 'vote',
+  'reportContent',
   'setProfile', 'setFollow', 'setMembership', 'migrateLocalGraph',
   'modAction', 'addMod', 'removeMod'
 ])
@@ -1415,6 +1423,10 @@ export class Data {
     return (await this._index()).membersOf(community)
   }
 
+  async membershipRecordsIn (community) {
+    return (await this._index()).membershipRecordsIn(community)
+  }
+
   async memberCount (community) { return (await this.membersOf(community)).length }
 
   async myMemberships () {
@@ -1523,6 +1535,141 @@ export class Data {
     const c = await this.getCommunity(community)
     const actions = await this.listModActions(community)
     return modOverlay(c, actions)
+  }
+
+  async listReportsFor (community, targetCid) {
+    return (await this._index()).listReportsFor(community, targetCid)
+  }
+
+  async myReportFor (community, targetCid) {
+    const me = this.me().pubkey
+    if (!me) return null
+    const report = await this._get(keys.report(community, targetCid, me))
+    return report && !report.deleted ? report : null
+  }
+
+  async reportContent (community, {
+    targetCid,
+    targetType,
+    postCid,
+    verdict = REPORT_VERDICT.BURY,
+    reason = 'other',
+    note = '',
+    deleted = false,
+    onProgress
+  } = {}) {
+    community = normalizeSlug(community)
+    if (!isValidSlug(community)) throw new Error('Report community is invalid')
+    if (verdict !== REPORT_VERDICT.BURY && verdict !== REPORT_VERDICT.KEEP) throw new Error('Report verdict must be bury or keep')
+    if (!REPORT_REASONS.includes(reason)) throw new Error('Choose a valid report reason')
+    const bound = await this._modContentTarget(community, targetCid, targetType, postCid)
+    const me = await this._writer()
+    const data = {
+      id: mkid.report(community, bound.target.cid, me.pubkey),
+      protocol: CONTENT_PROTOCOL,
+      community,
+      targetCid: bound.target.cid,
+      targetType: bound.targetType,
+      targetRef: bound.targetRef,
+      verdict,
+      reason,
+      note: String(note || '').slice(0, 300),
+      author: me.pubkey,
+      ts: Date.now(),
+      deleted: !!deleted
+    }
+    await this._emit(TYPE.REPORT, data, { pow: true, onProgress })
+    this.invalidateViewCaches()
+    return data
+  }
+
+  async withdrawReport (community, targetCid, { postCid } = {}) {
+    const existing = await this.myReportFor(community, targetCid)
+    if (!existing) return null
+    return this.reportContent(community, {
+      targetCid,
+      targetType: existing.targetType,
+      postCid,
+      verdict: existing.verdict,
+      reason: existing.reason,
+      note: '',
+      deleted: true
+    })
+  }
+
+  // Annotate content with the deterministic policy selected by this reader.
+  // Eligibility is derived only from signed community-local graph/content/vote
+  // records; the globally backdateable display reputation score is never used.
+  async moderationMany (records, { view = 'community' } = {}) {
+    const rows = Array.isArray(records) ? records : []
+    if (!rows.length) return []
+    view = cleanModerationView(view)
+    const index = await this._index()
+    const viewer = this.me().pubkey
+    const byCommunity = new Map()
+    for (const row of rows) {
+      if (row?.community && !byCommunity.has(row.community)) byCommunity.set(row.community, null)
+    }
+
+    // Group the shared index once. A global feed may span many communities;
+    // rescanning every comment and vote for each community would turn policy
+    // annotation into O(communities × records).
+    const selectedCommunities = new Set(byCommunity.keys())
+    const postsByCommunity = new Map()
+    const commentsByCommunity = new Map()
+    const votesByCommunity = new Map()
+    const targetCommunity = new Map()
+    for (const community of selectedCommunities) {
+      const posts = index.listPostsIn(community)
+      postsByCommunity.set(community, posts)
+      for (const post of posts) if (post?.cid) targetCommunity.set(post.cid, community)
+    }
+    for (const comment of index.listAllComments()) {
+      if (!comment?.community || !selectedCommunities.has(comment.community)) continue
+      let comments = commentsByCommunity.get(comment.community)
+      if (!comments) commentsByCommunity.set(comment.community, (comments = []))
+      comments.push(comment)
+      if (comment.cid) targetCommunity.set(comment.cid, comment.community)
+    }
+    for (const vote of index.listAllVotes()) {
+      const community = targetCommunity.get(vote?.targetCid)
+      if (!community) continue
+      let votes = votesByCommunity.get(community)
+      if (!votes) votesByCommunity.set(community, (votes = []))
+      votes.push(vote)
+    }
+
+    for (const community of byCommunity.keys()) {
+      const [meta, overlay] = await Promise.all([this.getCommunity(community), this.overlay(community)])
+      const posts = postsByCommunity.get(community) || []
+      const comments = commentsByCommunity.get(community) || []
+      const votes = votesByCommunity.get(community) || []
+      const eligible = eligibleCommunityAuthors({
+        creator: meta?.creator,
+        mods: overlay?.mods || [],
+        banned: overlay?.banned || [],
+        memberships: index.membershipRecordsIn(community),
+        posts,
+        comments,
+        votes
+      })
+      byCommunity.set(community, { overlay, eligible })
+    }
+
+    return rows.map(record => {
+      const context = byCommunity.get(record.community) || { overlay: null, eligible: new Set() }
+      const reports = index.listReportsFor(record.community, record.cid)
+      const consensus = aggregateReports(reports, { eligible: context.eligible, viewer })
+      const moderation = applyModerationPolicy(consensus, {
+        view,
+        moderatorRemoved: !!context.overlay?.removed?.has(record.cid)
+      })
+      return { ...record, moderation }
+    })
+  }
+
+  async moderationFor (record, opts) {
+    return (await this.moderationMany([record], opts))[0] || record
   }
 
   async modAction (community, args) { return this._modAction(community, args) }

@@ -1,0 +1,59 @@
+<svg viewBox="0 0 840 460" xmlns="http://www.w3.org/2000/svg" role="img" font-family="inherit">
+<title>One relay fleet, many mounted services, per-app signed rosters</title>
+<desc>Apps ship signed rosters naming which relays serve each data plane. Relays are generic nodes that mount services like outboxlog and shard-store. peerit uses a relay roster for its graph plane and a shard roster for its body plane; other apps reuse the same fleet under their own namespaces.</desc>
+<defs>
+<marker id="ar2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M0 0 L10 5 L0 10 z" fill="#71717a"/>
+</marker>
+</defs>
+<rect x="0" y="0" width="840" height="460" fill="#f4f4f5"/>
+<text x="20" y="28" font-size="16" font-weight="500" fill="#18181b">one relay fleet, many services — rosters are app-side pointers</text>
+
+<rect x="20" y="52" width="240" height="96" rx="8" fill="#ffffff" stroke="#e4e4e7"/>
+<text x="36" y="80" font-size="14" font-weight="500" fill="#18181b">peerit client</text>
+<text x="36" y="102" font-size="12" fill="#3f3f46">verifies every record itself</text>
+<text x="36" y="122" font-size="12" fill="#3f3f46">ships 2 signed rosters, 1 key pin</text>
+
+<rect x="20" y="168" width="240" height="72" rx="8" fill="#ffffff" stroke="#e4e4e7"/>
+<text x="36" y="196" font-size="14" font-weight="500" fill="#18181b">relay roster</text>
+<text x="36" y="218" font-size="12" fill="#3f3f46">graph plane → outboxlog</text>
+
+<rect x="20" y="256" width="240" height="72" rx="8" fill="#ffffff" stroke="#e4e4e7"/>
+<text x="36" y="284" font-size="14" font-weight="500" fill="#18181b">shard roster</text>
+<text x="36" y="306" font-size="12" fill="#3f3f46">body plane → shard-store, k-of-n</text>
+
+<line x1="140" y1="148" x2="140" y2="166" stroke="#71717a" marker-end="url(#ar2)"/>
+<line x1="140" y1="240" x2="140" y2="254" stroke="#71717a" marker-end="url(#ar2)"/>
+
+<rect x="330" y="60" width="480" height="300" rx="10" fill="none" stroke="#a1a1aa" stroke-dasharray="6 4"/>
+<text x="346" y="86" font-size="12" fill="#71717a">hiverelay fleet — every node is the same software, services are mounts</text>
+
+<rect x="350" y="100" width="210" height="110" rx="8" fill="#eef2ff" stroke="#c7d2fe"/>
+<text x="366" y="126" font-size="14" font-weight="500" fill="#3730a3">relay: bern</text>
+<text x="366" y="148" font-size="12" fill="#3730a3">▸ outboxlog (peerit graph)</text>
+<text x="366" y="168" font-size="12" fill="#3730a3">▸ shard-store (custody)</text>
+<text x="366" y="188" font-size="12" fill="#3730a3">▸ poker, notify, …</text>
+
+<rect x="590" y="100" width="200" height="110" rx="8" fill="#ffffff" stroke="#e4e4e7"/>
+<text x="606" y="126" font-size="14" font-weight="500" fill="#18181b">relay: operator B</text>
+<text x="606" y="148" font-size="12" fill="#3f3f46">▸ shard-store</text>
+<text x="606" y="168" font-size="12" fill="#3f3f46">▸ outboxlog (backup)</text>
+
+<rect x="350" y="230" width="210" height="110" rx="8" fill="#ffffff" stroke="#e4e4e7"/>
+<text x="366" y="256" font-size="14" font-weight="500" fill="#18181b">relay: operator C</text>
+<text x="366" y="278" font-size="12" fill="#3f3f46">▸ shard-store</text>
+<text x="366" y="298" font-size="12" fill="#3f3f46">▸ other apps' namespaces</text>
+
+<rect x="590" y="230" width="200" height="110" rx="8" fill="#ffffff" stroke="#e4e4e7"/>
+<text x="606" y="256" font-size="14" font-weight="500" fill="#18181b">other apps</text>
+<text x="606" y="278" font-size="12" fill="#3f3f46">p2pbuilders, pear-exchange…</text>
+<text x="606" y="298" font-size="12" fill="#3f3f46">own namespace, own roster</text>
+
+<line x1="262" y1="204" x2="348" y2="150" stroke="#71717a" marker-end="url(#ar2)"/>
+<line x1="262" y1="292" x2="348" y2="292" stroke="#71717a" marker-end="url(#ar2)"/>
+<line x1="262" y1="300" x2="588" y2="180" stroke="#71717a" marker-end="url(#ar2)"/>
+
+<text x="20" y="392" font-size="12" fill="#3f3f46">a roster = a signed, key-pinned list of "which relays serve this plane". the relay never decides membership —</text>
+<text x="20" y="412" font-size="12" fill="#3f3f46">the app's build pins the signing key, the client verifies every record, so relays stay untrusted transport.</text>
+<text x="20" y="432" font-size="12" fill="#3f3f46">different planes can point at different (overlapping) subsets of the same fleet.</text>
+</svg>

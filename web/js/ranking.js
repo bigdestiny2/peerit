@@ -2,6 +2,7 @@
 // { score, up, down, createdAt } shapes so they're unit-testable.
 
 import { FEED_PAGE_SIZE, parseFeedPage } from './feed-window.js'
+import { moderationTier } from './moderation.js'
 
 const EPOCH = 1134028003000 // Reddit's epoch (2005-12-08) in ms
 
@@ -103,6 +104,9 @@ export function sortPosts (posts, sort = 'hot', timeWindow = 'all', now = Date.n
     const sa = a.stickied ? 1 : 0
     const sb = b.stickied ? 1 : 0
     if (sa !== sb) return sb - sa
+    const ma = moderationTier(a)
+    const mb = moderationTier(b)
+    if (ma !== mb) return ma - mb
     return cmp(a, b)
   })
   return list
@@ -140,6 +144,9 @@ export function rankPostsWindow (posts, sort = 'hot', timeWindow = 'all', reques
     const aSticky = a.post.stickied ? 1 : 0
     const bSticky = b.post.stickied ? 1 : 0
     if (aSticky !== bSticky) return bSticky - aSticky
+    const aModeration = moderationTier(a.post)
+    const bModeration = moderationTier(b.post)
+    if (aModeration !== bModeration) return aModeration - bModeration
     const ranked = postComparator(a.post, b.post)
     // Array#sort is stable, so preserve that existing tie behaviour even when
     // the requested page is selected via a heap instead of a full sort.
@@ -196,7 +203,10 @@ function heapSinkWorst (heap, parent, compare) {
 
 export function sortComments (comments, sort = 'best', now = Date.now()) {
   const cmp = comparator(sort, now, true)
-  return comments.slice().sort(cmp)
+  return comments.slice().sort((a, b) => {
+    const moderation = moderationTier(a) - moderationTier(b)
+    return moderation || cmp(a, b)
+  })
 }
 
 function comparator (sort, now, isComment) {

@@ -17,8 +17,10 @@ import { createData } from './data.js'
 import { Prefs } from './prefs.js'
 import { STARTER_COMMUNITIES, STARTER_POSTS, WELCOME_COMMUNITY, starterCommunity } from './onboarding.js'
 import { renderMarkdown, excerpt } from './markdown.js'
-import { sortPosts, rankPostsWindow, sortComments, weight as voteWeight, POST_SORTS, COMMENT_SORTS, TIME_WINDOW_KEYS } from './ranking.js'
-import { buildCommentTree, sortCommentTree, annotateDescendants, countDescendants, MOD, TYPE } from './model.js'
+import { sortPosts, sortComments, weight as voteWeight, POST_SORTS, COMMENT_SORTS, TIME_WINDOW_KEYS } from './ranking.js'
+import { feedAlgorithm, rankFeedWindow } from './feed-algorithms.js'
+import { MODERATION_VIEW, VISIBILITY } from './moderation.js'
+import { buildCommentTree, sortCommentTree, annotateDescendants, countDescendants, MOD, REPORT_REASONS, REPORT_VERDICT, TYPE } from './model.js'
 import { COPY as RECOVERY_COPY, buildRecoveryBundle, cleanOutboxes, peeritSeederCommand, recoveryBundleFilename, recoveryBundleJson } from './recovery.js'
 import { exportIdentity, importIdentity, looksLikeIdentityExport, identityExportJson, identityExportFilename, passphraseStrength, MIN_PASSPHRASE } from './identity-export.js'
 import { VAULT_KEY, hasVault, vaultPubkey, saveVault, unlockVault, clearVault } from './identity-vault.js'
@@ -50,6 +52,7 @@ let renderToken = 0
 let _lastHash = ''
 const openReplies = new Set()      // comment cids with an open reply box
 const collapsedComments = new Set() // comment cids the user has collapsed (survives re-renders)
+const revealedModeration = new Set() // session-only "show anyway" exceptions
 let editing = null                 // { kind:'post'|'comment', ... } inline editor
 const nameCache = new Map()        // pub -> display name (sync-ish for render)
 let integrityWarningActive = false
@@ -1208,6 +1211,72 @@ function sortTabs (active, base, query) {
   `</div>`
 }
 
+function moderationControls (view, algorithm) {
+  const labels = {
+    [MODERATION_VIEW.COMMUNITY]: 'Community',
+    [MODERATION_VIEW.CONSENSUS]: 'Consensus only',
+    [MODERATION_VIEW.OPEN]: 'Open / unmoderated'
+  }
+  return `<div class="moderation-controls">
+    <label>View
+      <select data-act="moderation-view" aria-label="Feed moderation view">
+        ${Object.values(MODERATION_VIEW).map(key => `<option value="${key}" ${view === key ? 'selected' : ''}>${labels[key]}</option>`).join('')}
+      </select>
+    </label>
+    <span class="algorithm-disclosure" title="${esc(algorithm.id)} · ${esc(algorithm.source)}">Algorithm: ${esc(algorithm.name)} v${algorithm.version} · ${algorithm.license} source</span>
+  </div>`
+}
+
+function moderationRef (record) {
+  return record?.community && record?.cid ? record.community + '/' + record.cid : ''
+}
+
+function isModerationMasked (record) {
+  const visibility = record?.moderation?.visibility
+  return (visibility === VISIBILITY.COLLAPSED || visibility === VISIBILITY.BURIED) &&
+    !revealedModeration.has(moderationRef(record))
+}
+
+function moderationBadge (record) {
+  const moderation = record?.moderation
+  if (!moderation) return ''
+  const consensus = moderation.consensusState
+  const hasConsensus = consensus && consensus !== VISIBILITY.VISIBLE
+  if (!hasConsensus && !moderation.moderatorRemoved) return ''
+  const label = moderation.moderatorRemoved && moderation.view === MODERATION_VIEW.COMMUNITY
+    ? 'moderator-limited'
+    : hasConsensus
+      ? `community ${consensus}`
+      : 'moderator label'
+  const votes = moderation.eligible ? ` · ${moderation.bury} bury / ${moderation.keep} keep` : ''
+  return `<span class="moderation-badge state-${esc(consensus || 'visible')}" title="Eligible community reports${esc(votes)}">${esc(label)}${esc(votes)}</span>`
+}
+
+function moderationPlaceholder (record) {
+  const moderation = record.moderation || {}
+  const reason = moderation.reasons?.[0]?.reason
+  const source = moderation.moderatorRemoved && moderation.view === MODERATION_VIEW.COMMUNITY
+    ? 'limited by community moderators'
+    : `${moderation.consensusState || 'collapsed'} by eligible community participants`
+  return `<div class="moderation-placeholder">
+    <span>Content ${esc(source)}${reason ? ` · leading reason: ${esc(reason)}` : ''}.</span>
+    <button class="pa" data-act="reveal-moderated">Show anyway</button>
+  </div>`
+}
+
+function moderationActions (record) {
+  if (!isWritableContent(record) || record.deleted) return []
+  const mine = record.moderation?.myVerdict
+  const consensus = record.moderation?.consensusState
+  const actions = []
+  if (mine !== REPORT_VERDICT.KEEP && (mine === REPORT_VERDICT.BURY || (consensus && consensus !== VISIBILITY.VISIBLE))) {
+    actions.push('<button class="pa community-keep" data-act="community-keep">✓ keep</button>')
+  }
+  if (mine !== REPORT_VERDICT.BURY) actions.push('<button class="pa" data-act="open-report">⚑ flag</button>')
+  if (mine) actions.push('<button class="pa" data-act="withdraw-report">withdraw community vote</button>')
+  return actions
+}
+
 function feedPager ({ page, totalPages, totalItems, hasPrevious, hasNext }, base, query) {
   if (totalItems <= 25) return ''
   const route = (target) => buildRoute(base, { ...query, page: target > 1 ? target : undefined })
@@ -1251,7 +1320,6 @@ function authorLine (rec, extra = '') {
 
 function postCard (post, ov, opts = {}) {
   const ref = post.community + '/' + post.cid
-  const removed = ov && ov.removed.has(post.cid)
   const locked = ov && ov.locked.has(post.cid)
   const stickied = ov && ov.stickied.has(post.cid)
   const isMod = opts.mods && opts.mods.has(identity.me().pubkey)
@@ -1260,10 +1328,11 @@ function postCard (post, ov, opts = {}) {
   const permalink = buildRoute(['r', post.community, 'comments', post.cid])
   const commentCount = opts.commentCounts ? (opts.commentCounts.get(post.cid) || 0) : null
   const overflow = actionOverflow(post, ov, { isMod, mine, writable, full: opts.full })
+  const masked = isModerationMasked(post)
 
   let bodyHtml = ''
   if (post.deleted) bodyHtml = `<div class="removed-note">[deleted by author]</div>`
-  else if (removed) bodyHtml = `<div class="removed-note">[removed by moderators]</div>`
+  else if (masked) bodyHtml = moderationPlaceholder(post)
   else if (post.kind === 'link') bodyHtml = `<a class="post-link" href="${esc(safeUrl(post.url))}" target="_blank" rel="noopener noreferrer nofollow">${esc(post.url)} ↗</a>`
   else if (post.kind === 'image') bodyHtml = `<a href="${esc(safeUrl(post.url))}" target="_blank" rel="noopener noreferrer nofollow"><img class="post-img" src="${esc(safeUrl(post.url))}" alt="${esc(post.title || 'image post')}" loading="lazy" data-fallback-url="${esc(safeUrl(post.url))}"></a>`
   else if (post._blobMissing) bodyHtml = `<div class="removed-note">[encrypted body unavailable — no relay is currently serving it]</div>`
@@ -1278,6 +1347,7 @@ function postCard (post, ov, opts = {}) {
         <a class="sub-link" href="#/r/${esc(post.community)}">r/${esc(post.community)}</a>
         <span class="dim">· posted by</span> ${authorLine(post)}
         ${writable ? '' : '<span class="historical-tag" title="Pre-v3 content: readable, but CID-based writes are disabled">historical · read-only</span>'}
+        ${moderationBadge(post)}
         ${locked ? '<span class="lock" title="Locked">🔒</span>' : ''}
       </div>
       <h2 class="post-title">${opts.full ? esc(post.title) : `<a href="${permalink}">${esc(post.title)}</a>`}
@@ -1302,6 +1372,7 @@ function actionOverflow (post, ov, { isMod, mine, writable }) {
     items.push('<button class="pa danger" data-act="delete-post">🗑 delete</button>')
   }
   if (writable && isMod && ov) items.push(modMenu(post, ov))
+  items.push(...moderationActions(post))
   if (!items.length) return ''
   return `<details class="more-actions">
     <summary class="pa" aria-label="More post actions">More</summary>
@@ -1343,6 +1414,8 @@ function onResourceError (e) {
 // ---- FEED views (home / all / community) ------------------------------------
 async function viewFeed ({ scope, community, query, guard, token }) {
   const sort = postSort(query.sort || prefs.sort)
+  const algorithm = feedAlgorithm(sort)
+  const moderationView = prefs.moderationView
   const tw = query.t || 'all'
   guard(skeleton(scope === 'community' ? 'r/' + esc(community) : (scope === 'home' ? 'Home' : scope === 'following' ? 'Following' : 'Popular')))
 
@@ -1380,14 +1453,19 @@ async function viewFeed ({ scope, community, query, guard, token }) {
   // feeds do not depend on votes, so defer their tally work until the visible
   // page; score-based ranking still uses the full verified record set.
   posts = posts.filter(p => !prefs.isHidden(p.community + '/' + p.cid))
+  posts = await data.moderationMany(posts, { view: moderationView })
+  const buriedCount = posts.filter(post => post.moderation?.visibility === VISIBILITY.BURIED &&
+    !revealedModeration.has(moderationRef(post))).length
+  posts = posts.filter(post => post.moderation?.visibility !== VISIBILITY.BURIED ||
+    revealedModeration.has(moderationRef(post)))
 
   // mark stickied (community feed only) + overlay removal
   if (scope === 'community' && ov) {
-    posts.forEach(p => { p.stickied = ov.stickied.has(p.cid) })
+    posts.forEach(p => { p.stickied = moderationView === MODERATION_VIEW.COMMUNITY && ov.stickied.has(p.cid) })
   }
   const rankingNeedsTallies = sort !== 'new' && sort !== 'old'
   if (rankingNeedsTallies) posts = await data.withTallies(posts)
-  const page = rankPostsWindow(posts, sort, tw, query.page)
+  const page = rankFeedWindow(posts, sort, tw, query.page)
   const pagePosts = rankingNeedsTallies ? page.items : await data.withTallies(page.items)
   // Ranking used the complete verified record set above. Keep expensive body
   // hydration, author/profile lookups, comment counts, and DOM construction to
@@ -1420,8 +1498,13 @@ async function viewFeed ({ scope, community, query, guard, token }) {
       mods: scope === 'community' ? mods : null, commentCounts
     })).join('') + feedPager(page, base, query)
   }
+  if (buriedCount) {
+    body = `<div class="moderation-buried-note">${fmtCount(buriedCount)} post${buriedCount === 1 ? '' : 's'} buried by eligible community consensus.
+      <button class="pa" data-act="open-moderation-view">Switch to Open view</button>
+    </div>` + body
+  }
 
-  guard(`${title}${sortTabs(sort, base, query)}<div class="feed">${body}</div>`)
+  guard(`${title}<div class="feed-controls">${sortTabs(sort, base, query)}${moderationControls(moderationView, algorithm)}</div><div class="feed">${body}</div>`)
   if (scope === 'community') renderSidebar(communitySidebar(communityMeta, mods), token)
   else renderSidebar(await sidebarHome(), token)
 }
@@ -1524,13 +1607,14 @@ async function viewPost ({ community, cid, query, guard, token }) {
   const ov = await data.overlay(community)
   const csort = query.csort || 'best'
 
-  const [pWith] = await data.withTallies([post])
+  let [pWith] = await data.withTallies([post])
   pWith.stickied = ov.stickied.has(cid)
 
   let comments = await data.listComments(community, cid)
   comments = await data.withTallies(comments)
-  // apply removal overlay to comment bodies
-  comments.forEach(c => { c._removed = ov.removed.has(c.cid) })
+  const moderated = await data.moderationMany([pWith, ...comments], { view: prefs.moderationView })
+  pWith = moderated[0]
+  comments = moderated.slice(1)
   await primeNames([post.author, ...comments.map(c => c.author), ...(ov && ov.mods ? [...ov.mods] : [])]) // + sidebar mods
 
   const { roots } = buildCommentTree(comments)
@@ -1544,7 +1628,7 @@ async function viewPost ({ community, cid, query, guard, token }) {
   const writableThread = isWritableContent(pWith)
 
   const banned = ov.banned.has(identity.me().pubkey)
-  const composer = (pWith.deleted || ov.removed.has(cid))
+  const composer = (pWith.deleted || (prefs.moderationView === MODERATION_VIEW.COMMUNITY && ov.removed.has(cid)))
     ? `<div class="locked-note">This post is no longer available.</div>`
     : !writableThread
       ? `<div class="locked-note">Historical thread — readable for compatibility, but replies, votes, edits, and moderation writes are disabled because its old CID may be ambiguous.</div>`
@@ -1568,6 +1652,7 @@ async function viewPost ({ community, cid, query, guard, token }) {
       ${postCard(pWith, ov, { full: true, mods: ov.mods })}
     </div>
     <div class="comment-section">
+      ${moderationControls(prefs.moderationView, feedAlgorithm(prefs.sort))}
       ${composer}
       <div class="comment-bar">${countDescendantsTotal(sorted)} comments ${csortTabs}</div>
       <div class="comments">${commentsHtml}</div>
@@ -1585,14 +1670,15 @@ function commentNode (node, post, ov, isMod, depth) {
   const mine = node.author === identity.me().pubkey
   const collapsedId = 'c_' + node.cid
   const isCollapsed = collapsedComments.has(node.cid) // preserved across live re-renders
-  const removed = node._removed
+  const moderatorRemoved = !!(ov.removed && ov.removed.has(node.cid))
+  const removed = prefs.moderationView === MODERATION_VIEW.COMMUNITY && moderatorRemoved
   const deleted = node.deleted
   const locked = !!(ov.locked && ov.locked.has(post.cid))
   const writable = isWritableContent(post) && isWritableContent(node)
   const childCount = node._descendants != null ? node._descendants : countDescendants(node)
   let bodyHtml
   if (deleted) bodyHtml = `<div class="removed-note">[deleted]</div>`
-  else if (removed) bodyHtml = `<div class="removed-note">[removed by moderators]</div>`
+  else if (isModerationMasked(node)) bodyHtml = moderationPlaceholder(node)
   else if (node._blobMissing) bodyHtml = `<div class="removed-note">[encrypted body unavailable — no relay is currently serving it]</div>`
   else bodyHtml = `<div class="md">${renderMarkdown(node.body)}</div>`
 
@@ -1615,14 +1701,15 @@ function commentNode (node, post, ov, isMod, depth) {
       <div class="comment-body">
         <div class="comment-head">
           ${voteWidgetInline(node)}
-          ${authorLine(node)} ${writable ? '' : '<span class="historical-tag">historical · read-only</span>'} ${childCount ? `<span class="dim">· ${childCount} ${childCount === 1 ? 'reply' : 'replies'}</span>` : ''}
+          ${authorLine(node)} ${writable ? '' : '<span class="historical-tag">historical · read-only</span>'} ${moderationBadge(node)} ${childCount ? `<span class="dim">· ${childCount} ${childCount === 1 ? 'reply' : 'replies'}</span>` : ''}
         </div>
         ${bodyHtml}
         <div class="comment-actions">
           ${writable && !deleted && !removed && !locked ? `<button class="pa" data-act="reply" data-cid="${esc(node.cid)}">↳ reply</button>` : ''}
           ${writable && mine && !deleted ? `<button class="pa" data-act="edit-comment" data-cid="${esc(node.cid)}">✎ edit</button>
             <button class="pa danger" data-act="delete-comment" data-cid="${esc(node.cid)}">🗑 delete</button>` : ''}
-          ${writable && isMod ? `<button class="pa mod" data-act="mod" data-mod="${removed ? MOD.APPROVE : MOD.REMOVE}" data-cid="${esc(node.cid)}">${removed ? '✓ approve' : '⊘ remove'}</button>` : ''}
+          ${writable && isMod ? `<button class="pa mod" data-act="mod" data-mod="${moderatorRemoved ? MOD.APPROVE : MOD.REMOVE}" data-cid="${esc(node.cid)}">${moderatorRemoved ? '✓ approve' : '⊘ remove'}</button>` : ''}
+          ${moderationActions(node).join('')}
         </div>
         ${replyForm}
       </div>
@@ -1814,7 +1901,7 @@ async function viewSaved ({ guard, token }) {
     const p = await data.getPost(c, cid)
     if (p) posts.push(p)
   }
-  const withT = await data.withTallies(posts)
+  const withT = await data.moderationMany(await data.withTallies(posts), { view: prefs.moderationView })
   await primeNames(withT.map(p => p.author))
   const counts = await countCommentsFor(withT)
   if (token !== renderToken) return
@@ -1880,21 +1967,29 @@ async function viewSearch ({ query, guard, token }) {
   guard(skeleton('Search'))
   if (!q) return done(guard, token, `<div class="empty"><h3>Search peerit</h3><p>Type a query in the bar above.</p></div>`, renderSidebarHome)
   const { communities: commHits, posts: postHits, comments: commentHits } = await data.search(q)
-  const withT = await data.withTallies(postHits)
-  await primeNames([...withT.map(p => p.author), ...commentHits.map(c => c.author)])
+  let withT = await data.moderationMany(await data.withTallies(postHits), { view: prefs.moderationView })
+  let moderatedComments = await data.moderationMany(commentHits, { view: prefs.moderationView })
+  const buriedMatches = withT.filter(record => record.moderation?.visibility === VISIBILITY.BURIED && !revealedModeration.has(moderationRef(record))).length +
+    moderatedComments.filter(record => record.moderation?.visibility === VISIBILITY.BURIED && !revealedModeration.has(moderationRef(record))).length
+  withT = withT.filter(record => record.moderation?.visibility !== VISIBILITY.BURIED || revealedModeration.has(moderationRef(record)))
+  moderatedComments = moderatedComments.filter(record => record.moderation?.visibility !== VISIBILITY.BURIED || revealedModeration.has(moderationRef(record)))
+  await primeNames([...withT.map(p => p.author), ...moderatedComments.map(c => c.author)])
   const counts = await countCommentsFor(withT)
   if (token !== renderToken) return
   guard(`<div class="feed-head"><h1>Results for "${esc(q)}"</h1></div>
+    ${moderationControls(prefs.moderationView, feedAlgorithm('top'))}
+    ${buriedMatches ? `<div class="moderation-buried-note">${fmtCount(buriedMatches)} matching item${buriedMatches === 1 ? '' : 's'} buried by the selected policy. <button class="pa" data-act="open-moderation-view">Switch to Open view</button></div>` : ''}
     ${commHits.length ? `<h2 class="section-title">Communities</h2><div class="comm-list">${commHits.map(c => `
       <div class="comm-row"><span class="comm-icon" style="background:${colorFor(c.slug)}">r/</span>
         <div class="comm-info"><a class="comm-name" href="#/r/${esc(c.slug)}">r/${esc(c.slug)}</a><div class="dim small">${esc(c.description || '')}</div></div></div>`).join('')}</div>` : ''}
     <h2 class="section-title">Posts</h2>
     <div class="feed">${withT.length ? sortPosts(withT, 'top').map(p => postCard(p, null, { commentCounts: counts })).join('') : '<div class="empty"><p>No matching posts.</p></div>'}</div>
     <h2 class="section-title">Comments</h2>
-    <div class="activity-feed">${commentHits.length ? commentHits.map(c => `
-      <div class="activity"><span class="atag">comment</span> by <a href="#/u/${esc(c.author)}">${esc(nameOf(c.author))}</a>
+    <div class="activity-feed">${moderatedComments.length ? moderatedComments.map(c => `
+      <div class="activity search-comment comment" data-cid="${esc(c.cid)}" data-community="${esc(c.community)}" data-post="${esc(c.postCid)}"><span class="atag">comment</span> by <a href="#/u/${esc(c.author)}">${esc(nameOf(c.author))}</a>
         on <a href="${buildRoute(['r', c.community, 'comments', c.postCid])}">${esc(c.postTitle || 'a post')}</a>
-        <div class="md small">${renderMarkdown(excerpt(c.body, 220))}</div></div>`).join('') : '<div class="empty"><p>No matching comments.</p></div>'}</div>`)
+        ${moderationBadge(c)}
+        ${isModerationMasked(c) ? moderationPlaceholder(c) : `<div class="md small">${renderMarkdown(excerpt(c.body, 220))}</div>`}</div>`).join('') : '<div class="empty"><p>No matching comments.</p></div>'}</div>`)
   renderSidebar(await sidebarHome(), token)
 }
 
@@ -2247,6 +2342,20 @@ async function onClick (e) {
       case 'vote': return void await onVote(t)
       case 'save': { prefs.toggleSaved(t.dataset.ref); t.textContent = prefs.isSaved(t.dataset.ref) ? '★ saved' : '☆ save'; return }
       case 'hide': { prefs.toggleHidden(t.dataset.ref); route(); return }
+      case 'open-report': return void openReportModal(t)
+      case 'community-keep': return void await publishCommunityVerdict(t, REPORT_VERDICT.KEEP)
+      case 'withdraw-report': return void await withdrawCommunityVerdict(t)
+      case 'reveal-moderated': {
+        const target = t.closest('.post') || t.closest('.comment')
+        if (target) revealedModeration.add(target.dataset.community + '/' + target.dataset.cid)
+        route()
+        return
+      }
+      case 'open-moderation-view': {
+        prefs.setModerationView(MODERATION_VIEW.OPEN)
+        route()
+        return
+      }
       case 'follow': {
         const pub = t.dataset.pub
         const now = prefs.toggleFollow(pub)
@@ -2356,6 +2465,10 @@ document.addEventListener('change', (e) => {
   if (e.target.matches('select.timewin')) {
     const { path, query } = parseRoute(location.hash)
     location.hash = buildRoute(path, { ...query, t: e.target.value })
+  }
+  if (e.target.matches('select[data-act="moderation-view"]')) {
+    prefs.setModerationView(e.target.value)
+    route()
   }
   if (e.target.matches('select[name="community"]')) { /* no-op */ }
   if (e.target.matches('input[type="file"][data-file="import-identity"]')) {
@@ -2491,6 +2604,69 @@ async function onMod (t) {
   route()
 }
 
+function moderationTargetFromElement (element) {
+  const node = element?.closest('.post') || element?.closest('.comment')
+  if (!node) throw new Error('Moderation target is no longer on this page')
+  const isComment = node.classList.contains('comment')
+  return {
+    community: node.dataset.community,
+    targetCid: node.dataset.cid,
+    targetType: isComment ? TYPE.COMMENT : TYPE.POST,
+    postCid: isComment ? node.dataset.post : null
+  }
+}
+
+async function publishCommunityVerdict (element, verdict) {
+  if (isReadOnly()) throw new Error('This peerit is read-only')
+  const target = moderationTargetFromElement(element)
+  await data.reportContent(target.community, {
+    ...target,
+    verdict,
+    reason: 'other',
+    note: ''
+  })
+  toast(verdict === REPORT_VERDICT.KEEP ? 'Community keep vote published' : 'Community flag published')
+  route()
+}
+
+async function withdrawCommunityVerdict (element) {
+  if (isReadOnly()) throw new Error('This peerit is read-only')
+  const target = moderationTargetFromElement(element)
+  await data.withdrawReport(target.community, target.targetCid, { postCid: target.postCid })
+  toast('Community moderation vote withdrawn')
+  route()
+}
+
+function openReportModal (element) {
+  const root = $('#modal-root')
+  if (!root) { toast('This needs the in-app modal', 'error'); return }
+  const target = moderationTargetFromElement(element)
+  root.innerHTML = `<div class="modal-backdrop">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="report-title">
+      <h2 id="report-title">Flag for community review</h2>
+      <p class="dim small">Your signed flag is public to peers, sealed from blind cell relays, and counts only if you are an eligible participant in this community.</p>
+      <form data-form="report-content"
+        data-community="${esc(target.community)}"
+        data-cid="${esc(target.targetCid)}"
+        data-type="${esc(target.targetType)}"
+        data-post="${esc(target.postCid || '')}">
+        <label>Reason
+          <select name="reason">
+            ${REPORT_REASONS.map(reason => `<option value="${esc(reason)}">${esc(reason)}</option>`).join('')}
+          </select>
+        </label>
+        <label>Context (optional)
+          <textarea name="note" rows="3" maxlength="300" placeholder="Short factual context for other readers"></textarea>
+        </label>
+        <div class="form-actions">
+          <button class="btn btn-primary" type="submit">Publish flag</button>
+          <button class="btn btn-ghost" type="button" data-act="close-modal">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>`
+}
+
 async function editPost (t) {
   const post = t.closest('.post')
   const community = post.dataset.community, cid = post.dataset.cid
@@ -2583,6 +2759,21 @@ async function onSubmit (e) {
       finishComposerNavigation()
       form.reset()
       toast('Comment added'); route()
+      return
+    }
+    if (f === 'report-content') {
+      await data.reportContent(form.dataset.community, {
+        targetCid: form.dataset.cid,
+        targetType: form.dataset.type,
+        postCid: form.dataset.post || null,
+        verdict: REPORT_VERDICT.BURY,
+        reason: fd.get('reason'),
+        note: fd.get('note'),
+        onProgress
+      })
+      closeModal()
+      toast('Community flag published')
+      route()
       return
     }
     if (f === 'profile') {

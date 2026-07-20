@@ -66,6 +66,8 @@ export class MaterializedIndex {
     this.commentsAll = new Map()
     this.votesByTarget = new Map()
     this.votesAll = new Map()
+    this.reportsByTarget = new Map()
+    this.reportsAll = new Map()
     this.modsByCommunity = new Map()
     this.followersByTarget = new Map()
     this.followingByAuthor = new Map()
@@ -83,6 +85,8 @@ export class MaterializedIndex {
     this.commentsAll.clear()
     this.votesByTarget.clear()
     this.votesAll.clear()
+    this.reportsByTarget.clear()
+    this.reportsAll.clear()
     this.modsByCommunity.clear()
     this.followersByTarget.clear()
     this.followingByAuthor.clear()
@@ -114,10 +118,13 @@ export class MaterializedIndex {
   listAllComments () { return values(this.commentsAll, ALL) }
   listVotesFor (targetCid) { return values(this.votesByTarget, targetCid) }
   listAllVotes () { return values(this.votesAll, ALL) }
+  listReportsFor (community, targetCid) { return values(this.reportsByTarget, threadScope(community, targetCid)) }
+  listAllReports () { return values(this.reportsAll, ALL) }
   listModActions (community) { return values(this.modsByCommunity, community) }
   followersOf (target) { return values(this.followersByTarget, target).map(row => row.author) }
   followingOf (author) { return values(this.followingByAuthor, author).map(row => row.target) }
   membersOf (community) { return values(this.membersByCommunity, community).map(row => row.author) }
+  membershipRecordsIn (community) { return values(this.membersByCommunity, community) }
   membershipsOf (author) { return values(this.membershipsByAuthor, author).map(row => row.community) }
   postCount (community) { return count(this.postsByCommunity, community) }
   memberCount (community) { return count(this.membersByCommunity, community) }
@@ -139,6 +146,10 @@ export class MaterializedIndex {
       case TYPE.VOTE:
         if (record.targetCid != null) put(this.votesByTarget, record.targetCid, key, record)
         put(this.votesAll, ALL, key, record)
+        break
+      case TYPE.REPORT:
+        if (record.community != null && record.targetCid != null) put(this.reportsByTarget, threadScope(record.community, record.targetCid), key, record)
+        put(this.reportsAll, ALL, key, record)
         break
       case TYPE.MOD:
         if (record.community != null) put(this.modsByCommunity, record.community, key, record)
@@ -175,6 +186,10 @@ export class MaterializedIndex {
       case TYPE.VOTE:
         del(this.votesByTarget, record.targetCid, key)
         del(this.votesAll, ALL, key)
+        break
+      case TYPE.REPORT:
+        del(this.reportsByTarget, threadScope(record.community, record.targetCid), key)
+        del(this.reportsAll, ALL, key)
         break
       case TYPE.MOD:
         del(this.modsByCommunity, record.community, key)

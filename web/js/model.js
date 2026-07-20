@@ -8,6 +8,7 @@
 //   post        post!<community>!<cid>
 //   comment     comment!<community>!<postCid>!<cid>
 //   vote        vote!<targetCid>!<authorPub>     (one per voter -> LWW dedup)
+//   report      report!<community>!<targetCid>!<authorPub> (bury/keep, one per participant)
 //   profile     profile!<authorPub>
 //   modaction   modaction!<community>!<actionId>
 //
@@ -22,6 +23,7 @@ export const TYPE = {
   POST: 'post',
   COMMENT: 'comment',
   VOTE: 'vote',
+  REPORT: 'report',
   PROFILE: 'profile',
   MOD: 'modaction',
   // A per-outbox signed census (the "merkle root"): head!<authorPub> commits to
@@ -152,6 +154,46 @@ export async function hasValidModAction (data) {
   return false
 }
 
+export const REPORT_VERDICT = Object.freeze({
+  BURY: 'bury',
+  KEEP: 'keep'
+})
+
+export const REPORT_REASONS = Object.freeze([
+  'spam',
+  'off-topic',
+  'low-quality',
+  'harassment',
+  'hate',
+  'sexual',
+  'graphic',
+  'personal-info',
+  'impersonation',
+  'malware',
+  'illegal',
+  'misleading',
+  'duplicate',
+  'other'
+])
+const REPORT_REASON_SET = new Set(REPORT_REASONS)
+
+// Community reports are signed, target-bound protocol records rather than
+// mutable server flags. One author has one LWW slot per target, and can choose
+// either "bury" or "keep" (community vouch). The targetRef prevents a report
+// from being redirected to a caller-selected or ambiguous legacy CID.
+export async function hasValidReport (data) {
+  if (!data || typeof data !== 'object' || data.protocol !== CONTENT_PROTOCOL) return false
+  if (!validCommunitySlug(data.community) || !validUserTarget(data.author)) return false
+  if (!Number.isFinite(data.ts) || data.ts < 0) return false
+  if (data.targetType !== TYPE.POST && data.targetType !== TYPE.COMMENT) return false
+  if (data.targetCid !== data.targetRef?.cid || data.targetType !== data.targetRef?.type) return false
+  if (data.verdict !== REPORT_VERDICT.BURY && data.verdict !== REPORT_VERDICT.KEEP) return false
+  if (!REPORT_REASON_SET.has(data.reason)) return false
+  if (typeof data.note !== 'string' || data.note.length > 300) return false
+  if (data.deleted !== undefined && typeof data.deleted !== 'boolean') return false
+  return hasValidContentRef(data.targetRef, data.targetType)
+}
+
 export const keys = {
   community: (slug) => `${TYPE.COMMUNITY}!${slug}`,
   communityPrefix: () => `${TYPE.COMMUNITY}!`,
@@ -166,6 +208,10 @@ export const keys = {
   vote: (targetCid, author) => `${TYPE.VOTE}!${targetCid}!${author}`,
   voteAll: () => `${TYPE.VOTE}!`,
   votesFor: (targetCid) => `${TYPE.VOTE}!${targetCid}!`,
+
+  report: (community, targetCid, author) => `${TYPE.REPORT}!${community}!${targetCid}!${author}`,
+  reportAll: () => `${TYPE.REPORT}!`,
+  reportsFor: (community, targetCid) => `${TYPE.REPORT}!${community}!${targetCid}!`,
 
   profile: (author) => `${TYPE.PROFILE}!${author}`,
 
@@ -197,6 +243,7 @@ export const id = {
   post: (community, cid) => `${community}!${cid}`,
   comment: (community, postCid, cid) => `${community}!${postCid}!${cid}`,
   vote: (targetCid, author) => `${targetCid}!${author}`,
+  report: (community, targetCid, author) => `${community}!${targetCid}!${author}`,
   profile: (author) => author,
   mod: (community, actionId) => `${community}!${actionId}`,
   head: (author) => author,
@@ -216,6 +263,7 @@ export function semanticId (type, data) {
     case TYPE.POST: return data.community != null && data.cid != null ? id.post(data.community, data.cid) : null
     case TYPE.COMMENT: return data.community != null && data.postCid != null && data.cid != null ? id.comment(data.community, data.postCid, data.cid) : null
     case TYPE.VOTE: return data.targetCid != null && data.author != null ? id.vote(data.targetCid, data.author) : null
+    case TYPE.REPORT: return data.community != null && data.targetCid != null && data.author != null ? id.report(data.community, data.targetCid, data.author) : null
     case TYPE.PROFILE: return data.author != null ? id.profile(data.author) : null
     case TYPE.MOD: return data.community != null && data.actionId != null ? id.mod(data.community, data.actionId) : null
     case TYPE.HEAD: return data.author != null ? id.head(data.author) : null

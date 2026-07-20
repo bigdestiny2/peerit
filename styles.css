@@ -99,6 +99,17 @@ button{font-family:inherit}
 .sorttabs .tab:hover{color:var(--text);background:var(--surface-2)}
 .sorttabs .tab.active{color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent-2))}
 .timewin{margin-left:auto;background:var(--surface-2);color:var(--text);border:1px solid var(--border-2);border-radius:8px;padding:5px 8px;font-size:13px}
+.feed-controls{display:flex;flex-direction:column;align-items:stretch;gap:8px;margin-bottom:16px}
+.feed-controls .sorttabs{margin-bottom:0;width:100%}
+.feed-controls > .moderation-controls{order:-1;justify-content:space-between}
+.moderation-controls{display:flex;align-items:center;gap:9px;min-height:42px;padding:5px 10px;background:var(--surface);
+  border:1px solid var(--border);border-radius:12px;color:var(--muted);font-size:12px;flex-wrap:wrap}
+.comment-section > .moderation-controls{margin-bottom:12px}
+.moderation-controls label{display:flex;align-items:center;gap:7px;margin:0;font-weight:700}
+.moderation-controls select{display:inline-block;width:auto;margin:0;background:var(--surface-2);color:var(--text);border:1px solid var(--border-2);border-radius:8px;padding:5px 8px}
+.algorithm-disclosure{white-space:nowrap}
+.moderation-buried-note{padding:10px 12px;border:1px solid rgba(251,191,36,.28);border-radius:10px;
+  background:rgba(251,191,36,.07);color:var(--muted);font-size:13px}
 
 /* posts */
 .feed{display:flex;flex-direction:column;gap:12px}
@@ -135,6 +146,13 @@ button{font-family:inherit}
 .post-link{color:var(--accent);font-size:14px;word-break:break-all}
 .post-img{max-width:100%;max-height:520px;border-radius:10px;margin:4px 0}
 .removed-note{color:var(--faint);font-style:italic;font-size:14px;padding:4px 0}
+.moderation-badge{display:inline-flex;align-items:center;border:1px solid rgba(251,191,36,.32);border-radius:999px;
+  padding:1px 6px;color:#f5c96a;background:rgba(251,191,36,.07);font-size:10.5px;font-weight:700;white-space:nowrap}
+.moderation-badge.state-buried{border-color:rgba(255,92,108,.38);color:#ff9ca8;background:rgba(255,92,108,.07)}
+.moderation-placeholder{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:4px 0 8px;padding:9px 11px;
+  border:1px dashed var(--border-2);border-radius:9px;color:var(--faint);font-size:13px;font-style:italic}
+.moderation-placeholder .pa{flex:none;font-style:normal}
+.community-keep{color:var(--good)}
 .post-actions{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:6px}
 .pa{display:inline-flex;align-items:center;gap:5px;background:none;border:0;color:var(--muted);font-weight:600;font-size:12.5px;
   cursor:pointer;padding:5px 9px;border-radius:7px}
@@ -330,6 +348,9 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
 .modal-card{width:min(520px,100%);background:var(--surface);border:1px solid var(--border-2);border-radius:var(--radius);padding:20px;box-shadow:0 24px 70px rgba(0,0,0,.55)}
 .modal-card h2{margin:0 0 10px;font-size:19px}
 .modal-card p{margin:0 0 10px}
+.modal-card form label{display:flex;flex-direction:column;gap:6px;margin:12px 0;color:var(--muted);font-size:13px;font-weight:700}
+.modal-card form select,.modal-card form textarea{width:100%;background:var(--bg-2);border:1px solid var(--border-2);border-radius:9px;
+  color:var(--text);padding:9px 11px;font:inherit}
 .vault-unlock{z-index:120}
 .modal-card p.err{color:var(--danger)}
 

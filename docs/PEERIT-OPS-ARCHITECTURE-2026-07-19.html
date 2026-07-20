@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Peerit Ops Architecture — Blind Substrate · Gateway · Moderation (2026-07-19)</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0; background: #eef1f6; color: #1a2333;
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .page {
+    max-width: 980px; margin: 32px auto; background: #fff; padding: 56px 64px;
+    border-radius: 14px; box-shadow: 0 2px 18px rgba(20,30,60,.10);
+  }
+  @media (max-width: 720px) {
+    .page { margin: 0; border-radius: 0; padding: 28px 20px; }
+  }
+  h1 {
+    font-size: 1.8rem; line-height: 1.25; margin: 0 0 .4em;
+    padding-bottom: .35em; border-bottom: 3px solid #c45c26;
+  }
+  h2 {
+    font-size: 1.28rem; margin-top: 2em;
+    border-bottom: 1px solid #dde3ee; padding-bottom: .2em;
+  }
+  h3 { font-size: 1.06rem; margin-top: 1.45em; color: #2c3e63; }
+  p { margin: .7em 0; }
+  blockquote {
+    margin: 1em 0; padding: .85em 1.15em; background: #fff6f0;
+    border-left: 4px solid #c45c26; border-radius: 0 8px 8px 0; color: #4a3428;
+  }
+  code {
+    background: #f0f2f7; padding: .12em .38em; border-radius: 5px;
+    font: .86em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  pre {
+    background: #141a28; color: #e6ebf5; padding: 16px 18px;
+    border-radius: 10px; overflow-x: auto; font-size: .86rem;
+  }
+  pre code { background: none; padding: 0; color: inherit; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: .9rem; }
+  th, td { border: 1px solid #d8deea; padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #eef2fa; }
+  tr:nth-child(even) td { background: #fafbfe; }
+  a { color: #2f5fb3; }
+  .doc-badge {
+    display: inline-block; font-size: .72rem; letter-spacing: .05em; text-transform: uppercase;
+    background: #c45c26; color: #fff; border-radius: 999px; padding: 3px 12px; margin: 0 6px 10px 0;
+  }
+  .doc-badge.ok { background: #2c7a4f; }
+  .doc-badge.warn { background: #b7791f; }
+  .doc-badge.muted { background: #4a6fa5; }
+  .meta { color: #4b5568; font-size: .95rem; margin-bottom: 1.2em; }
+  .mermaid-figure {
+    margin: 1.4em 0; padding: 18px 14px; background: #fbfcfe;
+    border: 1px solid #e2e8f2; border-radius: 12px; overflow-x: auto;
+  }
+  .status-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px; margin: 1em 0 1.4em;
+  }
+  .status-card {
+    border: 1px solid #d8deea; border-radius: 10px; padding: 12px 14px; background: #fafbfe;
+  }
+  .status-card strong {
+    display: block; font-size: .75rem; letter-spacing: .04em;
+    text-transform: uppercase; color: #5b6b88; margin-bottom: 4px;
+  }
+  .status-card span { font-size: 1.02rem; font-weight: 650; color: #1a2333; }
+  .status-card.shipped { border-color: #b7e0c5; background: #f3fbf6; }
+  .status-card.progress { border-color: #f0d49a; background: #fffbf0; }
+  .status-card.hold { border-color: #e8c4c4; background: #fff6f6; }
+  ul.tight li { margin: .28em 0; }
+  .footer {
+    margin-top: 2.5em; padding-top: 1em; border-top: 1px solid #dde3ee;
+    font-size: .88rem; color: #5b6b88;
+  }
+  .delta {
+    background: #f6faf3; border: 1px solid #cfe6c4; border-radius: 10px;
+    padding: 12px 16px; margin: 1em 0;
+  }
+  .delta h3 { margin-top: 0; color: #2c5e3a; }
+  .warnbox {
+    background: #fff8e8; border: 1px solid #efd59a; border-radius: 10px;
+    padding: 12px 16px; margin: 1em 0;
+  }
+  .forbid {
+    background: #fff1f0; border: 1px solid #f0c2bc; border-radius: 10px;
+    padding: 12px 16px; margin: 1em 0;
+  }
+  .check { list-style: none; padding-left: 0; }
+  .check li { padding: .35em 0 .35em 1.6em; position: relative; }
+  .check li::before {
+    content: "☐"; position: absolute; left: 0; color: #4a6fa5; font-weight: 700;
+  }
+  .check li.done::before { content: "☑"; color: #2c7a4f; }
+  hr { border: none; border-top: 1px solid #dde3ee; margin: 2em 0; }
+  .layers {
+    display: grid; grid-template-columns: 1fr; gap: 8px; margin: 1em 0;
+  }
+  .layer {
+    border-radius: 10px; padding: 12px 16px; border: 1px solid #d8deea;
+  }
+  .layer .tag {
+    font-size: .72rem; letter-spacing: .05em; text-transform: uppercase;
+    font-weight: 700; color: #5b6b88;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<span class="doc-badge">PEERIT-OPS</span>
+<span class="doc-badge muted">BLIND · GATEWAY · MODERATION</span>
+<span class="doc-badge ok">2026-07-19</span>
+<span class="doc-badge warn">STAND-UP PLAN</span>
+
+<h1>Peerit Ops Architecture — Standing It Up Fully</h1>
+
+<p class="meta">
+  <strong>Date:</strong> 2026-07-19 ·
+  <strong>App:</strong> Peerit 1.0.1 · web release sequence <strong>11</strong> ·
+  <strong>Goal:</strong> full production stand-up on the <strong>new blind substrate</strong>, served via the
+  <strong>HTTPS Hive gateway (T1)</strong>, with the <strong>community moderation v1</strong> feature live and honest.
+</p>
+
+<blockquote>
+  Peerit is the first real passenger on the HiveRelay giga plane. Keys and verification stay in the browser.
+  Relays and gateways are untrusted availability — they can withhold, never forge. Moderation is a
+  <strong>client-honored overlay</strong> of signed reports and mod actions, not server-side deletion of truth.
+  Legal takedown on a relay is a separate, identifier-keyed DO-NOT-SERVE veil.
+</blockquote>
+
+<div class="status-grid">
+  <div class="status-card shipped"><strong>peerit.site</strong><span>Live canary · seq 11</span></div>
+  <div class="status-card shipped"><strong>outbox.peerit.site</strong><span>Live single ingress</span></div>
+  <div class="status-card shipped"><strong>Opaque-Log v2</strong><span>Live (client seal)</span></div>
+  <div class="status-card shipped"><strong>Moderation v1</strong><span>Reports + views + rankers</span></div>
+  <div class="status-card progress"><strong>HiveRelay outbox</strong><span>Wire-ready · canary path</span></div>
+  <div class="status-card progress"><strong>T1 HTTPS gateway</strong><span>Phase-1 canary · G1–G6</span></div>
+  <div class="status-card progress"><strong>Blind cells / shards</strong><span>Labs + vendor wired</span></div>
+  <div class="status-card hold"><strong>Full GA stand-up</strong><span>Multi-ingress · capacity</span></div>
+</div>
+
+<!-- ============================================================ -->
+<h2>1. Target architecture — three planes</h2>
+
+<div class="mermaid-figure">
+<pre class="mermaid">
+flowchart TB
+  subgraph Clients["Client plane — keys never leave"]
+    Web["Normal browser\nSubtleCrypto / DevIdentity"]
+    PB["PearBrowser\nhost-held keys + direct P2P"]
+    Mod["moderation.js policy\nCommunity · Consensus · Open"]
+    Rank["feed-algorithms.js\nHot New Top Rising Controversial"]
+  end
+
+  subgraph Delivery["Code delivery plane · T1 public bytes"]
+    GW["HTTPS Hive Gateway\nexact-byte Hyperdrive serve"]
+    Site["peerit.site / app key origin\nsigned web sequence"]
+    CDN["CDN / nginx edge\noptional"]
+  end
+
+  subgraph Data["Data plane · blind substrate"]
+    OL["HiveRelay OutboxLog\nnamespace peerit · non-blind NS"]
+    V2["Opaque-Log v2 cells\nv2!okey sealed envelopes"]
+    BS["Blind cells / shards\noptional large-body custody"]
+    Tak["Relay DO-NOT-SERVE\nopaque-id suppression"]
+  end
+
+  Web --> Site
+  Web --> OL
+  PB --> OL
+  PB --> Web
+  Site --> GW
+  OL --> V2
+  V2 --> BS
+  OL --> Tak
+  Web --> Mod --> Rank
+  PB --> Mod
+</pre>
+</div>
+
+<div class="layers">
+  <div class="layer" style="background:#f3fbf6;border-color:#b7e0c5">
+    <div class="tag">Plane A — Code delivery (T1 gateway)</div>
+    Static signed Peerit web artifact (HTML/JS/SW). Served by Render today; target composition is
+    <strong>publisher Hyperdrive → T1 HTTPS gateway → browser</strong>. Gateway must never host private/custody routes.
+  </div>
+  <div class="layer" style="background:#f2f6fd;border-color:#c5d4ef">
+    <div class="tag">Plane B — Social data (OutboxLog + Opaque-Log v2)</div>
+    Signed posts, comments, votes, communities, <strong>reports</strong>, <strong>modactions</strong>.
+    Client seals keys to <code>v2!&lt;okey&gt;</code>. Relay stores opaque cells; client materializes feed + moderation.
+  </div>
+  <div class="layer" style="background:#fff8e8;border-color:#efd59a">
+    <div class="tag">Plane C — Optional threshold custody (blind cells)</div>
+    Large bodies / sealed blobs via blind-shard dealer when over threshold. Not required for every post.
+    T2 custody vaults MUST NOT run the public app gateway.
+  </div>
+</div>
+
+<div class="forbid">
+  <strong>Forbidden claims (copy discipline):</strong>
+  <ul class="tight">
+    <li>Never: “the operator can’t read public posts” — public read key reaches every reader, including the operator.</li>
+    <li>Never: “moderation deletes the record from the network” — records stay signed; visibility is local policy.</li>
+    <li>Never: “one gateway outage erases Peerit” — if multi-gateway + multi-outbox are proven; today’s canary is single-ingress.</li>
+    <li>Never: “gateway is a custody vault” — T1 ≠ T2.</li>
+  </ul>
+  <em>Allowed claim:</em> “In the ordinary course, the operator holds and serves nothing readable and must affirmatively reconstruct to read.”
+</div>
+
+<!-- ============================================================ -->
+<h2>2. How the pieces fit</h2>
+
+<table>
+  <thead>
+    <tr><th>Component</th><th>Job in the stand-up</th><th>Where it lives</th><th>Status</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Peerit web canary</strong></td>
+      <td>Signed browser app people open today</td>
+      <td><code>peerit.site</code> · Render · seq 11</td>
+      <td>Live writable canary</td>
+    </tr>
+    <tr>
+      <td><strong>Outbox ingress</strong></td>
+      <td>HTTP/SSE availability for signed cells</td>
+      <td><code>outbox.peerit.site</code></td>
+      <td>Live · <code>singleIngressWriter: true</code></td>
+    </tr>
+    <tr>
+      <td><strong>HiveRelay outbox backend</strong></td>
+      <td>Swap peerit-relay → OutboxLog (wire-identical)</td>
+      <td><code>--relay-backend hiverelay-outbox</code></td>
+      <td>Built · default-off on canary</td>
+    </tr>
+    <tr>
+      <td><strong>Opaque-Log v2</strong></td>
+      <td>Opaque keys + sealed envelopes (blind storage posture)</td>
+      <td><code>js/seal.js</code>, <code>js/data.js</code>, <code>js/canon.js</code></td>
+      <td><strong>Live</strong> clean cutover</td>
+    </tr>
+    <tr>
+      <td><strong>Community moderation v1</strong></td>
+      <td>Reports, burial, reader views, pluggable rankers</td>
+      <td><code>js/moderation.js</code>, <code>js/model.js</code>, <code>js/feed-algorithms.js</code></td>
+      <td><strong>Implemented</strong> · tests</td>
+    </tr>
+    <tr>
+      <td><strong>Moderator actions</strong></td>
+      <td>remove/approve/lock/sticky/ban/addmod…</td>
+      <td>signed <code>modaction</code> records</td>
+      <td>Implemented overlay</td>
+    </tr>
+    <tr>
+      <td><strong>Relay DO-NOT-SERVE</strong></td>
+      <td>Operator legal takedown by opaque id</td>
+      <td><code>RELAY-TAKEDOWN-SPEC.md</code></td>
+      <td>Spec ready · implement on outbox edge</td>
+    </tr>
+    <tr>
+      <td><strong>T1 HTTPS gateway</strong></td>
+      <td>Exact-byte public Hyperdrive / app serve</td>
+      <td>v1-integration / hr-https-gateway</td>
+      <td>Phase-1 canary · G1–G6</td>
+    </tr>
+    <tr>
+      <td><strong>Blind cells / shards</strong></td>
+      <td>Threshold custody for sealed large bodies</td>
+      <td><code>js/vendor/blind-shards</code>, shard-cohort deploy</td>
+      <td>Labs + wiring · not GA path default</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>3. Community moderation — what we built</h2>
+
+<p>
+  Moderation is a first-class product surface, not a server flag. Relays store signed opaque cells;
+  <strong>every client</strong> runs the same pure policy over its admitted local view
+  (<code>js/moderation.js</code>). Policy is orthogonal to ranking.
+</p>
+
+<div class="mermaid-figure">
+<pre class="mermaid">
+flowchart LR
+  subgraph Ingest["Admit · verify"]
+    S["Signed records\npost comment vote report modaction"]
+    V["verify + PoW\nprotocol-v3 content refs"]
+  end
+
+  subgraph Overlay["Client overlays"]
+    M["modOverlay\nremove lock sticky ban"]
+    R["aggregateReports\neligible bury/keep"]
+    P["applyModerationPolicy\nvisible→buried"]
+  end
+
+  subgraph Reader["Reader choice"]
+    C["Community"]
+    N["Consensus only"]
+    O["Open / unmoderated*"]
+  end
+
+  subgraph Rank["Ranking · orthogonal"]
+    H["Hot / New / Top\nRising / Controversial"]
+  end
+
+  S --> V --> M
+  V --> R --> P
+  P --> C & N & O
+  C & N & O --> H
+</pre>
+</div>
+<p style="font-size:.9rem;color:#5b6b88">* Open still enforces signatures, protocol validity, author deletion, and personal blocks — it ignores community/mod visibility labels only.</p>
+
+<h3>3.1 Record types</h3>
+<table>
+  <thead><tr><th>Type</th><th>Semantic</th><th>Effect</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>report</code></td>
+      <td>Signed LWW slot per community×target×author · verdict <code>bury</code> / <code>keep</code></td>
+      <td>Drives consensus thresholds; sealed in Opaque-Log v2</td>
+    </tr>
+    <tr>
+      <td><code>modaction</code></td>
+      <td>Content: remove, approve, lock, unlock, sticky, unsticky<br/>User: ban, unban, addmod, removemod</td>
+      <td>Moderator overlay; creator always trust root</td>
+    </tr>
+    <tr>
+      <td>Withdrawals</td>
+      <td>Signed tombstones in the same report slot</td>
+      <td>Fully reversible burial path</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>3.2 Visibility ladder &amp; thresholds (v1 constants)</h3>
+<table>
+  <thead><tr><th>State</th><th>Default threshold</th><th>Reader experience</th></tr></thead>
+  <tbody>
+    <tr><td><code>visible</code></td><td>—</td><td>Normal feed row</td></tr>
+    <tr><td><code>downranked</code></td><td>≥3 bury · support ≥ 0.60</td><td>Lower rank / soft friction</td></tr>
+    <tr><td><code>collapsed</code></td><td>≥5 bury · support ≥ 2/3</td><td>Collapsed with reveal</td></tr>
+    <tr><td><code>buried</code></td><td>≥7 bury · support ≥ 0.75</td><td>Buried; “show anyway” session exception</td></tr>
+  </tbody>
+</table>
+
+<h3>3.3 Who may report (anti-Sybil roots)</h3>
+<ul class="tight">
+  <li><strong>Trust roots:</strong> community founder + current moderators (from signed addmod chain).</li>
+  <li><strong>Eligible reporters:</strong> non-banned members who published content in-community <em>and</em> received a direct positive vote from a root.</li>
+  <li><strong>Explicitly not used:</strong> global reputation, recursive upvote graphs, backdatable account age.</li>
+</ul>
+
+<div class="delta">
+  <h3>Tests / docs already in tree</h3>
+  <ul class="tight">
+    <li><code>test/community-moderation.mjs</code> · <code>test/community-moderation-ui.mjs</code></li>
+    <li><code>docs/COMMUNITY-MODERATION-AND-PLUGGABLE-FEEDS-RESEARCH.md</code> (2026-07-18 implementation update)</li>
+    <li>Algorithms: Hot, New, Top, Rising, Controversial with stable ids + MIT metadata</li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2>4. Blind substrate — what “new blind” means for Peerit ops</h2>
+
+<div class="mermaid-figure">
+<pre class="mermaid">
+flowchart TB
+  subgraph Client
+    Write["compose post / report / modaction"]
+    Seal["seal.js · okey = HMAC RK\nenvelope + optional body box"]
+    Mat["materialized-index\nlocal graph rebuild"]
+  end
+
+  subgraph Relay["HiveRelay OutboxLog · peerit namespace"]
+    Cell["store v2!okey → opaque bytes"]
+    Dir["/api/directory · appId = author pubkey"]
+    Sync["/api/sync · SSE · heads"]
+    DNS["DO-NOT-SERVE set\nmatch opaque ids only"]
+  end
+
+  subgraph Optional["Optional T2 custody"]
+    Deal["blind-dealer · PVSS split"]
+    Shards["shard cohort k-of-n"]
+  end
+
+  Write --> Seal --> Cell
+  Cell --> Sync --> Mat
+  Cell --> DNS
+  Seal -.-> Deal --> Shards
+</pre>
+</div>
+
+<table>
+  <thead><tr><th>Layer</th><th>What operators get</th><th>What they do not get</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Opaque-Log v2</strong> (on)</td>
+      <td>No passive semantic key grep; content-neutral cells; drop-by-opaque-id possible</td>
+      <td>Confidentiality of public posts; anonymity of authors; free prefix “list r/x”</td>
+    </tr>
+    <tr>
+      <td><strong>OutboxLog transport</strong></td>
+      <td>Server-side Ed25519 verify; ecosystem-standard /api surface</td>
+      <td>Blindness by itself — blindness is 100% client seal</td>
+    </tr>
+    <tr>
+      <td><strong>HiveRelay blind namespace</strong></td>
+      <td>For private/capability content only</td>
+      <td>Usable for public forum content (read key is universal → forbidden)</td>
+    </tr>
+    <tr>
+      <td><strong>Blind cells / shards</strong></td>
+      <td>Threshold custody for large sealed bodies</td>
+      <td>Automatic for every short post; public-read secrecy</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  <strong>Ops implication:</strong> stand Peerit on HiveRelay OutboxLog in the <strong>non-blind <code>peerit</code> namespace</strong>
+  with client-side v2 sealing. Do not put public forum records into a blind-only namespace that pretends the operator cannot reconstruct.
+</p>
+
+<!-- ============================================================ -->
+<h2>5. HTTPS gateway — public code &amp; media plane</h2>
+
+<div class="mermaid-figure">
+<pre class="mermaid">
+flowchart LR
+  Pub["Publisher\nPeerit Hyperdrive"] --> T1["T1 availability relay\n+ HTTPS gateway"]
+  T1 --> TLS["TLS edge / nginx\nresponse shaping"]
+  TLS --> Browser["Browser loads\nsigned assets"]
+  Browser --> Out["Data plane\noutbox.peerit.site / multi-relay"]
+
+  T2["T2 custody vault\nblind cells only"] -.->|MUST NOT| T1
+</pre>
+</div>
+
+<table>
+  <thead><tr><th>Rule</th><th>Ops meaning</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Application key is canonical</td>
+      <td>Every HTTPS name is a mirror of a Hyperdrive / signed release — not an identity root</td>
+    </tr>
+    <tr>
+      <td>Exact-byte serve</td>
+      <td>Gateway must not mutate app bytes in verifiable mode</td>
+    </tr>
+    <tr>
+      <td>T1 vs T2 split</td>
+      <td>Public gateway on T1 only; blind custody vaults never mount app-hosting routes</td>
+    </tr>
+    <tr>
+      <td>Multi-gateway</td>
+      <td>Target: unrelated gateway operators; today’s <code>peerit.site</code> is still Render-centric canary</td>
+    </tr>
+    <tr>
+      <td>Phase-1 evidence</td>
+      <td>G1–G6 executed on v1-integration (2026-07-18); G7–G13 need real operators / digests / host ceilings</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="warnbox">
+  <strong>Near-term hybrid (honest):</strong> keep serving the signed web sequence from
+  <code>peerit.site</code> (Render) while the T1 gateway canary is proven in parallel.
+  Cut over code delivery to gateway only after G7–G13 + dual-gateway failover proof.
+  Data plane cutover to multi-HiveRelay OutboxLog is independent of code-delivery cutover.
+</div>
+
+<!-- ============================================================ -->
+<h2>6. End-to-end ops journey</h2>
+
+<div class="mermaid-figure">
+<pre class="mermaid">
+sequenceDiagram
+  participant U as User browser
+  participant G as T1 gateway / peerit.site
+  participant R as OutboxLog relay
+  participant M as Local moderation policy
+  participant P as Peer / PearBrowser
+
+  U->>G: GET app assets (signed sequence)
+  G-->>U: exact bytes + SRI / SW pin
+  U->>R: token + pull heads / SSE
+  R-->>U: opaque cells (v2!okey)
+  U->>U: verify signatures + PoW
+  U->>M: reports + modactions → visibility
+  U->>U: rank remaining candidates
+
+  Note over U,R: Author path
+  U->>U: sign post/report/modaction
+  U->>U: seal to opaque cell
+  U->>R: atomic commit
+  R-->>U: receipt / directory sequence
+
+  Note over R: Legal takedown path
+  R->>R: suppress opaque id on serve paths
+  R-->>U: cell absent on read (bytes retained)
+
+  Note over P: PearBrowser path
+  P->>P: host keys + direct replicate
+  P->>R: optional relay bootstrap
+</pre>
+</div>
+
+<!-- ============================================================ -->
+<h2>7. Stand-up programme — phases to “fully up”</h2>
+
+<table>
+  <thead><tr><th>Phase</th><th>Objective</th><th>Exit evidence</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>P0</strong> Canary hold</td>
+      <td>Keep seq-11 canary healthy; moderation shipped in client</td>
+      <td><code>peerit.site</code> + outbox 200; <code>web:verify</code>; moderation tests green</td>
+      <td class="shipped">In progress / live</td>
+    </tr>
+    <tr>
+      <td><strong>P1</strong> Edge hardening</td>
+      <td>CSP + security headers; Render blueprint applied</td>
+      <td><code>proof:http-headers</code> pass; blueprint linked</td>
+      <td>Ops task</td>
+    </tr>
+    <tr>
+      <td><strong>P2</strong> HiveRelay data plane</td>
+      <td>OutboxLog production ingress(es); <code>relayBackend=hiverelay-outbox</code></td>
+      <td><code>proof:hiverelay-outboxlog</code>; boot probe <code>service=outboxlog</code>; new signed sequence</td>
+      <td>Wire-ready</td>
+    </tr>
+    <tr>
+      <td><strong>P3</strong> DO-NOT-SERVE</td>
+      <td>Implement opaque-id suppression on outbox edge</td>
+      <td>Takedown drill &lt; minutes; census math unbroken; audit log</td>
+      <td>Spec ready</td>
+    </tr>
+    <tr>
+      <td><strong>P4</strong> Multi-ingress durability</td>
+      <td>Second independent operator; roster without singleIngressWriter</td>
+      <td>Induced failure: writes continue; heads converge</td>
+      <td>Blocked on operators</td>
+    </tr>
+    <tr>
+      <td><strong>P5</strong> T1 gateway cutover</td>
+      <td>Serve signed drive via HTTPS gateway (+ optional custom domain)</td>
+      <td>G7–G13; dual-gateway failover; claim lint</td>
+      <td>G1–G6 only</td>
+    </tr>
+    <tr>
+      <td><strong>P6</strong> Blind cells optional path</td>
+      <td>Shard cohort for large sealed bodies under canary policy</td>
+      <td>Dispersal + reconstruct proofs; T2 never hosts gateway</td>
+      <td>Labs</td>
+    </tr>
+    <tr>
+      <td><strong>P7</strong> Capacity + devices</td>
+      <td>Staging 100→2000 clients; 2× PearBrowser devices</td>
+      <td>p99 &lt; 2s · errors &lt; 1% · device convergence reports</td>
+      <td>Hard GA gates</td>
+    </tr>
+    <tr>
+      <td><strong>P8</strong> Editorial + GA soak</td>
+      <td>v3 communities, archive test content, support/incident runbooks</td>
+      <td>Observation window inside error budget</td>
+      <td>Not started as GA</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>8. Operator checklist</h2>
+
+<h3>8.1 Today’s canary (keep green)</h3>
+<ul class="check">
+  <li class="done">Signed web sequence verifiable (<code>npm run web:verify</code>)</li>
+  <li class="done">Writable atomic commit path live on single ingress</li>
+  <li class="done">Opaque-Log v2 write/read path live</li>
+  <li class="done">Community moderation v1 in client + unit tests</li>
+  <li>Apply <code>deploy/render-security-headers.json</code> (CSP etc.) and re-proof</li>
+  <li>Link Render blueprint to existing <code>peerit-site</code> service</li>
+  <li>Off-host backup of outbox journal (today: same-host timer)</li>
+</ul>
+
+<h3>8.2 Blind + HiveRelay stand-up</h3>
+<ul class="check">
+  <li>Provision ≥1 production HiveRelay with OutboxLog + Peerit namespace admission</li>
+  <li>Build web with <code>--relay-backend hiverelay-outbox --relay https://…</code></li>
+  <li>Confirm boot probe / manual <code>/api/bridge/status</code> → <code>service: outboxlog</code></li>
+  <li>Sign new web sequence (bump <code>releaseSequence</code>) with new roster</li>
+  <li>Run <code>proof:hiverelay-outboxlog</code> + live moderation smoke (report → bury → view Open)</li>
+  <li>Implement DO-NOT-SERVE per <code>RELAY-TAKEDOWN-SPEC.md</code>; drill opaque-id suppress</li>
+  <li>Add second operator; clear <code>singleIngressWriter</code>; failure-injection proof</li>
+</ul>
+
+<h3>8.3 HTTPS gateway stand-up</h3>
+<ul class="check">
+  <li>Keep T2 custody nodes gateway-free</li>
+  <li>Publish Peerit app on T1 gateway canary with exact-byte verification</li>
+  <li>Complete G7–G13 (two operators, digests, Docker nginx capture, host ceiling)</li>
+  <li>Optional: map publisher domain → gateway with lease; dual-gateway failover test</li>
+  <li>Claim lint: no “private content via gateway”</li>
+</ul>
+
+<h3>8.4 Moderation go-live criteria</h3>
+<ul class="check">
+  <li class="done">Readers can switch Community / Consensus / Open</li>
+  <li class="done">Reports sealed in v2 cells; index aggregates without relay semantics</li>
+  <li class="done">Mod tools for remove/lock/sticky/ban/addmod in UI</li>
+  <li>Shadow-mode metrics on thresholds before tightening defaults</li>
+  <li>Document appeals / “show buried” UX for operators and communities</li>
+  <li>Legal: operator uses DO-NOT-SERVE, not “edit the mod overlay,” for notices</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2>9. Failure &amp; liability model</h2>
+
+<table>
+  <thead><tr><th>Event</th><th>Expected behaviour</th><th>Who acts</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Community spam wave</td>
+      <td>Eligible bury quorum collapses/buries; Open readers still see if they choose</td>
+      <td>Community + client policy</td>
+    </tr>
+    <tr>
+      <td>Moderator removes post</td>
+      <td>Overlay hides for Community view; signed post still in outboxes</td>
+      <td>Mod keys</td>
+    </tr>
+    <tr>
+      <td>Valid legal notice to operator</td>
+      <td>Suppress opaque id / appId on <em>this</em> relay only; other peers may retain</td>
+      <td>Relay operator</td>
+    </tr>
+    <tr>
+      <td>Single outbox host down</td>
+      <td>Canary degraded; multi-ingress target continues writes</td>
+      <td>Ops failover</td>
+    </tr>
+    <tr>
+      <td>Gateway down</td>
+      <td>Code delivery fails until mirror/gateway #2; data plane independent if already loaded / SW pinned</td>
+      <td>Publisher + gateway ops</td>
+    </tr>
+    <tr>
+      <td>Malicious relay forges records</td>
+      <td>Client reject at verify — never merge</td>
+      <td>Automatic</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>10. Command cheat sheet</h2>
+
+<pre><code># Verify current signed web release (never rebuilds)
+npm run web:verify
+
+# Prepare next sequence (bump deploy/web-release.json first)
+npm run web:prepare -- --drive-key &lt;64-hex&gt; \
+  --relay https://outbox.example \
+  --relay-backend hiverelay-outbox
+
+# Sign offline
+keyvault exec --only peerit/release/signing-seed -- npm run release:sign
+
+# HiveRelay outbox convergence proof
+npm run proof:hiverelay-outboxlog -- --out reports/hiverelay-outboxlog-….json
+
+# Headers / deploy proofs
+npm run proof:http-headers -- --url https://peerit.site
+npm run proof:writable-candidate -- --json
+
+# Moderation unit surface
+node test/community-moderation.mjs
+node test/community-moderation-ui.mjs
+</code></pre>
+
+<!-- ============================================================ -->
+<h2>11. Sources of truth</h2>
+
+<ul class="tight">
+  <li><code>docs/WEB-DEPLOYMENT.md</code> — browser path, phases 0–3</li>
+  <li><code>docs/HIVERELAY-OUTBOX-BACKEND.md</code> — OutboxLog swap</li>
+  <li><code>docs/BLIND-OUTBOX-MIGRATION.md</code> — Opaque-Log v2 (live)</li>
+  <li><code>docs/COMMUNITY-MODERATION-AND-PLUGGABLE-FEEDS-RESEARCH.md</code> — moderation v1</li>
+  <li><code>docs/RELAY-TAKEDOWN-SPEC.md</code> · <code>docs/OPERATOR-LIABILITY.md</code></li>
+  <li><code>docs/BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md</code> · blindshard docs</li>
+  <li><code>reports/2026-07-10-PRODUCTION-READINESS-MATRIX.md</code></li>
+  <li><code>00-core/hiverelay/docs/GIGA-RELEASE-ARCHITECTURE.md</code> · gateway PUBLIC-HTTPS-HIVE-GATEWAY-SPEC</li>
+  <li><code>deploy/web-release.json</code> · <code>deploy/render-security-headers.json</code></li>
+</ul>
+
+<hr />
+
+<div class="footer">
+  <p>
+    Peerit ops architecture — <strong>2026-07-19</strong>. Complements
+    <code>GIGA-RELEASE-ARCHITECTURE-2026-07-19.html</code> (substrate map) with the application stand-up path:
+    moderation v1 + Opaque-Log v2 + OutboxLog + T1 HTTPS gateway.
+  </p>
+  <p>
+    <strong>Definition of “fully stood up”:</strong> multi-ingress HiveRelay data plane, DO-NOT-SERVE drills,
+    T1 gateway (or dual delivery) with exact-byte proof, moderation live under claim-correct UI copy,
+    capacity + device gates green, editorial content clean — then GA soak. Until then: <em>writable canary</em>.
+  </p>
+</div>
+
+</div>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'neutral',
+    securityLevel: 'strict',
+    flowchart: { curve: 'basis', htmlLabels: true },
+    sequence: { mirrorActors: false, messageMargin: 28 }
+  });
+</script>
+</body>
+</html>

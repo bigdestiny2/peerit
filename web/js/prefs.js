@@ -11,12 +11,14 @@ const DEFAULTS = Object.freeze({
   hidden: [],
   follows: [], // author pubkeys the user follows (local; powers the Following feed + notify feed-head watches)
   sort: 'hot',
+  moderationView: 'community',
   theme: 'dark',
   seenWelcome: false,
   identityBackupAcked: false,
   notifSeen: 0 // ms timestamp of the newest notification the user has seen (device-local read marker)
 })
 const SORTS = new Set(['hot', 'new', 'top', 'rising', 'controversial'])
+const MODERATION_VIEWS = new Set(['community', 'consensus', 'open'])
 
 export class Prefs {
   constructor (storage, pubkey) {
@@ -101,6 +103,8 @@ export class Prefs {
   // Misc prefs
   setSort (s) { this.data.sort = cleanSort(s); this._save(); return this.data.sort }
   get sort () { return this.data.sort }
+  setModerationView (view) { this.data.moderationView = cleanModerationView(view); this._save(); return this.data.moderationView }
+  get moderationView () { return this.data.moderationView }
   setWelcomeSeen (seen = true) { this.data.seenWelcome = !!seen; this._save() }
   markWelcomeSeen () { this.setWelcomeSeen(true) }
   markWelcomeUnseen () { this.setWelcomeSeen(false) }
@@ -121,6 +125,7 @@ function cleanPrefs (d) {
     hidden: cleanList(d.hidden, cleanRef),
     follows: cleanList(d.follows, cleanPub),
     sort: cleanSort(d.sort),
+    moderationView: cleanModerationView(d.moderationView),
     theme: d.theme === 'light' ? 'light' : 'dark',
     seenWelcome: !!d.seenWelcome,
     identityBackupAcked: !!d.identityBackupAcked,
@@ -162,6 +167,11 @@ function cleanRef (ref) {
 function cleanSort (sort) {
   sort = String(sort || '').toLowerCase()
   return SORTS.has(sort) ? sort : DEFAULTS.sort
+}
+
+function cleanModerationView (view) {
+  view = String(view || '').toLowerCase()
+  return MODERATION_VIEWS.has(view) ? view : DEFAULTS.moderationView
 }
 
 function memShim () {

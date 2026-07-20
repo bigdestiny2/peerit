@@ -18,7 +18,8 @@ async function main () {
   ok(ready.kind === 'peerit-representative-outbox-availability', 'proof reports the evidence kind')
   ok(ready.status === 'ready', 'ready fixture proves fresh-client outbox recovery')
   ok(ready.checks.some((check) => check.id === 'seeder:byte-catchup' && check.status === 'pass'), 'ready fixture confirms byte catch-up')
-  ok(ready.freshReader.recoveredAllRepresentativeData === true, 'fresh reader recovers representative profile/community/post/comment/vote data')
+  ok(ready.freshReader.recoveredAllRepresentativeData === true && ready.freshReader.recovered.report === true,
+    'fresh reader recovers representative profile/community/post/comment/vote/report data from opaque cells')
 
   const blocked = await buildOutboxAvailabilityProof({
     fixture: 'missing-catchup',

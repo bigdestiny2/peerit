@@ -19,6 +19,7 @@ import {
   hasValidContentId,
   hasValidContentRef,
   hasValidModAction,
+  hasValidReport,
   validCommunitySlug,
   validUserTarget
 } from './model.js'
@@ -30,7 +31,10 @@ export const MIN_BITS = {
   community: 18,
   // BlindShard blobs (opaque bodies) carry a modest proof so a peer can't cheaply
   // flood the outbox/census with large content-addressed appends (review FIX 3).
-  blob: 12
+  blob: 12,
+  // A report is small but otherwise offers an attacker a cheap per-target cell
+  // flood. A modest proof keeps community flagging usable while imposing cost.
+  report: 12
 }
 
 /** Current mint version — all new proofs stamp pow.v = POW_VERSION. */
@@ -235,7 +239,7 @@ export function makeValidator (minBits = MIN_BITS, opts = {}) {
   return async (type, val) => {
     const signature = signatureOf(val)
     const legacyAction = actionSignaturesFor(legacyActionSignatures, type).has(signature)
-    const needsLogical = type === TYPE.POST || type === TYPE.COMMENT || type === TYPE.VOTE || type === TYPE.MOD
+    const needsLogical = type === TYPE.POST || type === TYPE.COMMENT || type === TYPE.VOTE || type === TYPE.MOD || type === TYPE.REPORT
     const logical = needsLogical ? await logicalValue(val) : val
     if (needsLogical && !logical) return false
 
@@ -260,10 +264,14 @@ export function makeValidator (minBits = MIN_BITS, opts = {}) {
       if (!(await hasValidModAction(logical))) return false
       if (logical.targetCid != null && legacyTargetCids.has(logical.targetCid)) return false
     }
+    if (type === TYPE.REPORT) {
+      if (!(await hasValidReport(logical))) return false
+      if (legacyTargetCids.has(logical.targetCid)) return false
+    }
     // A sealed record is the v2 wire form. Legacy v1 proofs are retained only for
     // legacy plaintext rows; accepting them on v2 would let one proof be replayed
     // across records whose v1 target fields are intentionally absent.
-    const proofGated = type === 'post' || type === 'comment' || type === 'community' || type === 'blob'
+    const proofGated = type === 'post' || type === 'comment' || type === 'community' || type === 'blob' || type === 'report'
     if (proofGated && val && val.sealed) {
       const version = val.pow && Number(val.pow.v)
       if (!Number.isFinite(version) || version < 2) {
@@ -278,6 +286,7 @@ export function makeValidator (minBits = MIN_BITS, opts = {}) {
     if (type === 'comment') return verify(type, val, minBits.comment)
     if (type === 'community') return verify(type, val, minBits.community)
     if (type === 'blob') return verify(type, val, minBits.blob)
+    if (type === 'report') return verify(type, val, minBits.report)
     return true
   }
 }

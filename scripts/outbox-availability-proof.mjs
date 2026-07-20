@@ -7,7 +7,7 @@ import { DevIdentity } from '../js/identity.js'
 import { createData } from '../js/data.js'
 import { BridgeGossipSync } from '../js/gossip.js'
 import { ready as cryptoReady, isSecure } from '../js/crypto.js'
-import { keys } from '../js/model.js'
+import { keys, REPORT_VERDICT, TYPE } from '../js/model.js'
 import { makeValidator } from '../js/pow.js'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
@@ -15,7 +15,7 @@ const ROOT = resolve(__dir, '..')
 const DEFAULT_REPORT = resolve(ROOT, 'reports', 'representative-outbox-availability-2026-07-01.json')
 const PKCS8_PREFIX = '302e020100300506032b657004220420'
 const SPKI_PREFIX = '302a300506032b6570032100'
-const BITS = { community: 7, post: 6, comment: 5 }
+const BITS = { community: 7, post: 6, comment: 5, report: 5 }
 const FIXTURE_TIME = Date.parse('2026-07-01T18:00:00.000Z')
 
 function usage (code = 0, message = '') {
@@ -365,13 +365,20 @@ async function runScenario ({ catchUp }) {
     writeHead: true
   })
   await authorSync.ready()
-  const authorData = createData(authorSync, authorIdentity, { minBits: BITS })
+  const authorData = createData(authorSync, authorIdentity, { minBits: BITS, v2: true })
 
   await authorData.setProfile({ name: 'availability-fixture', bio: 'representative outbox proof' })
   await authorData.createCommunity({ slug: 'availproof', title: 'Availability Proof', description: 'fresh reader recovery' })
   const post = await authorData.submitPost({ community: 'availproof', kind: 'text', title: 'fresh reader can recover this post', body: 'seeded bytes must catch up first' })
   const comment = await authorData.addComment({ community: 'availproof', postCid: post.cid, body: 'representative comment survives author offline' })
   await authorData.vote(post.cid, 'availproof', 'post', 1)
+  await authorData.reportContent('availproof', {
+    targetCid: post.cid,
+    targetType: TYPE.POST,
+    verdict: REPORT_VERDICT.KEEP,
+    reason: 'other',
+    note: 'representative sealed moderation record'
+  })
 
   const sourceGroup = authorStore.groups.get(authorPub)
   const head = sourceGroup.rows.get(keys.head(authorPub))
@@ -393,12 +400,13 @@ async function runScenario ({ catchUp }) {
   const storageKeysBefore = readerStorage.keys()
   await readerSync.ready()
   await readerSync._onDescriptor(await descriptorBytes(authorIdentity, authorPub, authorPub, sourceGroup.inviteKey))
-  const readerData = createData(readerSync, readerIdentity, { minBits: BITS })
+  const readerData = createData(readerSync, readerIdentity, { minBits: BITS, v2: true })
   const profile = await readerData.getProfile(authorPub)
   const community = await readerData.getCommunity('availproof')
   const recoveredPost = await readerData.getPost('availproof', post.cid)
   const comments = await readerData.listComments('availproof', post.cid)
   const tally = await readerData.tallyFor(post.cid)
+  const reports = await readerData.listReportsFor('availproof', post.cid)
   const status = await readerSync.status()
 
   const recovered = {
@@ -406,7 +414,8 @@ async function runScenario ({ catchUp }) {
     community: !!(community && community.title === 'Availability Proof'),
     post: !!(recoveredPost && recoveredPost.title === post.title),
     comment: comments.some((c) => c.cid === comment.cid && c.body === comment.body),
-    vote: tally.score === 1
+    vote: tally.score === 1,
+    report: reports.some((row) => row.verdict === REPORT_VERDICT.KEEP && row.note === 'representative sealed moderation record')
   }
 
   return {
@@ -415,9 +424,9 @@ async function runScenario ({ catchUp }) {
       outboxAppId: authorPub,
       outboxInviteKeyHash: seederEvidence.inviteKeyHash,
       outboxInviteKeyPrefix: seederEvidence.inviteKeyPrefix,
-      expectedRecords: ['profile', 'community', 'post', 'comment', 'vote'],
-      expectedNonHeadRows: 5,
-      expectedTotalRows: 6,
+      expectedRecords: ['profile', 'community', 'post', 'comment', 'vote', 'report'],
+      expectedNonHeadRows: 6,
+      expectedTotalRows: 7,
       community: 'availproof',
       postCid: post.cid,
       commentCid: comment.cid,
@@ -523,7 +532,7 @@ export async function buildOutboxAvailabilityProof ({
     }
 
     if (scenario.freshReader.recoveredAllRepresentativeData) {
-      addCheck(report, 'fresh-reader:representative-data', 'pass', 'Fresh reader recovered representative profile, community, post, comment, and vote data from the seeded outbox.', scenario.freshReader.recovered)
+      addCheck(report, 'fresh-reader:representative-data', 'pass', 'Fresh reader recovered representative profile, community, post, comment, vote, and moderation-report data from sealed opaque cells.', scenario.freshReader.recovered)
     } else {
       addCheck(report, 'fresh-reader:representative-data', 'fail', 'Fresh reader did not recover the full representative user-data set.', scenario.freshReader.recovered)
     }

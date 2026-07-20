@@ -25,6 +25,7 @@ export function expectedKey (type, data) {
     case TYPE.POST: return data.community != null && data.cid != null ? keys.post(data.community, data.cid) : null
     case TYPE.COMMENT: return data.community != null && data.postCid != null && data.cid != null ? keys.comment(data.community, data.postCid, data.cid) : null
     case TYPE.VOTE: return data.targetCid != null && data.author != null ? keys.vote(data.targetCid, data.author) : null
+    case TYPE.REPORT: return data.community != null && data.targetCid != null && data.author != null ? keys.report(data.community, data.targetCid, data.author) : null
     case TYPE.PROFILE: return data.author != null ? keys.profile(data.author) : null
     case TYPE.MOD: return data.community != null && data.actionId != null ? keys.mod(data.community, data.actionId) : null
     case TYPE.HEAD: return data.author != null ? keys.head(data.author) : null

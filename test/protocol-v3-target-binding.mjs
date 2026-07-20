@@ -11,6 +11,7 @@ import { DevIdentity } from '../js/identity.js'
 import {
   CONTENT_PROTOCOL,
   MOD,
+  REPORT_VERDICT,
   TYPE,
   contentId,
   hasValidContentRef,
@@ -19,7 +20,7 @@ import {
 import { makeValidator, mint } from '../js/pow.js'
 import { seal } from '../js/seal.js'
 
-const BITS = { community: 4, post: 4, comment: 4, blob: 4 }
+const BITS = { community: 4, post: 4, comment: 4, blob: 4, report: 4 }
 const CLEAR = new Set(['createdAt', 'ts', 'editedAt', 'deleted', 'slug'])
 const DROP = new Set(['id', '_t', 'author', 'creator', 'by', 'pow', '_sig', '_k', '_dk', '_ns', '_alg'])
 let passed = 0
@@ -176,6 +177,35 @@ ok(!(await admits(alice, TYPE.MOD, uppercaseBan)), 'a user action rejects a non-
 const unknown = await signedPlain(alice, TYPE.MOD, { ...ban, id: `${community}!unknown`, actionId: 'unknown', action: 'shadowban', ts: 14 }, { proof: false })
 ok(!(await admits(alice, TYPE.MOD, unknown)), 'an unknown mod action is rejected instead of acquiring client-specific semantics')
 
+console.log('\n— community reports bind verdict and target identity —')
+const buryReport = await signedPlain(bob, TYPE.REPORT, {
+  id: `${community}!${targetPost.cid}!${bob.me().pubkey}`,
+  protocol: CONTENT_PROTOCOL,
+  community,
+  targetCid: targetPost.cid,
+  targetType: TYPE.POST,
+  targetRef: postRef,
+  verdict: REPORT_VERDICT.BURY,
+  reason: 'spam',
+  note: '',
+  author: bob.me().pubkey,
+  ts: 15,
+  deleted: false
+}, { proof: true })
+ok(await admits(bob, TYPE.REPORT, buryReport), 'a signed PoW report with an exact protocol-v3 target admits')
+const bareReport = await signedPlain(bob, TYPE.REPORT, {
+  ...buryReport,
+  targetRef: null,
+  ts: 16
+}, { proof: true })
+ok(!(await admits(bob, TYPE.REPORT, bareReport)), 'a freshly signed report cannot target a bare legacy CID')
+const inventedVerdict = await signedPlain(bob, TYPE.REPORT, {
+  ...buryReport,
+  verdict: 'shadowban',
+  ts: 17
+}, { proof: true })
+ok(!(await admits(bob, TYPE.REPORT, inventedVerdict)), 'unknown report verdicts cannot acquire client-specific semantics')
+
 console.log('\n— sealed v2 validates decrypted logical targets —')
 const sealedComment = await signedSealed(bob, TYPE.COMMENT, topLogical)
 ok(await admits(bob, TYPE.COMMENT, sealedComment.value, makeValidator(BITS), sealedComment.key), 'a sealed comment with valid decrypted refs admits')
@@ -183,6 +213,8 @@ const sealedVote = await signedSealed(bob, TYPE.VOTE, { ...votePost })
 ok(await admits(bob, TYPE.VOTE, sealedVote.value, makeValidator(BITS), sealedVote.key), 'a sealed vote with a valid decrypted ref admits')
 const sealedMod = await signedSealed(alice, TYPE.MOD, { ...lockPost })
 ok(await admits(alice, TYPE.MOD, sealedMod.value, makeValidator(BITS), sealedMod.key), 'a sealed content-mod action with a valid decrypted ref admits')
+const sealedReport = await signedSealed(bob, TYPE.REPORT, { ...buryReport }, { proof: true })
+ok(await admits(bob, TYPE.REPORT, sealedReport.value, makeValidator(BITS), sealedReport.key), 'a sealed report validates its decrypted target and PoW')
 const sealedAttack = await signedSealed(bob, TYPE.VOTE, { ...votePost, targetCid: 'legacy-cid', targetRef: null, id: `legacy-cid!${bob.me().pubkey}`, ts: 15 })
 ok(!(await admits(bob, TYPE.VOTE, sealedAttack.value, makeValidator(BITS), sealedAttack.key)), 'sealed fields are unsealed before a legacy-targeted vote is rejected')
 

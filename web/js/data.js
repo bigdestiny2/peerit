@@ -101,6 +101,11 @@ export class Data {
     this._materializedBuild = null
     this._materializedBuildEpoch = -1
     this._preserveMaterializedOnInvalidate = false
+    // Set when a sync onChange during an in-flight local append includes keys that
+    // are not this write's local wire keys. Blocks the local-write index preserve
+    // path so a remote merge that landed in the same publication cannot freeze an
+    // incomplete derived view (see _emit).
+    this._remoteChangeDuringLocalWrite = false
     this._epoch = 0          // bumped on EVERY write; gates vote tallies
     this._contentEpoch = 0   // bumped only when searchable content changes; gates comment-count + search caches
     this._bodyCache = new Map() // blobId -> decrypted body (content-addressed → never stale)
@@ -125,10 +130,22 @@ export class Data {
     // publication promise resolves. Ignore the synchronous echo from that exact
     // append so an opaque v2 wire key cannot be conservatively misclassified as
     // content and unnecessarily discard the search cache after a local vote. A
-    // remote change racing that append is never ignored.
-    const onlyLocalEcho = this._localSyncWrites > 0 && Array.isArray(changed) && changed.length > 0 &&
-      changed.every(key => this._localSyncKeys.has(String(key)))
-    if (onlyLocalEcho || (this._localSyncWrites > 0 && !Array.isArray(changed))) return
+    // remote change racing that append is never ignored — and it also marks the
+    // in-flight local write so _emit will not preserve an incomplete index.
+    if (this._localSyncWrites > 0) {
+      // DevSync (and similar) emit bare onChange with no change set — treat as
+      // local echo (historical behavior), not as a remote merge.
+      if (!Array.isArray(changed)) return
+      // Head/integrity keys are internal to the writer's own append+head pair;
+      // they must not deny the local-write index preserve path.
+      const hasRemote = changed.some((key) => {
+        const k = String(key)
+        if (k.startsWith('head!') || k === 'peerit:status:integrity') return false
+        return !this._localSyncKeys.has(k)
+      })
+      if (!hasRemote) return // onlyLocalEcho (or empty / head-only)
+      this._remoteChangeDuringLocalWrite = true
+    }
     this.invalidateViewCaches(cacheClassForChangedKeys(changed))
   }
 
@@ -380,6 +397,12 @@ export class Data {
     const localWireKeys = ops
       .map(item => item && item.type && item.data && item.data.id != null ? item.type.replace(':', '!') + '!' + item.data.id : null)
       .filter(Boolean)
+    // A concurrent peer refresh can land remote rows during append. If we then
+    // stamp a preserved index after upserting only the local row, tallies can
+    // permanently miss those remote records (HiveRelay OutboxLog vote asymmetry:
+    // Bob's local vote freezes an index that never rebuilds Alice's already-merged
+    // vote). Track remote onChange keys via _remoteChangeDuringLocalWrite.
+    this._remoteChangeDuringLocalWrite = false
     this._localSyncWrites++
     for (const key of localWireKeys) this._localSyncKeys.add(key)
     try {
@@ -398,20 +421,65 @@ export class Data {
       this._localSyncWrites--
       for (const key of localWireKeys) this._localSyncKeys.delete(key)
     }
+    const sawRemoteDuringWrite = this._remoteChangeDuringLocalWrite
+    this._remoteChangeDuringLocalWrite = false
     // Optimistic rendering already receives `data`; keeping an existing derived
     // index in step here extends that same local-write fast path to later feed,
-    // graph, tally and thread reads. The following public method's invalidation
-    // advances the index epoch without rebuilding it. Remote records never take
-    // this path and therefore always rebuild from the verified merged source.
-    if (this._materializedIndex && this._materializedEpoch === this._epoch) {
+    // graph, tally and thread reads — but only when no remote merge arrived during
+    // publication. Remote records never take this path and therefore always
+    // rebuild from the verified merged source.
+    if (
+      this._materializedIndex &&
+      this._materializedEpoch === this._epoch &&
+      !sawRemoteDuringWrite
+    ) {
       const key = expectedKey(semType, data)
       if (key) {
         this._materializedIndex.upsert(key, data)
+        // A peer refresh can land remote rows into the merged view during the
+        // same publication without listing them in this write's onChange set
+        // (observed on HiveRelay OutboxLog: Alice's vote is in sync.list while
+        // Bob's preserved index only has Bob's vote, matSource already matches
+        // viewEpoch so _index never rebuilds). Reconcile this semantic prefix
+        // from the live merge via list() so concurrent remote rows cannot be
+        // frozen out. Prefer list() so DevSync tests that instrument range()
+        // still see a pure local-write fast path.
+        await this._reconcileMaterializedPrefix(semType)
         this._materializedSourceEpoch = this._sourceViewEpoch()
         this._preserveMaterializedOnInvalidate = true
       }
+    } else {
+      // Remote merge during write (or no live index): drop any partial preserve so
+      // the next _index() rebuilds from the merged view, which already includes
+      // this local write via the sync layer.
+      this._preserveMaterializedOnInvalidate = false
+      this._materializedIndex = null
+      this._materializedEpoch = -1
+      this._materializedSourceEpoch = null
     }
     return data
+  }
+
+  // Pull the current merged rows for a semantic type into the live materialized
+  // index without a full rebuild. Used after a local-write preserve so concurrent
+  // remote rows already in the merge are not left out of tallies/feeds.
+  async _reconcileMaterializedPrefix (semType) {
+    if (!this._materializedIndex) return
+    // Votes are the known race (cheap prefix, high concurrency under OutboxLog).
+    // Other types keep the historical upsert-only preserve; extend here if
+    // similar races appear.
+    if (semType !== TYPE.VOTE) return
+    const prefix = keys.voteAll()
+    let rows = null
+    if (typeof this.sync.list === 'function') {
+      try { rows = await this.sync.list(prefix, { limit: 1000 }) } catch { rows = null }
+    }
+    if (!rows) {
+      try { rows = await this._rawListPrefix(prefix, { limit: 1000 }) } catch { rows = null }
+    }
+    for (const row of rows || []) {
+      if (row && row.key) this._materializedIndex.upsert(row.key, row.value)
+    }
   }
 
   // ---- Opaque-Log v2 read model --------------------------------------------

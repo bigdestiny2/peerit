@@ -156,13 +156,28 @@ export function applyModerationPolicy (consensus, {
   view = cleanModerationView(view)
   let visibility = consensus?.state || VISIBILITY.VISIBLE
   if (view === MODERATION_VIEW.OPEN) visibility = VISIBILITY.VISIBLE
-  if (view === MODERATION_VIEW.COMMUNITY && moderatorRemoved) visibility = VISIBILITY.COLLAPSED
+  // A moderator removal is a floor, never a downgrade. In particular, a
+  // community-wide BURIED verdict must not become merely COLLAPSED because a
+  // moderator also removed the same record.
+  if (view === MODERATION_VIEW.COMMUNITY && moderatorRemoved &&
+      moderationSeverity(visibility) < moderationSeverity(VISIBILITY.COLLAPSED)) {
+    visibility = VISIBILITY.COLLAPSED
+  }
   return {
     ...(consensus || aggregateReports([])),
     consensusState: consensus?.state || VISIBILITY.VISIBLE,
     visibility,
     view,
     moderatorRemoved: !!moderatorRemoved
+  }
+}
+
+function moderationSeverity (visibility) {
+  switch (visibility) {
+    case VISIBILITY.DOWNRANKED: return 1
+    case VISIBILITY.COLLAPSED: return 2
+    case VISIBILITY.BURIED: return 3
+    default: return 0
   }
 }
 

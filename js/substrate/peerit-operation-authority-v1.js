@@ -5,6 +5,8 @@
 
 import { expectedKey, expectedKeyV2 } from '../canon.js'
 import { verifyBlobRecord } from '../blob-store.js'
+import { hasValidReport } from '../model.js'
+import { MIN_BITS, verify as verifyPow } from '../pow-current.js'
 import { unseal } from '../seal.js'
 import { verifyRecord } from '../verify.js'
 import {
@@ -349,6 +351,45 @@ async function assertOperationKeyBinding (operation, semanticType, key) {
   }
 }
 
+async function logicalOperationData (operation, semanticType) {
+  if (operation.type !== 'v2') return operation.data
+  const opened = await unseal(operation.data.sealed)
+  if (!isPlainObject(opened)) {
+    fail('PEERIT_OPERATION_BATCH_SEMANTICS', 'v2 operation sealed graph is not a plain object')
+  }
+  return {
+    ...opened,
+    id: operation.data.id,
+    _t: semanticType,
+    author: operation.data._k,
+    creator: operation.data._k,
+    by: operation.data._k,
+    pow: operation.data.pow
+  }
+}
+
+async function assertOperationSemantics (operation, semanticType) {
+  // Reports influence another author's content visibility. The Cell authority
+  // therefore enforces their target-bound v3 grammar and anti-spam proof before
+  // the signed bytes can enter a journal, rather than relying on a later UI
+  // reducer to ignore a malformed but correctly signed record.
+  if (semanticType !== 'report') return
+  let logical
+  try {
+    logical = await logicalOperationData(operation, semanticType)
+    if (!(await hasValidReport(logical))) {
+      fail('PEERIT_OPERATION_BATCH_SEMANTICS', 'report operation fails the target-bound Peerit report grammar')
+    }
+    if (!(await verifyPow('report', operation.type === 'v2' ? operation.data : logical, MIN_BITS.report))) {
+      fail('PEERIT_OPERATION_BATCH_POW', 'report operation has no valid current proof of work')
+    }
+  } catch (cause) {
+    if (cause?.code === 'PEERIT_OPERATION_BATCH_SEMANTICS' ||
+        cause?.code === 'PEERIT_OPERATION_BATCH_POW') throw cause
+    fail('PEERIT_OPERATION_BATCH_SEMANTICS', 'report operation cannot be validated', cause)
+  }
+}
+
 async function normalizeOperation (input, index, authorityOptions, seenKeys, budget) {
   const operation = snapshotOperation(input, `operations[${index}]`, budget)
   const semanticType = semanticTypeFor(operation)
@@ -370,6 +411,7 @@ async function normalizeOperation (input, index, authorityOptions, seenKeys, bud
     fail('PEERIT_OPERATION_BATCH_SIGNATURE', 'operation is unsigned, forged, owner-mismatched, or unverifiable')
   }
   await assertOperationKeyBinding(operation, semanticType, key)
+  await assertOperationSemantics(operation, semanticType)
   seenKeys.add(key)
   return Object.freeze({ operation: deepFreeze(operation), authorPublicKey, key })
 }

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { canonical, expectedKeyV2 } from '../js/canon.js'
 import { ready as cryptoReady } from '../js/crypto.js'
 import { createIdentity } from '../js/identity.js'
+import { CONTENT_PROTOCOL, REPORT_VERDICT, TYPE, contentId } from '../js/model.js'
+import { MIN_BITS, mint } from '../js/pow-current.js'
 import { seal } from '../js/seal.js'
 import { memoryStorage } from '../js/sync.js'
 import {
@@ -74,6 +76,30 @@ async function signedOperation (identity, type = 'profile', suffix = 'one', extr
   if (type === 'profile') return signedProfile(identity, extra)
   const me = identity.me()
   return signedRecord(identity, type, { id: me.pubkey, author: me.pubkey, ...extra })
+}
+
+async function signedReport (identity, extra = {}) {
+  const author = identity.me().pubkey
+  const contentNonce = 'authority-report-target'
+  const cid = await contentId(TYPE.POST, author, contentNonce)
+  const targetRef = { type: TYPE.POST, author, contentNonce, cid }
+  const data = {
+    id: `commons!${cid}!${author}`,
+    protocol: CONTENT_PROTOCOL,
+    community: 'commons',
+    targetCid: cid,
+    targetType: TYPE.POST,
+    targetRef,
+    verdict: REPORT_VERDICT.BURY,
+    reason: 'spam',
+    note: '',
+    author,
+    ts: 1,
+    deleted: false,
+    ...extra
+  }
+  data.pow = await mint(TYPE.REPORT, data, MIN_BITS.report)
+  return signedRecord(identity, TYPE.REPORT, data)
 }
 
 function clone (value) {
@@ -207,6 +233,25 @@ await test('signed V1 and V2 records cannot select a different storage slot', as
   )
 })
 
+await test('report admission enforces target-bound semantics and proof of work', async () => {
+  const valid = await signedReport(alice)
+  await createPeeritInnerOperationBatchV1([valid])
+
+  const invalidReason = await signedReport(alice, { reason: 'caller-selected' })
+  await assert.rejects(
+    createPeeritInnerOperationBatchV1([invalidReason]),
+    error => error.code === 'PEERIT_OPERATION_BATCH_SEMANTICS'
+  )
+
+  const noProofData = clone(valid.data)
+  delete noProofData.pow
+  const noProof = await signedRecord(alice, TYPE.REPORT, noProofData)
+  await assert.rejects(
+    createPeeritInnerOperationBatchV1([noProof]),
+    error => error.code === 'PEERIT_OPERATION_BATCH_POW'
+  )
+})
+
 await test('record-key and canonical resource bounds reject before a journal transaction can latch', async () => {
   const actionId = 'x'.repeat(4096)
   const me = alice.me()
@@ -322,4 +367,4 @@ await test('returned envelope bytes and commitments are defensive copies while o
   assert.notEqual(logicalHash[0], envelope.logicalHash[0])
 })
 
-process.stdout.write(`peerit operation authority V1 tests: ${passed}/11 passed\n`)
+process.stdout.write(`peerit operation authority V1 tests: ${passed}/12 passed\n`)

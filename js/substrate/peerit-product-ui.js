@@ -2,11 +2,15 @@
 // application records and calls the local-first product runtime; it owns no
 // relay URL, transport fallback, or network permission logic.
 
-import { COMMENT_SORTS, POST_SORTS, sortComments, sortPosts } from '../ranking.js'
-import { TYPE } from '../model.js'
+import { COMMENT_SORTS, POST_SORTS, sortComments } from '../ranking.js'
+import { feedAlgorithm, rankFeedWindow } from '../feed-algorithms.js'
+import { MODERATION_VIEW, VISIBILITY, cleanModerationView } from '../moderation.js'
+import { REPORT_REASONS, REPORT_VERDICT, TYPE } from '../model.js'
 import { publicationNetSegments } from './publication-status.js'
 
 const DEFAULT_COMMUNITY = 'welcome'
+const MODERATION_VIEW_STORAGE_KEY = 'peerit.moderation-view.v1'
+const FEED_ALGORITHM_STORAGE_KEY = 'peerit.feed-algorithm.v1'
 
 function esc (value) {
   return String(value == null ? '' : value)
@@ -74,22 +78,56 @@ function axesHtml (status) {
   </div>`
 }
 
-async function enrichedPosts (data, posts, sort) {
-  const tallies = await data.tallyMany(posts.map(post => post.cid))
-  return sortPosts(posts.map(post => ({
-    ...post,
-    tally: tallies.get(post.cid) || { score: 0, up: 0, down: 0, myVote: 0 }
-  })), POST_SORTS.includes(sort) ? sort : 'hot')
+function selectedFeedAlgorithm (value) {
+  return feedAlgorithm(value).key
 }
 
-export async function preparePeeritCommentsForRenderV1 (data, comments, sort, viewer) {
+export async function preparePeeritPostsForRenderV1 (data, posts, sort, moderationView, {
+  directCid = null
+} = {}) {
+  const tallies = await data.tallyMany(posts.map(post => post.cid))
+  let rows = posts.map(post => ({
+    ...post,
+    tally: tallies.get(post.cid) || { score: 0, up: 0, down: 0, myVote: 0 }
+  }))
+  rows = await data.moderationMany(rows, { view: cleanModerationView(moderationView) })
+  if (!directCid && moderationView !== MODERATION_VIEW.OPEN) {
+    rows = rows.filter(row => row.moderation?.visibility !== VISIBILITY.BURIED)
+  }
+  return rankFeedWindow(rows, selectedFeedAlgorithm(sort), 'all', 1,
+    Math.max(1, rows.length), Date.now()).items
+}
+
+export async function preparePeeritCommentsForRenderV1 (data, comments, sort, viewer,
+  moderationView = MODERATION_VIEW.COMMUNITY) {
   const rows = comments.map(comment => ({ ...comment }))
   const tallies = await data.tallyMany(rows.map(row => row.cid))
   for (const comment of rows) {
     comment.tally = tallies.get(comment.cid) || { score: 0, up: 0, down: 0, myVote: 0 }
     comment._mine = comment.author === viewer
   }
-  return sortComments(rows, COMMENT_SORTS.includes(sort) ? sort : 'best')
+  const moderated = await data.moderationMany(rows, { view: cleanModerationView(moderationView) })
+  return sortComments(moderated.filter(row => moderationView === MODERATION_VIEW.OPEN ||
+    row.moderation?.visibility !== VISIBILITY.BURIED), COMMENT_SORTS.includes(sort) ? sort : 'best')
+}
+
+function moderationSummary (record) {
+  const moderation = record.moderation
+  if (!moderation || (moderation.raw === 0 && moderation.visibility === VISIBILITY.VISIBLE)) return ''
+  const reasons = (moderation.reasons || []).map(row => `${row.reason} ${row.count}`).join(', ')
+  const labelledState = moderation.view === MODERATION_VIEW.OPEN
+    ? moderation.consensusState
+    : moderation.visibility
+  return `<div class="moderation-label" data-visibility="${esc(labelledState)}">community: ${esc(labelledState)} · ${esc(moderation.bury || 0)} bury / ${esc(moderation.keep || 0)} keep${reasons ? ` · ${esc(reasons)}` : ''}</div>`
+}
+
+function moderationActions (record, targetType, postCid = '') {
+  const mine = record.moderation?.myVerdict
+  return `<button class="pa" data-action="report-content" data-community="${esc(record.community)}" data-cid="${esc(record.cid)}" data-target-type="${esc(targetType)}" data-post-cid="${esc(postCid)}">flag</button><button class="pa" data-action="keep-content" data-community="${esc(record.community)}" data-cid="${esc(record.cid)}" data-target-type="${esc(targetType)}" data-post-cid="${esc(postCid)}">vouch</button>${mine ? `<button class="pa" data-action="withdraw-report" data-community="${esc(record.community)}" data-cid="${esc(record.cid)}" data-post-cid="${esc(postCid)}">withdraw vote</button>` : ''}`
+}
+
+function isCollapsed (record, revealed) {
+  return record.moderation?.visibility === VISIBILITY.COLLAPSED && !revealed.has(record.cid)
 }
 
 function voteBox (record, targetType, postCid = '') {
@@ -101,20 +139,22 @@ function voteBox (record, targetType, postCid = '') {
   </div>`
 }
 
-function postCard (post, { full = false, mine = false } = {}) {
+function postCard (post, { full = false, mine = false, revealed = new Set() } = {}) {
   const body = post.deleted ? '' : String(post.body || '')
   const text = full ? body : body.slice(0, 360)
   const href = postHref(post)
   const link = post.kind !== 'text' && post.url
     ? `<a class="post-link" href="${esc(post.url)}" target="_blank" rel="noopener noreferrer">${esc(post.url)}</a>`
     : text ? `<div class="post-excerpt md">${esc(text)}${!full && body.length > text.length ? '…' : ''}</div>` : ''
+  const collapsed = isCollapsed(post, revealed)
+  const buried = post.moderation?.visibility === VISIBILITY.BURIED
   return `<article class="post ${full ? 'full' : 'card'}" data-post="${esc(post.cid)}">
     ${voteBox(post, TYPE.POST)}
     <div class="post-main">
       <div class="post-meta"><a class="sub-link" href="${communityHref(post.community)}">r/${esc(post.community)}</a><span>·</span><span class="author">u/${esc(shortKey(post.author))}</span><span>·</span><span>${esc(when(post.createdAt))}</span></div>
-      <h2 class="post-title"><a href="${href}">${esc(post.title || '[untitled]')}</a><span class="kind">${esc(post.kind || 'text')}</span></h2>
-      ${post.deleted ? '<div class="removed-note">[deleted by author]</div>' : link}
-      <div class="post-actions"><a class="pa" href="${href}">comments</a>${mine && !post.deleted ? `<button class="pa" data-action="edit-post" data-community="${esc(post.community)}" data-cid="${esc(post.cid)}">edit</button><button class="pa danger" data-action="delete-post" data-community="${esc(post.community)}" data-cid="${esc(post.cid)}">delete</button>` : ''}</div>
+      ${moderationSummary(post)}
+      ${buried ? '<div class="removed-note">Buried by your selected policy. Switch to Open to inspect this otherwise-valid record.</div>' : collapsed ? `<div class="removed-note">Collapsed by your selected community policy. <button class="pa" data-action="reveal-content" data-cid="${esc(post.cid)}">show anyway</button></div>` : `<h2 class="post-title"><a href="${href}">${esc(post.title || '[untitled]')}</a><span class="kind">${esc(post.kind || 'text')}</span></h2>${post.deleted ? '<div class="removed-note">[deleted by author]</div>' : link}`}
+      <div class="post-actions"><a class="pa" href="${href}">comments</a>${moderationActions(post, TYPE.POST)}${mine && !post.deleted ? `<button class="pa" data-action="edit-post" data-community="${esc(post.community)}" data-cid="${esc(post.cid)}">edit</button><button class="pa danger" data-action="delete-post" data-community="${esc(post.community)}" data-cid="${esc(post.cid)}">delete</button>` : ''}</div>
     </div>
   </article>`
 }
@@ -124,30 +164,34 @@ function sortTabs (sort, base, kinds = POST_SORTS) {
     `<a class="tab${sort === kind ? ' active' : ''}" href="${base}${base.includes('?') ? '&' : '?'}sort=${pathPart(kind)}">${esc(kind)}</a>`).join('')}</nav>`
 }
 
-async function homeView (runtime, route) {
+async function homeView (runtime, route, ui) {
   const data = runtime.data
   const communities = await data.listCommunities()
-  const sort = route.query.get('sort') || 'hot'
-  const posts = await enrichedPosts(data, await data.listAllPosts(communities.map(row => row.slug)), sort)
+  const sort = selectedFeedAlgorithm(route.query.get('sort') || ui.feedAlgorithm)
+  ui.feedAlgorithm = sort
+  const posts = await preparePeeritPostsForRenderV1(data,
+    await data.listAllPosts(communities.map(row => row.slug)), sort, ui.moderationView)
   const me = runtime.identity.me().pubkey
   const welcome = '<section class="welcome-panel"><div class="welcome-copy"><span class="tag">blind substrate</span><h2>Local-first communities, without a relay permission gate</h2><p>Browse as a lurker. Your first explicit post creates one durable device identity; every event is signed and visible locally before delivery.</p></div><div class="welcome-actions"><a class="btn btn-primary" href="#/create">Create a community</a></div></section>'
   const feed = posts.length
-    ? `<div class="feed">${posts.map(post => postCard(post, { mine: post.author === me })).join('')}</div>`
+    ? `<div class="feed">${posts.map(post => postCard(post, { mine: post.author === me, revealed: ui.revealed })).join('')}</div>`
     : empty('Your local feed is ready', 'No verified posts are materialized on this device yet. Create a community or wait for authenticated discovery.', '<div class="empty-actions"><a class="btn btn-primary" href="#/create">Create community</a></div>')
   return `<div class="feed-head"><h1>Home</h1><a class="btn btn-ghost" href="#/submit/${pathPart(communities[0]?.slug || DEFAULT_COMMUNITY)}">New post</a></div>${welcome}${sortTabs(sort, '#/')}${feed}`
 }
 
-async function communityView (runtime, route) {
+async function communityView (runtime, route, ui) {
   const data = runtime.data
   const community = await data.getCommunity(route.community)
   if (!community) return empty('Community not found', `r/${route.community} is not in this verified local view.`, '<a class="btn btn-ghost" href="#/">Back home</a>')
-  const sort = route.query.get('sort') || 'hot'
-  const posts = await enrichedPosts(data, await data.listPostsIn(community.slug), sort)
+  const sort = selectedFeedAlgorithm(route.query.get('sort') || ui.feedAlgorithm)
+  ui.feedAlgorithm = sort
+  const posts = await preparePeeritPostsForRenderV1(data,
+    await data.listPostsIn(community.slug), sort, ui.moderationView)
   const me = runtime.identity.me().pubkey
-  return `<section class="community-banner"><div class="comm-icon lg" style="background:${colorFor(community.slug)}">r/</div><div class="cb-info"><h1>r/${esc(community.slug)}</h1><div class="dim">${esc(community.title || '')}</div><div class="small dim">${esc(community.description || '')}</div></div><a class="btn btn-primary" href="#/submit/${pathPart(community.slug)}">Create post</a></section>${sortTabs(sort, communityHref(community.slug))}${posts.length ? `<div class="feed">${posts.map(post => postCard(post, { mine: post.author === me })).join('')}</div>` : empty('No posts yet', 'The first signed post can be created while completely offline.', `<a class="btn btn-primary" href="#/submit/${pathPart(community.slug)}">Create post</a>`)}`
+  return `<section class="community-banner"><div class="comm-icon lg" style="background:${colorFor(community.slug)}">r/</div><div class="cb-info"><h1>r/${esc(community.slug)}</h1><div class="dim">${esc(community.title || '')}</div><div class="small dim">${esc(community.description || '')}</div></div><a class="btn btn-primary" href="#/submit/${pathPart(community.slug)}">Create post</a></section>${sortTabs(sort, communityHref(community.slug))}${posts.length ? `<div class="feed">${posts.map(post => postCard(post, { mine: post.author === me, revealed: ui.revealed })).join('')}</div>` : empty('No posts in this policy view', 'Create the first signed post, wait for authenticated discovery, or inspect the Open view.', `<a class="btn btn-primary" href="#/submit/${pathPart(community.slug)}">Create post</a>`)}`
 }
 
-function commentTree (comments) {
+function commentTree (comments, ui) {
   const byParent = new Map()
   for (const comment of comments) {
     const key = comment.parentCid || ''
@@ -156,21 +200,26 @@ function commentTree (comments) {
   }
   const render = (parent, depth = 0) => (byParent.get(parent) || []).map(comment => {
     const mine = comment._mine === true
-    return `<article class="comment" data-comment="${esc(comment.cid)}"><div class="comment-row">${voteBox(comment, TYPE.COMMENT, comment.postCid)}<div class="comment-body"><div class="comment-head"><span class="author">u/${esc(shortKey(comment.author))}</span><span class="dim">${esc(when(comment.createdAt))}</span></div><div class="md">${comment.deleted ? '<span class="dim">[deleted]</span>' : esc(comment.body || '')}</div><div class="comment-actions"><button class="pa" data-action="reply" data-cid="${esc(comment.cid)}">reply</button>${mine && !comment.deleted ? `<button class="pa" data-action="edit-comment" data-community="${esc(comment.community)}" data-post-cid="${esc(comment.postCid)}" data-cid="${esc(comment.cid)}">edit</button><button class="pa danger" data-action="delete-comment" data-community="${esc(comment.community)}" data-post-cid="${esc(comment.postCid)}" data-cid="${esc(comment.cid)}">delete</button>` : ''}</div></div></div>${depth < 32 ? `<div class="children">${render(comment.cid, depth + 1)}</div>` : ''}</article>`
+    const collapsed = isCollapsed(comment, ui.revealed)
+    return `<article class="comment" data-comment="${esc(comment.cid)}"><div class="comment-row">${voteBox(comment, TYPE.COMMENT, comment.postCid)}<div class="comment-body"><div class="comment-head"><span class="author">u/${esc(shortKey(comment.author))}</span><span class="dim">${esc(when(comment.createdAt))}</span></div>${moderationSummary(comment)}<div class="md">${collapsed ? `<span class="dim">Collapsed by your policy. <button class="pa" data-action="reveal-content" data-cid="${esc(comment.cid)}">show anyway</button></span>` : comment.deleted ? '<span class="dim">[deleted]</span>' : esc(comment.body || '')}</div><div class="comment-actions"><button class="pa" data-action="reply" data-cid="${esc(comment.cid)}">reply</button>${moderationActions(comment, TYPE.COMMENT, comment.postCid)}${mine && !comment.deleted ? `<button class="pa" data-action="edit-comment" data-community="${esc(comment.community)}" data-post-cid="${esc(comment.postCid)}" data-cid="${esc(comment.cid)}">edit</button><button class="pa danger" data-action="delete-comment" data-community="${esc(comment.community)}" data-post-cid="${esc(comment.postCid)}" data-cid="${esc(comment.cid)}">delete</button>` : ''}</div></div></div>${depth < 32 ? `<div class="children">${render(comment.cid, depth + 1)}</div>` : ''}</article>`
   }).join('')
   return render('')
 }
 
-async function postView (runtime, route) {
+async function postView (runtime, route, ui) {
   const data = runtime.data
   const post = await data.getPost(route.community, route.cid)
   if (!post) return empty('Post not found', 'This post is not in the verified local view.', `<a class="btn btn-ghost" href="${communityHref(route.community)}">Back to community</a>`)
-  post.tally = await data.tallyFor(post.cid)
+  const [moderatedPost] = await preparePeeritPostsForRenderV1(data, [post], 'new', ui.moderationView,
+    { directCid: post.cid })
   const sort = route.query.get('sort') || 'best'
   const commentRows = await data.listComments(route.community, route.cid)
   const me = runtime.identity.me().pubkey
-  const comments = await preparePeeritCommentsForRenderV1(data, commentRows, sort, me)
-  return `<div class="post-detail">${postCard(post, { full: true, mine: post.author === me })}<section class="comment-section"><form class="composer" data-form="comment"><input type="hidden" name="community" value="${esc(route.community)}"><input type="hidden" name="postCid" value="${esc(route.cid)}"><input type="hidden" name="parentCid" value=""><label>Join the discussion<textarea name="body" rows="4" maxlength="10000" required placeholder="Write a signed comment…"></textarea></label><div class="composer-actions"><button class="btn btn-primary" type="submit">Comment</button><span class="small dim" data-reply-note></span></div></form><div class="comment-bar"><span>${comments.length} comment${comments.length === 1 ? '' : 's'}</span><span class="csort">${COMMENT_SORTS.map(kind => `<a class="${sort === kind ? 'active' : ''}" href="${postHref(post)}?sort=${pathPart(kind)}">${esc(kind)}</a>`).join('')}</span></div>${comments.length ? `<div class="comments">${commentTree(comments)}</div>` : '<div class="no-comments">No comments yet.</div>'}</section></div>`
+  const comments = await preparePeeritCommentsForRenderV1(data, commentRows, sort, me, ui.moderationView)
+  const buriedAudit = moderatedPost.moderation?.visibility === VISIBILITY.BURIED && ui.moderationView !== MODERATION_VIEW.OPEN
+    ? '<div class="notice warn"><b>Buried in this policy view</b><p>This direct link remains available for audit. Switch to Open to inspect the content.</p></div>'
+    : ''
+  return `<div class="post-detail">${buriedAudit}${postCard(moderatedPost, { full: true, mine: post.author === me, revealed: ui.revealed })}<section class="comment-section"><form class="composer" data-form="comment"><input type="hidden" name="community" value="${esc(route.community)}"><input type="hidden" name="postCid" value="${esc(route.cid)}"><input type="hidden" name="parentCid" value=""><label>Join the discussion<textarea name="body" rows="4" maxlength="10000" required placeholder="Write a signed comment…"></textarea></label><div class="composer-actions"><button class="btn btn-primary" type="submit">Comment</button><span class="small dim" data-reply-note></span></div></form><div class="comment-bar"><span>${comments.length} visible comment${comments.length === 1 ? '' : 's'}</span><span class="csort">${COMMENT_SORTS.map(kind => `<a class="${sort === kind ? 'active' : ''}" href="${postHref(post)}?sort=${pathPart(kind)}">${esc(kind)}</a>`).join('')}</span></div>${comments.length ? `<div class="comments">${commentTree(comments, ui)}</div>` : '<div class="no-comments">No comments in this policy view.</div>'}</section></div>`
 }
 
 async function createView () {
@@ -190,28 +239,29 @@ async function profileView (runtime) {
   return `<section class="panel"><h1>Your identity</h1><div class="notice${me.pubkey ? '' : ' warn'}"><b>${me.pubkey ? 'Durable writer active' : 'Lurker mode'}</b><p>${me.pubkey ? `This device will keep using ${shortKey(me.pubkey)}.` : 'No key has been created. Your first explicit mutation will persist one encrypted device identity before signing.'}</p></div><form data-form="profile"><label>Display name<input name="name" maxlength="32" value="${esc(profile?.name || '')}"></label><label>Bio<textarea name="bio" maxlength="500" rows="5">${esc(profile?.bio || '')}</textarea></label><label>Color<input name="color" maxlength="32" value="${esc(profile?.color || '')}" placeholder="#4f8cff"></label><div class="form-actions"><button class="btn btn-primary" type="submit">Save signed profile</button></div></form></section>`
 }
 
-async function searchView (runtime, route) {
+async function searchView (runtime, route, ui) {
   const query = route.query.get('q') || ''
   const result = query ? await runtime.data.search(query) : { communities: [], posts: [], comments: [] }
   const me = runtime.identity.me().pubkey
   if (!query) return empty('Search your verified view', 'Enter a query in the search bar. Search runs locally over admitted records.')
-  const posts = await enrichedPosts(runtime.data, result.posts, 'new')
-  return `<div class="feed-head"><h1>Search</h1><span class="dim">${esc(query)}</span></div>${result.communities.map(row => `<div class="comm-row"><div class="comm-icon" style="background:${colorFor(row.slug)}">r/</div><div class="comm-info"><a class="comm-name" href="${communityHref(row.slug)}">r/${esc(row.slug)}</a><div class="dim small">${esc(row.description || '')}</div></div></div>`).join('')}${posts.length ? `<div class="feed">${posts.map(post => postCard(post, { mine: post.author === me })).join('')}</div>` : ''}${result.comments.length ? `<section class="card"><h3>Comments</h3>${result.comments.map(row => `<p><a href="#/r/${pathPart(row.community)}/post/${pathPart(row.postCid)}">${esc(String(row.body || '').slice(0, 180))}</a></p>`).join('')}</section>` : ''}${!result.communities.length && !posts.length && !result.comments.length ? empty('No local matches', 'Discovery may add more verified records later.') : ''}`
+  const posts = await preparePeeritPostsForRenderV1(runtime.data, result.posts, 'new', ui.moderationView)
+  const comments = await preparePeeritCommentsForRenderV1(runtime.data, result.comments, 'new', me, ui.moderationView)
+  return `<div class="feed-head"><h1>Search</h1><span class="dim">${esc(query)}</span></div>${result.communities.map(row => `<div class="comm-row"><div class="comm-icon" style="background:${colorFor(row.slug)}">r/</div><div class="comm-info"><a class="comm-name" href="${communityHref(row.slug)}">r/${esc(row.slug)}</a><div class="dim small">${esc(row.description || '')}</div></div></div>`).join('')}${posts.length ? `<div class="feed">${posts.map(post => postCard(post, { mine: post.author === me, revealed: ui.revealed })).join('')}</div>` : ''}${comments.length ? `<section class="card"><h3>Comments</h3>${comments.map(row => `<div>${moderationSummary(row)}<a href="#/r/${pathPart(row.community)}/post/${pathPart(row.postCid)}">${esc(String(row.body || '').slice(0, 180))}</a></div>`).join('')}</section>` : ''}${!result.communities.length && !posts.length && !comments.length ? empty('No local matches', 'Discovery may add more verified records later.') : ''}`
 }
 
-async function sidebarView (runtime) {
+async function sidebarView (runtime, ui) {
   const communities = (await runtime.data.listCommunities()).slice(0, 8)
-  return `<section class="card side"><h3>Communities</h3>${communities.length ? communities.map((row, index) => `<a class="side-comm" href="${communityHref(row.slug)}"><span class="rank">${index + 1}</span><span class="comm-icon sm" style="background:${colorFor(row.slug)}">r/</span><span>r/${esc(row.slug)}</span></a>`).join('') : '<p class="dim small">No local communities yet.</p>'}<a class="see-all" href="#/create">Create community</a></section><section class="card side"><h3>What relays can see</h3><p class="dim small">Generic relay operations, opaque cells or frames, timing, size bands, transport metadata, and capabilities presented to that relay—not Peerit post fields or graph semantics.</p></section>`
+  return `<section class="card side"><h3>Your feed</h3><label class="small">Moderation<select data-preference="moderation-view">${Object.values(MODERATION_VIEW).map(view => `<option value="${view}"${ui.moderationView === view ? ' selected' : ''}>${view}</option>`).join('')}</select></label><p class="dim small">Community applies moderator actions plus eligible majority votes. Consensus ignores moderator actions. Open shows otherwise-valid content and labels the result.</p><label class="small">Algorithm<select data-preference="feed-algorithm">${POST_SORTS.map(key => `<option value="${key}"${ui.feedAlgorithm === key ? ' selected' : ''}>${feedAlgorithm(key).name}</option>`).join('')}</select></label><p class="dim small">Algorithms are interchangeable MIT-licensed modules. Moderation is applied before ranking.</p></section><section class="card side"><h3>Communities</h3>${communities.length ? communities.map((row, index) => `<a class="side-comm" href="${communityHref(row.slug)}"><span class="rank">${index + 1}</span><span class="comm-icon sm" style="background:${colorFor(row.slug)}">r/</span><span>r/${esc(row.slug)}</span></a>`).join('') : '<p class="dim small">No local communities yet.</p>'}<a class="see-all" href="#/create">Create community</a></section><section class="card side"><h3>What relays can see</h3><p class="dim small">Generic relay operations, opaque cells or frames, timing, size bands, transport metadata, and capabilities presented to that relay—not Peerit post fields or graph semantics.</p></section>`
 }
 
-async function routeView (runtime, route) {
-  if (route.name === 'community') return communityView(runtime, route)
-  if (route.name === 'post') return postView(runtime, route)
+async function routeView (runtime, route, ui) {
+  if (route.name === 'community') return communityView(runtime, route, ui)
+  if (route.name === 'post') return postView(runtime, route, ui)
   if (route.name === 'create') return createView(runtime, route)
   if (route.name === 'submit') return submitView(runtime, route)
   if (route.name === 'profile') return profileView(runtime, route)
-  if (route.name === 'search') return searchView(runtime, route)
-  return homeView(runtime, route)
+  if (route.name === 'search') return searchView(runtime, route, ui)
+  return homeView(runtime, route, ui)
 }
 
 export function mountPeeritProductUiV1 (runtime, options = {}) {
@@ -221,6 +271,14 @@ export function mountPeeritProductUiV1 (runtime, options = {}) {
   let renderVersion = 0
   let busy = false
   let destroyed = false
+  const storage = options.storage || window.localStorage
+  const ui = {
+    moderationView: cleanModerationView(storage?.getItem(MODERATION_VIEW_STORAGE_KEY)),
+    feedAlgorithm: selectedFeedAlgorithm(storage?.getItem(FEED_ALGORITHM_STORAGE_KEY)),
+    // Deliberately session-only: a new browser session respects the selected
+    // policy again instead of silently remembering every reveal forever.
+    revealed: new Set()
+  }
 
   document.body.innerHTML = '<header class="topbar"><a class="brand" href="#/"><span class="brand-mark">P</span><span class="brand-name">peerit</span></a><form class="search" data-form="search"><input name="q" type="search" maxlength="200" placeholder="Search your verified local view" aria-label="Search"><button class="search-submit" type="submit" aria-label="Run search">⌕</button></form><div class="topbar-right"><span class="mode-badge live">blind</span><a class="user-pill" href="#/profile" aria-label="Your identity"><span class="avatar" style="background:linear-gradient(135deg,var(--accent),var(--accent-2))"></span><span class="uname" data-user-label>lurking</span></a></div></header><div data-status></div><main class="layout"><section class="content" id="app"><div class="panel skel"><div class="sk-line w40"></div><div class="sk-line w80"></div></div></section><aside class="sidebar" id="sidebar"></aside></main><div class="toast" data-toast hidden></div>'
 
@@ -238,7 +296,12 @@ export function mountPeeritProductUiV1 (runtime, options = {}) {
     try {
       const status = await runtime.status()
       const route = parseRoute(window.location)
-      const [main, sidebar] = await Promise.all([routeView(runtime, route), sidebarView(runtime)])
+      const routeFeed = route.query.get('sort')
+      if (routeFeed && POST_SORTS.includes(routeFeed)) {
+        ui.feedAlgorithm = selectedFeedAlgorithm(routeFeed)
+        storage?.setItem(FEED_ALGORITHM_STORAGE_KEY, ui.feedAlgorithm)
+      }
+      const [main, sidebar] = await Promise.all([routeView(runtime, route, ui), sidebarView(runtime, ui)])
       if (destroyed || version !== renderVersion) return
       document.querySelector('[data-status]').innerHTML = axesHtml(status)
       document.querySelector('[data-user-label]').textContent = status.lurker ? 'lurking' : shortKey(status.identity.pubkey)
@@ -324,6 +387,29 @@ export function mountPeeritProductUiV1 (runtime, options = {}) {
         const current = control.classList.contains('on') ? 0 : Number(control.dataset.value)
         await runtime.data.vote(control.dataset.cid, control.dataset.community, control.dataset.targetType, current,
           { postCid: control.dataset.postCid || undefined })
+      } else if (action === 'report-content' || action === 'keep-content') {
+        const verdict = action === 'keep-content' ? REPORT_VERDICT.KEEP : REPORT_VERDICT.BURY
+        let reason = 'other'
+        let note = ''
+        if (verdict === REPORT_VERDICT.BURY) {
+          const answer = window.prompt(`Reason (${REPORT_REASONS.join(', ')})`, 'spam')
+          if (answer == null) return
+          reason = REPORT_REASONS.includes(answer) ? answer : 'other'
+          note = window.prompt('Optional note (never shown to the relay)', '') || ''
+        }
+        await runtime.data.reportContent(control.dataset.community, {
+          targetCid: control.dataset.cid,
+          targetType: control.dataset.targetType,
+          postCid: control.dataset.postCid || undefined,
+          verdict,
+          reason,
+          note
+        })
+      } else if (action === 'withdraw-report') {
+        await runtime.data.withdrawReport(control.dataset.community, control.dataset.cid,
+          { postCid: control.dataset.postCid || undefined })
+      } else if (action === 'reveal-content') {
+        ui.revealed.add(control.dataset.cid)
       } else if (action === 'reply') {
         const form = document.querySelector('form[data-form="comment"]')
         if (!form) return
@@ -347,6 +433,18 @@ export function mountPeeritProductUiV1 (runtime, options = {}) {
   }
 
   const onChange = event => {
+    if (event.target.matches('[data-preference="moderation-view"]')) {
+      ui.moderationView = cleanModerationView(event.target.value)
+      storage?.setItem(MODERATION_VIEW_STORAGE_KEY, ui.moderationView)
+      render()
+      return
+    }
+    if (event.target.matches('[data-preference="feed-algorithm"]')) {
+      ui.feedAlgorithm = selectedFeedAlgorithm(event.target.value)
+      storage?.setItem(FEED_ALGORITHM_STORAGE_KEY, ui.feedAlgorithm)
+      render()
+      return
+    }
     if (!event.target.matches('input[name="kind"]')) return
     const form = event.target.closest('form[data-form="post"]')
     if (!form) return

@@ -121,14 +121,16 @@ const trackedWebManifestBytes = readFileSync(
 const trackedWebManifest = JSON.parse(trackedWebManifestBytes)
 assert.ok(officialRelease.releaseSequence >= PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE)
 assert.equal(consumedSigningRequest.releaseSequence, trackedWebManifest.releaseSequence,
-  'the immutable signing request remains bound to the tracked prior-release artifact')
-assert.equal(consumedSigningRequest.manifestSha256,
+  'the immutable sequence-11 request remains distinguishable from the sequence-12 replacement')
+assert.notEqual(consumedSigningRequest.manifestSha256,
   createHash('sha256').update(trackedWebManifestBytes).digest('hex'),
-  'the immutable signing request still hashes the exact tracked prior-release manifest')
+  'the superseded sequence-11 request cannot authorize the moderation-expanded tracked tree')
 assert.ok(trackedWebManifest.releaseSequence < officialRelease.releaseSequence,
   'the tracked prior-release web directory is never reused as the replacement candidate')
 assert.notEqual(trackedWebManifest.webRelease?.transport, 'blind-substrate',
   'the tracked prior release remains explicitly distinguishable from the replacement transport')
+assert.equal(officialRelease.productionPinHistory == null, true,
+  'the unsigned replacement remains fail-closed until a new signing request and pin history are produced')
 const render = readFileSync(new URL('../render.yaml', import.meta.url), 'utf8')
 const renderHeaderPolicy = readFileSync(new URL('../deploy/render-security-headers.json', import.meta.url), 'utf8')
 for (const source of [officialConfig, render, renderHeaderPolicy]) {

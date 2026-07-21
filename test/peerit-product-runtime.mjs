@@ -9,7 +9,10 @@ import {
   createMemoryPeeritJournal
 } from '../js/substrate/peerit-journal.js'
 import { createPeeritProductRuntimeV1 } from '../js/substrate/peerit-product-runtime.js'
-import { preparePeeritCommentsForRenderV1 } from '../js/substrate/peerit-product-ui.js'
+import {
+  preparePeeritCommentsForRenderV1,
+  preparePeeritPostsForRenderV1
+} from '../js/substrate/peerit-product-ui.js'
 import { createPeeritSubstrateSync } from '../js/substrate/peerit-substrate-sync.js'
 
 let passed = 0
@@ -77,6 +80,12 @@ async function main () {
         ['older', { score: 3, up: 3, down: 0, myVote: 0 }],
         ['newer', { score: 1, up: 1, down: 0, myVote: 0 }]
       ])
+    },
+    async moderationMany (rows) {
+      return rows.map(row => ({
+        ...row,
+        moderation: { visibility: 'visible', consensusState: 'visible', view: 'community' }
+      }))
     }
   }, [
     { cid: 'older', author: 'alice', createdAt: 1 },
@@ -87,6 +96,31 @@ async function main () {
   'two comments without pre-attached tallies sort without a render crash')
   ok(preparedComments.find(comment => comment.cid === 'older')._mine === true,
     'comment ownership is attached before rendering edit controls')
+
+  console.log('\n— blind product moderation precedes interchangeable ranking —')
+  const preparedPosts = await preparePeeritPostsForRenderV1({
+    async tallyMany () {
+      return new Map([
+        ['buried', { score: 100, weighted: 100 }],
+        ['visible', { score: 1, weighted: 1 }]
+      ])
+    },
+    async moderationMany (rows, { view }) {
+      return rows.map(row => ({
+        ...row,
+        moderation: {
+          view,
+          visibility: row.cid === 'buried' ? 'buried' : 'visible',
+          consensusState: row.cid === 'buried' ? 'buried' : 'visible'
+        }
+      }))
+    }
+  }, [
+    { cid: 'buried', createdAt: 2 },
+    { cid: 'visible', createdAt: 1 }
+  ], 'top', 'community')
+  ok(preparedPosts.map(row => row.cid).join(',') === 'visible',
+    'community policy removes buried candidates before the selected top ranker runs')
 
   const shared = createMemoryJournalState()
   const backing = countedKv()

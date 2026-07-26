@@ -3,17 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: hyper: pear:; connect-src 'self' hyper: pear:; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: hyper: pear:; connect-src 'self' hyper: pear: https://relay-syd.p2phiverelay.xyz https://relay-dal.p2phiverelay.xyz; form-action 'none'">
   <title>peerit — peer-to-peer Reddit</title>
-  <meta name="description" content="peerit is a signed-outbox community app. PearBrowser peers replicate directly; normal browsers verify the same records while using configured relay infrastructure.">
-  <meta name="peerit-v2" content="true">
+  <meta name="description" content="peerit is a local-first community app using authenticated blind relay substrate artifacts.">
   <link rel="icon" type="image/svg+xml" href="icon.svg">
-  <link rel="stylesheet" href="styles.css" integrity="sha384-2inmeItOLC1m6vitQ33Az+YreC0fo6aF4ka7WLUavgyBoDvpwRfq651dBtrbAM+1" crossorigin="anonymous">
-  <meta name="peerit-relay" content="same-origin">
-  <meta name="peerit-relay-readonly" content="false">
+  <link rel="stylesheet" href="styles.css" integrity="sha384-ErBGfHOSVkrAiUt0leEBFMIrTBxQYrrRuiYZFYAU43xUkrPwtHEGgrFGzOghfIW3" crossorigin="anonymous">
+  <meta name="peerit-substrate" content="blind-v1">
+  <meta name="peerit-substrate-relays" content="https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe,https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe">
   <meta name="peerit-release-key" content="d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b">
-  <meta name="peerit-release-sequence" content="11">
-  <meta name="peerit-seed-outboxes" content="6b565bc4cc28544526c85c09760f53bf735464393ad931bb026fb10e0757de30:e488cea9bea7f8eeb5f9c4dee9a5a0dccebb400d23db37fcf440980e66348a4e">
+  <meta name="peerit-release-sequence" content="12">
+  <meta name="peerit-production-web-asset-manifest" content="/peerit-web-assets-v1.cenc">
   <script src="sw-register.js"></script>
 </head>
 <body>
@@ -22,6 +21,6 @@
     <div class="boot-name">peerit</div>
     <div class="boot-sub">connecting to peers…</div>
   </div>
-  <script type="module" src="js/app.js" integrity="sha384-ffPGbNhJ43Boch4RvG7W5JEK3NhPwONowvdydLgDnDd3KJLvZXv9fuUmpThn2160" crossorigin="anonymous"></script>
+  <script type="module" src="js/substrate/app-entry.js" integrity="sha384-ykj21gpkZ6BcpbC2hZ+mm41eYOacSjSWDFFm0Gda5rTU7eFcymlAkLtMK27aEtwR" crossorigin="anonymous"></script>
 </body>
 </html>

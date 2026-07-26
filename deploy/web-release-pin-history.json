@@ -1,0 +1,28 @@
+{
+  "schema": "peerit-web-release-pin-history/v1",
+  "note": "App release pin-history for the web artifact line. Each entry binds releaseSequence -> signed manifest identity from deploy/web-signing-request.json at signing time. This is the app-level continuity record; it is NOT the production PeeritHiveRelayProfilePinV1 pin-history (the production release authority root is intentionally null — see js/substrate/production-release-authority.mjs).",
+  "entries": [
+    {
+      "releaseSequence": 11,
+      "manifestSha256": "91cc2c55e151ce56ca9eeebb6969995b88eabd28262a56a01b8f941580ca34b9",
+      "signingMessageSha256": "605df3a63dbd5b3b8c437b474e3ac9f850f67abaf4f3cbe2edef13e11e68fff0",
+      "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
+      "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
+      "note": "prior production web release (legacy transport line final state before the blind-substrate canary)"
+    },
+    {
+      "releaseSequence": 12,
+      "manifestSha256": "70c6c757a8b0153293cc7298b807db6d70b6f8f0d0b6119185321ac5443c6a83",
+      "signingMessageSha256": "60327ff50224c1d92ceb5fc374a3bd31e6993d0fb46a7fb9a82d8b630ae36649",
+      "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
+      "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
+      "transport": "blind-substrate/blind-v1",
+      "relayHints": [
+        "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+        "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe"
+      ],
+      "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+      "note": "bounded public-test canary artifact; signed with the offline release key after the two-relay blind-cell drills. NOT deployed to peerit.site."
+    }
+  ]
+}

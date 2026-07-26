@@ -1,0 +1,311 @@
+{
+  "schema": "PeeritBlindPublicTestCellDrillV1",
+  "drilledAt": "2026-07-26T17:23:58.331Z",
+  "marker": "peerit-public-test-bind-drill-2026-07-26T17:23:58.328Z",
+  "publication": {
+    "intentId": "21f6e0ea8896c6a0235d17920fcc63140144d5015866452a1428e1a349d3c700",
+    "logicalId": "468c66639868e4cf6778fd37d1a3be16cf2c7ceab1d90cec6290ea77c46684ec",
+    "innerCodec": 334,
+    "innerLength": 590,
+    "sizeClass": 1
+  },
+  "vendoredArtifact": {
+    "artifactHash": "967cbc42a3583ef158045dfdf6afd82f672153c117236a928bc2c2684776b008",
+    "wireTuple": {
+      "specHash": "470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9",
+      "abiHash": "aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d",
+      "vectorSetHash": "09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78"
+    }
+  },
+  "relays": [
+    {
+      "id": "syd-1",
+      "checks": [
+        {
+          "id": "continuity.chain-walk",
+          "status": "pass",
+          "detail": "genesis→head chain of 5 descriptors fetched and client-verified live"
+        },
+        {
+          "id": "continuity.trust-seeded",
+          "status": "pass",
+          "detail": "genesis-pinned chain accepted into the drill trust store"
+        },
+        {
+          "id": "qualify.one-adapter",
+          "status": "pass",
+          "detail": "qualified=1 failures=[]"
+        },
+        {
+          "id": "qualify.admission-verified",
+          "status": "pass",
+          "detail": "signed admission parameters verified against the descriptor pin"
+        },
+        {
+          "id": "profile.lease-class-redeemed",
+          "status": "info",
+          "detail": "relay admission offers CELL PUT only at leaseClass 1 (10 units); the Peerit adapter default (4) is incompatible, so this drill redeems the advertised class 1. Recorded as consumer gap PEERIT-BIND-GAP-LEASE-CLASS."
+        },
+        {
+          "id": "deliver.acknowledged",
+          "status": "pass",
+          "detail": "evidenceRef=peerit-capability-v1:e86c4b348b1a68709a3a064210cc6e8aec73e2b376401dfdd9888fcf787a895a:3"
+        },
+        {
+          "id": "deliver.readback-verified",
+          "status": "pass",
+          "detail": "signed receipt + readback verified under the relay key by the substrate client"
+        },
+        {
+          "id": "vault.stage",
+          "status": "pass",
+          "detail": "readback-verified"
+        },
+        {
+          "id": "vault.byte-exact-readback",
+          "status": "pass",
+          "detail": "readback inner bytes are byte-exact against the authored batch"
+        },
+        {
+          "id": "boundary.no-marker-on-wire",
+          "status": "pass",
+          "detail": "app plaintext marker never appears in relay-visible bytes"
+        },
+        {
+          "id": "boundary.no-app-schema-on-wire",
+          "status": "pass",
+          "detail": "no app schema vocabulary in relay-visible bytes"
+        },
+        {
+          "id": "boundary.cell-unary-shape",
+          "status": "pass",
+          "detail": "cell request 65536B to https://relay-syd.p2phiverelay.xyz/api/blind/v1/cell"
+        }
+      ],
+      "wire": [
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/cell",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/cell",
+          "method": "POST",
+          "bodyBytes": 16384,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        }
+      ]
+    },
+    {
+      "id": "dal-1",
+      "checks": [
+        {
+          "id": "continuity.chain-walk",
+          "status": "pass",
+          "detail": "genesis→head chain of 3 descriptors fetched and client-verified live"
+        },
+        {
+          "id": "continuity.trust-seeded",
+          "status": "pass",
+          "detail": "genesis-pinned chain accepted into the drill trust store"
+        },
+        {
+          "id": "qualify.one-adapter",
+          "status": "pass",
+          "detail": "qualified=1 failures=[]"
+        },
+        {
+          "id": "qualify.admission-verified",
+          "status": "pass",
+          "detail": "signed admission parameters verified against the descriptor pin"
+        },
+        {
+          "id": "profile.lease-class-redeemed",
+          "status": "info",
+          "detail": "relay admission offers CELL PUT only at leaseClass 1 (10 units); the Peerit adapter default (4) is incompatible, so this drill redeems the advertised class 1. Recorded as consumer gap PEERIT-BIND-GAP-LEASE-CLASS."
+        },
+        {
+          "id": "deliver.acknowledged",
+          "status": "pass",
+          "detail": "evidenceRef=peerit-capability-v1:950e4f90e759381aeefb20ffae72debc3677eaadd1962c2fe133d23302177668:3"
+        },
+        {
+          "id": "deliver.readback-verified",
+          "status": "pass",
+          "detail": "signed receipt + readback verified under the relay key by the substrate client"
+        },
+        {
+          "id": "vault.stage",
+          "status": "pass",
+          "detail": "readback-verified"
+        },
+        {
+          "id": "vault.byte-exact-readback",
+          "status": "pass",
+          "detail": "readback inner bytes are byte-exact against the authored batch"
+        },
+        {
+          "id": "boundary.no-marker-on-wire",
+          "status": "pass",
+          "detail": "app plaintext marker never appears in relay-visible bytes"
+        },
+        {
+          "id": "boundary.no-app-schema-on-wire",
+          "status": "pass",
+          "detail": "no app schema vocabulary in relay-visible bytes"
+        },
+        {
+          "id": "boundary.cell-unary-shape",
+          "status": "pass",
+          "detail": "cell request 65536B to https://relay-dal.p2phiverelay.xyz/api/blind/v1/cell"
+        }
+      ],
+      "wire": [
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/cell",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/cell",
+          "method": "POST",
+          "bodyBytes": 16384,
+          "markerPresent": false,
+          "schemaWordsPresent": []
+        }
+      ]
+    }
+  ],
+  "status": "pass"
+}

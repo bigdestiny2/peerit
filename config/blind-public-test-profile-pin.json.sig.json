@@ -1,0 +1,9 @@
+{
+  "schema": "peerit-blind-public-test-artifact-sig/v1",
+  "alg": "ed25519",
+  "key": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
+  "sig": "dc453d0461628fcd422f38f4ad27d7618942098f1ae141cdd12c11e6d704e7854609a244d384b81fda896a737dbac0522258f929844bb1023e225cab4d843106",
+  "signedBytesSha256": "d345a5ebc0b348fa26f0c04faab994755443526220feefee322def82bd675118",
+  "signedFile": "config/blind-public-test-profile-pin.json",
+  "note": "signature covers the exact current bytes of signedFile"
+}

@@ -1,0 +1,75 @@
+{
+  "schema": "peerit-blind-public-test-profile-pin/v1",
+  "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+  "status": "bound_public_test_canary",
+  "pinned_at": "2026-07-26",
+  "pinned_by": "peerit-bind-producer (codex/peerit-blind-cell-bind-20260726)",
+  "note": "Bind-scoped signed profile pin for the two-relay public-test canary. This is NOT the production PeeritHiveRelayProfilePinV1: the production release authority root (PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1) is intentionally null, so no production pin can exist yet. This pin commits the exact substrate tuple the Peerit client speaks, both relays' verified identities, and the operation/admission profile the drills redeemed — signed with the offline Peerit release key.",
+  "substrateTuple": {
+    "specHash": "470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9",
+    "abiHash": "aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d",
+    "vectorSetHash": "09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78",
+    "source": "vendor/hiverelay-blind-client-v1/authority.json wireTuple (artifact 967cbc42…, exact-verified before network use)"
+  },
+  "tupleDrift": {
+    "kind": "WIRE_TUPLE_DRIFT",
+    "deployedRelayWireTuple": {
+      "specHash": "c9ddd235c3963461174e3de13c25a4c995b53ff320be822d8304f870766b6592",
+      "abiHash": "199ba15d94d4d112cfac520a67055ce15ec870f0f6f7bd9adaaf47d552334567",
+      "vectorSetHash": "fa54012cd0d7e4e620878c67e61f435ecb31ddec05a6283917987cc84279ee05"
+    },
+    "disposition": "recorded, not silently accepted; re-pin honestly impossible (v3 artifact declares runtimeReady/realBrowserEvidenceAccepted/authorizesRelease false); empirical compatibility proven by the drills referenced below"
+  },
+  "operationProfile": {
+    "families": { "DESCRIBE": 1, "CELL": 2, "INBOX": 3, "CORE": 4, "FORWARD": 5 },
+    "writeRequirement": { "familyId": 2, "operationId": 1, "endpointId": 1, "requiredRoleBits": 49, "privacyProfileBit": 1, "transportSupportBit": 1 },
+    "readRequirement": { "familyId": 2, "operationId": 2, "endpointId": 1, "requiredRoleBits": 49, "privacyProfileBit": 1, "transportSupportBit": 1 },
+    "describeFamilyId": 1,
+    "admissionParametersOperationId": 3,
+    "supportedProtocolProfiles": "protocols 1-4, major 1, minor 0 (advertised profileHash values are the disclosed relay-side placeholders, DAL1-IAR-P2-1)",
+    "supportedTransportProfiles": "transportId 1 (HTTPS_DIRECT), support bit 1 (DIRECT_HTTP)"
+  },
+  "admissionProfile": {
+    "profileId": 7,
+    "schemeId": 9,
+    "conformanceClass": 1,
+    "roleBits": 49,
+    "cellPutCost": { "resourceClass": 1, "leaseClass": 1, "costUnits": 10 },
+    "leaseClassNote": "Peerit adapter default leaseClass 4 is unredeemable against this profile; drills redeem the advertised class 1 (PEERIT-BIND-GAP-LEASE-CLASS)"
+  },
+  "relays": [
+    {
+      "id": "syd-1",
+      "edgeUrl": "https://relay-syd.p2phiverelay.xyz:443",
+      "describeUrl": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+      "relayPublicKey": "52f4d78364180553a944629b5dd90834d3c3d4f7755cc2e452b3308329a88161",
+      "continuityRootRelayPublicKey": "52f4d78364180553a944629b5dd90834d3c3d4f7755cc2e452b3308329a88161",
+      "storeId": "5193f588aa3b55886e27dc35ead0777d6b3f787e575458d9b2d914f413b130de",
+      "descriptorHeadHash": "2d46ac68851b1366ed1d89352707508d1986a7cebe4eb21afb041ee3425ffa5e",
+      "descriptorHeadSequence": 4,
+      "descriptorGenesisHash": "b2384d4b9e3480a7d4aefa53b97c6c1ac38a4ee1c793b283aefc6fde10f61e92",
+      "admissionParameterHash": "8a796071cfc688bfd23dfa50dc83a7a56431daae223f0f77236c51bad7476d30",
+      "edgeImageAmd64": "sha256:ae95c673f1df8de1d4a719b72fd36a140a12f3821f0ce7379376cadbc1331f57",
+      "daemonImageAmd64": "sha256:1903df25efbd10bd564a9029245f2812f0bc61cee43bfc36d6063f35186413b4"
+    },
+    {
+      "id": "dal-1",
+      "edgeUrl": "https://relay-dal.p2phiverelay.xyz:443",
+      "describeUrl": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+      "relayPublicKey": "8b3f4161271cfa511bc49fb03033d6441da01bf27c35a754e2a1b0d7df32e1d2",
+      "continuityRootRelayPublicKey": "8b3f4161271cfa511bc49fb03033d6441da01bf27c35a754e2a1b0d7df32e1d2",
+      "storeId": "744a7e97bd96f74e7ce7cd6a600a0ff1846da4fe3d39c35c611f12ffcd69cb90",
+      "descriptorHeadHash": "4325b15ab4d6e8ca98bf7e1c6199acb36a3d1c83641c1635ff86fe7a347e344a",
+      "descriptorHeadSequence": 2,
+      "descriptorGenesisHash": "0fb814bdd1b649f4bf2c8dffac4b7ccbfab6de755c25829c877dab950b9ea5ce",
+      "admissionParameterHash": "75bde3f84de03f8ceeef9a7a26e8d17e498413e93419762da0e1ee88b1c9adcd",
+      "edgeImageAmd64": "sha256:ae95c673f1df8de1d4a719b72fd36a140a12f3821f0ce7379376cadbc1331f57",
+      "daemonImageAmd64": "sha256:1903df25efbd10bd564a9029245f2812f0bc61cee43bfc36d6063f35186413b4"
+    }
+  ],
+  "evidence": {
+    "describeProbe": "reports/blind-public-test-describe-probe-20260726.json",
+    "cellDrill": "reports/blind-public-test-cell-drill-20260726.json",
+    "catalogue": "config/blind-public-test-bind.scaffold.json"
+  }
+}

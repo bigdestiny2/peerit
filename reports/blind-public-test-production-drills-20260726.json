@@ -1,0 +1,440 @@
+{
+  "schema": "PeeritBlindPublicTestProductionDrillsV1",
+  "drilledAt": "2026-07-26T17:52:48.267Z",
+  "marker": "peerit-public-test-production-drill-2026-07-26T17:52:48.267Z",
+  "phases": {
+    "A": "cell write/readback/restart-recovery (capability GET only after restart)",
+    "B": "client-side moderation/feed/vote over relay-held opaque cells",
+    "C": "INBOX/CORE unary availability probe (informational)"
+  },
+  "relays": [
+    {
+      "id": "syd-1",
+      "checks": [
+        {
+          "id": "A.deliver.readback-verified",
+          "status": "pass",
+          "detail": "evidenceRef=peerit-capability-v1:911d01c24c34bc0226bfd5f48318804957695215d292f2266ffaed3b8f3137ee:3"
+        },
+        {
+          "id": "A.restart.requalified",
+          "status": "pass",
+          "detail": "fresh adapter after simulated restart (chain 5 descriptors)"
+        },
+        {
+          "id": "A.restart.capability-get-only",
+          "status": "pass",
+          "detail": "recovery performed exactly one new capability-bound GET and zero PUTs"
+        },
+        {
+          "id": "A.restart.byte-exact",
+          "status": "pass",
+          "detail": "stage=readback-verified revision=4"
+        },
+        {
+          "id": "A.restart.ambiguity-note",
+          "status": "info",
+          "detail": "lost-response-after-commit reconcile (GET-only, never resend) is proven in fixture e2e test/peerit-hiverelay-real-e2e.mjs; live fault injection on shared relays is not consented — deferred."
+        },
+        {
+          "id": "B.deliver.readback-verified",
+          "status": "pass",
+          "detail": "evidenceRef=peerit-capability-v1:839b60f5ebfcddaa3202c240abf9cc09f0586237a88690e74229ce513e4998f3:3"
+        },
+        {
+          "id": "B.byte-exact",
+          "status": "pass",
+          "detail": "post+vote batch read back byte-exact from the relay-held cell"
+        },
+        {
+          "id": "B.decode.verified",
+          "status": "pass",
+          "detail": "decoded 2 signed ops from the recovered cell"
+        },
+        {
+          "id": "B.client-side.vote-tally",
+          "status": "pass",
+          "detail": "ranking.tally over recovered votes: score=1"
+        },
+        {
+          "id": "B.client-side.feed-rank",
+          "status": "pass",
+          "detail": "rankPostsWindow over recovered posts"
+        },
+        {
+          "id": "B.client-side.moderation-view",
+          "status": "pass",
+          "detail": "eligibleCommunityAuthors + aggregateReports + applyModerationPolicy over recovered records: visibility=visible"
+        },
+        {
+          "id": "B.moderation-scope-note",
+          "status": "info",
+          "detail": "report/modaction aggregation (aggregateReports/applyModerationPolicy) operates on the same recovered-record shape; report ops additionally require PoW and are not written to shared public-test relays in this drill."
+        },
+        {
+          "id": "boundary.no-app-schema-on-wire",
+          "status": "pass",
+          "detail": "zero app schema vocabulary in 25 relay-visible requests (post/vote/profile/moderation markers)"
+        }
+      ],
+      "wire": [
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/cell",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/cell",
+          "method": "POST",
+          "bodyBytes": 16384,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/cell",
+          "method": "POST",
+          "bodyBytes": 16384,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/cell",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/cell",
+          "method": "POST",
+          "bodyBytes": 16384,
+          "schemaWordsPresent": []
+        }
+      ]
+    },
+    {
+      "id": "dal-1",
+      "checks": [
+        {
+          "id": "A.deliver.readback-verified",
+          "status": "pass",
+          "detail": "evidenceRef=peerit-capability-v1:4f81947b65ee0be391e1c20bb1d81e015074468cf58e5b7a1307e09ee4ebf42d:3"
+        },
+        {
+          "id": "A.restart.requalified",
+          "status": "pass",
+          "detail": "fresh adapter after simulated restart (chain 3 descriptors)"
+        },
+        {
+          "id": "A.restart.capability-get-only",
+          "status": "pass",
+          "detail": "recovery performed exactly one new capability-bound GET and zero PUTs"
+        },
+        {
+          "id": "A.restart.byte-exact",
+          "status": "pass",
+          "detail": "stage=readback-verified revision=4"
+        },
+        {
+          "id": "A.restart.ambiguity-note",
+          "status": "info",
+          "detail": "lost-response-after-commit reconcile (GET-only, never resend) is proven in fixture e2e test/peerit-hiverelay-real-e2e.mjs; live fault injection on shared relays is not consented — deferred."
+        },
+        {
+          "id": "B.deliver.readback-verified",
+          "status": "pass",
+          "detail": "evidenceRef=peerit-capability-v1:4dc12413d1cc66e18460a437448cc5b3361b8f3000643f050e821cd8ff74b236:3"
+        },
+        {
+          "id": "B.byte-exact",
+          "status": "pass",
+          "detail": "post+vote batch read back byte-exact from the relay-held cell"
+        },
+        {
+          "id": "B.decode.verified",
+          "status": "pass",
+          "detail": "decoded 2 signed ops from the recovered cell"
+        },
+        {
+          "id": "B.client-side.vote-tally",
+          "status": "pass",
+          "detail": "ranking.tally over recovered votes: score=1"
+        },
+        {
+          "id": "B.client-side.feed-rank",
+          "status": "pass",
+          "detail": "rankPostsWindow over recovered posts"
+        },
+        {
+          "id": "B.client-side.moderation-view",
+          "status": "pass",
+          "detail": "eligibleCommunityAuthors + aggregateReports + applyModerationPolicy over recovered records: visibility=visible"
+        },
+        {
+          "id": "B.moderation-scope-note",
+          "status": "info",
+          "detail": "report/modaction aggregation (aggregateReports/applyModerationPolicy) operates on the same recovered-record shape; report ops additionally require PoW and are not written to shared public-test relays in this drill."
+        },
+        {
+          "id": "boundary.no-app-schema-on-wire",
+          "status": "pass",
+          "detail": "zero app schema vocabulary in 21 relay-visible requests (post/vote/profile/moderation markers)"
+        }
+      ],
+      "wire": [
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/cell",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/cell",
+          "method": "POST",
+          "bodyBytes": 16384,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/cell",
+          "method": "POST",
+          "bodyBytes": 16384,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/cell",
+          "method": "POST",
+          "bodyBytes": 65536,
+          "schemaWordsPresent": []
+        },
+        {
+          "url": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/cell",
+          "method": "POST",
+          "bodyBytes": 16384,
+          "schemaWordsPresent": []
+        }
+      ]
+    }
+  ],
+  "phaseC": {
+    "vendoredControlExportsInboxCoreComposition": 0,
+    "relaysAdvertiseInboxCore": true,
+    "admissionPricesInboxCore": true,
+    "disposition": "DEFERRED — relays serve INBOX/CORE and price them in the signed admission parameters, but the vendored v1 control surface exports no INBOX/CORE request constructors, so the app’s own code paths cannot compose these operations today. Not faked; the relay-side acceptance already covers the relay surface.",
+    "detail": "vendored composition covers DESCRIBE + CELL (write/readback/reconcile) only"
+  },
+  "status": "pass"
+}

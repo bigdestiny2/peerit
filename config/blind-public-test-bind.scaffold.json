@@ -1,0 +1,129 @@
+{
+  "$schema_comment": "Peerit public-test bind scaffold — NOT LIVE for Peerit catalogue/seed. Digests and host facts are copied from frozen public-test run evidence (read-only); do not invent values.",
+  "schema": "peerit-blind-public-test-bind/v1",
+  "status": "scaffold_not_live",
+  "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+  "status_detail": "Host Blind stacks on syd-1 and dallas-1 have independent qualify evidence in the public-test run; Peerit catalogue bind and seed publish remain OFF until owner checklist completes. Do not flip fleet channels.json. Do not mutate Blind :443 from Peerit.",
+  "release": "1.0.0-rc.1.public-test.1",
+  "source": {
+    "run_id": "hiverelay-vnext-direct-https-public-test-storage-first-20260724t110740z",
+    "run_path": "00-core/pear-agent-system/runs/hiverelay-vnext-direct-https-public-test-storage-first-20260724t110740z",
+    "artifact_manifest_relative": "assignments/release-and-appliances/worktree/release/blind-public-test/artifact-manifest.json",
+    "pin_history_relative": "assignments/release-and-appliances/worktree/release/blind-public-test/pin-history.json",
+    "syd1_qualify_evidence": "assignments/fleet-and-cohort/evidence/syd-1-redeployment-qualification-20260725t223015z.json",
+    "syd1_independent_acceptance": "assignments/fleet-and-cohort/evidence/syd-1-independent-acceptance-20260725t225825z.json",
+    "dallas1_qualify_evidence": "assignments/fleet-and-cohort/evidence/dallas-1-deployment-qualification-20260726t1106z.json",
+    "reconstructed_artifact_manifest_sha256": "a2dc6113d4b6965cb9895cc18023059638a71992e5abe448b3f1bd84b5570176",
+    "source_commit_rebuild_branch": "973f25c212553653b65811eacd28ed35b1b54124",
+    "signature_status_reconstructed_manifest": "UNSIGNED-PENDING-CONDUCTOR-RESIGN",
+    "signature_note": "Worktree teardown destroyed signed manifest refs; live host qualify used earlier re-signed successor archives (oci sha256 below). Peerit live bind must re-check which pin set is running on each host before catalogue flip."
+  },
+  "pins": {
+    "deployed_live_public_test": {
+      "note": "Exact digests recorded as running on syd-1 and dallas-1 qualify evidence (amd64).",
+      "edge": {
+        "image": "hiverelay/blind-edge",
+        "version": "1.0.0-rc.1.public-test.1",
+        "loaded_index_digest": "sha256:d53d21b417d75d291c46c30266e207758bd56675c99dd2607459356ea72c1855",
+        "linux_amd64_manifest_digest": "sha256:949d82e387672099fc87e0e1cba2c3e2591c5eb82e7fdea413efeeae4bcc4ec1",
+        "oci_archive_build2": "blind-edge-1.0.0-rc.1.public-test.1-build2.oci.tar",
+        "oci_archive_build2_sha256": "sha256:5aca19210990909d07b8525f9f26e718f0a220b246f2db4a646dadd9bee9eeb4"
+      },
+      "daemon": {
+        "image": "hiverelay/blind-daemon",
+        "version": "1.0.0-rc.1.public-test.1",
+        "loaded_index_digest": "sha256:2da1d69138922875ef6df60aa3539658830724c50f4c0e8d9d37e662d2c42a6e",
+        "linux_amd64_manifest_digest": "sha256:baaa83c363602b71f665f2cf4966ed5298ca72287dd2026a53fa8cd9f21a8b7e",
+        "oci_archive_build2": "blind-daemon-1.0.0-rc.1.public-test.1-build2.oci.tar",
+        "oci_archive_build2_sha256": "sha256:d73256c37a4cde954b64d2baf928b5ef90ac5f6cd424dba0666ba97636fc88c3"
+      }
+    },
+    "reconstructed_manifest_pending_resign": {
+      "note": "Digests from reconstructed artifact-manifest.json after teardown (NOT the digests recorded as currently deployed on hosts). For continuity only until conductor re-sign.",
+      "edge_canonical_image_index_digest": "sha256:79a4e8e735681497772c06f6c35544bf4d6d77afdd0ed9f06bc6c5b2ae564fe7",
+      "daemon_canonical_image_index_digest": "sha256:57b7c2b1645b2c728efd761904b40a838b2db6111b0e9957b081d800ccf98f9f",
+      "edge_linux_amd64_manifest_digest": "sha256:ae95c673f1df8de1d4a719b72fd36a140a12f3821f0ce7379376cadbc1331f57",
+      "daemon_linux_amd64_manifest_digest": "sha256:1903df25efbd10bd564a9029245f2812f0bc61cee43bfc36d6063f35186413b4"
+    },
+    "protocol": {
+      "runtime_acceptance_record_sha256": "1febe4dbe0070fbf74e7f6707974ae0decd4174c3e351e78f97b5f1a8974d3a5",
+      "assembly_acceptance_record_sha256": "59bcf6862722fb94f009b50bcd84783a15968d7f90364790637e9e73a41e6d69",
+      "admission_parameter_hash": "6d633c1c4308e8eceb456e95116fe1d85cedae3fbd5e3028ab0c232a8cf3a8ec",
+      "ipc_hash": "PENDING_NAMED_FIELD_NOT_IN_FROZEN_JSON"
+    }
+  },
+  "failure_domains": [
+    {
+      "id": "syd-1",
+      "seat": "phase-1",
+      "role": "first_owner_operated_fd",
+      "fleet_host_name": "sydney",
+      "hostname": "hiverelay-syd-1",
+      "public_ip": "104.194.135.205",
+      "dns_name": "relay-syd.p2phiverelay.xyz",
+      "edge_https_url": "https://relay-syd.p2phiverelay.xyz:443",
+      "describe_url": "https://relay-syd.p2phiverelay.xyz:443/api/blind/v1/describe",
+      "edge_port": 443,
+      "fleet_relay_port": 9100,
+      "fleet_relay_note": "Ordinary HiveRelay :9100 may track fleet canary/stable (Track A). Blind stack owns :443 only.",
+      "qualify_status": "qualified_in_run_evidence",
+      "qualify_evidence": "syd-1-redeployment-qualification-20260725t223015z.json + syd-1-independent-acceptance-20260725t225825z.json",
+      "relay_public_key": "52f4d78364180553a944629b5dd90834d3c3d4f7755cc2e452b3308329a88161",
+      "store_id": "5193f588aa3b55886e27dc35ead0777d6b3f787e575458d9b2d914f413b130de",
+      "descriptor_head_hash": "82dbf188f51d37453980534697280530a0e370dd8d7488cd222ed246e9fe2b10",
+      "descriptor_genesis_hash": "b2384d4b9e3480a7d4aefa53b97c6c1ac38a4ee1c793b283aefc6fde10f61e92",
+      "expected_images": {
+        "edge_linux_amd64_manifest": "sha256:949d82e387672099fc87e0e1cba2c3e2591c5eb82e7fdea413efeeae4bcc4ec1",
+        "daemon_linux_amd64_manifest": "sha256:baaa83c363602b71f665f2cf4966ed5298ca72287dd2026a53fa8cd9f21a8b7e"
+      }
+    },
+    {
+      "id": "dal-1",
+      "seat": "phase-2",
+      "role": "second_owner_operated_fd",
+      "alias_note": "Handover also named Bern for this same phase-2 seat — only one second FD under the lease. Evidence uses dallas-1.",
+      "fleet_host_name": "dallas",
+      "hostname": "ubuntu-Dallas-12gb",
+      "public_ip": "172.86.90.115",
+      "dns_name": "relay-dal.p2phiverelay.xyz",
+      "edge_https_url": "https://relay-dal.p2phiverelay.xyz:443",
+      "describe_url": "https://relay-dal.p2phiverelay.xyz:443/api/blind/v1/describe",
+      "edge_port": 443,
+      "fleet_relay_port": 9100,
+      "qualify_status": "qualified_in_run_evidence",
+      "qualify_evidence": "dallas-1-deployment-qualification-20260726t1106z.json",
+      "relay_public_key": "8b3f4161271cfa511bc49fb03033d6441da01bf27c35a754e2a1b0d7df32e1d2",
+      "descriptor_head_hash": "a18d0dc92a56ed41553a5ca8dee71c9b79f4afeb2d8ad2865ef858f6fbc84ea5",
+      "expected_images": {
+        "edge_linux_amd64_manifest": "sha256:949d82e387672099fc87e0e1cba2c3e2591c5eb82e7fdea413efeeae4bcc4ec1",
+        "daemon_linux_amd64_manifest": "sha256:baaa83c363602b71f665f2cf4966ed5298ca72287dd2026a53fa8cd9f21a8b7e",
+        "continuity": "same image digests as syd-1 + distinct node identity / descriptor head"
+      }
+    }
+  ],
+  "catalogue": {
+    "status": "scaffold_empty",
+    "seed_publish": false,
+    "seed_publish_gate": "blocked_until_peerit_two_fd_e2e_and_owner_seed_spec_review",
+    "relays": [
+      {
+        "fd_id": "syd-1",
+        "edge_url": "https://relay-syd.p2phiverelay.xyz:443",
+        "bound": false
+      },
+      {
+        "fd_id": "dal-1",
+        "edge_url": "https://relay-dal.p2phiverelay.xyz:443",
+        "bound": false
+      }
+    ]
+  },
+  "peerit_bind_checklist": [
+    "Re-probe both DESCRIBE endpoints; confirm descriptor head hashes still match this scaffold (or update pins from new evidence).",
+    "Confirm running container image digests still match deployed_live_public_test pins (not the reconstructed pending-resign set unless hosts were patched).",
+    "Run two-relay cell write/readback through Peerit client only.",
+    "Set catalogue.relays[].bound true only after e2e.",
+    "Keep seed_publish false until seed-spec owner review.",
+    "Do not mutate fleet/channels.json or Blind compose from Peerit."
+  ]
+}

@@ -7,7 +7,7 @@ services:
     runtime: static
     branch: main
     autoDeployTrigger: checksPass
-    buildCommand: "node scripts/web-release.mjs --verify-only --strict"
+    buildCommand: "node scripts/web-release.mjs --verify-only --strict --canary-limited-public-test-v1"
     staticPublishPath: web
     envVars:
       - key: SKIP_INSTALL_DEPS

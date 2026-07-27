@@ -17,7 +17,10 @@ import {
   releaseSigningMessage
 } from '../js/release-verify.js'
 import { normalizeShardRosterPayload, shardRosterSigningMessage } from '../js/shard-roster.js'
-import { assertPeeritBlindProductReleaseReady } from '../js/substrate/product-release-status.mjs'
+import {
+  PEERIT_BLIND_PRODUCT_RELEASE_BLOCKERS,
+  assertPeeritBlindProductReleaseReady
+} from '../js/substrate/product-release-status.mjs'
 import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from '../js/substrate/production-release-authority.mjs'
 import { normalizePeeritReleaseRelayHintsV1 } from '../js/substrate/release-relay-hints.mjs'
 import {
@@ -41,8 +44,12 @@ function usage (code = 0, message = '') {
   if (message) console.error('error:', message)
   console.error([
     'usage: node scripts/web-release.mjs [--prepare|--verify-only] [--strict] [--drive-key <hex>] [--config deploy/web-release.json]',
+    '       [--canary-limited-public-test-v1]',
     '       --prepare builds exactly once and writes deploy/web-signing-request.json',
     '       --verify-only (the default) never builds and requires the returned signature',
+    '       --canary-limited-public-test-v1 verifies the frozen canary artifact and discloses',
+    '       every GA product blocker as DISCLOSED-OPEN under the recorded owner canary',
+    '       decision; without it the unchanged GA product gate applies',
     '       PEERIT_ROSTER_SEED=<32-byte-hex-seed> node scripts/web-release.mjs'
   ].join('\n'))
   process.exit(code)
@@ -56,7 +63,8 @@ function parseArgs (argv) {
     signingRequest: process.env.WEB_SIGNING_REQUEST || DEFAULT_SIGNING_REQUEST,
     driveKey: process.env.PEERIT_DRIVE_KEY || '',
     strict: false,
-    json: false
+    json: false,
+    canaryLimitedPublicTestV1: false
   }
 
   let selectedPhase = ''
@@ -74,6 +82,7 @@ function parseArgs (argv) {
     else if (arg === '--signing-request') opts.signingRequest = resolve(ROOT, argv[++i] || '')
     else if (arg === '--drive-key') opts.driveKey = argv[++i] || ''
     else if (arg === '--strict') opts.strict = true
+    else if (arg === '--canary-limited-public-test-v1') opts.canaryLimitedPublicTestV1 = true
     else if (arg === '--json') opts.json = true
     else if (arg === '-h' || arg === '--help') usage(0)
     else usage(2, `unknown option: ${arg}`)
@@ -86,6 +95,7 @@ const report = {
   appId: 'peerit',
   mode: opts.phase,
   strict: opts.strict,
+  canaryScope: opts.canaryLimitedPublicTestV1 ? 'LIMITED_PUBLIC_TEST_V1' : null,
   generatedAt: new Date().toISOString(),
   config: opts.config,
   report: opts.report,
@@ -123,7 +133,9 @@ function finishReport () {
       ? 'Web artifact built once and frozen; return asset-manifest.sig, then run verify-only.'
       : report.status === 'review'
         ? `${counts.warn} web release warning${counts.warn === 1 ? '' : 's'} to review.`
-        : 'Web release artifacts are in sync.'
+        : opts.canaryLimitedPublicTestV1
+          ? `Web release artifacts are in sync (CANARY ${CANARY_SCOPE}; GA product gate remains DISCLOSED-OPEN, never cleared).`
+          : 'Web release artifacts are in sync.'
 }
 
 function writeReport () {
@@ -725,6 +737,130 @@ function verifyDocs () {
   addCheck('docs:web-release', 'pass', 'WEB-DEPLOYMENT.md documents the web release command and config files.')
 }
 
+// ---------------------------------------------------------------------------
+// CANARY SCOPE: LIMITED_PUBLIC_TEST_V1
+//
+// The owner's recorded canary decision (run
+// hiverelay-vnext-direct-https-public-test-storage-first-20260724t110740z,
+// decision-peerit-v1-artifact-canary-acceptance-20260727t100542z) accepts the
+// frozen seq-12 blind-v1 artifact for the bounded public-test canary while the
+// GA product gate stays honestly blocked. This scope therefore verifies
+// everything the canary actually is — frozen signed artifact bytes, manifest,
+// pin-history continuity 11 -> 12, substrate profile blind-v1, both relay
+// hints, CSP origins, and the vendored owner decision — and reports EVERY GA
+// product blocker as DISCLOSED-OPEN. It never clears, skips, or weakens the GA
+// gate: without this flag the unchanged assertPeeritBlindProductReleaseReady
+// applies (and currently fails with the same 22 blockers).
+const CANARY_SCOPE = 'LIMITED_PUBLIC_TEST_V1'
+const CANARY_DECISION_FILE = 'deploy/canary-decision-peerit-v1-artifact-acceptance-20260727t100542z.json'
+// sha256 of the vendored byte-exact copy of the owner decision record (source:
+// run assignments/programme-control/decision-peerit-v1-artifact-canary-acceptance-20260727t100542z.json).
+const CANARY_DECISION_SHA256 = 'd862d06948ada8ebb0d33124d426f264adbfe0db0540c577ef6c3f85ae1f5ed2'
+const CANARY_PIN_HISTORY_FILE = 'deploy/web-release-pin-history.json'
+const CANARY_PIN_HISTORY_SIG_FILE = 'deploy/web-release-pin-history.json.sig.json'
+
+function verifyCanaryOwnerDecision () {
+  const file = join(ROOT, CANARY_DECISION_FILE)
+  if (!existsSync(file)) throw new Error(`vendored owner canary decision is missing: ${CANARY_DECISION_FILE}`)
+  const bytes = readFileSync(file)
+  const actual = sha256(bytes)
+  if (actual !== CANARY_DECISION_SHA256) {
+    throw new Error(`vendored owner canary decision hash mismatch: ${actual} != pinned ${CANARY_DECISION_SHA256}; the decision record must be the exact recorded bytes`)
+  }
+  const decision = JSON.parse(bytes.toString('utf8'))
+  if (decision.decision_id !== 'hiverelay-vnext-direct-https-public-test-storage-first-20260724t110740z--peerit-v1-artifact-canary-acceptance') {
+    throw new Error('canary decision_id does not match the recorded owner decision')
+  }
+  if (decision.status !== 'DECIDED' || !String(decision.decision || '').startsWith('ACCEPT the vendored v1 blind-client browser artifact')) {
+    throw new Error('canary decision is not the recorded ACCEPT')
+  }
+  if (!String(decision.decision).includes('WIRE_TUPLE_DRIFT disclosed')) {
+    throw new Error('canary decision must carry the WIRE_TUPLE_DRIFT disclosure')
+  }
+  const followups = Array.isArray(decision.followups) ? decision.followups.join('\n') : ''
+  if (!followups.includes('GA product gate remains honestly blocked')) {
+    throw new Error('canary decision must itself record that the GA product gate remains blocked')
+  }
+  addCheck('canary:owner-decision', 'pass', `Owner canary decision verified byte-exact (sha256 ${CANARY_DECISION_SHA256.slice(0, 12)}...): ACCEPT seq-12 blind-v1 artifact for the bounded public-test canary, WIRE_TUPLE_DRIFT disclosed, GA gate recorded as still blocked.`, {
+    file: CANARY_DECISION_FILE,
+    sha256: CANARY_DECISION_SHA256,
+    decidedAt: decision.decided_at
+  })
+}
+
+function verifyCanaryPinHistoryContinuity (release, driveKey) {
+  const historyPath = join(ROOT, CANARY_PIN_HISTORY_FILE)
+  const sigPath = join(ROOT, CANARY_PIN_HISTORY_SIG_FILE)
+  if (!existsSync(historyPath)) throw new Error(`web release pin-history is missing: ${CANARY_PIN_HISTORY_FILE}`)
+  if (!existsSync(sigPath)) throw new Error(`web release pin-history signature is missing: ${CANARY_PIN_HISTORY_SIG_FILE}`)
+  const historyBytes = readFileSync(historyPath)
+  const history = JSON.parse(historyBytes.toString('utf8'))
+  const envelope = JSON.parse(readFileSync(sigPath, 'utf8'))
+  if (history.schema !== 'peerit-web-release-pin-history/v1' || !Array.isArray(history.entries)) {
+    throw new Error('web release pin-history schema is not peerit-web-release-pin-history/v1 with entries')
+  }
+  if (envelope.schema !== 'peerit-blind-public-test-artifact-sig/v1' || envelope.alg !== 'ed25519' ||
+      String(envelope.key || '').toLowerCase() !== release.pinnedReleaseKey ||
+      envelope.signedFile !== CANARY_PIN_HISTORY_FILE ||
+      envelope.signedBytesSha256 !== sha256(historyBytes)) {
+    throw new Error('web release pin-history signature envelope does not bind the exact current pin-history bytes with the pinned release key')
+  }
+  const historySigOk = nodeVerify(null, historyBytes,
+    createPublicKey({ key: Buffer.from(SPKI_PREFIX + release.pinnedReleaseKey, 'hex'), format: 'der', type: 'spki' }),
+    Buffer.from(String(envelope.sig || ''), 'hex'))
+  if (!historySigOk) throw new Error('web release pin-history signature does not verify with the pinned release key')
+
+  const sequences = history.entries.map((entry) => entry.releaseSequence)
+  if (sequences.length < 2 || sequences[sequences.length - 2] !== release.releaseSequence - 1 ||
+      sequences[sequences.length - 1] !== release.releaseSequence) {
+    throw new Error(`pin-history continuity broken: expected ...${release.releaseSequence - 1} -> ${release.releaseSequence}, got ${sequences.join(' -> ')}`)
+  }
+  for (let i = 1; i < sequences.length; i++) {
+    if (sequences[i] <= sequences[i - 1]) throw new Error(`pin-history sequences must strictly increase: ${sequences.join(' -> ')}`)
+  }
+  const head = history.entries[history.entries.length - 1]
+  const manifestSha256 = sha256(readFileSync(join(ROOT, 'web', 'asset-manifest.json')))
+  if (head.manifestSha256 !== manifestSha256) throw new Error('pin-history head does not bind the exact frozen web/asset-manifest.json bytes')
+  if (head.pinnedReleaseKey !== release.pinnedReleaseKey) throw new Error('pin-history head key does not match the release config')
+  if (head.driveKey !== driveKey) throw new Error('pin-history head drive key does not match the release drive key')
+  if (head.transport !== 'blind-substrate/blind-v1') throw new Error('pin-history head transport is not blind-substrate/blind-v1')
+  if (JSON.stringify(head.relayHints) !== JSON.stringify(release.relayHints)) throw new Error('pin-history head relay hints do not match the release config')
+  if (head.claim_boundary !== 'LIVE_PUBLIC_TEST_ONLY') throw new Error('pin-history head must carry the LIVE_PUBLIC_TEST_ONLY claim boundary')
+  addCheck('canary:pin-history-continuity', 'pass', `Pin-history continuity ${sequences[sequences.length - 2]} -> ${sequences[sequences.length - 1]} verified: head entry binds the exact frozen asset-manifest, both relay hints, and the pinned release key; history signature verifies.`, {
+    sequences,
+    headManifestSha256: manifestSha256
+  })
+}
+
+function verifyCanaryCspOrigins (release) {
+  const blueprintPath = join(ROOT, 'render.yaml')
+  if (!existsSync(blueprintPath)) throw new Error('render.yaml is missing; the canary CSP check requires the source-managed blueprint')
+  const blueprint = readFileSync(blueprintPath, 'utf8')
+  const cspMatch = blueprint.match(/name: "Content-Security-Policy"\n        value: "([^"]+)"/)
+  if (!cspMatch) throw new Error('render.yaml does not pin a Content-Security-Policy header')
+  const connectSrc = (cspMatch[1].split(';').map((v) => v.trim()).find((v) => v.startsWith('connect-src ')) || '')
+  if (!connectSrc) throw new Error('render.yaml CSP has no connect-src directive')
+  const missing = release.relayHints.filter((hint) => !connectSrc.includes(new URL(hint).origin))
+  if (missing.length) throw new Error(`render.yaml CSP connect-src does not allow every relay hint origin: ${missing.join(', ')}`)
+  addCheck('canary:csp-origins', 'pass', `render.yaml CSP connect-src allows exactly the canary relay hint origins (${release.relayHints.map((hint) => new URL(hint).origin).join(', ')}).`)
+}
+
+function verifyCanaryLimitedPublicTestV1 (release, driveKey) {
+  addCheck('canary:scope', 'info', `CANARY SCOPE ${CANARY_SCOPE}: verifying the frozen bounded-public-test artifact under the recorded owner decision. This is NOT the GA release gate and never substitutes for it.`)
+  const gaBlockers = [...PEERIT_BLIND_PRODUCT_RELEASE_BLOCKERS]
+  addCheck('canary:ga-gate-status', 'info', `GA product gate (assertPeeritBlindProductReleaseReady) output unchanged: ${gaBlockers.length} product blocker(s) remain OPEN. Each is disclosed below and stays open; none is cleared by this scope.`, {
+    gaReleaseReady: gaBlockers.length === 0,
+    gaBlockerCount: gaBlockers.length
+  })
+  for (const blocker of gaBlockers) {
+    addCheck(`canary:ga-blocker:${blocker}`, 'info', `DISCLOSED-OPEN (GA blocker, not canary-blocking): ${blocker}`)
+  }
+  verifyCanaryOwnerDecision()
+  verifyCanaryPinHistoryContinuity(release, driveKey)
+  verifyCanaryCspOrigins(release)
+  addCheck('canary:verdict', 'pass', `CANARY ${CANARY_SCOPE} verification complete: frozen artifact, owner decision, pin-history continuity, relay hints and CSP origins all bind; ${gaBlockers.length} GA blockers remain DISCLOSED-OPEN.`)
+}
+
 async function main () {
   const raw = readJson(opts.config)
   if (!raw) throw new Error(`${opts.config} is missing or invalid JSON`)
@@ -753,13 +889,22 @@ async function main () {
       }
   validateReleaseConfig(release)
   // This is the official web-release boundary. A profile-only green state must
-  // never publish an uncomposed browser/daemon/store product.
-  if (release.transport === 'blind-substrate') assertPeeritBlindProductReleaseReady(release)
+  // never publish an uncomposed browser/daemon/store product. The canary scope
+  // below does NOT weaken or replace it: without --canary-limited-public-test-v1
+  // the unchanged GA product gate applies; with it, the frozen canary artifact
+  // is verified under the recorded owner decision while every GA blocker stays
+  // disclosed-open.
+  if (release.transport === 'blind-substrate' && !opts.canaryLimitedPublicTestV1) {
+    assertPeeritBlindProductReleaseReady(release)
+  }
   const rosterInfo = release.transport === 'blind-substrate' ? null : await prepareRoster(release)
   verifyDocs()
   const driveKey = String(opts.driveKey || loadManifestDriveKey()).toLowerCase()
   report.driveKey = driveKey
   assertDriveKey(driveKey)
+  if (release.transport === 'blind-substrate' && opts.canaryLimitedPublicTestV1) {
+    verifyCanaryLimitedPublicTestV1(release, driveKey)
+  }
   if (opts.phase === 'prepare') {
     const priorSigningRequest = readJson(opts.signingRequest)
     await buildWeb(release, driveKey)

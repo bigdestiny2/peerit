@@ -20,7 +20,7 @@ requireText('name: peerit-site', 'the peerit-site service name')
 requireText('runtime: static', 'the static runtime')
 requireText('branch: main', 'the main deployment branch')
 requireText('autoDeployTrigger: checksPass', 'the CI-gated deployment trigger')
-requireText('buildCommand: "node scripts/web-release.mjs --verify-only --strict"', 'the frozen-artifact verifier build command')
+requireText('buildCommand: "node scripts/web-release.mjs --verify-only --strict --canary-limited-public-test-v1"', 'the frozen-artifact canary verifier build command')
 requireText('staticPublishPath: web', 'the signed web publish directory')
 requireText('key: SKIP_INSTALL_DEPS\n        value: "true"', 'the dependency-install-free static build setting')
 

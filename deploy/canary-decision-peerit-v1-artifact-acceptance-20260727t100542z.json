@@ -1,0 +1,29 @@
+{
+ "schema_version": 1,
+ "decision_id": "hiverelay-vnext-direct-https-public-test-storage-first-20260724t110740z--peerit-v1-artifact-canary-acceptance",
+ "decided_at": "2026-07-27T10:05:42Z",
+ "decided_by": "owner (recorded by kimi-k3 conductor)",
+ "status": "DECIDED",
+ "decision": "ACCEPT the vendored v1 blind-client browser artifact (470a48af/aaf29c82/09bd04c8, 2026-07-16) for the Peerit bounded public-test canary, with WIRE_TUPLE_DRIFT disclosed in every artifact.",
+ "basis": [
+  "The deployed relay build (c9ddd235/199ba15d/fa54012c, 2026-07-24, v2 authority) is the v1 tuple PLUS disabled FORWARD schemas only; the v1 client speaks a valid subset of the deployed authority, and the baseline LIMITED_PUBLIC_TEST_V1 profile (DESCRIBE/CELL/INBOX/CORE) sits entirely inside that subset. FORWARD is disabled, so the drift is additive, not breaking.",
+  "Re-pin to the relay's matching v3 artifact is honestly impossible: it declares runtimeReady/realBrowserEvidenceAccepted/authorizesRelease=false.",
+  "Empirical proof: two-relay CELL write/readback through the Peerit client passed on both relays (signed receipts, byte-exact readback under each relay's own key); restart recovery passed; boundary proof zero app plaintext markers in 46 relay-visible requests.",
+  "The catalogue flip (config/blind-public-test-bind.scaffold.json -> bound: true, canary) stands; the revert-by-one-commit path remains available if this decision is ever revisited."
+ ],
+ "boundary": "bounded public-test canary on two owner-operated failure domains; NOT GA; NOT independent operators; no seed-publish (owner review pending); relay-side placeholder profile-hash rotation + fresh re-probe is a later relay pass",
+ "followups": [
+  "relay-side placeholder profile-hash rotation (DAL1-IAR-P2-1) then fresh re-probe",
+  "INBOX/CORE client composition (vendored v1 surface lacks constructors; deferred not faked)",
+  "consumer gaps: first-contact chain-seeded trust, lease-class default, profile-hash placeholders",
+  "seed-publish owner review (still false)",
+  "GA product gate remains honestly blocked"
+ ],
+ "evidence": {
+  "bind_work": "02-apps/peerit-release-bind @ codex/peerit-blind-cell-bind-20260726 (6 commits)",
+  "describe_probe": "reports/blind-public-test-describe-probe-20260726.json",
+  "cell_drill": "reports/blind-public-test-cell-drill-20260726.json",
+  "production_drills": "reports/blind-public-test-production-drills-20260726.json",
+  "evidence_doc": "docs/BLIND-PUBLIC-TEST-CANARY-EVIDENCE.md"
+ }
+}

@@ -48,7 +48,9 @@ for (const requiredProductFile of [
   'js/substrate/peerit-operation-authority-v1.js',
   'js/substrate/peerit-product-runtime.js',
   'js/substrate/peerit-product-ui.js',
-  'js/substrate/peerit-substrate-sync.js'
+  'js/substrate/peerit-substrate-sync.js',
+  'js/substrate/remote-record-ingest.mjs',
+  'js/substrate/seed-bootstrap-v1.mjs'
 ]) assert.equal(served.has(requiredProductFile), true, `${requiredProductFile} is in the replacement product closure`)
 
 for (const path of Object.values(PEERIT_BROWSER_RUNTIME_ASSET_PATHS)) {
@@ -70,6 +72,7 @@ const forbiddenRuntimeTokens = [
   'outbox.peerit.site'
 ]
 const importPattern = /\b(?:import|export)\s+(?:[^'";]+?\s+from\s*)?['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g
+const staticRuntimeImportTargets = new Set()
 
 for (const file of SUBSTRATE_SITE_FILES.filter(file => /\.(?:js|mjs)$/.test(file))) {
   const source = readFileSync(join(root, file), 'utf8')
@@ -82,6 +85,7 @@ for (const file of SUBSTRATE_SITE_FILES.filter(file => /\.(?:js|mjs)$/.test(file
     const specifier = match[1] || match[2]
     if (!specifier || (!specifier.startsWith('./') && !specifier.startsWith('../'))) continue
     const target = normalize(join(dirname(file), specifier)).replaceAll('\\', '/')
+    staticRuntimeImportTargets.add(target)
     assert.equal(served.has(target), true, `${file} import ${specifier} remains inside replacement closure`)
   }
 }
@@ -140,6 +144,16 @@ const verifiedRuntime = verifyPeeritSubstrateRuntimeArtifactV1({
 assert.equal(verifiedRuntime.appArtifactHashHex, manifest.webRelease.appArtifactHash)
 assert.equal(verifiedRuntime.webAssetManifestHashHex,
   manifest.webRelease.canonicalWebAssetManifestHash)
+const canonicalRuntimePaths = new Set(verifiedRuntime.webAssetManifest.assets
+  .map(asset => asset.path.slice(1)))
+for (const target of staticRuntimeImportTargets) {
+  assert.equal(Object.hasOwn(verifiedRuntime.appArtifact.files, target), true,
+    `${target} static/transitive import bytes are authenticated by the app artifact`)
+  assert.equal(canonicalRuntimePaths.has(target), true,
+    `${target} static/transitive import bytes are authenticated by WebAssetManifestV1`)
+  assert.equal(verifiedRuntime.appArtifact.files[target], manifest.files[target],
+    `${target} app-artifact SHA-256 equals the outer deterministic manifest`)
+}
 assert.equal(manifest.webRelease.productionPinHistory, null)
 assert.throws(() => verifyPeeritSubstrateRuntimeArtifactV1({
   files: new Map([...builtRuntimeFiles, ['js/app.js', Buffer.from('legacy writer')]]),

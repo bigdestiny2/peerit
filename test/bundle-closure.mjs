@@ -51,9 +51,9 @@ function jsSpecifiers (src) {
   const clean = stripComments(src)
   const specs = new Set()
   const patterns = [
-    /\bfrom\s*['"]([^'"]+)['"]/g,          // import … from '…'  /  export … from '…'
+    /\bfrom\s*['"]([^'"]+)['"]/g, // import … from '…'  /  export … from '…'
     /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g, // dynamic import('…')
-    /\bimport\s+['"]([^'"]+)['"]/g          // bare side-effect import '…'
+    /\bimport\s+['"]([^'"]+)['"]/g // bare side-effect import '…'
   ]
   for (const re of patterns) { let m; while ((m = re.exec(clean))) specs.add(m[1]) }
   return [...specs]
@@ -114,5 +114,9 @@ if (missing.length) {
 ok(checked > 0, `scanned import graph of served files (${checked} local references)`)
 ok(bundled.has('js/lazy-pool.js'), 'js/lazy-pool.js is bundled (regression: app.js imports it)')
 ok(bundled.has('js/shard-roster.js'), 'js/shard-roster.js is bundled (runtime.js dynamic-imports it)')
+ok(bundled.has('js/substrate/remote-record-ingest.mjs'),
+  'remote-record-ingest.mjs is bundled (peerit-substrate-sync.js imports it)')
+ok(bundled.has('js/substrate/seed-bootstrap-v1.mjs'),
+  'seed-bootstrap-v1.mjs is bundled (remote-record-ingest.mjs imports it)')
 
 console.log(`\nbundle-closure: ${passed} checks passed, ${checked} local imports all bundled.`)

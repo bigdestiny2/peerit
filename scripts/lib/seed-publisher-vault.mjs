@@ -527,8 +527,8 @@ export function createPeeritSeedPublisherVaultV1 (options = {}) {
           attemptState: record.attempts && record.attempts[relayId]
             ? record.attempts[relayId].stage
             : legacyAmbiguous(record, relayId)
-                ? 'legacy-ambiguous-no-recovery-material'
-                : null
+              ? 'legacy-ambiguous-no-recovery-material'
+              : null
         }
       })
     }))

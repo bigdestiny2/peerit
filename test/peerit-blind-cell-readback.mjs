@@ -221,6 +221,24 @@ function harness ({
 }
 
 {
+  const value = publication(11)
+  const test = harness()
+  const relay = test.createRelay()
+  await relay.deliver(value)
+  const stored = await test.vault.load(value.intentId, relay.id)
+  const recovered = await relay.readCellCapability({
+    targetId: relay.id,
+    innerLength: value.innerLength,
+    sizeClass: value.sizeClass,
+    readCapability: stored.payload.readCapability
+  })
+  assert.deepEqual(recovered.innerBytes, value.innerBytes)
+  assert.match(recovered.evidenceRef, /^blind-cell-get:[0-9a-f]{64}$/)
+  assert.deepEqual(test.calls, ['PUT', 'GET', 'GET'],
+    'public reader-capability recovery performs a fresh authenticated GET without a PUT')
+}
+
+{
   const value = publication(7)
   const test = harness({ notFoundAfter: 1 })
   await test.createRelay().deliver(value)

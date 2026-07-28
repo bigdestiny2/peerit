@@ -132,7 +132,7 @@ export async function verifyPeeritRemoteSeedBatchV1 (bootstrapInput, resultInput
     checkpointHash: bootstrap.artifactHash,
     previousCheckpointHash: bootstrap.payload.previousBootstrapHash,
     releaseSequence: bootstrap.payload.releaseSequence,
-    releaseManifestHash: bootstrap.payload.releaseManifestHash,
+    releaseBoundBootstrapHash: bootstrap.artifactHash,
     records,
     evidence
   })

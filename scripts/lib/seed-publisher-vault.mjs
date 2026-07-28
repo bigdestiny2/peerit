@@ -18,6 +18,12 @@ export const PEERIT_SEED_RECEIPT_MANIFEST_SCHEMA_V1 = 'peerit-seed-receipts-v1'
 const KDF = Object.freeze({ name: 'scrypt', N: 32768, r: 8, p: 1, keyLength: 32 })
 const MAX_BYTES = 16 * 1024 * 1024
 const HEX32 = /^[0-9a-f]{64}$/
+const PUT_ATTEMPT_STAGE = Object.freeze({
+  PREPARED_NOT_SENT: 'prepared-not-sent',
+  SENT_AMBIGUOUS: 'sent-ambiguous',
+  RESPONSE_VERIFIED: 'response-verified',
+  READBACK_VERIFIED: 'readback-verified'
+})
 
 function fail (code, message, exitCode = null) {
   const error = new Error(message)
@@ -30,6 +36,16 @@ function plain (value, field) {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
       (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) {
     fail('PEERIT_SEED_VAULT_BAD_INPUT', `${field} must be a plain object`)
+  }
+  return value
+}
+
+function exact (value, fields, field) {
+  plain(value, field)
+  const actual = Object.keys(value).sort()
+  const expected = [...fields].sort()
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    fail('PEERIT_SEED_VAULT_BAD_INPUT', `${field} has an unsupported field set`)
   }
   return value
 }
@@ -90,6 +106,25 @@ function decodeNode (node, depth = 0) {
     return output
   }
   fail('PEERIT_SEED_VAULT_CORRUPT', 'publisher state node has an unknown type')
+}
+
+function cloneNodeValue (value) {
+  return decodeNode(encodeNode(value))
+}
+
+function sameNodeValue (left, right) {
+  return JSON.stringify(encodeNode(left)) === JSON.stringify(encodeNode(right))
+}
+
+function ownedBytes (value, field, minimum = 1, maximum = MAX_BYTES) {
+  let bytes
+  if (value instanceof Uint8Array) bytes = new Uint8Array(value)
+  else if (value instanceof ArrayBuffer) bytes = new Uint8Array(value.slice(0))
+  else if (ArrayBuffer.isView(value)) bytes = new Uint8Array(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength))
+  if (!bytes || bytes.byteLength < minimum || bytes.byteLength > maximum) {
+    fail('PEERIT_SEED_VAULT_BAD_INPUT', `${field} must be ${minimum}..${maximum} owned bytes`)
+  }
+  return bytes
 }
 
 function encodeState (state) {
@@ -196,6 +231,12 @@ function complete (record) {
   return record.plannedRelays.every(relayId => record.replicas[relayId] && record.replicas[relayId].verified === true)
 }
 
+function legacyAmbiguous (record, relayId) {
+  return !(record.attempts && record.attempts[relayId]) &&
+    Number.isSafeInteger(record.putAttempts && record.putAttempts[relayId]) &&
+    record.putAttempts[relayId] > 0
+}
+
 async function writeAtomic (filePath, bytes) {
   await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 })
   const temporary = `${filePath}.tmp-${process.pid}-${randomBytes(8).toString('hex')}`
@@ -262,6 +303,7 @@ export function createPeeritSeedPublisherVaultV1 (options = {}) {
           minimumParentAgeMs: Number.isSafeInteger(input.minimumParentAgeMs) && input.minimumParentAgeMs >= 0 ? input.minimumParentAgeMs : 0,
           plannedRelays,
           replicas: Object.create(null),
+          attempts: Object.create(null),
           putAttempts: Object.create(null),
           recoveryGets: Object.create(null),
           completedAt: 0
@@ -303,23 +345,115 @@ export function createPeeritSeedPublisherVaultV1 (options = {}) {
         recordId,
         eligible: true,
         eligibleAt,
-        actions: record.plannedRelays.map(relayId => ({
-          relayId,
-          action: record.replicas[relayId] && record.replicas[relayId].verified === true
-            ? 'get-only-revalidate'
-            : 'put'
-        }))
+        actions: record.plannedRelays.map(relayId => {
+          if (record.replicas[relayId] && record.replicas[relayId].verified === true) {
+            return { relayId, action: 'get-only-revalidate' }
+          }
+          const attempt = record.attempts && record.attempts[relayId]
+          if (legacyAmbiguous(record, relayId)) {
+            return { relayId, action: 'legacy-ambiguous-manual-recovery' }
+          }
+          if (!attempt) {
+            return { relayId, action: 'prepare-put' }
+          }
+          if (attempt.stage === PUT_ATTEMPT_STAGE.PREPARED_NOT_SENT) {
+            return { relayId, action: 'send-prepared-put' }
+          }
+          if (attempt.stage === PUT_ATTEMPT_STAGE.SENT_AMBIGUOUS ||
+              attempt.stage === PUT_ATTEMPT_STAGE.RESPONSE_VERIFIED) {
+            return { relayId, action: 'reconcile-get-only' }
+          }
+          return fail('PEERIT_SEED_VAULT_CORRUPT', `record ${recordId}/${relayId} has an invalid attempt state`)
+        })
       })
     }
     return output
   }
 
-  async function recordPutAttempt (recordId, relayId) {
+  async function preparePutAttempt (input) {
+    exact(input, [
+      'recordId', 'relayId', 'attemptId', 'preparedAt', 'requestBytes',
+      'requestCommitment', 'clientNonce', 'targetContext', 'readerCapability',
+      'managementCapability'
+    ], 'prepared PUT attempt')
+    const next = {
+      attemptId: text(input.attemptId, 'attemptId', 512),
+      stage: PUT_ATTEMPT_STAGE.PREPARED_NOT_SENT,
+      preparedAt: Number.isSafeInteger(input.preparedAt) && input.preparedAt >= 0 ? input.preparedAt : now(),
+      sentAt: 0,
+      responseVerifiedAt: 0,
+      requestBytes: ownedBytes(input.requestBytes, 'requestBytes'),
+      requestCommitment: ownedBytes(input.requestCommitment, 'requestCommitment', 32, 32),
+      clientNonce: ownedBytes(input.clientNonce, 'clientNonce', 32, 32),
+      targetContext: cloneNodeValue(plain(input.targetContext, 'targetContext')),
+      readerCapability: cloneNodeValue(plain(input.readerCapability, 'readerCapability')),
+      managementCapability: cloneNodeValue(plain(input.managementCapability, 'managementCapability')),
+      responseEvidenceRef: null,
+      resultHash: null
+    }
+    return transaction(state => {
+      const record = state.records[input.recordId]
+      if (!record || !record.plannedRelays.includes(input.relayId)) fail('PEERIT_SEED_VAULT_UNKNOWN_RECORD', 'prepared PUT is outside the durable plan')
+      if (!record.attempts) record.attempts = Object.create(null)
+      const existing = record.attempts[input.relayId]
+      if (!existing && legacyAmbiguous(record, input.relayId)) {
+        fail('PEERIT_SEED_VAULT_LEGACY_AMBIGUOUS',
+          'a legacy PUT may have crossed the send boundary without exact recovery material; replacement is forbidden')
+      }
+      if (existing && existing.attemptId === next.attemptId) {
+        if (existing.stage !== PUT_ATTEMPT_STAGE.PREPARED_NOT_SENT || !sameNodeValue(existing, next)) {
+          fail('PEERIT_SEED_VAULT_ATTEMPT_CONFLICT', 'prepared PUT attempt identity was reused with different material or state')
+        }
+        return cloneNodeValue(existing)
+      }
+      if (existing) {
+        fail('PEERIT_SEED_VAULT_ATTEMPT_PENDING', 'an exact prepared or ambiguous PUT must be reconciled before another PUT is prepared')
+      }
+      record.attempts[input.relayId] = next
+      return cloneNodeValue(next)
+    })
+  }
+
+  async function loadPreparedAttempt (recordId, relayId) {
+    const state = await load()
+    const record = state.records[recordId]
+    const attempt = record && record.attempts && record.attempts[relayId]
+    if (!record || !record.plannedRelays.includes(relayId) || !attempt) {
+      fail('PEERIT_SEED_VAULT_PREPARED_MISSING', 'exact prepared PUT recovery material is unavailable')
+    }
+    return cloneNodeValue(attempt)
+  }
+
+  async function recordPutSendStarted (recordId, relayId, attemptId, sentAt = now()) {
     return transaction(state => {
       const record = state.records[recordId]
-      if (!record || !record.plannedRelays.includes(relayId)) fail('PEERIT_SEED_VAULT_UNKNOWN_RECORD', 'PUT attempt is outside the durable plan')
+      const attempt = record && record.attempts && record.attempts[relayId]
+      if (!attempt || attempt.attemptId !== attemptId || attempt.stage !== PUT_ATTEMPT_STAGE.PREPARED_NOT_SENT) {
+        fail('PEERIT_SEED_VAULT_SEND_STATE', 'PUT send boundary requires the exact durable prepared-not-sent attempt')
+      }
+      attempt.stage = PUT_ATTEMPT_STAGE.SENT_AMBIGUOUS
+      attempt.sentAt = Number.isSafeInteger(sentAt) && sentAt >= 0 ? sentAt : now()
       record.putAttempts[relayId] = (record.putAttempts[relayId] || 0) + 1
-      return record.putAttempts[relayId]
+      return { attemptId, stage: attempt.stage, putAttempts: record.putAttempts[relayId] }
+    })
+  }
+
+  async function recordPutResponseVerified (input) {
+    exact(input, [
+      'recordId', 'relayId', 'attemptId', 'verifiedAt', 'evidenceRef', 'resultHash'
+    ], 'verified PUT response')
+    return transaction(state => {
+      const record = state.records[input.recordId]
+      const attempt = record && record.attempts && record.attempts[input.relayId]
+      if (!attempt || attempt.attemptId !== input.attemptId ||
+          attempt.stage !== PUT_ATTEMPT_STAGE.SENT_AMBIGUOUS) {
+        fail('PEERIT_SEED_VAULT_RESPONSE_STATE', 'verified PUT response requires the exact sent/ambiguous attempt')
+      }
+      attempt.stage = PUT_ATTEMPT_STAGE.RESPONSE_VERIFIED
+      attempt.responseVerifiedAt = Number.isSafeInteger(input.verifiedAt) && input.verifiedAt >= 0 ? input.verifiedAt : now()
+      attempt.responseEvidenceRef = text(input.evidenceRef, 'PUT response evidenceRef', 1024)
+      attempt.resultHash = text(input.resultHash, 'PUT resultHash', 128)
+      return { attemptId: attempt.attemptId, stage: attempt.stage }
     })
   }
 
@@ -328,19 +462,28 @@ export function createPeeritSeedPublisherVaultV1 (options = {}) {
     return transaction(state => {
       const record = state.records[input.recordId]
       if (!record || !record.plannedRelays.includes(input.relayId)) fail('PEERIT_SEED_VAULT_UNKNOWN_RECORD', 'verified replica is outside the durable plan')
+      const attempt = record.attempts && record.attempts[input.relayId]
+      if (!attempt || attempt.attemptId !== input.attemptId ||
+          (attempt.stage !== PUT_ATTEMPT_STAGE.SENT_AMBIGUOUS &&
+           attempt.stage !== PUT_ATTEMPT_STAGE.RESPONSE_VERIFIED &&
+           attempt.stage !== PUT_ATTEMPT_STAGE.READBACK_VERIFIED)) {
+        fail('PEERIT_SEED_VAULT_READBACK_STATE', 'verified readback requires the exact durable ambiguous or response-verified PUT attempt')
+      }
       const next = {
         verified: true,
         verifiedAt: Number.isSafeInteger(input.verifiedAt) ? input.verifiedAt : now(),
         evidenceRef: text(input.evidenceRef, 'evidenceRef', 1024),
         readbackHash: text(input.readbackHash, 'readbackHash', 128),
-        readerCapability: plain(input.readerCapability, 'readerCapability'),
-        managementCapability: input.managementCapability == null ? null : plain(input.managementCapability, 'managementCapability')
+        attemptId: attempt.attemptId,
+        readerCapability: cloneNodeValue(attempt.readerCapability),
+        managementCapability: cloneNodeValue(attempt.managementCapability)
       }
       const existing = record.replicas[input.relayId]
       if (existing && JSON.stringify(encodeNode(existing)) !== JSON.stringify(encodeNode(next))) {
         fail('PEERIT_SEED_VAULT_RECEIPT_CONFLICT', 'a different verified replica already owns this record/relay')
       }
       record.replicas[input.relayId] = existing || next
+      attempt.stage = PUT_ATTEMPT_STAGE.READBACK_VERIFIED
       if (complete(record) && !record.completedAt) {
         record.completedAt = Math.max(...record.plannedRelays.map(relayId => record.replicas[relayId].verifiedAt))
       }
@@ -380,7 +523,12 @@ export function createPeeritSeedPublisherVaultV1 (options = {}) {
           evidenceRef: replica ? replica.evidenceRef : null,
           readbackHash: replica ? replica.readbackHash : null,
           putAttempts: record.putAttempts[relayId] || 0,
-          recoveryGets: (record.recoveryGets[relayId] && record.recoveryGets[relayId].count) || 0
+          recoveryGets: (record.recoveryGets[relayId] && record.recoveryGets[relayId].count) || 0,
+          attemptState: record.attempts && record.attempts[relayId]
+            ? record.attempts[relayId].stage
+            : legacyAmbiguous(record, relayId)
+                ? 'legacy-ambiguous-no-recovery-material'
+                : null
         }
       })
     }))
@@ -406,7 +554,10 @@ export function createPeeritSeedPublisherVaultV1 (options = {}) {
   return Object.freeze({
     bindPlan,
     resumePlan,
-    recordPutAttempt,
+    preparePutAttempt,
+    loadPreparedAttempt,
+    recordPutSendStarted,
+    recordPutResponseVerified,
     recordVerifiedReplica,
     recordRecoveryGet,
     sanitizedReceiptManifest,

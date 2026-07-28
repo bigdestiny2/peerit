@@ -1,6 +1,9 @@
-// Signed, release-bound direct-share bootstrap for the bounded Peerit Blind
-// canary. The artifact is application-owned. HiveRelay receives only generic
-// ReadCellCapV1 material and never learns Peerit record semantics.
+// Signed direct-share bootstrap for the bounded Peerit Blind canary. Binding is
+// deliberately one-way to avoid a manifest/bootstrap hash cycle: this signed
+// artifact names its release sequence and authority, while the authenticated
+// terminal release/profile reverse-binds the exact artifact hash. The artifact
+// is application-owned. HiveRelay receives only generic ReadCellCapV1 material
+// and never learns Peerit record semantics.
 
 import { hashBytes, signBytes, verifyBytes } from '../crypto.js'
 
@@ -8,6 +11,13 @@ export const PEERIT_SEED_BOOTSTRAP_SCHEMA_V1 = 'peerit-seed-bootstrap-v1'
 export const PEERIT_SEED_BOOTSTRAP_PROFILE_V1 = 'LIMITED_PUBLIC_TEST_V1'
 export const PEERIT_SEED_BOOTSTRAP_OPERATOR_BOUNDARY_V1 =
   'two-owner-operated-relays-not-independent-operators'
+export const PEERIT_SEED_BOOTSTRAP_RELEASE_BINDING_V1 = Object.freeze({
+  direction: 'authenticated-terminal-release-profile-to-bootstrap',
+  authenticatedReleaseField: 'peeritSeedBootstrapSha256',
+  hashAlgorithm: 'sha256',
+  verificationOption: 'expectedArtifactHash',
+  bootstrapEmbedsTerminalManifestHash: false
+})
 
 const SIGN_DOMAIN = 'peerit.seed-bootstrap.v1'
 const HEX32 = /^[0-9a-f]{64}$/
@@ -119,7 +129,9 @@ function relayRoot (input, index) {
   const field = `payload.relays[${index}]`
   exact(input, [
     'relayId', 'canonicalDescribeUrl', 'continuityRootRelayPublicKey', 'storeId',
-    'descriptorGenesisHash', 'minimumDescriptorSequence'
+    'descriptorGenesisHash', 'minimumDescriptorSequence', 'familyId',
+    'operationId', 'endpointId', 'transportId', 'transportSupportBit',
+    'privacyProfileBit'
   ], field)
   let url
   try { url = new URL(text(input.canonicalDescribeUrl, `${field}.canonicalDescribeUrl`)) } catch {
@@ -135,7 +147,13 @@ function relayRoot (input, index) {
     continuityRootRelayPublicKey: hex32(input.continuityRootRelayPublicKey, `${field}.continuityRootRelayPublicKey`),
     storeId: hex32(input.storeId, `${field}.storeId`),
     descriptorGenesisHash: hex32(input.descriptorGenesisHash, `${field}.descriptorGenesisHash`),
-    minimumDescriptorSequence: integer(input.minimumDescriptorSequence, `${field}.minimumDescriptorSequence`)
+    minimumDescriptorSequence: integer(input.minimumDescriptorSequence, `${field}.minimumDescriptorSequence`),
+    familyId: integer(input.familyId, `${field}.familyId`, 1, 0xffff),
+    operationId: integer(input.operationId, `${field}.operationId`, 1, 0xffff),
+    endpointId: integer(input.endpointId, `${field}.endpointId`, 1, 0xffff),
+    transportId: integer(input.transportId, `${field}.transportId`, 1, 0xffff),
+    transportSupportBit: integer(input.transportSupportBit, `${field}.transportSupportBit`, 1, 0xffff),
+    privacyProfileBit: integer(input.privacyProfileBit, `${field}.privacyProfileBit`, 1, 0xffff)
   }
 }
 
@@ -197,8 +215,8 @@ function seedRecord (input, relays, index) {
 function payload (input) {
   exact(input, [
     'schema', 'version', 'profile', 'operatorBoundary', 'bootstrapSequence',
-    'previousBootstrapHash', 'releaseSequence', 'releaseManifestHash',
-    'authorityPublicKey', 'issuedAt', 'expiresAt', 'relays', 'records'
+    'previousBootstrapHash', 'releaseSequence', 'authorityPublicKey', 'issuedAt',
+    'expiresAt', 'relays', 'records'
   ], 'payload')
   if (input.schema !== PEERIT_SEED_BOOTSTRAP_SCHEMA_V1 || input.version !== 1 ||
       input.profile !== PEERIT_SEED_BOOTSTRAP_PROFILE_V1 ||
@@ -242,7 +260,6 @@ function payload (input) {
     bootstrapSequence,
     previousBootstrapHash,
     releaseSequence: integer(input.releaseSequence, 'payload.releaseSequence', 13),
-    releaseManifestHash: hex32(input.releaseManifestHash, 'payload.releaseManifestHash'),
     authorityPublicKey: hex32(input.authorityPublicKey, 'payload.authorityPublicKey'),
     issuedAt,
     expiresAt,
@@ -291,18 +308,24 @@ export function encodePeeritSeedBootstrapV1 (input) {
   return canonicalBytes(artifact)
 }
 
+// Offline/release assembly helper. It authenticates no content and grants no
+// runtime authority; it only computes the exact reverse-binding value that the
+// terminal release/profile must commit before signing.
+export async function hashPeeritSeedBootstrapV1 (input) {
+  return hashBytes(canonicalBytes(parseArtifact(input)))
+}
+
 export async function verifyPeeritSeedBootstrapV1 (input, options = {}) {
   const artifact = parseArtifact(input)
   const expectedAuthority = hex32(options.authorityPublicKey, 'authorityPublicKey')
   if (artifact.payload.authorityPublicKey !== expectedAuthority) {
     fail('PEERIT_SEED_BOOTSTRAP_AUTHORITY_MISMATCH', 'bootstrap signer is not the release-pinned discovery authority')
   }
-  if (options.releaseSequence != null && artifact.payload.releaseSequence !== options.releaseSequence) {
+  const expectedReleaseSequence = integer(options.releaseSequence, 'releaseSequence', 13)
+  if (artifact.payload.releaseSequence !== expectedReleaseSequence) {
     fail('PEERIT_SEED_BOOTSTRAP_RELEASE_MISMATCH', 'bootstrap release sequence does not match the authenticated release')
   }
-  if (options.releaseManifestHash != null && artifact.payload.releaseManifestHash !== options.releaseManifestHash) {
-    fail('PEERIT_SEED_BOOTSTRAP_RELEASE_MISMATCH', 'bootstrap manifest hash does not match the authenticated release')
-  }
+  const expectedArtifactHash = hex32(options.expectedArtifactHash, 'expectedArtifactHash')
   const expectedPrevious = options.previousBootstrapHash == null ? null : hex32(options.previousBootstrapHash, 'previousBootstrapHash')
   if (artifact.payload.previousBootstrapHash !== expectedPrevious) {
     fail('PEERIT_SEED_BOOTSTRAP_CONTINUITY', 'bootstrap predecessor does not match the persisted discovery floor')
@@ -314,7 +337,11 @@ export async function verifyPeeritSeedBootstrapV1 (input, options = {}) {
   const ok = await verifyBytes(expectedAuthority, signedBytes(artifact.payload), fromHex(artifact.signature))
   if (!ok) fail('PEERIT_SEED_BOOTSTRAP_BAD_SIGNATURE', 'bootstrap signature verification failed')
   const artifactHash = await hashBytes(canonicalBytes(artifact))
-  const sourceId = await hashBytes(encoder.encode(`${SIGN_DOMAIN}\0${expectedAuthority}\0${artifact.payload.releaseManifestHash}`))
+  if (artifactHash !== expectedArtifactHash) {
+    fail('PEERIT_SEED_BOOTSTRAP_RELEASE_MISMATCH', 'bootstrap hash does not match the authenticated release/profile reverse binding')
+  }
+  const sourceId = await hashBytes(encoder.encode(
+    `${SIGN_DOMAIN}\0${expectedAuthority}\0${expectedReleaseSequence}`))
   const verified = immutable({
     ...artifact,
     artifactHash,

@@ -10,6 +10,10 @@ import {
   ingestVerifiedPeeritRemoteBatchV1,
   verifyPeeritRemoteSeedBatchV1
 } from './remote-record-ingest.mjs'
+import {
+  assertVerifiedPeeritRelayCellGetResult,
+  verifiedPeeritRelayCellGetContext
+} from './relay-consumer.js'
 
 const MAX_CONCURRENCY = 16
 const MAX_TIMEOUT_MS = 30_000
@@ -35,17 +39,59 @@ async function runBounded (values, concurrency, worker) {
 }
 
 async function bounded (milliseconds, operation) {
-  if (typeof AbortController !== 'function') return operation({ signal: undefined })
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(new Error('Peerit cold Cell GET deadline expired')), milliseconds)
-  try { return await operation({ signal: controller.signal }) } finally { clearTimeout(timer) }
+  const controller = typeof AbortController === 'function' ? new AbortController() : null
+  let cancelTimeout = () => {}
+  const timeout = new Promise((resolve, reject) => {
+    const error = new Error('Peerit cold Cell GET deadline expired')
+    error.code = 'PEERIT_COLD_READER_DEADLINE'
+    const timer = setTimeout(() => {
+      if (controller) controller.abort(error)
+      reject(error)
+    }, milliseconds)
+    cancelTimeout = () => clearTimeout(timer)
+  })
+  const pending = Promise.resolve().then(() => operation({
+    signal: controller ? controller.signal : undefined
+  }))
+  // Promise.race installs a rejection observer on pending. This additional
+  // observer documents and preserves that guarantee if a non-cooperative
+  // adapter rejects only after the deadline/fallback has completed.
+  pending.catch(() => {})
+  try { return await Promise.race([pending, timeout]) } finally { cancelTimeout() }
 }
 
-function relayMap (relays) {
+function relayContextMatches (context, signed) {
+  return context.canonicalDescribeUrl === signed.canonicalDescribeUrl &&
+    context.continuityRootRelayPublicKey === signed.continuityRootRelayPublicKey &&
+    context.storeId === signed.storeId &&
+    context.descriptorGenesisHash === signed.descriptorGenesisHash &&
+    context.descriptorSequence >= BigInt(signed.minimumDescriptorSequence) &&
+    context.familyId === signed.familyId &&
+    context.operationId === signed.operationId &&
+    context.endpointId === signed.endpointId &&
+    context.transportId === signed.transportId &&
+    context.transportSupportBit === signed.transportSupportBit &&
+    context.privacyProfileBit === signed.privacyProfileBit
+}
+
+function relayMap (relays, signedRelays) {
+  if (!Array.isArray(relays) || relays.length !== signedRelays.length) {
+    fail('PEERIT_COLD_READER_RELAY_BINDING_MISMATCH',
+      'cold reader requires exactly the signed relay adapter set')
+  }
   const map = new Map()
-  for (const relay of Array.isArray(relays) ? relays : []) {
-    if (!relay || typeof relay !== 'object' || typeof relay.id !== 'string' || map.has(relay.id)) continue
-    map.set(relay.id, relay)
+  for (const relay of relays) {
+    const context = verifiedPeeritRelayCellGetContext(relay)
+    if (typeof relay.readCellCapability !== 'function') {
+      fail('PEERIT_COLD_READER_GET_UNAVAILABLE',
+        'qualified relay adapter has no authenticated reader-capability GET')
+    }
+    const matches = signedRelays.filter(signed => relayContextMatches(context, signed))
+    if (matches.length !== 1 || map.has(matches[0].relayId)) {
+      fail('PEERIT_COLD_READER_RELAY_BINDING_MISMATCH',
+        'qualified relay continuity/operation/transport tuple does not match the signed bootstrap')
+    }
+    map.set(matches[0].relayId, relay)
   }
   return map
 }
@@ -57,7 +103,6 @@ export function createPeeritSeedColdReaderV1 (options = {}) {
     throw new TypeError('Peerit cold reader requires the remote-ingest substrate sync boundary')
   }
   const capabilityVault = options.capabilityVault || null
-  const readReplica = typeof options.readReplica === 'function' ? options.readReplica : null
   const concurrency = Number.isSafeInteger(options.concurrency)
     ? Math.max(1, Math.min(MAX_CONCURRENCY, options.concurrency))
     : 4
@@ -100,14 +145,14 @@ export function createPeeritSeedColdReaderV1 (options = {}) {
       fail('PEERIT_COLD_READER_GAP', 'cold browser requires bootstrap sequence zero')
     }
 
-    const relays = relayMap(options.relays)
+    const relays = relayMap(options.relays, bootstrap.payload.relays)
     let networkGets = 0
     let fallbackCount = 0
     const results = await runBounded(bootstrap.payload.records, concurrency, async record => {
       const failures = []
       for (let index = 0; index < record.replicas.length; index++) {
         const replica = record.replicas[index]
-        const relay = relays.get(replica.targetId) || relays.get(replica.relayId)
+        const relay = relays.get(replica.relayId)
         if (!relay) {
           failures.push({ relayId: replica.relayId, code: 'PEERIT_COLD_READER_RELAY_UNAVAILABLE' })
           continue
@@ -141,16 +186,13 @@ export function createPeeritSeedColdReaderV1 (options = {}) {
             readCapability: decodePeeritSeedReadCapabilityV1(replica.readCapability)
           })
           networkGets++
-          const result = await bounded(timeoutMillis, context => {
-            if (readReplica) return readReplica(relay, request, context)
-            if (typeof relay.readCellCapability !== 'function') {
-              fail('PEERIT_COLD_READER_GET_UNAVAILABLE', 'qualified relay adapter has no public reader-capability GET')
-            }
-            return relay.readCellCapability(request, context)
-          })
-          if (!result || result.verified !== true || result.targetId !== replica.targetId ||
-              result.relayId !== replica.relayId || result.innerBytes == null || !result.evidenceRef) {
-            fail('PEERIT_COLD_READER_UNVERIFIED_RESULT', 'relay did not return a capability-bound verified Cell result')
+          const result = assertVerifiedPeeritRelayCellGetResult(await bounded(
+            timeoutMillis,
+            context => relay.readCellCapability(request, context)
+          ))
+          if (result.targetId !== replica.targetId || result.relayId !== replica.relayId) {
+            fail('PEERIT_COLD_READER_UNVERIFIED_RESULT',
+              'authenticated Cell result does not match the signed replica target')
           }
           if (index > 0) fallbackCount++
           return Object.freeze({

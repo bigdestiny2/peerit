@@ -38,6 +38,8 @@ const MAX_HINT_BYTES = 2048
 const HEX_32 = /^[0-9a-f]{64}$/i
 const SOURCES = Object.freeze(['recommendation', 'user', 'peer', 'dht'])
 const VERIFIED_RELAY_ADAPTERS = new WeakSet()
+const VERIFIED_RELAY_ADAPTER_CONTEXTS = new WeakMap()
+const VERIFIED_RELAY_CELL_GET_RESULTS = new WeakSet()
 // One ownership record covers both asynchronous module setup and the live
 // scheduler. Replacing/stopping an install invalidates all older continuations
 // before they can publish to the same sync instance.
@@ -242,6 +244,45 @@ function contextSnapshot (control, endpoint, requirement) {
   return context
 }
 
+async function seedReadContextSnapshot (control, profile, candidate, context, readContext, backend) {
+  let descriptorGenesisHash = null
+  if (context.descriptorSequence === 0n) {
+    descriptorGenesisHash = fixedHex(context.descriptorHash)
+  } else if (backend && typeof backend.read === 'function' &&
+      typeof control.verifyDescriptorBytes === 'function') {
+    const key = `descriptor:${fixedHex(context.continuityRoot)}:${fixedHex(context.storeId)}`
+    const record = await backend.read(key)
+    const state = record && record.value
+    if (!state || state.sequence !== context.descriptorSequence ||
+        !bytesEqual(state.rootRelayPublicKey, context.continuityRoot) ||
+        !bytesEqual(state.storeId, context.storeId) ||
+        !bytesEqual(state.currentHash, context.descriptorHash) ||
+        !Array.isArray(state.history) || state.history.length !== Number(context.descriptorSequence) + 1) {
+      throw qualificationError('PEERIT_DESCRIPTOR_HISTORY_BINDING_UNAVAILABLE',
+        'qualified endpoint cannot reproduce its exact persisted descriptor history')
+    }
+    const genesis = control.verifyDescriptorBytes(state.history[0], {
+      history: true,
+      supportedProtocolProfiles: profile.supportedProtocolProfiles,
+      supportedTransportProfiles: profile.supportedTransportProfiles
+    })
+    descriptorGenesisHash = fixedHex(genesis.descriptorHash)
+  }
+  return Object.freeze({
+    canonicalDescribeUrl: candidate.canonicalUrl,
+    continuityRootRelayPublicKey: fixedHex(context.continuityRoot),
+    storeId: fixedHex(context.storeId),
+    descriptorGenesisHash,
+    descriptorSequence: context.descriptorSequence,
+    familyId: readContext.familyId,
+    operationId: readContext.operationId,
+    endpointId: readContext.endpointId,
+    transportId: readContext.transportId,
+    transportSupportBit: readContext.transportSupportBit,
+    privacyProfileBit: readContext.privacyProfileBit
+  })
+}
+
 function identityKey (context) {
   return `${fixedHex(context.continuityRoot)}:${fixedHex(context.storeId)}`
 }
@@ -338,7 +379,7 @@ function admissionValiditySnapshot (control, verifiedAdmissionParameters) {
   return Object.freeze({ validFromEpoch, expiresEpoch })
 }
 
-function brandedAdapter (adapter, context, lease) {
+function brandedAdapter (adapter, context, seedReadContext, lease) {
   if (!adapter || typeof adapter !== 'object' || adapter.compatible === false ||
       (typeof adapter.deliver !== 'function' &&
        !(typeof adapter.prepare === 'function' && typeof adapter.send === 'function'))) {
@@ -383,6 +424,27 @@ function brandedAdapter (adapter, context, lease) {
       return value
     }
     : undefined
+  const readCellCapability = typeof adapter.readCellCapability === 'function'
+    ? async (request, operationContext = {}) => {
+      assertFresh(false)
+      const value = await adapter.readCellCapability(request, operationContext)
+      if (!value || typeof value !== 'object' || value.innerBytes == null ||
+          typeof value.evidenceRef !== 'string' || value.evidenceRef.length < 1 ||
+          value.evidenceRef.length > 1024 || !request || typeof request !== 'object') {
+        throw qualificationError('PEERIT_CELL_GET_RESULT_UNVERIFIED',
+          'qualified Cell GET adapter returned an invalid authenticated result')
+      }
+      const result = Object.freeze({
+        relayId: String(request.relayId),
+        targetId: String(request.targetId),
+        innerBytes: bytes(value.innerBytes, 'verified Cell GET innerBytes'),
+        evidenceRef: value.evidenceRef
+      })
+      VERIFIED_RELAY_CELL_GET_RESULTS.add(result)
+      assertFresh(false)
+      return result
+    }
+    : undefined
   // Adapter construction may itself take long enough to cross a signed or
   // health boundary. Refuse to mint the Peerit brand once that happens.
   assertFresh(true)
@@ -393,14 +455,33 @@ function brandedAdapter (adapter, context, lease) {
     prepare: bind('prepare'),
     send: bind('send'),
     reconcile: bind('reconcile'),
-    revalidateReadback: bind('revalidateReadback')
+    revalidateReadback: bind('revalidateReadback'),
+    readCellCapability
   })
   VERIFIED_RELAY_ADAPTERS.add(result)
+  VERIFIED_RELAY_ADAPTER_CONTEXTS.set(result, seedReadContext)
   return result
 }
 
 export function isPeeritVerifiedRelayAdapter (value) {
   return !!(value && typeof value === 'object' && VERIFIED_RELAY_ADAPTERS.has(value))
+}
+
+export function verifiedPeeritRelayCellGetContext (value) {
+  const context = value && VERIFIED_RELAY_ADAPTER_CONTEXTS.get(value)
+  if (!context) {
+    throw qualificationError('PEERIT_VERIFIED_RELAY_ADAPTER_REQUIRED',
+      'a currently qualified branded Peerit relay adapter is required')
+  }
+  return context
+}
+
+export function assertVerifiedPeeritRelayCellGetResult (value) {
+  if (!value || !VERIFIED_RELAY_CELL_GET_RESULTS.has(value)) {
+    throw qualificationError('PEERIT_CELL_GET_RESULT_UNVERIFIED',
+      'a branded authenticated Cell GET result is required')
+  }
+  return value
 }
 
 function candidate (input, source) {
@@ -764,6 +845,8 @@ export async function qualifyPermissionlessRelayCandidates (options = {}) {
       }), qualificationSignal)
       const readContext = contextSnapshot(control, readQualified.endpoint, profile.readRequirement)
       assertPairedCellEndpointContexts(context, readContext)
+      const seedReadContext = await seedReadContextSnapshot(
+        control, profile, candidateValue, context, readContext, options.descriptorTrustBackend)
       const descriptorValidity = descriptorValiditySnapshot(control, qualified.trustedDescriptor)
       const healthValidity = healthValiditySnapshot(
         control, qualified.health, qualificationLeaseMillis)
@@ -872,7 +955,7 @@ export async function qualifyPermissionlessRelayCandidates (options = {}) {
         expiresEpoch: signedExpiresEpoch
       })
       selected.set(key, Object.freeze({
-        adapter: brandedAdapter(adapter, context, lease),
+        adapter: brandedAdapter(adapter, context, seedReadContext, lease),
         context,
         identity,
         key,

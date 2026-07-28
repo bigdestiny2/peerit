@@ -743,6 +743,97 @@ export function createBlindCellRelay (options = {}) {
     return readback(publication, persisted.payload.prepared, context)
   }
 
+  async function readCellCapability (request, context = {}) {
+    if (!readbackConfigured) {
+      throw terminalError('PEERIT_SUBSTRATE_READ_CAPABILITY_MISSING',
+        'qualified Cell GET endpoint is unavailable')
+    }
+    if (!request || typeof request !== 'object' || !request.readCapability ||
+        String(request.targetId || '').toLowerCase() !== canonicalTargetId ||
+        !Number.isSafeInteger(request.innerLength) || request.innerLength < 1 ||
+        !Number.isSafeInteger(request.sizeClass) || request.sizeClass < 1 || request.sizeClass > 5) {
+      throw terminalError('PEERIT_COLD_READER_REQUEST_INVALID',
+        'cold-reader request does not match the qualified Cell target')
+    }
+    const readCap = request.readCapability
+    if (!equalBytes(readCap.relayPublicKey, relayPublicKey) ||
+        readCap.sizeClass !== request.sizeClass) {
+      throw terminalError('PEERIT_COLD_READER_CAPABILITY_DRIFT',
+        'reader capability does not match the qualified relay or declared size class')
+    }
+    const control = await loadControl()
+    const currentWriteContext = targetContext(
+      control.verifiedEndpointContext(options.endpoint), relayPublicKey)
+    const currentReadContext = pairedReadContext(
+      control.verifiedEndpointContext(options.readEndpoint), relayPublicKey, currentWriteContext)
+    if (contextFingerprint(currentWriteContext) !== contextFingerprint(qualifiedContext) ||
+        contextFingerprint(currentReadContext) !== contextFingerprint(qualifiedReadContext)) {
+      throw terminalError('HIVERELAY_READ_TARGET_CONTEXT_DRIFT',
+        'qualified Cell GET endpoint identity changed before cold recovery')
+    }
+
+    const attempt = attemptTransportContext(options.signal, options.timeoutMillis, context)
+    let opened = null
+    try {
+      throwIfAborted(attempt.signal)
+      const get = await control.createGetCellRequest({
+        runtime: options.runtime,
+        readCap,
+        admissionProvider: options.readAdmissionProvider
+      })
+      throwIfAborted(attempt.signal)
+      const response = await readHttp.request({
+        endpoint: options.readEndpoint,
+        ...get.wire,
+        body: get.requestBytes,
+        signal: attempt.signal,
+        timeoutMillis: attempt.timeoutMillis
+      })
+      throwIfAborted(attempt.signal)
+      if (!response || response.ok !== true) {
+        const error = new Error('HiveRelay did not return the capability-selected Cell')
+        const remote = response && response.error
+        error.code = remote && remote.code === HIVERELAY_BLIND_ERROR_NOT_FOUND
+          ? 'HIVERELAY_CELL_NOT_FOUND'
+          : 'HIVERELAY_CELL_GET_FAILED'
+        error.remote = remote
+        throw error
+      }
+      let verified
+      try {
+        verified = await control.verifyOperationResult({
+          endpoint: options.readEndpoint,
+          request: get.request,
+          requestCommitment: get.requestCommitment,
+          resultBytes: response.body,
+          externalWitnessVerifier: options.externalWitnessVerifier
+        })
+        opened = await control.openVerifiedCellGetResult({
+          verifiedResult: verified,
+          runtime: options.runtime,
+          readCap
+        })
+      } catch (cause) {
+        const error = terminalError('PEERIT_COLD_READER_RESULT_AUTHENTICATION_FAILED',
+          'Cell GET result failed endpoint binding, signature verification, or capability opening')
+        error.cause = cause
+        throw error
+      }
+      throwIfAborted(attempt.signal)
+      if (opened.byteLength !== request.innerLength) {
+        throw terminalError('PEERIT_COLD_READER_ENVELOPE_LENGTH_MISMATCH',
+          'decrypted Cell bytes do not match the signed bootstrap length')
+      }
+      return Object.freeze({
+        innerBytes: new Uint8Array(opened),
+        evidenceRef: `blind-cell-get:${hex(get.requestCommitment)}`
+      })
+    } finally {
+      if (opened && typeof opened.fill === 'function') opened.fill(0)
+      attempt.close()
+    }
+  }
+
   return Object.freeze({
     id: canonicalTargetId,
     compatible: options.compatible !== false,
@@ -753,6 +844,7 @@ export function createBlindCellRelay (options = {}) {
       return send({ ...publication, prepared }, context)
     },
     reconcile: typeof options.reconcile === 'function' || loadPersistedReplica ? reconcile : undefined,
-    revalidateReadback: readbackConfigured && loadPersistedReplica ? revalidateReadback : undefined
+    revalidateReadback: readbackConfigured && loadPersistedReplica ? revalidateReadback : undefined,
+    readCellCapability: readbackConfigured ? readCellCapability : undefined
   })
 }

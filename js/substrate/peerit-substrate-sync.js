@@ -23,6 +23,7 @@ import {
 } from './peerit-operation-authority-v1.js'
 import { bytesEqual } from './release-control-primitives.mjs'
 import { isPeeritVerifiedRelayAdapter } from './relay-consumer.js'
+import { assertVerifiedPeeritRemoteBatchV1 } from './remote-record-ingest.mjs'
 
 export const SUBSTRATE_STATE_KEY = LEGACY_SUBSTRATE_STATE_KEY
 // AvailabilityPolicyVNext fixes proofFreshnessEpochs=4 and the substrate lease
@@ -599,6 +600,50 @@ export class PeeritSubstrateSync {
       logicalId,
       queued: result.queued
     })
+  }
+
+  // Remote discovery is a read-side state transition, not an authored intent.
+  // The branded batch has already passed signature, key, envelope and release
+  // binding checks. The journal transaction it enters cannot create relay
+  // targets, pending intents, or publication queue work.
+  async ingestVerifiedRemoteBatch (batchInput, options = {}) {
+    const batch = assertVerifiedPeeritRemoteBatchV1(batchInput)
+    if (this._localFailure) {
+      const error = new Error('Peerit cannot safely commit verified remote records on this device.')
+      error.code = 'PEERIT_SUBSTRATE_REMOTE_INGEST_BLOCKED'
+      error.cause = this._localFailure
+      throw error
+    }
+    try {
+      const result = await this.journal.commitDiscoveredBatch({
+        sourceId: batch.sourceId,
+        checkpointSequence: batch.checkpointSequence,
+        checkpointHash: batch.checkpointHash,
+        previousCheckpointHash: batch.previousCheckpointHash,
+        records: batch.records,
+        observedAt: Number.isSafeInteger(options.observedAt) ? options.observedAt : this.clock()
+      })
+      await this._refreshAfterMutation(result.changedKeys.length > 0, result.changedKeys)
+      return Object.freeze({
+        ok: true,
+        remote: true,
+        duplicate: result.duplicate,
+        changedKeys: Object.freeze([...result.changedKeys]),
+        checkpointSequence: result.checkpointSequence,
+        checkpointHash: result.checkpointHash,
+        queued: false,
+        pendingIntentsCreated: 0,
+        relayTargetsCreated: 0
+      })
+    } catch (error) {
+      if (error && (error.code === 'PEERIT_JOURNAL_CORRUPT' ||
+        error.code === 'PEERIT_JOURNAL_STORAGE_UNAVAILABLE')) this._localFailure = error
+      throw error
+    }
+  }
+
+  async discoveryFloor (sourceId) {
+    return this.journal.getDiscoveryFloor(sourceId)
   }
 
   async get (key) { return this.journal.getView(key) }

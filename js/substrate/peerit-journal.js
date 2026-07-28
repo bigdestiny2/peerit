@@ -51,6 +51,7 @@ const TARGET_STATES = Object.freeze([
   'terminal', 'acknowledged', 'readback-verified'
 ])
 const HEX64 = /^[0-9a-f]{64}$/
+const DISCOVERY_FLOOR_PREFIX = 'discovery-floor:v1:'
 
 function clone (value) {
   if (value == null) return value
@@ -198,6 +199,30 @@ function boundedString (value, field, maximum, { allowEmpty = false } = {}) {
     throw journalError('PEERIT_JOURNAL_LIMIT', `${field} exceeds its journal bound.`)
   }
   return normalized
+}
+
+function discoveredRecordTimestamp (value) {
+  const candidates = [value && value.editedAt, value && value.updatedAt, value && value.ts, value && value.createdAt]
+  for (const candidate of candidates) {
+    if (Number.isSafeInteger(candidate) && candidate >= 0) return candidate
+  }
+  return 0
+}
+
+function discoveredRecordWins (incoming, current) {
+  if (!current) return true
+  if (incoming && current && incoming._sig === current._sig) return false
+  // Community ownership is sticky once a signed row has been admitted locally.
+  if (incoming && current && incoming._t === 'community' && current._t === 'community' &&
+      (incoming.creator || incoming._k) !== (current.creator || current._k)) return false
+  const left = discoveredRecordTimestamp(incoming)
+  const right = discoveredRecordTimestamp(current)
+  if (left !== right) return left > right
+  return String((incoming && incoming._sig) || '') > String((current && current._sig) || '')
+}
+
+function discoveryFloorKey (sourceId) {
+  return DISCOVERY_FLOOR_PREFIX + validateIntentId(sourceId, 'discovery sourceId')
 }
 
 function normalizedInnerIntent (input, limits) {
@@ -970,6 +995,111 @@ export class PeeritJournal {
       meta.updatedAt = now
       await tx.put(JOURNAL_STORES.META, meta)
       return { duplicate: false, compacted: false, queued: true, viewRevision: meta.viewRevision }
+    })
+  }
+
+  // Atomically imports an already-authenticated remote batch into the read view
+  // and advances one source-scoped discovery floor. This transaction never opens
+  // INTENTS, TARGETS or DEDUPE, so downloaded rows cannot become publication
+  // work or relay targets even if the process crashes at any boundary.
+  async commitDiscoveredBatch (input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'discovered batch must be an object.')
+    }
+    const sourceId = validateIntentId(input.sourceId, 'discovery sourceId')
+    const checkpointHash = validateIntentId(input.checkpointHash, 'discovery checkpointHash')
+    const previousCheckpointHash = input.previousCheckpointHash == null
+      ? null
+      : validateIntentId(input.previousCheckpointHash, 'discovery previousCheckpointHash')
+    const checkpointSequence = input.checkpointSequence
+    if (!Number.isSafeInteger(checkpointSequence) || checkpointSequence < 0) {
+      throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'discovery checkpointSequence must be a non-negative safe integer.')
+    }
+    const records = Array.isArray(input.records) ? input.records : []
+    if (records.length < 1 || records.length > this.limits.maxRecordsPerIntent * 64) {
+      throw journalError('PEERIT_JOURNAL_LIMIT', 'discovered record count is outside its bounded batch limit.')
+    }
+    const seen = new Set()
+    const normalizedRecords = records.map(record => {
+      const key = boundedString(record && record.key, 'discovered record key', this.limits.maxRecordKeyBytes)
+      if (seen.has(key)) throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'discovered batch contains a duplicate record key.')
+      seen.add(key)
+      if (!record.value || typeof record.value !== 'object' || Array.isArray(record.value) ||
+          typeof record.value._sig !== 'string' || typeof record.value._k !== 'string') {
+        throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'discovered record is not an authenticated Peerit row.')
+      }
+      return { key, value: clone(record.value) }
+    })
+    const observedAt = Number.isSafeInteger(input.observedAt) && input.observedAt >= 0
+      ? input.observedAt
+      : this.clock()
+    const floorKey = discoveryFloorKey(sourceId)
+    return this._transaction([JOURNAL_STORES.META, JOURNAL_STORES.VIEW], 'readwrite', 'verified remote batch commit', async tx => {
+      const meta = validateMeta(await tx.get(JOURNAL_STORES.META, META_KEY))
+      const previous = await tx.get(JOURNAL_STORES.META, floorKey)
+      if (previous) {
+        if (!Number.isSafeInteger(previous.checkpointSequence) || !HEX64.test(previous.checkpointHash || '')) {
+          throw journalError('PEERIT_JOURNAL_CORRUPT', 'discovery floor is corrupt.')
+        }
+        if (checkpointSequence < previous.checkpointSequence) {
+          throw journalError('PEERIT_JOURNAL_DISCOVERY_ROLLBACK', 'discovery checkpoint is below the persisted source floor.')
+        }
+        if (checkpointSequence === previous.checkpointSequence) {
+          if (checkpointHash !== previous.checkpointHash) {
+            throw journalError('PEERIT_JOURNAL_DISCOVERY_FORK', 'discovery checkpoint conflicts at the persisted sequence.')
+          }
+          return { duplicate: true, changedKeys: [], checkpointSequence, checkpointHash }
+        }
+        if (previousCheckpointHash !== previous.checkpointHash) {
+          throw journalError('PEERIT_JOURNAL_DISCOVERY_GAP', 'discovery checkpoint does not extend the persisted source floor.')
+        }
+      } else if (checkpointSequence !== 0 || previousCheckpointHash != null) {
+        throw journalError('PEERIT_JOURNAL_DISCOVERY_GAP', 'first discovery checkpoint must be sequence zero with no predecessor.')
+      }
+
+      let newViewRecords = 0
+      const changedKeys = []
+      for (const record of normalizedRecords) {
+        const existing = await tx.get(JOURNAL_STORES.VIEW, record.key)
+        if (!discoveredRecordWins(record.value, existing && existing.value)) continue
+        if (!existing) newViewRecords++
+        await tx.put(JOURNAL_STORES.VIEW, {
+          ...record,
+          intentId: null,
+          discoverySourceId: sourceId,
+          discoveryCheckpointSequence: checkpointSequence,
+          discoveryCheckpointHash: checkpointHash,
+          updatedAt: observedAt
+        })
+        changedKeys.push(record.key)
+      }
+      if (meta.viewRecordCount + newViewRecords > this.limits.maxViewRecords) {
+        throw journalError('PEERIT_JOURNAL_LIMIT', 'discovered batch exceeds the materialized-view record limit.')
+      }
+      await tx.put(JOURNAL_STORES.META, {
+        key: floorKey,
+        sourceId,
+        checkpointSequence,
+        checkpointHash,
+        previousCheckpointHash,
+        observedAt
+      })
+      meta.revision++
+      if (changedKeys.length) meta.viewRevision++
+      meta.viewRecordCount += newViewRecords
+      if (!meta.createdAt) meta.createdAt = observedAt
+      meta.updatedAt = Math.max(meta.updatedAt, observedAt)
+      await tx.put(JOURNAL_STORES.META, meta)
+      return { duplicate: false, changedKeys, checkpointSequence, checkpointHash }
+    })
+  }
+
+  async getDiscoveryFloor (sourceId) {
+    const key = discoveryFloorKey(sourceId)
+    return this._transaction([JOURNAL_STORES.META], 'readonly', 'discovery floor read', async tx => {
+      if (!tx) return null
+      const value = await tx.get(JOURNAL_STORES.META, key)
+      return value == null ? null : clone(value)
     })
   }
 

@@ -49,6 +49,10 @@ function fromHex (value, field) {
   return output
 }
 
+function bytesOrHex (value, field) {
+  return typeof value === 'string' ? fromHex(value, field) : bytes(value, field)
+}
+
 function sameBytes (left, right) {
   if (left.byteLength !== right.byteLength) return false
   for (let index = 0; index < left.byteLength; index++) if (left[index] !== right[index]) return false
@@ -709,6 +713,93 @@ export function createPeeritCapabilityVault (options = {}) {
     throw new Error('capability record changed too many times during readback persistence')
   }
 
+  function publicReadCapability (value) {
+    if (!plainObject(value)) throw new TypeError('public read capability must be an object')
+    const keys = Object.keys(value).sort()
+    const expected = ['cellKey', 'expectedCellBlobHash', 'relayPublicKey', 'sizeClass', 'storageSlot', 'version']
+    if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
+      throw new TypeError('public read capability contains management or unknown fields')
+    }
+    const relayPublicKey = bytesOrHex(value.relayPublicKey, 'readCapability.relayPublicKey')
+    const storageSlot = bytesOrHex(value.storageSlot, 'readCapability.storageSlot')
+    const cellKey = bytesOrHex(value.cellKey, 'readCapability.cellKey')
+    const expectedCellBlobHash = value.expectedCellBlobHash == null
+      ? null
+      : bytesOrHex(value.expectedCellBlobHash, 'readCapability.expectedCellBlobHash')
+    if (value.version !== 1 || relayPublicKey.byteLength !== 32 || storageSlot.byteLength !== 32 ||
+        cellKey.byteLength !== 32 || (expectedCellBlobHash && expectedCellBlobHash.byteLength !== 32) ||
+        !Number.isSafeInteger(value.sizeClass) || value.sizeClass < 1 || value.sizeClass > 5) {
+      throw new TypeError('public read capability has an invalid closed shape')
+    }
+    return { version: 1, relayPublicKey, storageSlot, cellKey, sizeClass: value.sizeClass, expectedCellBlobHash }
+  }
+
+  async function persistReaderCapability (input) {
+    if (!plainObject(input)) throw new TypeError('reader capability persistence input must be an object')
+    const sourceId = text(input.sourceId, 'sourceId', 64)
+    const recordId = text(input.recordId, 'recordId', 64)
+    if (!HEX64.test(sourceId) || !HEX64.test(recordId)) throw new TypeError('reader capability source and record ids must be 32-byte hex')
+    const fields = {
+      intentId: `reader:${sourceId}:${recordId}`,
+      logicalId: text(input.logicalId, 'logicalId', 512),
+      targetId: text(input.targetId, 'targetId', 4096)
+    }
+    const envelope = envelopeFields({
+      ...input,
+      logicalHash: bytesOrHex(input.logicalHash, 'logicalHash'),
+      encodingCommitment: bytesOrHex(input.encodingCommitment, 'encodingCommitment')
+    })
+    const payload = {
+      version: 1,
+      stage: 1,
+      kind: 'public-reader-v1',
+      ...fields,
+      ...envelope,
+      sourceId,
+      recordId,
+      relayId: text(input.relayId, 'relayId', 128),
+      readCapability: publicReadCapability(input.readCapability)
+    }
+    const encoded = encodeSecret(payload)
+    const recordKey = await recordKeyFor(runtime, fields.intentId, fields.targetId)
+    try {
+      const timestamp = now()
+      if (!Number.isSafeInteger(timestamp) || timestamp < 0) throw new Error('capability vault clock is invalid')
+      const candidate = await sealRecord(runtime, {
+        version: 1,
+        recordKey,
+        recordId: randomId(runtime),
+        revision: 1,
+        stage: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      }, payload)
+      const result = await kv.putIfAbsent(recordKey, candidate)
+      const winner = assertRecord(result.value, recordKey)
+      const winnerPayload = await openRecord(runtime, winner, recordKey)
+      if (!sameEncodedSecret(winnerPayload, encoded)) {
+        throw new Error('a different reader capability already owns this source record target')
+      }
+      return publicRecord(winner, winnerPayload)
+    } finally { encoded.fill(0) }
+  }
+
+  async function loadReaderCapability (sourceId, recordId, targetId) {
+    sourceId = text(sourceId, 'sourceId', 64)
+    recordId = text(recordId, 'recordId', 64)
+    targetId = text(targetId, 'targetId', 4096)
+    const intentId = `reader:${sourceId}:${recordId}`
+    const recordKey = await recordKeyFor(runtime, intentId, targetId)
+    const record = await kv.get(recordKey)
+    if (!record) return null
+    const payload = await openRecord(runtime, record, recordKey)
+    if (payload.kind !== 'public-reader-v1' || payload.sourceId !== sourceId ||
+        payload.recordId !== recordId || payload.targetId !== targetId) {
+      throw new Error('reader capability lookup identity conflicts')
+    }
+    return publicRecord(record, payload)
+  }
+
   async function load (intentId, targetId) {
     const fields = {
       intentId: text(intentId, 'intentId', 512),
@@ -750,6 +841,8 @@ export function createPeeritCapabilityVault (options = {}) {
     persistPreparedReplica,
     persistVerifiedResult,
     persistVerifiedReadback,
+    persistReaderCapability,
+    loadReaderCapability,
     load,
     inspect,
     deleteExact
@@ -764,6 +857,7 @@ export const PEERIT_CAPABILITY_VAULT_STATUS = Object.freeze({
   authenticatedReadbackBeforeAuthorBinding: true,
   atomicMultiTabCas: true,
   browserIndexedDbIntegrationTested: true,
+  publicReaderCapabilitiesEncrypted: true,
   portableRecoveryBundleIntegrated: false,
   runtimeConsumerIntegrated: false
 })

@@ -25,7 +25,7 @@ launch/reports/seed-plan.md
 scripts/build-seed-manifest.mjs
 scripts/publish-seed-waves.mjs
 scripts/publish-seed-waves-blind.mjs
-scripts/prove-sydney-cell-classes.mjs
+scripts/prove-*-cell-classes.mjs
 
 # misplaced here — belongs to pear-agent-system / hiverelay repos (pending relocation)
 assignments/

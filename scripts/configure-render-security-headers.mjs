@@ -6,7 +6,7 @@
 
 import { readFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const API = 'https://api.render.com/v1'
@@ -48,11 +48,12 @@ async function request (token, path, init = {}) {
   return body
 }
 
-function headerRows (payload) {
-  if (Array.isArray(payload)) return payload
-  if (payload && Array.isArray(payload.headers)) return payload.headers
-  if (payload && Array.isArray(payload.items)) return payload.items
-  return []
+export function headerRows (payload) {
+  let rows = []
+  if (Array.isArray(payload)) rows = payload
+  else if (payload && Array.isArray(payload.headers)) rows = payload.headers
+  else if (payload && Array.isArray(payload.items)) rows = payload.items
+  return rows.map(row => row && typeof row === 'object' && row.header && typeof row.header === 'object' ? row.header : row)
 }
 
 async function main () {
@@ -94,7 +95,9 @@ async function main () {
   console.log(`[render-headers] applied ${plan.filter(item => item.action !== 'keep').length} change(s) to ${opts.service}`)
 }
 
-main().catch((err) => {
-  console.error('[render-headers] FAIL', err && err.message ? err.message : err)
-  process.exit(1)
-})
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  main().catch((err) => {
+    console.error('[render-headers] FAIL', err && err.message ? err.message : err)
+    process.exit(1)
+  })
+}

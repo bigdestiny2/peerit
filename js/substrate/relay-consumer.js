@@ -273,6 +273,7 @@ async function seedReadContextSnapshot (control, profile, candidate, context, re
     continuityRootRelayPublicKey: fixedHex(context.continuityRoot),
     storeId: fixedHex(context.storeId),
     descriptorGenesisHash,
+    descriptorHeadHash: fixedHex(context.descriptorHash),
     descriptorSequence: context.descriptorSequence,
     familyId: readContext.familyId,
     operationId: readContext.operationId,

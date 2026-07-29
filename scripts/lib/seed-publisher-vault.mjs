@@ -302,6 +302,14 @@ export function createPeeritSeedPublisherVaultV1 (options = {}) {
           parentRecordId: input.parentRecordId == null ? null : text(input.parentRecordId, 'parentRecordId', 512),
           minimumParentAgeMs: Number.isSafeInteger(input.minimumParentAgeMs) && input.minimumParentAgeMs >= 0 ? input.minimumParentAgeMs : 0,
           plannedRelays,
+          // The exact authored VNext envelope is part of the pre-send recovery
+          // boundary. v2 sealing is intentionally randomized, so recomposing a
+          // record after a crash would produce different bytes even though its
+          // public CID is stable. Persist it in the encrypted vault atomically
+          // with the plan before any Cell request can be prepared or sent.
+          recordMaterial: input.recordMaterial == null
+            ? null
+            : cloneNodeValue(plain(input.recordMaterial, 'recordMaterial')),
           replicas: Object.create(null),
           attempts: Object.create(null),
           putAttempts: Object.create(null),
@@ -314,12 +322,27 @@ export function createPeeritSeedPublisherVaultV1 (options = {}) {
               JSON.stringify([candidate.parentRecordId, candidate.minimumParentAgeMs, candidate.plannedRelays])) {
             fail('PEERIT_SEED_VAULT_PLAN_CONFLICT', `record ${recordId} conflicts with the durable plan`)
           }
+          if (candidate.recordMaterial != null &&
+              !sameNodeValue(existing.recordMaterial == null ? null : existing.recordMaterial, candidate.recordMaterial)) {
+            fail('PEERIT_SEED_VAULT_PLAN_CONFLICT', `record ${recordId} authored material conflicts with the durable plan`)
+          }
           continue
         }
         state.records[recordId] = candidate
       }
       return { manifestSha256, recordCount: Object.keys(state.records).length }
     })
+  }
+
+  async function loadRecordMaterial (recordId) {
+    const state = await load()
+    const record = state.records[text(recordId, 'recordId', 512)]
+    if (!record) fail('PEERIT_SEED_VAULT_UNKNOWN_RECORD', `record ${recordId} is not in the durable plan`)
+    if (record.recordMaterial == null) {
+      fail('PEERIT_SEED_VAULT_RECORD_MATERIAL_MISSING',
+        `record ${recordId} has no exact authored pre-send material`)
+    }
+    return cloneNodeValue(record.recordMaterial)
   }
 
   async function resumePlan (recordIds, at = now()) {
@@ -553,6 +576,7 @@ export function createPeeritSeedPublisherVaultV1 (options = {}) {
 
   return Object.freeze({
     bindPlan,
+    loadRecordMaterial,
     resumePlan,
     preparePutAttempt,
     loadPreparedAttempt,

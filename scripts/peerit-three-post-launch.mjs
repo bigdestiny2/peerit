@@ -255,11 +255,11 @@ export async function runThreePostLiveCliV1 (argv) {
     const plan = existing.records.length
       ? await recoverThreePostPlanV1(vault, { expectedManifestSha256: manifestSha256 })
       : await composeThreePostPlanV1({
-          selection,
-          personas: personas.value,
-          identityFor: identityRestorer(personas.value),
-          now: options.at
-        })
+        selection,
+        personas: personas.value,
+        identityFor: identityRestorer(personas.value),
+        now: options.at
+      })
     // The bridge is created before qualification so the raw Cell adapter cannot
     // exist without its exact encrypted pre-send callbacks.
     const bridge = createThreePostVaultBridgeV1({ vault, relayTuple })

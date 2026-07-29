@@ -126,7 +126,7 @@ const relayTuple = validateCurrentRelayTupleV1({
 })
 const remoteCells = new Map(relayTuple.relays.map(row => [row.relayId, new Map()]))
 const calls = []
-let ambiguousRecordId = plan.records[0].recordId
+const ambiguousRecordId = plan.records[0].recordId
 let ambiguousOnce = true
 
 function vault () {
@@ -226,7 +226,6 @@ function rawAdapter (adapterOptions, row) {
 }
 
 function createHashBytes (value, suffix = '') {
-  const hash = globalThis.crypto.subtle
   // Keep this synchronous fixture helper independent of application hashes.
   const input = Buffer.concat([Buffer.from(value), Buffer.from(String(suffix))])
   return new Uint8Array((awaitableHash(input)))

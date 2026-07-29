@@ -212,9 +212,9 @@ async function qualifyOne ({ row, control, runtime, bridge, fetchImpl }) {
   for (const link of chain) {
     await trustStore.accept(link.descriptor, link.parsed.descriptorSequence === 0n
       ? Object.freeze({
-          pinnedDescriptorHash: bytes(link.descriptorHash),
-          continuityRootRelayPublicKey: bytes(row.continuityRootRelayPublicKey)
-        })
+        pinnedDescriptorHash: bytes(link.descriptorHash),
+        continuityRootRelayPublicKey: bytes(row.continuityRootRelayPublicKey)
+      })
       : Object.freeze({ continuityRootRelayPublicKey: bytes(row.continuityRootRelayPublicKey) }))
   }
   const raw = []

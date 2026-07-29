@@ -1,6 +1,15 @@
 import { availabilityPolicyHash } from './availability-policy.mjs'
 import { hashBytes } from '../crypto.js'
-import { verifyBlindClientBrowserReleaseV1 } from './blind-client-browser-verifier.mjs'
+import {
+  verifyBlindClientBrowserReleaseV1,
+  verifyBlindClientCellGetBrowserReleaseV1
+} from './blind-client-browser-verifier.mjs'
+import {
+  PEERIT_LIMITED_CELL_GET_ARTIFACT_PATH_V1,
+  PEERIT_LIMITED_CELL_GET_MANIFEST_PATH_V1,
+  PEERIT_LIMITED_CELL_GET_PROFILE_PATH_V1,
+  verifyPeeritLimitedCellGetProfileV1
+} from './limited-cell-get-profile.mjs'
 import {
   decodePeeritProfileRegistry,
   hashPeeritProfileAbi,
@@ -42,7 +51,17 @@ export { PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1 } from './production-release-aut
 
 const PEERIT_SEED_BOOTSTRAP_PATH_V1 = '/peerit-seed-bootstrap-v1.json'
 const PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE = 13
+const PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE = 15
 const HEX_32 = /^[0-9a-f]{64}$/
+
+function browserRuntimeAssetPathsForRelease (releaseSequence) {
+  const limitedCellGet = BigInt(releaseSequence) ===
+    BigInt(PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE)
+  return Object.entries(PEERIT_BROWSER_RUNTIME_ASSET_PATHS)
+    .filter(([name]) => limitedCellGet ||
+      (!name.startsWith('hiveCellGet') && name !== 'limitedCellGetProfile'))
+    .map(([, path]) => path)
+}
 
 export const PEERIT_BROWSER_RUNTIME_ASSET_PATHS = Object.freeze({
   appArtifact: PEERIT_APP_ARTIFACT_PATH_V1,
@@ -51,6 +70,12 @@ export const PEERIT_BROWSER_RUNTIME_ASSET_PATHS = Object.freeze({
   hiveChromiumEvidence: '/vendor/hiverelay-blind-client-v1/blind-client-control-v1.chromium-evidence.json',
   hiveCrossHostEvidence: '/vendor/hiverelay-blind-client-v1/blind-client-control-v1.cross-host-evidence.json',
   hiveVendorAuthority: '/vendor/hiverelay-blind-client-v1/authority.json',
+  limitedCellGetProfile: PEERIT_LIMITED_CELL_GET_PROFILE_PATH_V1,
+  hiveCellGetArtifact: PEERIT_LIMITED_CELL_GET_ARTIFACT_PATH_V1,
+  hiveCellGetManifest: PEERIT_LIMITED_CELL_GET_MANIFEST_PATH_V1,
+  hiveCellGetChromiumEvidence: '/vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.chromium-evidence.json',
+  hiveCellGetCrossHostEvidence: '/vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.cross-host-evidence.json',
+  hiveCellGetVendorAuthority: '/vendor/hiverelay-blind-cell-get-v1/authority.json',
   profileSource: '/docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md',
   profileRegistry: '/protocol/peerit-profile-v1.cenc',
   profileVectorManifest: '/protocol/vectors/peerit-profile-v1.manifest.cenc',
@@ -67,6 +92,12 @@ const ASSET_HARD_CAPS = Object.freeze({
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveChromiumEvidence]: 16 * 1024,
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCrossHostEvidence]: 16 * 1024,
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveVendorAuthority]: 16 * 1024,
+  [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.limitedCellGetProfile]: 32 * 1024,
+  [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetArtifact]: 320 * 1024,
+  [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetManifest]: 16 * 1024,
+  [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetChromiumEvidence]: 16 * 1024,
+  [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetCrossHostEvidence]: 16 * 1024,
+  [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetVendorAuthority]: 16 * 1024,
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.profileSource]: 512 * 1024,
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.profileRegistry]: 1024 * 1024,
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.profileVectorManifest]: 128 * 1024,
@@ -109,6 +140,7 @@ export const PEERIT_BROWSER_RUNTIME_ASSEMBLY_STATUS = Object.freeze({
 })
 
 const VERIFIED_AUTHORITIES = new WeakMap()
+const VERIFIED_SEED_BOOTSTRAPS = new WeakMap()
 const LEASE_EPOCH_MILLIS = 21600000n
 const REQUIRED_CONTROL_EXPORTS = Object.freeze([
   'BlindDescriptorBootstrapHttpClient',
@@ -191,6 +223,17 @@ function assertControlModule (control) {
     if (typeof control[name] !== 'function') {
       fail('BLIND_CLIENT_BROWSER_MODULE_INVALID', `blind-client browser module is missing ${name}`)
     }
+  }
+}
+
+function assertCellGetControlModule (control) {
+  if (!control || typeof control !== 'object' ||
+      Object.keys(control).sort().join('\0') !==
+        ['createBlindCellGetControl', 'createBrowserCryptoRuntime'].sort().join('\0') ||
+      typeof control.createBlindCellGetControl !== 'function' ||
+      typeof control.createBrowserCryptoRuntime !== 'function') {
+    fail('BLIND_CLIENT_CELL_GET_BROWSER_MODULE_INVALID',
+      'limited blind-client browser module is not the exact two-export Cell-GET surface')
   }
 }
 
@@ -324,12 +367,13 @@ export function getVerifiedPeeritBrowserRuntimeAssembly (value) {
 export function getVerifiedPeeritBrowserSeedBootstrapV1 (value) {
   const record = VERIFIED_AUTHORITIES.get(value)
   if (!record) fail('PEERIT_AUTHENTICATED_RELAY_RUNTIME_AUTHORITY_REQUIRED', 'verified browser runtime authority is required')
-  if (!record.seedBootstrap) {
+  const seedBootstrap = VERIFIED_SEED_BOOTSTRAPS.get(value)
+  if (!seedBootstrap) {
     fail('PEERIT_AUTHENTICATED_SEED_BOOTSTRAP_REQUIRED', 'verified browser runtime has no release-bound seed bootstrap')
   }
   return Object.freeze({
-    artifactBytes: record.seedBootstrap.artifactBytes.slice(),
-    verification: Object.freeze({ ...record.seedBootstrap.verification })
+    artifactBytes: seedBootstrap.artifactBytes.slice(),
+    verification: Object.freeze({ ...seedBootstrap.verification })
   })
 }
 
@@ -401,7 +445,7 @@ async function assemblePeeritBrowserRuntimeAuthorityInternal (input, trusted) {
       'WebAssetManifestV1 release, app, or bootstrap binding does not match the production pin')
   }
   verifyPeeritWebAssetBytesV1(webAssetManifest, assets, {
-    requiredPaths: Object.values(PEERIT_BROWSER_RUNTIME_ASSET_PATHS),
+    requiredPaths: browserRuntimeAssetPathsForRelease(pin.releaseSequence),
     requireComplete: false
   })
   const appArtifactBytes = requireAsset(
@@ -419,6 +463,34 @@ async function assemblePeeritBrowserRuntimeAuthorityInternal (input, trusted) {
     chromiumEvidenceBytes: requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveChromiumEvidence),
     crossHostEvidenceBytes: requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCrossHostEvidence)
   })
+  const hiveCellGet = Number(pin.releaseSequence) === PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE
+    ? verifyBlindClientCellGetBrowserReleaseV1({
+      artifactBytes: requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetArtifact),
+      manifestBytes: requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetManifest),
+      chromiumEvidenceBytes: requireAsset(
+        assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetChromiumEvidence),
+      crossHostEvidenceBytes: requireAsset(
+        assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetCrossHostEvidence)
+    })
+    : null
+  if (hiveCellGet && (!sameTuple(hive.manifest, hiveCellGet.manifest) ||
+      !bytesEqual(hive.manifest.clientCompositionFormatHash,
+        hiveCellGet.manifest.clientCompositionFormatHash) ||
+      !bytesEqual(hive.manifest.clientCompositionVectorSetHash,
+        hiveCellGet.manifest.clientCompositionVectorSetHash))) {
+    fail('PRODUCTION_HIVERELAY_CELL_GET_TUPLE_MISMATCH',
+      'limited Cell-GET artifact does not share the authenticated HiveRelay tuple')
+  }
+  const limitedCellGetProfileBytes = hiveCellGet
+    ? requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.limitedCellGetProfile)
+    : null
+  if (hiveCellGet) {
+    verifyPeeritLimitedCellGetProfileV1(
+      limitedCellGetProfileBytes, {
+        releaseSequence: Number(pin.releaseSequence),
+        hive: hiveCellGet
+      })
+  }
   const emitSubstrate = Object.freeze({
     specHash: hive.manifest.specHash,
     abiHash: hive.manifest.abiHash,
@@ -489,6 +561,14 @@ async function assemblePeeritBrowserRuntimeAuthorityInternal (input, trusted) {
     canonicalPath: PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveArtifact
   }))
   assertControlModule(control)
+  const cellGetControl = hiveCellGet
+    ? await importModule(Object.freeze({
+      kind: 'hiverelay-blind-cell-get-client',
+      bytes: hiveCellGet.artifactBytes.slice(),
+      canonicalPath: PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetArtifact
+    }))
+    : null
+  if (cellGetControl) assertCellGetControlModule(cellGetControl)
   const clock = exactClock(trusted.clock)
   const authority = Object.freeze({
     version: 1,
@@ -506,9 +586,20 @@ async function assemblePeeritBrowserRuntimeAuthorityInternal (input, trusted) {
   })
   VERIFIED_AUTHORITIES.set(authority, Object.freeze({
     control,
+    limitedCellGet: cellGetControl
+      ? Object.freeze({
+        control: cellGetControl,
+        profileSnapshot () {
+          return verifyPeeritLimitedCellGetProfileV1(
+            limitedCellGetProfileBytes, {
+              releaseSequence: Number(pin.releaseSequence),
+              hive: hiveCellGet
+            })
+        }
+      })
+      : null,
     registry,
     verifiedPin,
-    seedBootstrap,
     validatorArtifactAuthenticated: true,
     validatorInstantiationAuthorized: false,
     createRelayAdapter (options) {
@@ -519,6 +610,7 @@ async function assemblePeeritBrowserRuntimeAuthorityInternal (input, trusted) {
       })
     }
   }))
+  if (seedBootstrap) VERIFIED_SEED_BOOTSTRAPS.set(authority, seedBootstrap)
   return authority
 }
 
@@ -926,7 +1018,8 @@ export async function loadPeeritBrowserRuntimeAuthorityV1 (options = {}) {
     }
     const signedAssets = new Map(webAssetManifest.assets.map(asset => [asset.path, asset]))
     let runtimeBootBytes = 0
-    for (const assetPath of Object.values(PEERIT_BROWSER_RUNTIME_ASSET_PATHS)) {
+    for (const assetPath of browserRuntimeAssetPathsForRelease(
+      production.pin.releaseSequence)) {
       const asset = signedAssets.get(assetPath)
       if (!asset) fail('WEB_ASSET_MISSING', `${assetPath} is absent from signed WebAssetManifestV1`)
       const length = Number(asset.byteLength)

@@ -9,6 +9,7 @@ import {
 
 const MAGIC = utf8Bytes('HIVERELAY-BLIND-CLIENT-BROWSER-V1')
 const ARTIFACT_PATH = 'browser-artifacts/blind-client-control-v1.mjs'
+const CELL_GET_ARTIFACT_PATH = 'browser-artifacts/blind-client-cell-get-v1.mjs'
 const MAX_ARTIFACT_BYTES = 320 * 1024
 const ARTIFACT_HASH_DOMAIN = 'hiverelay.blind.client-browser-artifact-hash.v1'
 const MANIFEST_HASH_DOMAIN = 'hiverelay.blind.client-browser-artifact-manifest-hash.v1'
@@ -19,6 +20,13 @@ const CHROMIUM_CHECKS = Object.freeze([
   'WEBCRYPTO_AES_256_GCM_ROUNDTRIP',
   'SIGNED_CAPABILITY_CELL_COMPOSITION',
   'PLAINTEXT_SENTINEL_ABSENT_FROM_REQUEST'
+])
+const CELL_GET_CHROMIUM_CHECKS = Object.freeze([
+  'STANDALONE_ESM_IMPORT',
+  'EXACT_CELL_GET_ONLY_EXPORTS',
+  'WEBCRYPTO_AES_256_GCM_ROUNDTRIP',
+  'FIXED_CELL_GET_OPERATION_BOUNDARY',
+  'FORWARD_CANDIDATE_CODE_ABSENT'
 ])
 const CROSS_HOST_CHECKS = Object.freeze([
   'CLEAN_LINUX_DEPENDENCY_INSTALL',
@@ -83,7 +91,7 @@ class Reader {
   }
 }
 
-export function decodeBlindClientBrowserManifestV1 (input) {
+function decodeManifest (input, expectedArtifactPath) {
   const reader = new Reader(input)
   if (!bytesEqual(reader.take(MAGIC.byteLength, 'magic'), MAGIC) ||
       reader.u8('version') !== 1 || reader.u8('draft') !== 0) {
@@ -105,11 +113,15 @@ export function decodeBlindClientBrowserManifestV1 (input) {
     artifactHash: fixed32(reader.take(32, 'artifactHash'), 'artifactHash')
   })
   reader.end()
-  if (value.artifactPath !== ARTIFACT_PATH || value.artifactLength < 1n ||
+  if (value.artifactPath !== expectedArtifactPath || value.artifactLength < 1n ||
       value.artifactLength > BigInt(MAX_ARTIFACT_BYTES)) {
     fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', 'blind-client browser artifact path or size is invalid')
   }
   return value
+}
+
+export function decodeBlindClientBrowserManifestV1 (input) {
+  return decodeManifest(input, ARTIFACT_PATH)
 }
 
 function canonicalEvidence (input, field) {
@@ -140,10 +152,10 @@ function exactChecks (actual, expected, field) {
   }
 }
 
-export function verifyBlindClientBrowserReleaseV1 (input) {
+function verifyRelease (input, profile) {
   const manifestBytes = new Uint8Array(asBytes(input.manifestBytes, 'blind-client browser manifest'))
   const artifactBytes = new Uint8Array(asBytes(input.artifactBytes, 'blind-client browser artifact'))
-  const manifest = decodeBlindClientBrowserManifestV1(manifestBytes)
+  const manifest = decodeManifest(manifestBytes, profile.artifactPath)
   const manifestHash = domainLengthHash(MANIFEST_HASH_DOMAIN, manifestBytes)
   const artifactHash = domainLengthHash(ARTIFACT_HASH_DOMAIN, artifactBytes)
   if (BigInt(artifactBytes.byteLength) !== manifest.artifactLength ||
@@ -151,7 +163,7 @@ export function verifyBlindClientBrowserReleaseV1 (input) {
     fail('BLIND_CLIENT_BROWSER_ARTIFACT_DRIFT', 'blind-client browser artifact does not match its manifest')
   }
   const expected = {
-    artifactPath: ARTIFACT_PATH,
+    artifactPath: profile.artifactPath,
     artifactLength: artifactBytes.byteLength,
     artifactHash: bytesToHex(artifactHash),
     manifestHash: bytesToHex(manifestHash),
@@ -184,7 +196,7 @@ export function verifyBlindClientBrowserReleaseV1 (input) {
       crossHost.passed !== true || !/^sha256:[0-9a-f]{64}$/.test(crossHost.containerImageId)) {
     fail('BAD_BLIND_CLIENT_BROWSER_RELEASE_EVIDENCE', 'cross-host evidence authority is invalid')
   }
-  exactChecks(chromium.checks, CHROMIUM_CHECKS, 'Chromium evidence')
+  exactChecks(chromium.checks, profile.chromiumChecks, 'Chromium evidence')
   exactChecks(crossHost.checks, CROSS_HOST_CHECKS, 'cross-host evidence')
   return Object.freeze({
     manifest,
@@ -199,4 +211,18 @@ export function verifyBlindClientBrowserReleaseV1 (input) {
       node: crossHost.node
     })
   })
+}
+
+export function verifyBlindClientBrowserReleaseV1 (input) {
+  return verifyRelease(input, Object.freeze({
+    artifactPath: ARTIFACT_PATH,
+    chromiumChecks: CHROMIUM_CHECKS
+  }))
+}
+
+export function verifyBlindClientCellGetBrowserReleaseV1 (input) {
+  return verifyRelease(input, Object.freeze({
+    artifactPath: CELL_GET_ARTIFACT_PATH,
+    chromiumChecks: CELL_GET_CHROMIUM_CHECKS
+  }))
 }

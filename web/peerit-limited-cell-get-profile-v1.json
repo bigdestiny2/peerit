@@ -1,0 +1,80 @@
+{
+  "schema": "peerit-limited-cell-get-profile-v1",
+  "version": 1,
+  "releaseSequence": 15,
+  "mode": "seed-recovery-only",
+  "ordinaryDelivery": "local-only",
+  "networkPuts": 0,
+  "maximumDescriptorHistory": 4096,
+  "hiveCellGet": {
+    "artifactPath": "/vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.mjs",
+    "manifestPath": "/vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.manifest.cenc",
+    "artifactHash": "e04b514a4f828d8b557b833c37cea00fab37046bbc2d108c557924a9302259e1",
+    "manifestHash": "80fbff28284f1ef2e369871090be260050482b5b8d62b92b3d38670381f5a17d"
+  },
+  "supportedProtocolProfiles": [
+    {
+      "protocolId": 1,
+      "major": 1,
+      "minimumMinor": 0,
+      "profileHash": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+    },
+    {
+      "protocolId": 2,
+      "major": 1,
+      "minimumMinor": 0,
+      "profileHash": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+    },
+    {
+      "protocolId": 3,
+      "major": 1,
+      "minimumMinor": 0,
+      "profileHash": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+    },
+    {
+      "protocolId": 4,
+      "major": 1,
+      "minimumMinor": 0,
+      "profileHash": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+    }
+  ],
+  "supportedTransportProfiles": [
+    {
+      "transportId": 1,
+      "transportSupportBit": 1,
+      "transportProfileHash": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+    }
+  ],
+  "requirement": {
+    "familyId": 2,
+    "operationId": 2,
+    "endpointId": 1,
+    "requiredRoleBits": 49,
+    "privacyProfileBit": 1,
+    "transportSupportBit": 1
+  },
+  "relays": [
+    {
+      "relayId": "dal-1",
+      "admissionProfile": {
+        "profileId": 7,
+        "schemeId": 9,
+        "conformanceClass": 1,
+        "roleBits": 49,
+        "parameterUrl": null,
+        "parameterHash": "8748eaafd273695eb1d22282c8278cd733898f00ff137f238d8d5e300a148cc4"
+      }
+    },
+    {
+      "relayId": "syd-1",
+      "admissionProfile": {
+        "profileId": 7,
+        "schemeId": 9,
+        "conformanceClass": 1,
+        "roleBits": 49,
+        "parameterUrl": null,
+        "parameterHash": "a474226ced549bea08cb1e7af20f4104561a4818482b20815f6c63b632e0762b"
+      }
+    }
+  ]
+}

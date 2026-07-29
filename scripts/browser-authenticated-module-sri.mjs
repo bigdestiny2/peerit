@@ -8,7 +8,10 @@ import { chromium, firefox, webkit } from 'playwright'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const CSP = "default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; " +
-  "connect-src 'self'; img-src 'none'; style-src 'none'; frame-ancestors 'none'"
+  "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: hyper: pear:; " +
+  "connect-src 'self' hyper: pear: https://relay-syd.p2phiverelay.xyz " +
+  "https://relay-dal.p2phiverelay.xyz; frame-ancestors 'none'; form-action 'none'"
+const VALIDATOR_PATH = '/protocol/validator/peerit-validator-v1.bare.mjs'
 const VERIFIED_MODULE = Buffer.from(
   "globalThis.__peeritSriStableExecutions=(globalThis.__peeritSriStableExecutions||0)+1;export const marker='verified';\n")
 const MALICIOUS_STABLE_MODULE = Buffer.from(
@@ -28,6 +31,13 @@ async function authenticatedBytes(path) {
 }
 
 async function run() {
+  const validatorBytes = await authenticatedBytes('${VALIDATOR_PATH}')
+  const validator = await importAuthenticatedSameOriginModuleV1({
+    bytes: validatorBytes,
+    canonicalPath: '${VALIDATOR_PATH}',
+    timeoutMillis: 10000
+  })
+  const validatorVector = validator.computePeeritValidatorRuntimeVectorV1()
   const stableBytes = await authenticatedBytes('/sri-stable.mjs')
   const stable = await importAuthenticatedSameOriginModuleV1({
     bytes: stableBytes,
@@ -47,6 +57,9 @@ async function run() {
   }
   const countResponse = await fetch('/sri-counts.json', { cache: 'no-store' })
   globalThis.__peeritSriResult = {
+    validatorSchemaCount: validator.PEERIT_VALIDATOR_PROFILE_BINDING_V1.schemaCount,
+    validatorVectorHex: [...validatorVector]
+      .map(byte => byte.toString(16).padStart(2, '0')).join(''),
     stableMarker: stable.marker,
     stableExecutions: globalThis.__peeritSriStableExecutions || 0,
     maliciousStableExecuted: globalThis.__peeritSriMaliciousExecuted === true,
@@ -136,6 +149,10 @@ try {
       await page.waitForFunction(() => globalThis.__peeritSriResult != null, null, { timeout: 30000 })
       const result = await page.evaluate(() => globalThis.__peeritSriResult)
       assert.equal(result.fatal, undefined, `${name} runtime failed: ${JSON.stringify(result.fatal)}`)
+      assert.equal(result.validatorSchemaCount, 78, `${name} validator binding drifted`)
+      assert.equal(result.validatorVectorHex,
+        `0101${'11'.repeat(32)}${'22'.repeat(32)}${'33'.repeat(32)}`,
+        `${name} validator did not execute under the exact production CSP`)
       assert.equal(result.stableMarker, 'verified', `${name} imported substituted stable bytes`)
       assert.equal(result.stableExecutions, 1, `${name} evaluated the authenticated module more than once`)
       assert.equal(result.maliciousStableExecuted, false, `${name} executed a later stable response`)

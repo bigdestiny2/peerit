@@ -36,6 +36,10 @@ import {
   hashPeeritWebAssetManifestV1
 } from '../js/substrate/web-asset-manifest.mjs'
 import {
+  PEERIT_SEQUENCE_18_VALIDATOR_ARTIFACT_HASH,
+  PEERIT_SEQUENCE_19_VALIDATOR_ARTIFACT_HASH,
+  assertProductionPredecessorBindingsV1,
+  deriveProductionPinBindingsV1,
   finalizeProductionPinHistoryV1,
   prepareProductionPinHistoryPrefixV1,
   releaseSigningSeedFromEnvironment
@@ -386,24 +390,57 @@ const final15 = await finalizeSuccessor(15, final14.bundleBytes, 20_000)
 const final16 = await finalizeSuccessor(16, final15.bundleBytes, 30_000)
 const final17 = await finalizeSuccessor(17, final16.bundleBytes, 40_000)
 const final18 = await finalizeSuccessor(18, final17.bundleBytes, 50_000)
-assert.equal(decodePeeritPinHistoryBundleV1(final18.bundleBytes).pins.length, 19)
+const final18Terminal = decodePeeritHiveRelayProfilePinV1(
+  decodePeeritPinHistoryBundleV1(final18.bundleBytes).pins[18])
+const transitionBindings = deriveProductionPinBindingsV1(fixtureRoot)
+assert.equal(bytesToHex(transitionBindings.validatorArtifactHash),
+  PEERIT_SEQUENCE_19_VALIDATOR_ARTIFACT_HASH)
+const historicalSequence18 = {
+  ...final18Terminal,
+  validatorArtifactHash: new Uint8Array(Buffer.from(
+    PEERIT_SEQUENCE_18_VALIDATOR_ARTIFACT_HASH, 'hex'))
+}
+assert.doesNotThrow(() => assertProductionPredecessorBindingsV1(
+  historicalSequence18, transitionBindings, 19))
+assert.throws(() => assertProductionPredecessorBindingsV1(
+  historicalSequence18, transitionBindings, 20), /validatorArtifactHash is stale/)
+assert.throws(() => assertProductionPredecessorBindingsV1({
+  ...historicalSequence18,
+  releaseSequence: 17n
+}, transitionBindings, 19), /validatorArtifactHash is stale/)
+assert.throws(() => assertProductionPredecessorBindingsV1({
+  ...historicalSequence18,
+  readSubstrates: [{
+    specHash: new Uint8Array(32),
+    abiHash: new Uint8Array(32),
+    vectorSetHash: new Uint8Array(32)
+  }]
+}, transitionBindings, 19), /substrate does not match/)
+assert.throws(() => assertProductionPredecessorBindingsV1(
+  historicalSequence18, {
+    ...transitionBindings,
+    validatorArtifactHash: new Uint8Array(Buffer.from('ff'.repeat(32), 'hex'))
+  }, 19), /validatorArtifactHash is stale/)
+const final19 = await finalizeSuccessor(19, final18.bundleBytes, 60_000)
+const final20 = await finalizeSuccessor(20, final19.bundleBytes, 70_000)
+assert.equal(decodePeeritPinHistoryBundleV1(final20.bundleBytes).pins.length, 21)
 await assert.rejects(predictPeeritProductionRuntimeV1({
   root: fixtureRoot,
   fixtureOnly: true,
-  configBytes: predictionConfig(19),
-  pinHistoryBytes: final18.bundleBytes,
+  configBytes: predictionConfig(21),
+  pinHistoryBytes: final20.bundleBytes,
   seedBootstrapBytes: bootstrap14Bytes,
   sourceFiles: predictionSourceFiles
-}), /sequence 13\.\.18/)
+}), /sequence 13\.\.20/)
 await assert.rejects(finalizeProductionPinHistoryV1({
   ...finalizeOptions,
-  releaseSequence: 19,
-  prefixBundleBytes: final18.bundleBytes
-}), /between 13 and 18/)
+  releaseSequence: 21,
+  prefixBundleBytes: final20.bundleBytes
+}), /between 13 and 20/)
 await assert.rejects(finalizeProductionPinHistoryV1({
   ...finalizeOptions,
   releaseSequence: 12
-}), /between 13 and 18/)
+}), /between 13 and 20/)
 
 const tampered = Buffer.from(prefixA.bundleBytes)
 tampered[tampered.length - 1] ^= 1
@@ -421,4 +458,4 @@ await assert.rejects(finalizeProductionPinHistoryV1({
   seedBootstrapBytes: wrongBootstrap
 }))
 
-console.log('peerit-production-pin-history-ceremony: deterministic 13..18 prefix/finalization, exact bindings, tamper/wrong-key/order rejection green')
+console.log('peerit-production-pin-history-ceremony: deterministic 13..20 prefix/finalization, exact bindings, tamper/wrong-key/order rejection green')

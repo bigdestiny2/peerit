@@ -22,7 +22,7 @@ import {
   pinHistoryBundleHash,
   profilePinHash
 } from '../js/substrate/release-control-codec.mjs'
-import { bytesEqual, bytesToHex } from '../js/substrate/release-control-primitives.mjs'
+import { bytesToHex } from '../js/substrate/release-control-primitives.mjs'
 import { normalizePeeritReleaseRelayHintsV1 } from '../js/substrate/release-relay-hints.mjs'
 import { PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1, PEERIT_PRODUCTION_PIN_HISTORY_PATH } from '../js/substrate/production-release-authority.mjs'
 import {
@@ -33,6 +33,7 @@ import {
 import { SUBSTRATE_SITE_FILES } from '../publish.mjs'
 import {
   PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE,
+  assertProductionPredecessorBindingsV1,
   deriveProductionPinBindingsV1
 } from './production-pin-history-ceremony.mjs'
 import {
@@ -140,20 +141,12 @@ function sourceHashes (sourceFiles) {
     .map(([path, bytes]) => [path, sha256(bytes)]))
 }
 
-function assertProductionBindings (terminal, root) {
+function assertProductionBindings (terminal, root, successorSequence) {
   const expected = deriveProductionPinBindingsV1(root)
-  for (const field of [
-    'profileSpecHash', 'profileAbiHash', 'profileVectorSetHash',
-    'validatorArtifactHash', 'validatorVectorSetHash', 'availabilityPolicyHash',
-    'legacySourceSetHash'
-  ]) {
-    if (!bytesEqual(terminal[field], expected[field])) fail(`predecessor pin ${field} has drifted from the frozen source`)
-  }
-  if (!bytesEqual(terminal.emitSubstrate.specHash, expected.emitSubstrate.specHash) ||
-      !bytesEqual(terminal.emitSubstrate.abiHash, expected.emitSubstrate.abiHash) ||
-      !bytesEqual(terminal.emitSubstrate.vectorSetHash, expected.emitSubstrate.vectorSetHash) ||
-      terminal.readSubstrates.length !== 1) {
-    fail('predecessor pin HiveRelay substrate tuple has drifted from the frozen source')
+  try {
+    assertProductionPredecessorBindingsV1(terminal, expected, successorSequence)
+  } catch (error) {
+    fail(`predecessor pin has drifted from the frozen source: ${error.message}`)
   }
 }
 
@@ -184,7 +177,7 @@ async function verifyPredecessor (bytes, config, root, fixtureOnly) {
       fail('production authority/genesis is not compiled', 'PRODUCTION_PEERIT_RELEASE_AUTHORITY_UNPINNED')
     }
     await verifyPeeritProductionPinHistoryReleaseV1(verifyOptions)
-    assertProductionBindings(terminal, root)
+    assertProductionBindings(terminal, root, config.releaseSequence)
   }
   return { decoded, terminal }
 }

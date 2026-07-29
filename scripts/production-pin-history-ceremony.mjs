@@ -3,9 +3,9 @@
 // Offline, two-phase production pin-history ceremony. The command accepts the
 // signing seed only from process environment, never from argv or a file. Phase
 // one reconstructs and signs the disclosed 0..12 prefix and compiles its trust
-// root. Phase two appends exactly one predicted runtime (13 through 18) after
-// checking the signed seed bootstrap and canonical Web closure. Sequence 17 is
-// the exact-URL Cell GET recovery release; sequence 18 is its cold rollback.
+// root. Phase two appends exactly one predicted runtime (13 through 20) after
+// checking the signed seed bootstrap and canonical Web closure. Sequence 19 is
+// the CSP-safe browser recovery release; sequence 20 is its cold rollback.
 
 import {
   createHash,
@@ -76,7 +76,12 @@ export const PEERIT_PRODUCTION_CEREMONY_SCHEMA_V1 = 'peerit-production-pin-histo
 export const PEERIT_SEED_BOOTSTRAP_PATH = '/peerit-seed-bootstrap-v1.json'
 export const PEERIT_PRODUCTION_PREFIX_TERMINAL_SEQUENCE = 12
 export const PEERIT_PRODUCTION_CEREMONY_MIN_RELEASE_SEQUENCE = 13
-export const PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE = 18
+export const PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE = 20
+export const PEERIT_CSP_SAFE_VALIDATOR_TRANSITION_RELEASE_SEQUENCE = 19
+export const PEERIT_SEQUENCE_18_VALIDATOR_ARTIFACT_HASH =
+  '9e4c2e57769d005bee92a227751e559144824553b202401fb89c06d4bca55b2a'
+export const PEERIT_SEQUENCE_19_VALIDATOR_ARTIFACT_HASH =
+  'c92f1b402d745fc5d8235358bc7909a50cb23b230e75de605fd421fc500f9613'
 export const PEERIT_ACCEPTED_SEQUENCE_12_APP_HASH = 'b34628cb7580e8decb9f3dfced4dceaff6220573d6cba31970f3b1b7f165c292'
 export const PEERIT_ACCEPTED_SEQUENCE_12_WEB_HASH = 'fb79fd6c8ec4bd628aff8a1007a88f9200117903f6356cc41ab16bc1d308229c'
 
@@ -384,17 +389,41 @@ export async function prepareProductionPinHistoryPrefixV1 (options = {}) {
   })
 }
 
-function assertTerminalBindings (pin, bindings, publicKey) {
+export function assertProductionPredecessorBindingsV1 (pin, bindings, successorSequence) {
+  if (!Number.isSafeInteger(successorSequence) ||
+      successorSequence < PEERIT_PRODUCTION_CEREMONY_MIN_RELEASE_SEQUENCE ||
+      successorSequence > PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE) {
+    fail('successor release sequence is outside the production ceremony window')
+  }
   for (const field of [
     'profileSpecHash', 'profileAbiHash', 'profileVectorSetHash',
     'validatorArtifactHash', 'validatorVectorSetHash', 'availabilityPolicyHash',
     'legacySourceSetHash'
-  ]) if (!bytesEqual(pin[field], bindings[field])) fail(`prefix terminal ${field} is stale`)
+  ]) {
+    if (bytesEqual(pin[field], bindings[field])) continue
+    const exactCspSafeValidatorTransition =
+      field === 'validatorArtifactHash' &&
+      successorSequence === PEERIT_CSP_SAFE_VALIDATOR_TRANSITION_RELEASE_SEQUENCE &&
+      pin.releaseSequence === BigInt(successorSequence - 1) &&
+      bytesToHex(pin.validatorArtifactHash) === PEERIT_SEQUENCE_18_VALIDATOR_ARTIFACT_HASH &&
+      bytesToHex(bindings.validatorArtifactHash) === PEERIT_SEQUENCE_19_VALIDATOR_ARTIFACT_HASH
+    if (!exactCspSafeValidatorTransition) fail(`prefix terminal ${field} is stale`)
+  }
   if (!bytesEqual(pin.emitSubstrate.specHash, bindings.emitSubstrate.specHash) ||
       !bytesEqual(pin.emitSubstrate.abiHash, bindings.emitSubstrate.abiHash) ||
       !bytesEqual(pin.emitSubstrate.vectorSetHash, bindings.emitSubstrate.vectorSetHash) ||
-      pin.readSubstrates.length !== 1 || !bytesEqual(pin.releaseAuthorityPublicKey, publicKey)) {
-    fail('prefix terminal substrate or authority does not match the repository')
+      pin.readSubstrates.length !== 1 || bindings.readSubstrates.length !== 1 ||
+      !bytesEqual(pin.readSubstrates[0].specHash, bindings.readSubstrates[0].specHash) ||
+      !bytesEqual(pin.readSubstrates[0].abiHash, bindings.readSubstrates[0].abiHash) ||
+      !bytesEqual(pin.readSubstrates[0].vectorSetHash, bindings.readSubstrates[0].vectorSetHash)) {
+    fail('prefix terminal substrate does not match the repository')
+  }
+}
+
+function assertTerminalBindings (pin, bindings, publicKey, successorSequence) {
+  assertProductionPredecessorBindingsV1(pin, bindings, successorSequence)
+  if (!bytesEqual(pin.releaseAuthorityPublicKey, publicKey)) {
+    fail('prefix terminal authority does not match the repository')
   }
 }
 
@@ -435,7 +464,7 @@ export async function finalizeProductionPinHistoryV1 (options = {}) {
       !bytesEqual(checked.pins[0].releaseAuthorityPublicKey, publicKey)) {
     fail(`input bundle must be a contiguous authority-matched 0..${sequence - 1} prefix`)
   }
-  assertTerminalBindings(terminal, bindings, publicKey)
+  assertTerminalBindings(terminal, bindings, publicKey, sequence)
 
   const bootstrapBytes = exactBytes(options.seedBootstrapBytes, 'seed bootstrap')
   const canonicalBootstrap = encodePeeritSeedBootstrapV1(bootstrapBytes)

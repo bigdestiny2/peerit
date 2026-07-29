@@ -759,9 +759,10 @@ function verifyDocs () {
 //
 // The owner's recorded canary decisions bind two successive bounded releases:
 // 13/14 for the original two-relay three-post publication, 15/16 for the rejected
-// null-URL recovery attempt and its containment rollback, and 17/18 for the exact
-// signed parameter-URL correction and its cold rollback. In each pair the even
-// sequence is prepared only as the monotonic rollback. The all-five successor
+// null-URL recovery attempt and its containment rollback, 17/18 for the exact
+// signed parameter-URL correction and its cold rollback, and 19/20 for the
+// CSP-safe authenticated browser recovery and its cold rollback. In each pair
+// the even sequence is prepared only as the monotonic rollback. The all-five successor
 // remains excluded and the GA product gate remains honestly blocked. This scope verifies everything
 // the selected canary actually is — frozen signed artifact bytes, manifest,
 // pin-history continuity, substrate profile blind-v1, both relay hints, CSP
@@ -776,6 +777,10 @@ const CANARY_EXACT_ADMISSION_URL_DECISION_FILE =
   'deploy/canary-decision-peerit-seq17-exact-admission-url-recovery-20260729.json'
 const CANARY_EXACT_ADMISSION_URL_DECISION_SHA256 =
   'd218d4c2ff9c651b96450e5caf85911fe1e715767eecd129c8a7c20ad443297a'
+const CANARY_CSP_SAFE_RECOVERY_DECISION_FILE =
+  'deploy/canary-decision-peerit-seq19-csp-safe-live-recovery-20260729.json'
+const CANARY_CSP_SAFE_RECOVERY_DECISION_SHA256 =
+  '1dfbb512cdd306dec903a407831cc3911c5844ded6e29c38d641bf700b4c1605'
 const CANARY_PIN_HISTORY_FILE = 'deploy/web-release-pin-history.json'
 const CANARY_PIN_HISTORY_SIG_FILE = 'deploy/web-release-pin-history.json.sig.json'
 
@@ -796,6 +801,143 @@ function verifyCanaryOwnerDecision (release) {
     'fc80b076becb28c9fbda596def255246cd506fc5ed4e5f4d22499c5cdad95f1b',
     '52f99d16c0ab47bdad025cbd4138549802e552d55835435588887e7ca178e3a6'
   ]
+  if (release.releaseSequence >= 19 && release.releaseSequence <= 20) {
+    const decision = readCanaryOwnerDecision(
+      CANARY_CSP_SAFE_RECOVERY_DECISION_FILE,
+      CANARY_CSP_SAFE_RECOVERY_DECISION_SHA256)
+    const activation = decision.activation || {}
+    const authority = decision.authority || {}
+    const exactUrl = decision.exact_admission_parameter_url || {}
+    const csp = decision.production_csp || {}
+    const runtimeGate = decision.production_runtime_gate || {}
+    const rootCause = decision.root_cause || {}
+    const validator = decision.csp_safe_validator_authority || {}
+    const cellGet = decision.fixed_cell_get_authority || {}
+    const relays = decision.relay_authority || {}
+    const followups = Array.isArray(decision.followups) ? decision.followups.join('\n') : ''
+    if (decision.schema_version !== 5 ||
+        decision.decision_id !== 'peerit-seq19-csp-safe-two-relay-live-recovery-20260729' ||
+        decision.status !== 'DECIDED' ||
+        !String(decision.decision || '').startsWith('ACCEPT Peerit release sequence 19') ||
+        !followups.includes('GA product gate remains honestly blocked')) {
+      throw new Error('sequence-19 CSP-safe recovery decision is not the recorded owner ACCEPT')
+    }
+    if (authority.baseline_commit !== '9f4cb0d600d5df6ed927b9220ea713dab9a1e49b' ||
+        authority.baseline_tree !== '0268f2a59a51db0a7ada73679f2451e5bc6718a2' ||
+        authority.baseline_release_sequence !== 18 ||
+        authority.failed_sequence_17_deploy_id !== 'dep-d9l6u1b7uimc738lsik0' ||
+        authority.containment_sequence_18_deploy_id !== 'dep-d9l6vn2jobas738ogetg' ||
+        authority.incident_evidence_sha256 !== '4259c947ba1d1ebf9d9bcd323a015c2a01df051fb2d2c085f42df1e53e879d0e' ||
+        authority.incident_handoff_sha256 !== '2661648ba7179f43fc8ee71ac9e5b53d611ceaf802c5bac70ab79016516231d0' ||
+        authority.root_cause_diagnostic_sha256 !== 'cd65c0c3080e5b64ad5a79b70b7f8506409c4b49825c8e0dbbaabb6e8ff07eb4' ||
+        authority.maintenance_run_id !== 'peerit-seq19-csp-safe-live-recovery-20260729t220328z' ||
+        authority.context_lock_digest !== '63cf32c6f6a16b954a793fc87877212f1d2ad8db114d9910507f6033dd059890' ||
+        authority.source_acceptance_sha256 !== '0326f1efac7cec332875c6ecf5e1fce78edcd2bfec954fb4b903fb8b72677824') {
+      throw new Error('CSP-safe recovery decision does not bind the accepted incident and run authority')
+    }
+    if (activation.functional_release_sequence !== 19 ||
+        activation.rollback_release_sequence !== 20 ||
+        activation.rollback_posture !== 'COLD_FAIL_CLOSED_BEFORE_RELAY_IO_AT_SEQUENCE_20' ||
+        activation.limited_cell_get_authority_release_sequence !== 19 ||
+        activation.rollback_limited_cell_get_runtime_authority_exposed !== false ||
+        activation.rollback_generic_limited_get_assets !==
+          'PRESENT_BUT_INERT_AND_EXCLUDED_FROM_RUNTIME_AUTHORITY' ||
+        activation.claim_boundary !== 'LIVE_PUBLIC_TEST_ONLY' ||
+        JSON.stringify(activation.relays) !== JSON.stringify(['dal-1', 'syd-1']) ||
+        JSON.stringify(activation.allowed_browser_operations) !==
+          JSON.stringify(['DESCRIBE.GET', 'DESCRIBE.CHALLENGE', 'CELL.GET']) ||
+        activation.network_puts_during_recovery !== 0 ||
+        activation.ordinary_delivery !== 'LOCAL_ONLY' ||
+        activation.seed_record_count !== 4 || activation.historical_seed_put_count !== 8 ||
+        JSON.stringify(activation.post_cids) !== JSON.stringify(exactPostCids) ||
+        activation.all_five_successor !==
+          'EXCLUDED_AND_LOCKED_UNTIL_AFTER_SEQUENCE_19_LIVE_ACCEPTANCE') {
+      throw new Error('CSP-safe decision does not bind the exact seq19/seq20 two-relay recovery scope')
+    }
+    if (csp.policy_file !== 'deploy/render-security-headers.json' ||
+        csp.policy_file_sha256 !== 'dc97c87d08bb773712cc739c37ffd4c62c121f7c92c01b20b3a8bf4a14f95724' ||
+        csp.script_src !== "'self'" || csp.unsafe_eval !== 'FORBIDDEN' ||
+        csp.wasm_unsafe_eval !== 'FORBIDDEN' || csp.expansion !== 'FORBIDDEN' ||
+        csp.parameter_url_origin_addition !== 'FORBIDDEN' ||
+        rootCause.classification !== 'VALIDATOR_WASM_BLOCKED_BY_RELEASE_CSP' ||
+        !String(rootCause.exact_exception || '').includes('WebAssembly.Module()') ||
+        !String(rootCause.exact_exception || '').includes("script-src 'self'")) {
+      throw new Error('CSP-safe decision does not bind the exact unchanged policy and root cause')
+    }
+    if (exactUrl.utf8 !== 'https://evidence.example:443/admission.cenc' ||
+        exactUrl.utf8_hex !==
+          '68747470733a2f2f65766964656e63652e6578616d706c653a3434332f61646d697373696f6e2e63656e63' ||
+        exactUrl.semantics !== 'EVIDENCE_MIRROR_HINT_ONLY' ||
+        exactUrl.browser_fetch !== 'FORBIDDEN' ||
+        exactUrl.dns_resolution !== 'FORBIDDEN' ||
+        exactUrl.url_parsing_or_normalization !== 'FORBIDDEN' ||
+        exactUrl.csp_change !== 'FORBIDDEN' ||
+        exactUrl.comparison !== 'EXACT_SIGNED_UTF8_BYTES') {
+      throw new Error('CSP-safe decision does not bind the exact no-fetch parameterUrl contract')
+    }
+    const gate19 = runtimeGate.sequence_19 || {}
+    const gate20 = runtimeGate.sequence_20 || {}
+    if (runtimeGate.script !== 'scripts/browser-peerit-production-runtime-gate.mjs' ||
+        runtimeGate.functional_mode !== 'live-two-relay' ||
+        runtimeGate.rollback_mode !== 'rollback-preio' ||
+        runtimeGate.full_authority_loader !== 'loadPeeritBrowserRuntimeAuthorityV1' ||
+        runtimeGate.production_pin_history_loader !== 'loadPeeritProductionPinHistoryTerminalV1' ||
+        runtimeGate.authority_active_before_relay_io !== true ||
+        gate19.expected_network_gets !== 5 || gate19.expected_fallback_count !== 1 ||
+        gate19.expected_record_count !== 4 || gate19.expected_cell_bytes !== 16384 ||
+        gate19.expected_network_puts !== 0 || gate19.expected_parameter_url_requests !== 0 ||
+        gate19['dal-1']?.origin !== 'https://relay-dal.p2phiverelay.xyz' ||
+        gate19['dal-1']?.descriptor_head_sha256 !== '549fd1df9b5cdba8ca2d97ab842bbda6a4a1433d79a82e230d8807bbd97cfebe' ||
+        gate19['dal-1']?.injected_cell_get_failures !== 1 ||
+        gate19['dal-1']?.successful_cell_gets !== 3 ||
+        gate19['dal-1']?.verified_readback_evidence_count !== 3 ||
+        gate19['syd-1']?.origin !== 'https://relay-syd.p2phiverelay.xyz' ||
+        gate19['syd-1']?.descriptor_head_sha256 !== 'a4cbfe23176862cf5dbfae962ad3b919063073c4a51abe20ef4ae06c05a32153' ||
+        gate19['syd-1']?.injected_cell_get_failures !== 0 ||
+        gate19['syd-1']?.successful_cell_gets !== 1 ||
+        gate19['syd-1']?.verified_readback_evidence_count !== 1 ||
+        gate20.browser_runtime_authority_active !== true ||
+        gate20.limited_cell_get_runtime_authority_exposed !== false ||
+        gate20.expected_error_code !== 'PEERIT_LIMITED_CELL_GET_CONTROL_INVALID' ||
+        gate20.expected_relay_requests !== 0 || gate20.expected_network_puts !== 0) {
+      throw new Error('CSP-safe decision does not bind the named-relay production runtime gate')
+    }
+    if (validator.accepted_source_patch_sha256 !== '123c501f36e6368ddedca089f778abb6ac86047b2236b31af72751a7daf9ef36' ||
+        validator.accepted_source_file_closure_sha256 !== '350ab2db0feb497107cb262c900b3adc271bd5afe1efed6eb41e94d1401f73ba' ||
+        validator.normalized_metafile_input_closure_sha256 !== '49bba7fd634d4085d74d13b5716491ad66415d3fbf4d1028c60a9b6d7cf628da' ||
+        validator.normalized_metafile_input_count !== 53 ||
+        validator.third_party_input_allowlist_count !== 25 ||
+        validator.validator_artifact_sha256 !== 'e69bf4554720c853e340f212eda4fe7760ae119594f5f136701a71c1b214a809' ||
+        validator.validator_project_domain_hash !== 'c92f1b402d745fc5d8235358bc7909a50cb23b230e75de605fd421fc500f9613' ||
+        validator.bundle_and_bare_byte_identical !== true) {
+      throw new Error('CSP-safe decision does not bind the independently accepted validator closure')
+    }
+    if (cellGet.hiverelay_commit !== 'c284435c1d075423a8d1bfcea04c3e171c6757ca' ||
+        cellGet.hiverelay_tree !== '02b11d448efdef693e49fec3b9d078643d8f4086' ||
+        cellGet.artifact_sha256 !== '653cba3c78d3b26b1e4f06a22fff8a5896a5c5158bc24c8b06ad577196429eed' ||
+        cellGet.artifact_domain_hash !== 'e04b514a4f828d8b557b833c37cea00fab37046bbc2d108c557924a9302259e1' ||
+        cellGet.manifest_sha256 !== '6992ea2f8ab4733aaecdfbb277b818bacb853b8d0141291abcc9386f3342fcc8' ||
+        cellGet.manifest_domain_hash !== '80fbff28284f1ef2e369871090be260050482b5b8d62b92b3d38670381f5a17d' ||
+        cellGet.source_closure_sha256 !== 'ed40292d9c1154e50607188cff6ffcc7df534b203c4ecf3ebccbd64099b24830' ||
+        JSON.stringify(cellGet.public_exports) !==
+          JSON.stringify(['createBlindCellGetControl', 'createBrowserCryptoRuntime']) ||
+        relays['dal-1']?.minimum_descriptor_sequence !== 5 ||
+        relays['dal-1']?.descriptor_head_sha256 !== '549fd1df9b5cdba8ca2d97ab842bbda6a4a1433d79a82e230d8807bbd97cfebe' ||
+        relays['dal-1']?.admission_protocol_sha256 !== '8748eaafd273695eb1d22282c8278cd733898f00ff137f238d8d5e300a148cc4' ||
+        relays['syd-1']?.minimum_descriptor_sequence !== 8 ||
+        relays['syd-1']?.descriptor_head_sha256 !== 'a4cbfe23176862cf5dbfae962ad3b919063073c4a51abe20ef4ae06c05a32153' ||
+        relays['syd-1']?.admission_protocol_sha256 !== 'a474226ced549bea08cb1e7af20f4104561a4818482b20815f6c63b632e0762b') {
+      throw new Error('CSP-safe decision does not bind the accepted Cell GET and named relay authorities')
+    }
+    addCheck('canary:owner-decision', 'pass', `Owner CSP-safe recovery decision verified byte-exact (sha256 ${CANARY_CSP_SAFE_RECOVERY_DECISION_SHA256.slice(0, 12)}...): ACCEPT seq-19 authenticated two-relay GET recovery with direct-child seq-20 cold rollback; unchanged CSP, zero PUTs, all-five excluded, GA gate still blocked.`, {
+      file: CANARY_CSP_SAFE_RECOVERY_DECISION_FILE,
+      sha256: CANARY_CSP_SAFE_RECOVERY_DECISION_SHA256,
+      decidedAt: decision.decided_at,
+      functionalReleaseSequence: 19,
+      rollbackReleaseSequence: 20
+    })
+    return
+  }
   if (release.releaseSequence >= 17 && release.releaseSequence <= 18) {
     const decision = readCanaryOwnerDecision(
       CANARY_EXACT_ADMISSION_URL_DECISION_FILE,

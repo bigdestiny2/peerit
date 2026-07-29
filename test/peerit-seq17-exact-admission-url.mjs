@@ -33,7 +33,7 @@ function canonicalBytes (value) {
 
 function verify (value) {
   return verifyPeeritLimitedCellGetProfileV1(canonicalBytes(value), {
-    releaseSequence: 17,
+    releaseSequence: 19,
     hive: {
       artifactHash: hexBytes(parsed.hiveCellGet.artifactHash),
       manifestHash: hexBytes(parsed.hiveCellGet.manifestHash)
@@ -44,7 +44,7 @@ function verify (value) {
 assert.equal(PEERIT_LIMITED_CELL_GET_PARAMETER_URL_V1,
   'https://evidence.example:443/admission.cenc')
 const profile = verify(parsed)
-assert.equal(profile.releaseSequence, 17)
+assert.equal(profile.releaseSequence, 19)
 for (const relay of profile.relays) {
   assert.equal(Buffer.from(relay.admissionProfile.parameterUrl).toString('hex'),
     expectedUrlHex)
@@ -72,7 +72,7 @@ assert.throws(() => verify(omitted), error =>
   error?.code === 'PEERIT_LIMITED_CELL_GET_PROFILE_INVALID')
 
 const wrongSequence = structuredClone(parsed)
-wrongSequence.releaseSequence = 18
+wrongSequence.releaseSequence = 20
 assert.throws(() => verify(wrongSequence), error =>
   error?.code === 'PEERIT_LIMITED_CELL_GET_PROFILE_INVALID')
 
@@ -83,4 +83,4 @@ assert.doesNotMatch(relayConsumerSource, /new URL\([^\n]*parameterUrl/)
 assert.doesNotMatch(relayConsumerSource, /fetch\([^\n]*parameterUrl/)
 assert.equal(renderBlueprint.includes('evidence.example'), false)
 assert.equal(renderHeaders.includes('evidence.example'), false)
-console.log('peerit seq17 exact admission URL: canonical UTF-8 bytes pinned; null and semantic drift rejected')
+console.log('peerit seq19 exact admission URL: canonical UTF-8 bytes pinned; null and semantic drift rejected')

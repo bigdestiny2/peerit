@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -22,6 +23,100 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const check = process.argv.includes('--check')
 const vectorRoot = 'protocol/validator/vectors'
 const bareImportMirrorPath = 'protocol/validator/peerit-validator-v1.bare.mjs'
+
+const CSP_FORBIDDEN_EXECUTION = /\bWebAssembly\b|\bwasm-binary\b|\beval\s*\(|\bnew\s+Function\s*\(/
+const CSP_FORBIDDEN_DEPENDENCIES = /(?:^|\/)(?:sha512-wasm|sha256-wasm|blake2b-wasm|xsalsa20|siphash24)(?:\/|$)/
+const CSP_SODIUM_ENTRYPOINTS = Object.freeze([
+  'sodium-javascript/crypto_aead.js',
+  'sodium-javascript/crypto_scalarmult.js',
+  'sodium-javascript/crypto_sign.js'
+])
+const CSP_METAFILE_INPUT_CLOSURE_SHA256 = '49bba7fd634d4085d74d13b5716491ad66415d3fbf4d1028c60a9b6d7cf628da'
+const CSP_THIRD_PARTY_INPUTS = Object.freeze([
+  'node_modules/@noble/hashes/_md.js',
+  'node_modules/@noble/hashes/_u64.js',
+  'node_modules/@noble/hashes/hkdf.js',
+  'node_modules/@noble/hashes/hmac.js',
+  'node_modules/@noble/hashes/sha2.js',
+  'node_modules/@noble/hashes/utils.js',
+  'node_modules/b4a/browser.js',
+  'node_modules/b4a/lib/ascii.js',
+  'node_modules/b4a/lib/base64.js',
+  'node_modules/b4a/lib/hex.js',
+  'node_modules/b4a/lib/latin1.js',
+  'node_modules/b4a/lib/utf16le.js',
+  'node_modules/b4a/lib/utf8.js',
+  'node_modules/chacha20-universal/index.js',
+  'node_modules/nanoassert/index.js',
+  'node_modules/sha512-universal/sha512.js',
+  'node_modules/sodium-javascript/crypto_aead.js',
+  'node_modules/sodium-javascript/crypto_hash.js',
+  'node_modules/sodium-javascript/crypto_scalarmult.js',
+  'node_modules/sodium-javascript/crypto_sign.js',
+  'node_modules/sodium-javascript/crypto_stream_chacha20.js',
+  'node_modules/sodium-javascript/crypto_verify.js',
+  'node_modules/sodium-javascript/internal/ed25519.js',
+  'node_modules/sodium-javascript/internal/poly1305.js',
+  'node_modules/sodium-javascript/randombytes.js'
+])
+
+function normalizedMetafileInput (input) {
+  const value = input.replaceAll('\\', '/')
+  if (value.startsWith('peerit-validator:')) return value
+  if (value.startsWith('node_modules/')) return value
+  const dependencyMarker = '/node_modules/'
+  const dependencyIndex = value.indexOf(dependencyMarker)
+  if (dependencyIndex >= 0) {
+    return `node_modules/${value.slice(dependencyIndex + dependencyMarker.length)}`
+  }
+  const absolute = path.isAbsolute(value) ? value : path.resolve(root, value)
+  const relative = path.relative(root, absolute).replaceAll('\\', '/')
+  if (!relative || relative === '..' || relative.startsWith('../')) {
+    throw new Error(`validator metafile input is outside the closed source/dependency roots: ${value}`)
+  }
+  return relative
+}
+
+function metafileInputClosure (metafile) {
+  const inputs = Object.keys(metafile.inputs).map(normalizedMetafileInput).sort()
+  const canonical = Buffer.from(`${inputs.join('\n')}\n`)
+  return Object.freeze({
+    inputs,
+    sha256: createHash('sha256').update(canonical).digest('hex')
+  })
+}
+
+function cspSafeValidatorCryptoPlugin () {
+  return {
+    name: 'peerit-csp-safe-validator-crypto',
+    setup (builder) {
+      builder.onResolve({ filter: /^sodium-javascript$/ }, () => ({
+        path: 'peerit-csp-safe-validator-crypto',
+        namespace: 'peerit-validator'
+      }))
+      builder.onLoad({ filter: /.*/, namespace: 'peerit-validator' }, () => ({
+        resolveDir: root,
+        loader: 'js',
+        contents: `
+import sign from 'sodium-javascript/crypto_sign.js';
+import aead from 'sodium-javascript/crypto_aead.js';
+import scalar from 'sodium-javascript/crypto_scalarmult.js';
+export default Object.freeze({
+  crypto_sign_verify_detached: sign.crypto_sign_verify_detached,
+  crypto_sign_seed_keypair: sign.crypto_sign_seed_keypair,
+  crypto_aead_chacha20poly1305_ietf_encrypt: aead.crypto_aead_chacha20poly1305_ietf_encrypt,
+  crypto_aead_chacha20poly1305_ietf_decrypt: aead.crypto_aead_chacha20poly1305_ietf_decrypt,
+  crypto_scalarmult: scalar.crypto_scalarmult,
+  crypto_scalarmult_base: scalar.crypto_scalarmult_base
+});
+`
+      }))
+      builder.onResolve({ filter: /^sha512-universal$/ }, () => ({
+        path: fileURLToPath(import.meta.resolve('sha512-universal/sha512.js'))
+      }))
+    }
+  }
+}
 
 function externalAuthorities () {
   const wireArtifacts = {
@@ -155,11 +250,45 @@ export function computePeeritValidatorRuntimeVectorSetHashV1(){
     charset: 'ascii',
     treeShaking: true,
     sourcemap: false,
+    metafile: true,
     banner: { js: bareTextCodecBanner },
+    plugins: [cspSafeValidatorCryptoPlugin()],
     logLevel: 'silent'
   })
   if (result.outputFiles.length !== 1) throw new Error('validator build produced an unexpected output set')
-  return new Uint8Array(result.outputFiles[0].contents)
+  const closure = metafileInputClosure(result.metafile)
+  if (closure.sha256 !== CSP_METAFILE_INPUT_CLOSURE_SHA256) {
+    throw new Error(`validator metafile input closure drift: ${closure.sha256}\n${closure.inputs.join('\n')}`)
+  }
+  const thirdPartyInputs = closure.inputs.filter(input => input.startsWith('node_modules/'))
+  if (JSON.stringify(thirdPartyInputs) !== JSON.stringify(CSP_THIRD_PARTY_INPUTS)) {
+    throw new Error(`validator third-party input allowlist drift: ${JSON.stringify(thirdPartyInputs)}`)
+  }
+  const inputs = closure.inputs
+  const forbiddenDependency = inputs.find(input => CSP_FORBIDDEN_DEPENDENCIES.test(input))
+  if (forbiddenDependency) {
+    throw new Error(`validator build contains CSP-forbidden dependency ${forbiddenDependency}`)
+  }
+  const sha512Inputs = inputs.filter(input => input.includes('/sha512-universal/'))
+  if (sha512Inputs.length !== 1 || !sha512Inputs[0].endsWith('/sha512-universal/sha512.js')) {
+    throw new Error(`validator build must contain only pure-JS sha512.js: ${sha512Inputs.join(', ')}`)
+  }
+  const adapter = Object.entries(result.metafile.inputs)
+    .find(([input]) => input.endsWith('peerit-csp-safe-validator-crypto'))?.[1]
+  const directSodium = (adapter?.imports || [])
+    .map(row => row.path.replaceAll('\\', '/'))
+    .filter(input => input.includes('sodium-javascript/'))
+    .map(input => input.slice(input.lastIndexOf('node_modules/') + 'node_modules/'.length))
+    .sort()
+  if (JSON.stringify(directSodium) !== JSON.stringify(CSP_SODIUM_ENTRYPOINTS)) {
+    throw new Error(`validator crypto adapter dependency drift: ${directSodium.join(', ')}`)
+  }
+  const output = new Uint8Array(result.outputFiles[0].contents)
+  const source = new TextDecoder().decode(output)
+  if (CSP_FORBIDDEN_EXECUTION.test(source)) {
+    throw new Error('validator build contains CSP-forbidden dynamic execution')
+  }
+  return output
 }
 
 function flipTag (bytes) {
@@ -294,6 +423,7 @@ if (problems.length > 0) {
     validatorVectorSetHash: bytesToHex(hashPeeritValidatorVectorSetV1(vectorManifest)),
     profileSpecHash: bytesToHex(profile.profileSpecHash),
     profileAbiHash: bytesToHex(profile.profileAbiHash),
-    externalCodecAuthorityComplete: profile.codecIr.externalCodecAuthorityComplete
+    externalCodecAuthorityComplete: profile.codecIr.externalCodecAuthorityComplete,
+    cspSafeDynamicExecution: true
   }, null, 2)}\n`)
 }

@@ -10,7 +10,10 @@ import {
   profilePinHash
 } from '../js/substrate/release-control-codec.mjs'
 import { bytesEqual } from '../js/substrate/release-control-primitives.mjs'
-import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from '../js/substrate/production-release-authority.mjs'
+import {
+  PEERIT_PRODUCTION_PIN_HISTORY_PATH,
+  PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1
+} from '../js/substrate/production-release-authority.mjs'
 import { decodePeeritWebAssetManifestV1 } from '../js/substrate/web-asset-manifest.mjs'
 import { SUBSTRATE_SITE_FILES } from '../publish.mjs'
 import { buildReleaseControlFixture } from '../scripts/release-control-fixture.mjs'
@@ -133,6 +136,8 @@ await assert.rejects(verifyPeeritProductionPinHistoryReleaseV1({
   releaseSequence,
   appArtifactHash: finalArtifact.appArtifactHash,
   webAssetManifestHash: finalArtifact.webAssetManifestHash
-}), error => error.code === 'PRODUCTION_PEERIT_RELEASE_AUTHORITY_UNPINNED')
+}), error => PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1.publicKey
+  ? /does not start at the compiled genesis/.test(error.message)
+  : error.code === 'PRODUCTION_PEERIT_RELEASE_AUTHORITY_UNPINNED')
 
-console.log('peerit-production-pin-history-release: detached pin history is constructible, signature/genesis/terminal bound, tamper rejected, and production remains root-gated')
+console.log('peerit-production-pin-history-release: detached pin history is constructible, signature/genesis/terminal bound, tamper rejected, and production stays compiled-root-gated')

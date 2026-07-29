@@ -127,6 +127,7 @@ assert.equal(variantBuild.status, 0, `${variantBuild.stdout}\n${variantBuild.std
 const manifest = JSON.parse(readFileSync(join(output, 'asset-manifest.json'), 'utf8'))
 const variantManifest = JSON.parse(readFileSync(
   join(variantOutput, 'asset-manifest.json'), 'utf8'))
+const officialRelease = JSON.parse(readFileSync(join(root, 'deploy', 'web-release.json'), 'utf8'))
 assert.deepEqual(variantManifest, manifest,
   'locale and stray legacy mirror environment cannot change replacement release bytes')
 for (const file of [...Object.keys(manifest.files), ...Object.keys(manifest.controls)]) {
@@ -136,16 +137,19 @@ for (const file of [...Object.keys(manifest.files), ...Object.keys(manifest.cont
 assert.equal(manifest.webRelease.transport, 'blind-substrate')
 assert.deepEqual(new Set(Object.keys(manifest.files)), new Set([
   ...SUBSTRATE_SITE_FILES,
+  ...(officialRelease.peeritSeedBootstrapBundle ? ['peerit-seed-bootstrap-v1.json'] : []),
   'sw-register.js',
   PEERIT_APP_ARTIFACT_PATH,
-  PEERIT_WEB_ASSET_MANIFEST_PATH
+  PEERIT_WEB_ASSET_MANIFEST_PATH,
+  ...(officialRelease.productionPinHistoryBundle
+    ? [PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)]
+    : [])
 ]))
 
 const builtRuntimeFiles = new Map(Object.keys(manifest.files).map(file => [
   file,
   readFileSync(join(output, file))
 ]))
-const officialRelease = JSON.parse(readFileSync(join(root, 'deploy', 'web-release.json'), 'utf8'))
 const verifiedRuntime = verifyPeeritSubstrateRuntimeArtifactV1({
   files: builtRuntimeFiles,
   releaseSequence: officialRelease.releaseSequence,
@@ -164,7 +168,8 @@ for (const target of staticRuntimeImportTargets) {
   assert.equal(verifiedRuntime.appArtifact.files[target], manifest.files[target],
     `${target} app-artifact SHA-256 equals the outer deterministic manifest`)
 }
-assert.equal(manifest.webRelease.productionPinHistory, null)
+assert.equal(manifest.webRelease.productionPinHistory,
+  officialRelease.productionPinHistoryBundle ? PEERIT_PRODUCTION_PIN_HISTORY_PATH : null)
 assert.throws(() => verifyPeeritSubstrateRuntimeArtifactV1({
   files: new Map([...builtRuntimeFiles, ['js/app.js', Buffer.from('legacy writer')]]),
   releaseSequence: officialRelease.releaseSequence,
@@ -258,6 +263,12 @@ const sequence13Verified = verifyPeeritSubstrateRuntimeArtifactV1({
   releaseSequence: 13,
   releaseKey: officialRelease.pinnedReleaseKey
 })
+assert.deepEqual(sequence13Verified.seedBootstrap, {
+  path: '/peerit-seed-bootstrap-v1.json',
+  sha256: sequence13Artifact.seedBootstrap.sha256,
+  authorityPublicKey: discoveryAuthority.pubHex,
+  releaseSequence: 13
+}, 'verification exposes the already-authenticated seed binding to release wrappers')
 assert.equal(sequence13Verified.webAssetManifest.recommendedBootstrapHashes.length, 1)
 assert.deepEqual(sequence13Verified.webAssetManifest.recommendedBootstrapHashes[0],
   hashPeeritBootstrapV1(seedBootstrapBytes),
@@ -295,9 +306,11 @@ const ceremonyArtifact = buildPeeritSubstrateRuntimeArtifactV1({
   sourceFiles: sourceRuntimeFiles,
   substrateProfile: 'blind-v1',
   relayHints: [],
-  releaseSequence: officialRelease.releaseSequence,
+  releaseSequence: 13,
   releaseKey: officialRelease.pinnedReleaseKey,
-  productionPinHistoryBytes: nonProductionPinHistoryFixture
+  productionPinHistoryBytes: nonProductionPinHistoryFixture,
+  seedBootstrapBytes,
+  seedDiscoveryAuthorityPublicKey: discoveryAuthority.pubHex
 })
 assert.deepEqual(
   ceremonyArtifact.files.get(PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)),
@@ -312,7 +325,7 @@ assert.equal(ceremonyArtifact.appArtifact.files[
 'detached pin history is excluded from the app artifact hash closure')
 const ceremonyVerified = verifyPeeritSubstrateRuntimeArtifactV1({
   files: ceremonyArtifact.files,
-  releaseSequence: officialRelease.releaseSequence,
+  releaseSequence: 13,
   releaseKey: officialRelease.pinnedReleaseKey
 })
 assert.equal(ceremonyVerified.webAssetManifest.assets.some(

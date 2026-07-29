@@ -120,21 +120,31 @@ const trackedWebManifestBytes = readFileSync(
   new URL('../web/asset-manifest.json', import.meta.url))
 const trackedWebManifest = JSON.parse(trackedWebManifestBytes)
 assert.ok(officialRelease.releaseSequence >= PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE)
-assert.equal(consumedSigningRequest.releaseSequence, trackedWebManifest.releaseSequence,
-  'the immutable sequence-11 request remains distinguishable from the sequence-12 replacement')
-assert.notEqual(consumedSigningRequest.manifestSha256,
-  createHash('sha256').update(trackedWebManifestBytes).digest('hex'),
-  'the superseded sequence-11 request cannot authorize the moderation-expanded tracked tree')
-assert.ok(trackedWebManifest.releaseSequence < officialRelease.releaseSequence,
-  'the tracked prior-release web directory is never reused as the replacement candidate')
-assert.notEqual(trackedWebManifest.webRelease?.transport, 'blind-substrate',
-  'the tracked prior release remains explicitly distinguishable from the replacement transport')
-assert.equal(officialRelease.productionPinHistory == null, true,
-  'the unsigned replacement remains fail-closed until a new signing request and pin history are produced')
+const trackedWebManifestSha256 = createHash('sha256').update(trackedWebManifestBytes).digest('hex')
+if (officialRelease.productionPinHistoryBundle) {
+  assert.equal(consumedSigningRequest.releaseSequence, officialRelease.releaseSequence,
+    'the sealed signing request selects the exact production sequence')
+  assert.equal(trackedWebManifest.releaseSequence, officialRelease.releaseSequence,
+    'the sealed Web tree selects the exact production sequence')
+  assert.equal(consumedSigningRequest.manifestSha256, trackedWebManifestSha256,
+    'the sealed signing request authorizes the exact tracked Web manifest bytes')
+  assert.equal(trackedWebManifest.webRelease?.transport, 'blind-substrate')
+  assert.equal(trackedWebManifest.webRelease?.productionPinHistory,
+    `/${officialRelease.productionPinHistoryBundle}`)
+} else {
+  assert.equal(consumedSigningRequest.releaseSequence, trackedWebManifest.releaseSequence,
+    'the consumed prior request remains distinguishable from the unsigned replacement')
+  assert.notEqual(consumedSigningRequest.manifestSha256, trackedWebManifestSha256,
+    'a superseded request cannot authorize a changed tracked tree')
+  assert.ok(trackedWebManifest.releaseSequence < officialRelease.releaseSequence,
+    'the tracked prior-release Web directory is never reused as the replacement candidate')
+  assert.notEqual(trackedWebManifest.webRelease?.transport, 'blind-substrate',
+    'the tracked prior release remains distinguishable from the replacement transport')
+}
 const render = readFileSync(new URL('../render.yaml', import.meta.url), 'utf8')
 const renderHeaderPolicy = readFileSync(new URL('../deploy/render-security-headers.json', import.meta.url), 'utf8')
 for (const source of [officialConfig, render, renderHeaderPolicy]) {
   assert.doesNotMatch(source, /outbox\.peerit\.site|peerit-relay|hiverelay-outbox/i)
 }
 
-console.log('peerit-cutover-gates: official release is replacement-only and fail-closed while local authoring remains available')
+console.log('peerit-cutover-gates: replacement-only unsigned and exact sealed release states fail/verify correctly')

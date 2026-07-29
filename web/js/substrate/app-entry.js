@@ -2,12 +2,16 @@
 // delivery are independent axes: release/authentication/qualification failures
 // install zero relay targets but never turn a healthy local journal read-only.
 
-import { loadPeeritBrowserRuntimeAuthorityV1 } from './browser-runtime-authority.mjs'
+import {
+  getVerifiedPeeritBrowserSeedBootstrapV1,
+  loadPeeritBrowserRuntimeAuthorityV1
+} from './browser-runtime-authority.mjs'
 import { loadPeeritProductionPinHistoryTerminalV1 } from './pin-history-bootstrap.mjs'
 import { createPeeritProductRuntimeV1 } from './peerit-product-runtime.js'
 import { mountPeeritProductUiV1 } from './peerit-product-ui.js'
 import {
   installPeeritBlindRelayConsumer,
+  recoverPeeritSeedFromActiveRelayInstallationV1,
   stopPeeritBlindRelayConsumer
 } from './relay-consumer.js'
 import {
@@ -39,14 +43,18 @@ function immutableNetworkStatus (parts) {
   }
   const authority = parts[2]
   const consumer = parts[3]
+  const seedRecovery = parts[4]
   return Object.freeze({
-    state: consumer && consumer.state
-      ? consumer.state
-      : authority && authority.state
-        ? authority.state
-        : 'blocked-authenticated-browser-runtime',
+    state: seedRecovery && seedRecovery.active === false
+      ? seedRecovery.state
+      : consumer && consumer.state
+        ? consumer.state
+        : authority && authority.state
+          ? authority.state
+          : 'blocked-authenticated-browser-runtime',
     active: authority && authority.active === true &&
-      consumer && consumer.active === true,
+      consumer && consumer.active === true &&
+      (!seedRecovery || seedRecovery.active === true),
     releaseBlockers: Object.freeze(releaseBlockers)
   })
 }
@@ -124,10 +132,10 @@ export async function bootPeeritReplacementOnly (options = {}) {
     assertLive()
     const authority = release.active && pinHistory.active
       ? await loadPeeritBrowserRuntimeAuthorityV1({
-          document,
-          pinHistoryTerminal: pinHistory.terminal,
-          signal: lifecycle.signal
-        })
+        document,
+        pinHistoryTerminal: pinHistory.terminal,
+        signal: lifecycle.signal
+      })
       : blockedStatus('blocked-authenticated-browser-runtime',
         pinHistory.releaseBlockers[0] || 'PRODUCTION_PEERIT_SIGNED_PROFILE_PIN_UNAVAILABLE',
         pinHistory.message)
@@ -152,11 +160,39 @@ export async function bootPeeritReplacementOnly (options = {}) {
       if (destroyed || lifecycle.signal.aborted) stopPeeritBlindRelayConsumer(product.sync)
     }
     assertLive()
-    const networkStatus = immutableNetworkStatus([release, pinHistory, authority, consumer])
+    let seedRecovery = null
+    if (release.seedBootstrap) {
+      try {
+        if (!authority.active || !consumer.active || consumer.qualifiedRelayCount !== 2) {
+          throw Object.assign(new Error('seed recovery requires the authenticated exact two-relay runtime'), {
+            code: 'PEERIT_SEED_RECOVERY_TWO_QUALIFIED_RELAYS_REQUIRED'
+          })
+        }
+        const seed = getVerifiedPeeritBrowserSeedBootstrapV1(authority.authority)
+        const recovered = await recoverPeeritSeedFromActiveRelayInstallationV1({
+          sync: product.sync,
+          artifactBytes: seed.artifactBytes,
+          verification: seed.verification,
+          signal: lifecycle.signal
+        })
+        seedRecovery = Object.freeze({
+          ...recovered,
+          state: recovered.cached ? 'seed-recovery-cached' : 'seed-recovery-complete',
+          active: true,
+          releaseBlockers: Object.freeze([])
+        })
+      } catch (error) {
+        seedRecovery = blockedStatus('blocked-seed-recovery',
+          (error && (error.code || error.name)) || 'PEERIT_SEED_RECOVERY_FAILED',
+          (error && error.message) || 'signed Peerit seed recovery failed')
+      }
+      assertLive()
+    }
+    const networkStatus = immutableNetworkStatus([release, pinHistory, authority, consumer, seedRecovery])
     product.setNetworkStatus(networkStatus)
-    publishNetworkStatus(networkStatus, { release, pinHistory, authority, consumer }, document, window)
+    publishNetworkStatus(networkStatus, { release, pinHistory, authority, consumer, seedRecovery }, document, window)
 
-    return Object.freeze({ product, productUi, release, pinHistory, authority, consumer, networkStatus, destroy })
+    return Object.freeze({ product, productUi, release, pinHistory, authority, consumer, seedRecovery, networkStatus, destroy })
   } catch (error) {
     if (!destroyed) destroy()
     throw error

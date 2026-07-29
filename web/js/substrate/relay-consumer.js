@@ -38,6 +38,8 @@ const MAX_HINT_BYTES = 2048
 const HEX_32 = /^[0-9a-f]{64}$/i
 const SOURCES = Object.freeze(['recommendation', 'user', 'peer', 'dht'])
 const VERIFIED_RELAY_ADAPTERS = new WeakSet()
+const VERIFIED_RELAY_ADAPTER_CONTEXTS = new WeakMap()
+const VERIFIED_RELAY_CELL_GET_RESULTS = new WeakSet()
 // One ownership record covers both asynchronous module setup and the live
 // scheduler. Replacing/stopping an install invalidates all older continuations
 // before they can publish to the same sync instance.
@@ -242,6 +244,46 @@ function contextSnapshot (control, endpoint, requirement) {
   return context
 }
 
+async function seedReadContextSnapshot (control, profile, candidate, context, readContext, backend) {
+  let descriptorGenesisHash = null
+  if (context.descriptorSequence === 0n) {
+    descriptorGenesisHash = fixedHex(context.descriptorHash)
+  } else if (backend && typeof backend.read === 'function' &&
+      typeof control.verifyDescriptorBytes === 'function') {
+    const key = `descriptor:${fixedHex(context.continuityRoot)}:${fixedHex(context.storeId)}`
+    const record = await backend.read(key)
+    const state = record && record.value
+    if (!state || state.sequence !== context.descriptorSequence ||
+        !bytesEqual(state.rootRelayPublicKey, context.continuityRoot) ||
+        !bytesEqual(state.storeId, context.storeId) ||
+        !bytesEqual(state.currentHash, context.descriptorHash) ||
+        !Array.isArray(state.history) || state.history.length !== Number(context.descriptorSequence) + 1) {
+      throw qualificationError('PEERIT_DESCRIPTOR_HISTORY_BINDING_UNAVAILABLE',
+        'qualified endpoint cannot reproduce its exact persisted descriptor history')
+    }
+    const genesis = control.verifyDescriptorBytes(state.history[0], {
+      history: true,
+      supportedProtocolProfiles: profile.supportedProtocolProfiles,
+      supportedTransportProfiles: profile.supportedTransportProfiles
+    })
+    descriptorGenesisHash = fixedHex(genesis.descriptorHash)
+  }
+  return Object.freeze({
+    canonicalDescribeUrl: candidate.canonicalUrl,
+    continuityRootRelayPublicKey: fixedHex(context.continuityRoot),
+    storeId: fixedHex(context.storeId),
+    descriptorGenesisHash,
+    descriptorHeadHash: fixedHex(context.descriptorHash),
+    descriptorSequence: context.descriptorSequence,
+    familyId: readContext.familyId,
+    operationId: readContext.operationId,
+    endpointId: readContext.endpointId,
+    transportId: readContext.transportId,
+    transportSupportBit: readContext.transportSupportBit,
+    privacyProfileBit: readContext.privacyProfileBit
+  })
+}
+
 function identityKey (context) {
   return `${fixedHex(context.continuityRoot)}:${fixedHex(context.storeId)}`
 }
@@ -338,7 +380,7 @@ function admissionValiditySnapshot (control, verifiedAdmissionParameters) {
   return Object.freeze({ validFromEpoch, expiresEpoch })
 }
 
-function brandedAdapter (adapter, context, lease) {
+function brandedAdapter (adapter, context, seedReadContext, lease) {
   if (!adapter || typeof adapter !== 'object' || adapter.compatible === false ||
       (typeof adapter.deliver !== 'function' &&
        !(typeof adapter.prepare === 'function' && typeof adapter.send === 'function'))) {
@@ -383,6 +425,27 @@ function brandedAdapter (adapter, context, lease) {
       return value
     }
     : undefined
+  const readCellCapability = typeof adapter.readCellCapability === 'function'
+    ? async (request, operationContext = {}) => {
+      assertFresh(false)
+      const value = await adapter.readCellCapability(request, operationContext)
+      if (!value || typeof value !== 'object' || value.innerBytes == null ||
+          typeof value.evidenceRef !== 'string' || value.evidenceRef.length < 1 ||
+          value.evidenceRef.length > 1024 || !request || typeof request !== 'object') {
+        throw qualificationError('PEERIT_CELL_GET_RESULT_UNVERIFIED',
+          'qualified Cell GET adapter returned an invalid authenticated result')
+      }
+      const result = Object.freeze({
+        relayId: String(request.relayId),
+        targetId: String(request.targetId),
+        innerBytes: bytes(value.innerBytes, 'verified Cell GET innerBytes'),
+        evidenceRef: value.evidenceRef
+      })
+      VERIFIED_RELAY_CELL_GET_RESULTS.add(result)
+      assertFresh(false)
+      return result
+    }
+    : undefined
   // Adapter construction may itself take long enough to cross a signed or
   // health boundary. Refuse to mint the Peerit brand once that happens.
   assertFresh(true)
@@ -393,14 +456,33 @@ function brandedAdapter (adapter, context, lease) {
     prepare: bind('prepare'),
     send: bind('send'),
     reconcile: bind('reconcile'),
-    revalidateReadback: bind('revalidateReadback')
+    revalidateReadback: bind('revalidateReadback'),
+    readCellCapability
   })
   VERIFIED_RELAY_ADAPTERS.add(result)
+  VERIFIED_RELAY_ADAPTER_CONTEXTS.set(result, seedReadContext)
   return result
 }
 
 export function isPeeritVerifiedRelayAdapter (value) {
   return !!(value && typeof value === 'object' && VERIFIED_RELAY_ADAPTERS.has(value))
+}
+
+export function verifiedPeeritRelayCellGetContext (value) {
+  const context = value && VERIFIED_RELAY_ADAPTER_CONTEXTS.get(value)
+  if (!context) {
+    throw qualificationError('PEERIT_VERIFIED_RELAY_ADAPTER_REQUIRED',
+      'a currently qualified branded Peerit relay adapter is required')
+  }
+  return context
+}
+
+export function assertVerifiedPeeritRelayCellGetResult (value) {
+  if (!value || !VERIFIED_RELAY_CELL_GET_RESULTS.has(value)) {
+    throw qualificationError('PEERIT_CELL_GET_RESULT_UNVERIFIED',
+      'a branded authenticated Cell GET result is required')
+  }
+  return value
 }
 
 function candidate (input, source) {
@@ -764,6 +846,8 @@ export async function qualifyPermissionlessRelayCandidates (options = {}) {
       }), qualificationSignal)
       const readContext = contextSnapshot(control, readQualified.endpoint, profile.readRequirement)
       assertPairedCellEndpointContexts(context, readContext)
+      const seedReadContext = await seedReadContextSnapshot(
+        control, profile, candidateValue, context, readContext, options.descriptorTrustBackend)
       const descriptorValidity = descriptorValiditySnapshot(control, qualified.trustedDescriptor)
       const healthValidity = healthValiditySnapshot(
         control, qualified.health, qualificationLeaseMillis)
@@ -872,7 +956,7 @@ export async function qualifyPermissionlessRelayCandidates (options = {}) {
         expiresEpoch: signedExpiresEpoch
       })
       selected.set(key, Object.freeze({
-        adapter: brandedAdapter(adapter, context, lease),
+        adapter: brandedAdapter(adapter, context, seedReadContext, lease),
         context,
         identity,
         key,
@@ -1019,6 +1103,24 @@ function publishRelayStatus (sync, relays, status) {
   }
 }
 
+function publishInstallationRelayStatus (sync, installation, relays, status) {
+  assertRelayInstallationCurrent(sync, installation)
+  const verified = Object.freeze(relays.filter(isPeeritVerifiedRelayAdapter))
+  const changed = verified.length !== installation.adapters.length ||
+    verified.some((adapter, index) => adapter !== installation.adapters[index])
+  if (changed) {
+    installation.adapterGeneration++
+    if (installation.recoveryController && !installation.recoveryController.signal.aborted) {
+      installation.recoveryController.abort(qualificationError(
+        'PEERIT_SEED_RECOVERY_RELAY_SET_CHANGED',
+        'qualified relay set changed during seed recovery'))
+    }
+    installation.recoveryController = null
+    installation.adapters = verified
+  }
+  publishRelayStatus(sync, verified, status)
+}
+
 export function stopPeeritBlindRelayConsumer (sync) {
   const installation = sync && ACTIVE_RELAY_INSTALLATIONS.get(sync)
   if (!installation) return false
@@ -1031,6 +1133,10 @@ export function stopPeeritBlindRelayConsumer (sync) {
     installation.controller.abort(qualificationError('PEERIT_RELAY_INSTALL_STOPPED',
       'Peerit relay installation was stopped'))
   }
+  if (installation.recoveryController && !installation.recoveryController.signal.aborted) {
+    installation.recoveryController.abort(qualificationError(
+      'PEERIT_SEED_RECOVERY_ABORTED', 'Peerit seed recovery stopped with relay installation'))
+  }
   if (installation.scheduler) installation.scheduler.stop()
   return true
 }
@@ -1041,6 +1147,10 @@ function beginRelayInstallation (sync, externalSignal) {
   const installation = {
     controller,
     scheduler: null,
+    adapters: Object.freeze([]),
+    adapterGeneration: 0,
+    capabilityVault: null,
+    recoveryController: null,
     externalSignal: externalSignal || null,
     forwardAbort: null
   }
@@ -1055,6 +1165,69 @@ function beginRelayInstallation (sync, externalSignal) {
     externalSignal.addEventListener('abort', installation.forwardAbort, { once: true })
   }
   return installation
+}
+
+// Seed recovery never exposes the branded adapter set. It can run only against
+// the exact current two-relay installation and is invalidated by page teardown,
+// installation replacement, relay rotation, or qualification lease expiry.
+export async function recoverPeeritSeedFromActiveRelayInstallationV1 (options = {}) {
+  const sync = options.sync
+  const installation = sync && ACTIVE_RELAY_INSTALLATIONS.get(sync)
+  if (!installation || installation.controller.signal.aborted ||
+      installation.adapters.length !== 2 || !installation.capabilityVault) {
+    throw qualificationError('PEERIT_SEED_RECOVERY_TWO_QUALIFIED_RELAYS_REQUIRED',
+      'seed recovery requires one active installation with exactly two qualified relays')
+  }
+  if (options.signal != null &&
+      (typeof options.signal !== 'object' || typeof options.signal.addEventListener !== 'function' ||
+       typeof options.signal.removeEventListener !== 'function' || typeof options.signal.aborted !== 'boolean')) {
+    throw new TypeError('seed recovery signal must be an AbortSignal')
+  }
+  if (installation.recoveryController && !installation.recoveryController.signal.aborted) {
+    installation.recoveryController.abort(qualificationError(
+      'PEERIT_SEED_RECOVERY_SUPERSEDED', 'newer seed recovery superseded the prior attempt'))
+  }
+  const controller = new AbortController()
+  installation.recoveryController = controller
+  const forward = signal => () => controller.abort(signal.reason || qualificationError(
+    'PEERIT_SEED_RECOVERY_ABORTED', 'seed recovery was aborted'))
+  const parents = [installation.controller.signal, options.signal].filter(Boolean)
+  const listeners = parents.map(signal => [signal, forward(signal)])
+  for (const [signal, listener] of listeners) {
+    if (signal.aborted) listener()
+    else signal.addEventListener('abort', listener, { once: true })
+  }
+  const generation = installation.adapterGeneration
+  const adapters = installation.adapters
+  try {
+    if (controller.signal.aborted) throw controller.signal.reason
+    const { createPeeritSeedColdReaderV1 } = await import('./cold-reader.mjs')
+    assertRelayInstallationCurrent(sync, installation)
+    if (generation !== installation.adapterGeneration || adapters !== installation.adapters) {
+      throw qualificationError('PEERIT_SEED_RECOVERY_RELAY_SET_CHANGED',
+        'qualified relay set changed before seed recovery began')
+    }
+    const reader = createPeeritSeedColdReaderV1({
+      sync,
+      relays: adapters,
+      capabilityVault: installation.capabilityVault,
+      signal: controller.signal,
+      concurrency: options.concurrency,
+      timeoutMillis: options.timeoutMillis,
+      now: options.now
+    })
+    const result = await reader.read(options.artifactBytes, options.verification)
+    assertRelayInstallationCurrent(sync, installation)
+    if (controller.signal.aborted || generation !== installation.adapterGeneration ||
+        adapters !== installation.adapters) {
+      throw controller.signal.reason || qualificationError(
+        'PEERIT_SEED_RECOVERY_RELAY_SET_CHANGED', 'qualified relay set changed during seed recovery')
+    }
+    return result
+  } finally {
+    if (installation.recoveryController === controller) installation.recoveryController = null
+    for (const [signal, listener] of listeners) signal.removeEventListener('abort', listener)
+  }
 }
 
 function ownsRelayInstallation (sync, installation) {
@@ -1176,6 +1349,7 @@ export async function installPeeritBlindRelayConsumer (options = {}) {
       throw qualificationError('PEERIT_ENCRYPTED_CAPABILITY_VAULT_REQUIRED',
         'encrypted Cell capability persistence is unavailable')
     }
+    installation.capabilityVault = capabilityVault
     const descriptorTrustBackend = createPeeritDescriptorTrustBackend({
       crypto: options.continuityCrypto,
       indexedDB: options.indexedDB
@@ -1199,7 +1373,7 @@ export async function installPeeritBlindRelayConsumer (options = {}) {
         loadPersistedReplica: capabilityVault.load,
         candidates
       }),
-      publish: (adapters, status) => publishRelayStatus(sync, adapters, status),
+      publish: (adapters, status) => publishInstallationRelayStatus(sync, installation, adapters, status),
       verifyAdapter: isPeeritVerifiedRelayAdapter,
       epochDeadlineMonotonicMillis: epoch =>
         options.releaseAuthority.epochDeadlineMonotonicMillis(epoch),

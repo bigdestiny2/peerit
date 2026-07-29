@@ -278,6 +278,7 @@ export function verifyPeeritSubstrateRuntimeArtifactV1 (options = {}) {
   const webAssetManifestHash = hashPeeritWebAssetManifestV1(webAssetManifestBytes)
   return Object.freeze({
     appArtifact,
+    seedBootstrap: seedBinding,
     webAssetManifest,
     appArtifactHash,
     appArtifactHashHex: bytesToHex(appArtifactHash),

@@ -1,6 +1,6 @@
 {
   "schema": "peerit-app-artifact-v1",
-  "releaseSequence": 17,
+  "releaseSequence": 18,
   "transport": "blind-substrate",
   "substrateProfile": "blind-v1",
   "relayHints": [
@@ -12,13 +12,13 @@
   "canonicalWebAssetManifest": "/peerit-web-assets-v1.cenc",
   "productionPinHistory": "/peerit-production-pin-history-v1.cenc",
   "peeritSeedBootstrap": "/peerit-seed-bootstrap-v1.json",
-  "peeritSeedBootstrapSha256": "7c0ecb964acf17b005e23c06000d5194ab7abeb05164cd7814aaf43182ef4cea",
+  "peeritSeedBootstrapSha256": "0843a614da29ca57b3b31163adac222e6fd605dda659fc23b13b2c563d979f5e",
   "peeritSeedDiscoveryAuthorityPublicKey": "691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec",
-  "peeritSeedBootstrapReleaseSequence": 17,
+  "peeritSeedBootstrapReleaseSequence": 18,
   "files": {
     "docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md": "74d3b65dff1bbf2a4630791fd1a770e8dcdfac415bf693ff313d38d0262619fd",
     "icon.svg": "7925827f718381ddf887d3c5bea9b5b94e6e80de569d6604e384033767914a1c",
-    "index.html": "ef7f82df1b964bc4294cc43cef28e184a61ffd0f96c7ee4c3634b49f71771290",
+    "index.html": "3c6c3de2f84afe398c643da61ecd725f0c2d6b18312de8a64d594246bb7a37c9",
     "js/blob-store.js": "1a947ca86c25a590a73d8a7808476e4ee659604da1f848d6da57a289392bfbc9",
     "js/box.js": "7d4460772ef79358bc57c7cc7bcb820af1a6aa96638f1a98b44e4d00fd5fe947",
     "js/canon.js": "b3e7f8841771675e0ef2bba59d65a217e46e081669ad36bea9fa6a3f45922599",
@@ -88,7 +88,7 @@
     "js/vendor/noble-hashes/utils.js": "e2adfc13c846487feff0410bd5508a1d66f5ebadc3188f3a40a6b55449981e2f",
     "js/verify.js": "9a838a0576d52b03c43f793726522e0a6932e82284a5e9e3fc0450610f3400ea",
     "peerit-limited-cell-get-profile-v1.json": "5388b707dfc3b5ee828db45d033cef67c463a5a3d6e9b99f94cc648f63e2c563",
-    "peerit-seed-bootstrap-v1.json": "7c0ecb964acf17b005e23c06000d5194ab7abeb05164cd7814aaf43182ef4cea",
+    "peerit-seed-bootstrap-v1.json": "0843a614da29ca57b3b31163adac222e6fd605dda659fc23b13b2c563d979f5e",
     "protocol/availability-policy-v1.cenc": "3d5bcc0547a28779fa30673bff1fbb0b5e15f6b75d56ddcab67b5b7f645645a1",
     "protocol/peerit-profile-v1.cenc": "abfbbd0282497f06a78ed675750806c320003bcfe70708a92bdc5a4be642ff28",
     "protocol/validator/peerit-validator-v1.bare.mjs": "36d35f403460e43c3d595a3adb8011c362ed7a4916e80ee0e1c65e181ad11625",

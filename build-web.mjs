@@ -56,8 +56,8 @@ const SUBSTRATE_RELAY_HINTS = String(process.env.PEERIT_SUBSTRATE_RELAY_HINTS ||
 const IS_SUBSTRATE_RELEASE = !!SUBSTRATE_PROFILE
 const SUBSTRATE_RELAY_HINT_VALUES = IS_SUBSTRATE_RELEASE
   ? normalizePeeritReleaseRelayHintsV1(
-      SUBSTRATE_RELAY_HINTS.split(',').map(value => value.trim()).filter(Boolean),
-      'blind-substrate build')
+    SUBSTRATE_RELAY_HINTS.split(',').map(value => value.trim()).filter(Boolean),
+    'blind-substrate build')
   : []
 const PRODUCTION_PIN_HISTORY_BUNDLE = IS_SUBSTRATE_RELEASE
   ? String(releaseConfig.productionPinHistoryBundle || '').trim()

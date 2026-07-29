@@ -60,7 +60,7 @@ async function bounded (milliseconds, operation, parentSignal) {
   const forwardAbort = () => controller.abort(parentSignal.reason ||
     Object.assign(new Error('Peerit cold reader was aborted'), { name: 'AbortError' }))
   let rejectAbort
-  const aborted = new Promise((_, reject) => { rejectAbort = reject })
+  const aborted = new Promise((_resolve, reject) => { rejectAbort = reject })
   const onAbort = () => rejectAbort(controller.signal.reason ||
     Object.assign(new Error('Peerit cold reader was aborted'), { name: 'AbortError' }))
   controller.signal.addEventListener('abort', onAbort, { once: true })

@@ -48,10 +48,10 @@ function immutableNetworkStatus (parts) {
     state: seedRecovery && seedRecovery.active === false
       ? seedRecovery.state
       : consumer && consumer.state
-      ? consumer.state
-      : authority && authority.state
-        ? authority.state
-        : 'blocked-authenticated-browser-runtime',
+        ? consumer.state
+        : authority && authority.state
+          ? authority.state
+          : 'blocked-authenticated-browser-runtime',
     active: authority && authority.active === true &&
       consumer && consumer.active === true &&
       (!seedRecovery || seedRecovery.active === true),
@@ -132,10 +132,10 @@ export async function bootPeeritReplacementOnly (options = {}) {
     assertLive()
     const authority = release.active && pinHistory.active
       ? await loadPeeritBrowserRuntimeAuthorityV1({
-          document,
-          pinHistoryTerminal: pinHistory.terminal,
-          signal: lifecycle.signal
-        })
+        document,
+        pinHistoryTerminal: pinHistory.terminal,
+        signal: lifecycle.signal
+      })
       : blockedStatus('blocked-authenticated-browser-runtime',
         pinHistory.releaseBlockers[0] || 'PRODUCTION_PEERIT_SIGNED_PROFILE_PIN_UNAVAILABLE',
         pinHistory.message)

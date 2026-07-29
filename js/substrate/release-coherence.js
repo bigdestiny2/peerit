@@ -44,7 +44,7 @@ function storageOrNull (value) {
 
 function readFloor (storage, key) {
   try {
-    const value = JSON.parse(storage && storage.getItem(RELEASE_FLOOR_PREFIX + key) || 'null')
+    const value = JSON.parse((storage && storage.getItem(RELEASE_FLOOR_PREFIX + key)) || 'null')
     return value && typeof value === 'object' ? value : null
   } catch {
     return null

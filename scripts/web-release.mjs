@@ -853,7 +853,7 @@ function verifyCanaryCspOrigins (release) {
   const blueprintPath = join(ROOT, 'render.yaml')
   if (!existsSync(blueprintPath)) throw new Error('render.yaml is missing; the canary CSP check requires the source-managed blueprint')
   const blueprint = readFileSync(blueprintPath, 'utf8')
-  const cspMatch = blueprint.match(/name: "Content-Security-Policy"\n        value: "([^"]+)"/)
+  const cspMatch = blueprint.match(/name: "Content-Security-Policy"\n {8}value: "([^"]+)"/)
   if (!cspMatch) throw new Error('render.yaml does not pin a Content-Security-Policy header')
   const connectSrc = (cspMatch[1].split(';').map((v) => v.trim()).find((v) => v.startsWith('connect-src ')) || '')
   if (!connectSrc) throw new Error('render.yaml CSP has no connect-src directive')

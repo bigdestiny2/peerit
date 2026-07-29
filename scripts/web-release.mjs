@@ -757,26 +757,23 @@ function verifyDocs () {
 // ---------------------------------------------------------------------------
 // CANARY SCOPE: LIMITED_PUBLIC_TEST_V1
 //
-// The owner's recorded canary decision (run
-// hiverelay-vnext-direct-https-public-test-storage-first-20260724t110740z,
-// decision-peerit-v1-artifact-canary-acceptance-20260727t100542z) accepts the
-// frozen seq-12 blind-v1 artifact for the bounded public-test canary while the
-// GA product gate stays honestly blocked. This scope therefore verifies
+// The owner's recorded canary decision accepts sequence 13 for the bounded
+// two-relay, three-post public test and sequence 14 only as its prepared signed
+// rollback. It explicitly excludes the all-five successor until after the site
+// activation and keeps the GA product gate honestly blocked. This scope verifies
 // everything the canary actually is — frozen signed artifact bytes, manifest,
-// pin-history continuity 11 -> 12, substrate profile blind-v1, both relay
+// pin-history continuity, substrate profile blind-v1, both relay
 // hints, CSP origins, and the vendored owner decision — and reports EVERY GA
 // product blocker as DISCLOSED-OPEN. It never clears, skips, or weakens the GA
 // gate: without this flag the unchanged assertPeeritBlindProductReleaseReady
 // applies (and currently fails with the same 22 blockers).
 const CANARY_SCOPE = 'LIMITED_PUBLIC_TEST_V1'
-const CANARY_DECISION_FILE = 'deploy/canary-decision-peerit-v1-artifact-acceptance-20260727t100542z.json'
-// sha256 of the vendored byte-exact copy of the owner decision record (source:
-// run assignments/programme-control/decision-peerit-v1-artifact-canary-acceptance-20260727t100542z.json).
-const CANARY_DECISION_SHA256 = 'd862d06948ada8ebb0d33124d426f264adbfe0db0540c577ef6c3f85ae1f5ed2'
+const CANARY_DECISION_FILE = 'deploy/canary-decision-peerit-seq13-three-post-activation-20260729t132650z.json'
+const CANARY_DECISION_SHA256 = '86130d0257105aecff2a40fee4656edabbffb531ac94854759138a13c06b59b0'
 const CANARY_PIN_HISTORY_FILE = 'deploy/web-release-pin-history.json'
 const CANARY_PIN_HISTORY_SIG_FILE = 'deploy/web-release-pin-history.json.sig.json'
 
-function verifyCanaryOwnerDecision () {
+function verifyCanaryOwnerDecision (release) {
   const file = join(ROOT, CANARY_DECISION_FILE)
   if (!existsSync(file)) throw new Error(`vendored owner canary decision is missing: ${CANARY_DECISION_FILE}`)
   const bytes = readFileSync(file)
@@ -785,20 +782,35 @@ function verifyCanaryOwnerDecision () {
     throw new Error(`vendored owner canary decision hash mismatch: ${actual} != pinned ${CANARY_DECISION_SHA256}; the decision record must be the exact recorded bytes`)
   }
   const decision = JSON.parse(bytes.toString('utf8'))
-  if (decision.decision_id !== 'hiverelay-vnext-direct-https-public-test-storage-first-20260724t110740z--peerit-v1-artifact-canary-acceptance') {
+  if (decision.schema_version !== 2 || decision.decision_id !== 'peerit-seq13-three-post-two-relay-public-test-activation-20260729t132650z') {
     throw new Error('canary decision_id does not match the recorded owner decision')
   }
-  if (decision.status !== 'DECIDED' || !String(decision.decision || '').startsWith('ACCEPT the vendored v1 blind-client browser artifact')) {
+  if (decision.status !== 'DECIDED' || !String(decision.decision || '').startsWith('ACCEPT Peerit release sequence 13')) {
     throw new Error('canary decision is not the recorded ACCEPT')
   }
-  if (!String(decision.decision).includes('WIRE_TUPLE_DRIFT disclosed')) {
+  if (!String(decision.decision).includes('WIRE_TUPLE_DRIFT') || !String(decision.decision).includes('disclosed')) {
     throw new Error('canary decision must carry the WIRE_TUPLE_DRIFT disclosure')
   }
   const followups = Array.isArray(decision.followups) ? decision.followups.join('\n') : ''
   if (!followups.includes('GA product gate remains honestly blocked')) {
     throw new Error('canary decision must itself record that the GA product gate remains blocked')
   }
-  addCheck('canary:owner-decision', 'pass', `Owner canary decision verified byte-exact (sha256 ${CANARY_DECISION_SHA256.slice(0, 12)}...): ACCEPT seq-12 blind-v1 artifact for the bounded public-test canary, WIRE_TUPLE_DRIFT disclosed, GA gate recorded as still blocked.`, {
+  const activation = decision.activation || {}
+  const exactPostCids = [
+    'f68ae14dcd4fb0764b0c5669a03ebb7d68993b7cddc31f1552b85c2cba67536f',
+    'fc80b076becb28c9fbda596def255246cd506fc5ed4e5f4d22499c5cdad95f1b',
+    '52f99d16c0ab47bdad025cbd4138549802e552d55835435588887e7ca178e3a6'
+  ]
+  if (activation.functional_release_sequence !== 13 || activation.rollback_release_sequence !== 14 ||
+      ![13, 14].includes(release.releaseSequence) ||
+      activation.claim_boundary !== 'LIVE_PUBLIC_TEST_ONLY' ||
+      JSON.stringify(activation.relays) !== JSON.stringify(['syd-1', 'dal-1']) ||
+      JSON.stringify(activation.post_cids) !== JSON.stringify(exactPostCids) ||
+      activation.seed_record_count !== 4 || activation.seed_put_count !== 8 ||
+      activation.all_five_successor !== 'EXCLUDED_UNTIL_AFTER_PEERIT_SITE_ACTIVATION') {
+    throw new Error('canary decision does not bind the exact seq13/seq14, two-relay, three-post activation scope')
+  }
+  addCheck('canary:owner-decision', 'pass', `Owner canary decision verified byte-exact (sha256 ${CANARY_DECISION_SHA256.slice(0, 12)}...): ACCEPT seq-13 with seq-14 rollback for the exact two-relay, three-post public test; all-five excluded, WIRE_TUPLE_DRIFT disclosed, GA gate still blocked.`, {
     file: CANARY_DECISION_FILE,
     sha256: CANARY_DECISION_SHA256,
     decidedAt: decision.decided_at
@@ -872,7 +884,7 @@ function verifyCanaryLimitedPublicTestV1 (release, driveKey) {
   for (const blocker of gaBlockers) {
     addCheck(`canary:ga-blocker:${blocker}`, 'info', `DISCLOSED-OPEN (GA blocker, not canary-blocking): ${blocker}`)
   }
-  verifyCanaryOwnerDecision()
+  verifyCanaryOwnerDecision(release)
   verifyCanaryPinHistoryContinuity(release, driveKey)
   verifyCanaryCspOrigins(release)
   addCheck('canary:verdict', 'pass', `CANARY ${CANARY_SCOPE} verification complete: frozen artifact, owner decision, pin-history continuity, relay hints and CSP origins all bind; ${gaBlockers.length} GA blockers remain DISCLOSED-OPEN.`)

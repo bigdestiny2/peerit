@@ -1,0 +1,67 @@
+{
+  "schema_version": 2,
+  "decision_id": "peerit-seq13-three-post-two-relay-public-test-activation-20260729t132650z",
+  "decided_at": "2026-07-29T13:26:50Z",
+  "decided_by": "owner (direct instruction recorded by Codex conductor)",
+  "status": "DECIDED",
+  "decision": "ACCEPT Peerit release sequence 13 for the bounded two-relay public test, with release sequence 14 prepared only as its signed rollback. Publish exactly the three approved posts through Sydney and Dallas, then release peerit.site. WIRE_TUPLE_DRIFT remains disclosed; the GA product gate remains blocked.",
+  "authority": {
+    "kind": "direct-owner-instruction",
+    "instruction": "The pace is disproportionate. The critical path should now be narrowed to: Recover Sydney with seq7/admission-v3. Prove class 1 and 2 PUT/GET. Recover Dallas. Publish the three posts. Release peerit.site. Handle the all-five successor separately afterward."
+  },
+  "activation": {
+    "functional_release_sequence": 13,
+    "rollback_release_sequence": 14,
+    "rollback_policy": "PREPARE_AND_SIGN_ONLY; deploy sequence 14 only to roll back a failed sequence 13 activation",
+    "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+    "relays": [
+      "syd-1",
+      "dal-1"
+    ],
+    "required_proof": "class 1 and class 2 PUT/GET with signed receipt and byte-exact readback on both relays",
+    "seed_record_count": 4,
+    "seed_put_count": 8,
+    "post_cids": [
+      "f68ae14dcd4fb0764b0c5669a03ebb7d68993b7cddc31f1552b85c2cba67536f",
+      "fc80b076becb28c9fbda596def255246cd506fc5ed4e5f4d22499c5cdad95f1b",
+      "52f99d16c0ab47bdad025cbd4138549802e552d55835435588887e7ca178e3a6"
+    ],
+    "all_five_successor": "EXCLUDED_UNTIL_AFTER_PEERIT_SITE_ACTIVATION"
+  },
+  "relay_authority": {
+    "relay_tuple_canonical_sha256": "7f1a85f1d9dc20d77041b69bc4d09cef01cd225329f475dc628b2d172e9e5da0",
+    "relay_tuple_file_sha256": "06f71dfe57876f2995e086798d6694176c8c313c2bcaf2477679dcd269a7a0db",
+    "syd-1": {
+      "descriptor_sequence": 8,
+      "descriptor_raw_sha256": "1da2fa08cd0514e51a57847b479ddb37a75a61b44e2c28b1e8afe9d06a18f3c9",
+      "descriptor_head_sha256": "a4cbfe23176862cf5dbfae962ad3b919063073c4a51abe20ef4ae06c05a32153",
+      "admission_raw_sha256": "76bd5d41ceae6feeb9c931bfb3615ef2d3354bd15360315a403772a127bdad62",
+      "admission_protocol_sha256": "a474226ced549bea08cb1e7af20f4104561a4818482b20815f6c63b632e0762b"
+    },
+    "dal-1": {
+      "descriptor_sequence": 5,
+      "descriptor_raw_sha256": "72494200e8e94daccdd57c88ed36336ff721e014bdfe68f267f5a33354cb95fe",
+      "descriptor_head_sha256": "549fd1df9b5cdba8ca2d97ab842bbda6a4a1433d79a82e230d8807bbd97cfebe",
+      "admission_raw_sha256": "56806a086b1c790dced4688263dd0cf8e03f8dca24d94f5c56fafa0e3b320a65",
+      "admission_protocol_sha256": "8748eaafd273695eb1d22282c8278cd733898f00ff137f238d8d5e300a148cc4"
+    }
+  },
+  "evidence": {
+    "seed_manifest_sha256": "36c15537d9e853cfb599cf59568a067e573a87c8de858183e332dfd3eb9192c0",
+    "sydney_recovery_evidence_sha256": "acd412deedd7a92593aae0a82b1ab3e0e97a1a6aaa8ee1d9468476b864e65ffd",
+    "dallas_recovery_evidence_sha256": "f907f1d371d311e6fb745c158c405fb82c3ab473ae410584511298c67fb46730",
+    "source_parent_commit": "1b3e81e5f6a0ba54999e110ffcca6b7ff4e1128a"
+  },
+  "disclosures": [
+    "This is a bounded public test, not GA and not a public launch declaration.",
+    "Sydney and Dallas are owner-operated relays, not independent-operator evidence.",
+    "The accepted blind-v1 browser client is a valid subset of the deployed relay authority; WIRE_TUPLE_DRIFT remains disclosed.",
+    "The all-five successor is deliberately excluded from this activation and must be qualified separately afterward.",
+    "The GA product gate remains honestly blocked."
+  ],
+  "followups": [
+    "qualify and land the all-five successor after peerit.site sequence 13 is verified",
+    "complete independent-operator, long-duration, recovery, and distribution evidence before GA",
+    "GA product gate remains honestly blocked"
+  ]
+}

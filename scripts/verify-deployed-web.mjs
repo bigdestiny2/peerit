@@ -16,6 +16,8 @@ import { normalizePeeritReleaseRelayHintsV1 } from '../js/substrate/release-rela
 import {
   PEERIT_APP_ARTIFACT_PATH,
   PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE,
+  PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE,
+  PEERIT_SEED_BOOTSTRAP_PATH,
   PEERIT_WEB_ASSET_MANIFEST_PATH,
   verifyPeeritSubstrateRuntimeArtifactV1
 } from './substrate-runtime-artifact.mjs'
@@ -135,11 +137,23 @@ export function releaseConfig (raw) {
         productionPinHistoryBundle !== PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)) {
       throw new Error(`productionPinHistoryBundle must equal ${PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)}`)
     }
+    const peeritSeedBootstrapBundle = String(raw.peeritSeedBootstrapBundle || '').trim()
+    const peeritSeedDiscoveryAuthorityPublicKey = String(
+      raw.peeritSeedDiscoveryAuthorityPublicKey || '').trim().toLowerCase()
+    if (releaseSequence >= PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE) {
+      if (!peeritSeedBootstrapBundle || !HEX64.test(peeritSeedDiscoveryAuthorityPublicKey)) {
+        throw new Error('sequence-13+ release requires a seed bootstrap bundle and discovery authority key')
+      }
+    } else if (peeritSeedBootstrapBundle || peeritSeedDiscoveryAuthorityPublicKey) {
+      throw new Error('Peerit seed bootstrap configuration requires releaseSequence 13 or later')
+    }
     return {
       transport: 'blind-substrate',
       substrateProfile,
       relayHints,
       productionPinHistoryBundle,
+      peeritSeedBootstrapBundle,
+      peeritSeedDiscoveryAuthorityPublicKey,
       releaseSequence,
       pinnedReleaseKey
     }
@@ -329,7 +343,7 @@ export function verifyIndexConfig (html, release) {
   }
 }
 
-export function verifyManifestConfig (manifest, release, rosterHash, shardRosterHash, driveKey) {
+export function verifyManifestConfig (manifest, release, rosterHash, shardRosterHash, driveKey, seedBootstrapSha256 = '') {
   if (manifest.releaseSequence !== release.releaseSequence) {
     throw new Error('asset-manifest.json releaseSequence does not match deploy/web-release.json')
   }
@@ -345,6 +359,9 @@ export function verifyManifestConfig (manifest, release, rosterHash, shardRoster
     if (!HEX64.test(appArtifactHash) || !HEX64.test(canonicalWebAssetManifestHash)) {
       throw new Error('asset-manifest.json webRelease has invalid canonical replacement hashes')
     }
+    if (release.peeritSeedBootstrapBundle && !HEX64.test(seedBootstrapSha256)) {
+      throw new Error('local Peerit seed bootstrap has an invalid SHA-256')
+    }
     const expected = {
       releaseSequence: release.releaseSequence,
       transport: 'blind-substrate',
@@ -359,6 +376,14 @@ export function verifyManifestConfig (manifest, release, rosterHash, shardRoster
       appArtifactHash,
       canonicalWebAssetManifest: `/${PEERIT_WEB_ASSET_MANIFEST_PATH}`,
       canonicalWebAssetManifestHash,
+      ...(release.peeritSeedBootstrapBundle
+        ? {
+            peeritSeedBootstrap: `/${PEERIT_SEED_BOOTSTRAP_PATH}`,
+            peeritSeedBootstrapSha256: seedBootstrapSha256,
+            peeritSeedDiscoveryAuthorityPublicKey: release.peeritSeedDiscoveryAuthorityPublicKey,
+            peeritSeedBootstrapReleaseSequence: release.releaseSequence
+          }
+        : {}),
       releaseKey: release.pinnedReleaseKey
     }
     if (!equalJson(manifest.webRelease, expected)) throw new Error('asset-manifest.json webRelease does not match the replacement substrate config')
@@ -522,6 +547,14 @@ async function main () {
     shardRosterHash = sha256(shardRosterBytes)
   }
 
+  let seedBootstrapSha256 = ''
+  if (release.peeritSeedBootstrapBundle) {
+    const seedBootstrapBytes = await readRequired(
+      repoPath(release.peeritSeedBootstrapBundle, 'peeritSeedBootstrapBundle'),
+      release.peeritSeedBootstrapBundle)
+    seedBootstrapSha256 = sha256(seedBootstrapBytes)
+  }
+
   const localManifestBytes = await readRequired(join(WEB, 'asset-manifest.json'), 'web/asset-manifest.json')
   const localSignatureBytes = await readRequired(join(WEB, 'asset-manifest.sig'), 'web/asset-manifest.sig')
   if (localManifestBytes.length > MAX_METADATA_BYTES || localSignatureBytes.length > MAX_METADATA_BYTES) {
@@ -531,7 +564,7 @@ async function main () {
   const signature = parseJson(localSignatureBytes, 'web/asset-manifest.sig')
   const entries = manifestEntries(manifest)
 
-  verifyManifestConfig(manifest, release, rosterHash, shardRosterHash, driveKey)
+  verifyManifestConfig(manifest, release, rosterHash, shardRosterHash, driveKey, seedBootstrapSha256)
   await verifyReleaseManifest({
     manifest,
     signature,
@@ -557,6 +590,14 @@ async function main () {
     if (manifest.webRelease.appArtifactHash !== runtime.appArtifactHashHex ||
         manifest.webRelease.canonicalWebAssetManifestHash !== runtime.webAssetManifestHashHex) {
       throw new Error('signed JSON manifest does not cross-bind the exact canonical replacement artifacts')
+    }
+    if (release.peeritSeedBootstrapBundle &&
+        (!runtime.seedBootstrap ||
+         runtime.seedBootstrap.path !== manifest.webRelease.peeritSeedBootstrap ||
+         runtime.seedBootstrap.sha256 !== seedBootstrapSha256 ||
+         runtime.seedBootstrap.authorityPublicKey !== release.peeritSeedDiscoveryAuthorityPublicKey ||
+         runtime.seedBootstrap.releaseSequence !== release.releaseSequence)) {
+      throw new Error('signed JSON manifest does not cross-bind the exact Peerit seed bootstrap')
     }
     if (release.productionPinHistoryBundle) {
       await verifyPeeritProductionPinHistoryReleaseV1({

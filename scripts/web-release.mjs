@@ -840,9 +840,16 @@ function verifyCanaryPinHistoryContinuity (release, driveKey) {
   if (!historySigOk) throw new Error('web release pin-history signature does not verify with the pinned release key')
 
   const sequences = history.entries.map((entry) => entry.releaseSequence)
-  if (sequences.length < 2 || sequences[sequences.length - 2] !== release.releaseSequence - 1 ||
-      sequences[sequences.length - 1] !== release.releaseSequence) {
-    throw new Error(`pin-history continuity broken: expected ...${release.releaseSequence - 1} -> ${release.releaseSequence}, got ${sequences.join(' -> ')}`)
+  const expectedHeadSequence = opts.phase === 'prepare'
+    ? release.releaseSequence - 1
+    : release.releaseSequence
+  if (sequences.length < 1 || sequences[sequences.length - 1] !== expectedHeadSequence ||
+      (opts.phase !== 'prepare' &&
+       (sequences.length < 2 || sequences[sequences.length - 2] !== release.releaseSequence - 1))) {
+    const expected = opts.phase === 'prepare'
+      ? `signed predecessor ${release.releaseSequence - 1}`
+      : `${release.releaseSequence - 1} -> ${release.releaseSequence}`
+    throw new Error(`pin-history continuity broken: expected ${expected}, got ${sequences.join(' -> ')}`)
   }
   for (let i = 1; i < sequences.length; i++) {
     if (sequences[i] <= sequences[i - 1]) throw new Error(`pin-history sequences must strictly increase: ${sequences.join(' -> ')}`)
@@ -855,7 +862,10 @@ function verifyCanaryPinHistoryContinuity (release, driveKey) {
   if (head.transport !== 'blind-substrate/blind-v1') throw new Error('pin-history head transport is not blind-substrate/blind-v1')
   if (JSON.stringify(head.relayHints) !== JSON.stringify(release.relayHints)) throw new Error('pin-history head relay hints do not match the release config')
   if (head.claim_boundary !== 'LIVE_PUBLIC_TEST_ONLY') throw new Error('pin-history head must carry the LIVE_PUBLIC_TEST_ONLY claim boundary')
-  addCheck('canary:pin-history-continuity', 'pass', `Pin-history continuity ${sequences[sequences.length - 2]} -> ${sequences[sequences.length - 1]} verified: head entry binds the exact frozen asset-manifest, both relay hints, and the pinned release key; history signature verifies.`, {
+  const phaseDescription = opts.phase === 'prepare'
+    ? `signed predecessor ${expectedHeadSequence}`
+    : `continuity ${sequences[sequences.length - 2]} -> ${sequences[sequences.length - 1]}`
+  addCheck('canary:pin-history-continuity', 'pass', `Pin-history ${phaseDescription} verified: head entry binds the exact frozen asset-manifest, both relay hints, and the pinned release key; history signature verifies.`, {
     sequences,
     headManifestSha256: manifestSha256
   })

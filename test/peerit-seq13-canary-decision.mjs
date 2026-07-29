@@ -11,6 +11,8 @@ const releaseSource = readFileSync(new URL('../scripts/web-release.mjs', import.
 assert.equal(decisionHash, '86130d0257105aecff2a40fee4656edabbffb531ac94854759138a13c06b59b0')
 assert.match(releaseSource, new RegExp(decisionHash))
 assert.match(releaseSource, /canary-decision-peerit-seq13-three-post-activation-20260729t132650z\.json/)
+assert.match(releaseSource, /opts\.phase === 'prepare'\s*\? release\.releaseSequence - 1/)
+assert.match(releaseSource, /signed predecessor/)
 assert.equal(decision.schema_version, 2)
 assert.equal(decision.status, 'DECIDED')
 assert.equal(decision.activation.functional_release_sequence, 13)

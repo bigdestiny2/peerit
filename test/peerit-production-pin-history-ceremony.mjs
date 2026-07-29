@@ -8,6 +8,7 @@ import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -35,11 +36,11 @@ import {
   hashPeeritWebAssetManifestV1
 } from '../js/substrate/web-asset-manifest.mjs'
 import {
-  PEERIT_SEED_BOOTSTRAP_PATH,
   finalizeProductionPinHistoryV1,
   prepareProductionPinHistoryPrefixV1,
   releaseSigningSeedFromEnvironment
 } from '../scripts/production-pin-history-ceremony.mjs'
+import { predictPeeritProductionRuntimeV1 } from '../scripts/predict-production-runtime.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const fixtureRoot = mkdtempSync(join(tmpdir(), 'peerit-pin-ceremony-'))
@@ -217,35 +218,56 @@ const bootstrap = await createPeeritSeedBootstrapV1({
 const bootstrapBytes = encodePeeritSeedBootstrapV1(bootstrap)
 const bootstrapSha256 = await hashPeeritSeedBootstrapV1(bootstrapBytes)
 const bootstrapDomainHash = hashPeeritBootstrapV1(bootstrapBytes)
-const app13Bytes = Buffer.from(JSON.stringify({
-  schema: 'peerit-app-artifact-v1',
-  releaseSequence: 13,
-  releaseKey: releasePublicKey,
-  productionPinHistory: '/peerit-production-pin-history-v1.cenc',
-  peeritSeedBootstrap: PEERIT_SEED_BOOTSTRAP_PATH,
-  peeritSeedBootstrapSha256: bootstrapSha256,
+const predictionSourceFiles = new Map([
+  ['index.html', readFileSync(join(root, 'index.html'))],
+  ['styles.css', readFileSync(join(root, 'styles.css'))],
+  ['js/substrate/app-entry.js', readFileSync(join(root, 'js/substrate/app-entry.js'))]
+])
+const predictionConfig = (releaseSequence) => Buffer.from(JSON.stringify({
+  substrateProfile: 'blind-v1',
+  relayHints: [],
+  productionPinHistoryBundle: 'peerit-production-pin-history-v1.cenc',
+  peeritSeedBootstrapBundle: 'deploy/peerit-seed-bootstrap-v1.json',
   peeritSeedDiscoveryAuthorityPublicKey: discoveryPublicKey,
-  peeritSeedBootstrapReleaseSequence: 13
+  releaseSequence,
+  pinnedReleaseKey: releasePublicKey
 }) + '\n')
-const app13Hash = hashPeeritAppArtifactV1(app13Bytes)
-const web13Bytes = encodePeeritWebAssetManifestV1({
-  version: 1,
-  releaseSequence: 13n,
-  appArtifactHash: app13Hash,
-  recommendedBootstrapHashes: [bootstrapDomainHash],
-  assets: [
-    {
-      path: '/peerit-app-artifact-v1.json',
-      byteLength: BigInt(app13Bytes.byteLength),
-      assetHash: blake2b256(app13Bytes)
-    },
-    {
-      path: PEERIT_SEED_BOOTSTRAP_PATH,
-      byteLength: BigInt(bootstrapBytes.byteLength),
-      assetHash: blake2b256(bootstrapBytes)
-    }
-  ]
+const prediction13Output = mkdtempSync(join(tmpdir(), 'peerit-predict-13-'))
+const prediction13 = await predictPeeritProductionRuntimeV1({
+  root: fixtureRoot,
+  fixtureOnly: true,
+  configBytes: predictionConfig(13),
+  pinHistoryBytes: prefixA.bundleBytes,
+  seedBootstrapBytes: bootstrapBytes,
+  sourceFiles: predictionSourceFiles,
+  outputDirectory: prediction13Output
 })
+const prediction13Again = await predictPeeritProductionRuntimeV1({
+  root: fixtureRoot,
+  fixtureOnly: true,
+  configBytes: predictionConfig(13),
+  pinHistoryBytes: prefixA.bundleBytes,
+  seedBootstrapBytes: bootstrapBytes,
+  sourceFiles: predictionSourceFiles,
+  outputDirectory: prediction13Output
+})
+assert.deepEqual(prediction13.appArtifactBytes, prediction13Again.appArtifactBytes)
+assert.deepEqual(prediction13.webAssetManifestBytes, prediction13Again.webAssetManifestBytes)
+assert.equal(prediction13.metadata.seedBootstrap.bootstrapSequence, 0)
+assert.equal(prediction13.metadata.seedBootstrap.previousBootstrapHash, null)
+writeFileSync(join(prediction13Output, 'peerit-app-artifact-v1.json'), 'drift')
+await assert.rejects(predictPeeritProductionRuntimeV1({
+  root: fixtureRoot,
+  fixtureOnly: true,
+  configBytes: predictionConfig(13),
+  pinHistoryBytes: prefixA.bundleBytes,
+  seedBootstrapBytes: bootstrapBytes,
+  sourceFiles: predictionSourceFiles,
+  outputDirectory: prediction13Output
+}), error => error.code === 'PEERIT_PRODUCTION_PREDICTION_OUTPUT_DRIFT')
+const app13Bytes = prediction13.appArtifactBytes
+const app13Hash = hashPeeritAppArtifactV1(app13Bytes)
+const web13Bytes = prediction13.webAssetManifestBytes
 const finalizeOptions = {
   root: fixtureRoot,
   seedHex: releaseSeed,
@@ -270,44 +292,41 @@ assert.equal(finalA.metadata.seedBootstrap.sha256, createHash('sha256').update(b
 
 const bootstrap14 = await createPeeritSeedBootstrapV1({
   ...bootstrap.payload,
+  bootstrapSequence: 0,
+  previousBootstrapHash: null,
+  releaseSequence: 14,
+  issuedAt: 10_000,
+  expiresAt: 20_000
+}, { seedHex: discoverySeed })
+const bootstrap14Bytes = encodePeeritSeedBootstrapV1(bootstrap14)
+const chainedBootstrap14 = await createPeeritSeedBootstrapV1({
+  ...bootstrap.payload,
   bootstrapSequence: 1,
   previousBootstrapHash: bootstrapSha256,
   releaseSequence: 14,
   issuedAt: 10_000,
   expiresAt: 20_000
 }, { seedHex: discoverySeed })
-const bootstrap14Bytes = encodePeeritSeedBootstrapV1(bootstrap14)
-const bootstrap14Sha256 = await hashPeeritSeedBootstrapV1(bootstrap14Bytes)
-const bootstrap14DomainHash = hashPeeritBootstrapV1(bootstrap14Bytes)
-const app14Bytes = Buffer.from(JSON.stringify({
-  schema: 'peerit-app-artifact-v1',
-  releaseSequence: 14,
-  releaseKey: releasePublicKey,
-  productionPinHistory: '/peerit-production-pin-history-v1.cenc',
-  peeritSeedBootstrap: PEERIT_SEED_BOOTSTRAP_PATH,
-  peeritSeedBootstrapSha256: bootstrap14Sha256,
-  peeritSeedDiscoveryAuthorityPublicKey: discoveryPublicKey,
-  peeritSeedBootstrapReleaseSequence: 14
-}) + '\n')
-const app14Hash = hashPeeritAppArtifactV1(app14Bytes)
-const web14Bytes = encodePeeritWebAssetManifestV1({
-  version: 1,
-  releaseSequence: 14n,
-  appArtifactHash: app14Hash,
-  recommendedBootstrapHashes: [bootstrap14DomainHash],
-  assets: [
-    {
-      path: '/peerit-app-artifact-v1.json',
-      byteLength: BigInt(app14Bytes.byteLength),
-      assetHash: blake2b256(app14Bytes)
-    },
-    {
-      path: PEERIT_SEED_BOOTSTRAP_PATH,
-      byteLength: BigInt(bootstrap14Bytes.byteLength),
-      assetHash: blake2b256(bootstrap14Bytes)
-    }
-  ]
+const chainedBootstrap14Bytes = encodePeeritSeedBootstrapV1(chainedBootstrap14)
+await assert.rejects(predictPeeritProductionRuntimeV1({
+  root: fixtureRoot,
+  fixtureOnly: true,
+  configBytes: predictionConfig(14),
+  pinHistoryBytes: finalA.bundleBytes,
+  seedBootstrapBytes: chainedBootstrap14Bytes,
+  sourceFiles: predictionSourceFiles
+}), /source sequence 0 with no predecessor/)
+const prediction14 = await predictPeeritProductionRuntimeV1({
+  root: fixtureRoot,
+  fixtureOnly: true,
+  configBytes: predictionConfig(14),
+  pinHistoryBytes: finalA.bundleBytes,
+  seedBootstrapBytes: bootstrap14Bytes,
+  sourceFiles: predictionSourceFiles,
+  outputDirectory: mkdtempSync(join(tmpdir(), 'peerit-predict-14-'))
 })
+const app14Bytes = prediction14.appArtifactBytes
+const web14Bytes = prediction14.webAssetManifestBytes
 const final14 = await finalizeProductionPinHistoryV1({
   root: fixtureRoot,
   seedHex: releaseSeed,
@@ -316,12 +335,13 @@ const final14 = await finalizeProductionPinHistoryV1({
   prefixBundleBytes: finalA.bundleBytes,
   seedBootstrapBytes: bootstrap14Bytes,
   appArtifactBytes: app14Bytes,
-  webAssetManifestBytes: web14Bytes,
-  previousBootstrapHash: bootstrapSha256
+  webAssetManifestBytes: web14Bytes
 })
 const final14Bundle = decodePeeritPinHistoryBundleV1(final14.bundleBytes)
 assert.equal(final14Bundle.pins.length, 15)
 assert.equal(decodePeeritHiveRelayProfilePinV1(final14Bundle.pins[14]).releaseSequence, 14n)
+assert.equal(final14.metadata.seedBootstrap.bootstrapSequence, 0)
+assert.equal(final14.metadata.seedBootstrap.previousBootstrapHash, null)
 
 const tampered = Buffer.from(prefixA.bundleBytes)
 tampered[tampered.length - 1] ^= 1

@@ -438,14 +438,16 @@ export async function finalizeProductionPinHistoryV1 (options = {}) {
   const bootstrap = JSON.parse(Buffer.from(bootstrapBytes).toString('utf8'))
   const discoveryKey = exactHex32(bootstrap?.payload?.authorityPublicKey, 'seed discovery authority')
   const bootstrapSha256 = sha256Hex(bootstrapBytes)
-  const previousBootstrapHash = options.previousBootstrapHash == null
-    ? null
-    : exactHex32(options.previousBootstrapHash, 'previous bootstrap hash')
+  if (bootstrap.payload.bootstrapSequence !== 0 ||
+      bootstrap.payload.previousBootstrapHash !== null ||
+      options.previousBootstrapHash != null) {
+    fail('terminal release bootstrap must be a distinct source sequence 0 with no predecessor')
+  }
   await verifyPeeritSeedBootstrapV1(bootstrapBytes, {
     authorityPublicKey: discoveryKey,
     releaseSequence: sequence,
     expectedArtifactHash: bootstrapSha256,
-    previousBootstrapHash,
+    previousBootstrapHash: null,
     now: options.bootstrapVerificationTime == null
       ? bootstrap.payload.issuedAt
       : Number(options.bootstrapVerificationTime)
@@ -496,7 +498,8 @@ export async function finalizeProductionPinHistoryV1 (options = {}) {
       sha256: bootstrapSha256,
       domainHash: bytesToHex(bootstrapDomainHash),
       discoveryAuthorityPublicKey: discoveryKey,
-      previousBootstrapHash
+      bootstrapSequence: 0,
+      previousBootstrapHash: null
     },
     appArtifactHash: bytesToHex(appHash),
     webAssetManifestHash: bytesToHex(webHash)
@@ -548,8 +551,7 @@ async function main () {
       prefixBundleBytes: readFileSync(requiredArg('--prefix')),
       seedBootstrapBytes: readFileSync(requiredArg('--seed-bootstrap')),
       appArtifactBytes: readFileSync(requiredArg('--app-artifact')),
-      webAssetManifestBytes: readFileSync(requiredArg('--web-asset-manifest')),
-      previousBootstrapHash: arg('--previous-bootstrap-sha256')
+      webAssetManifestBytes: readFileSync(requiredArg('--web-asset-manifest'))
     })
     atomicWrite(requiredArg('--out'), result.bundleBytes)
     atomicWrite(requiredArg('--metadata'), metadataBytes(result.metadata))

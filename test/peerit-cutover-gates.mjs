@@ -89,6 +89,52 @@ verifyManifestConfig({
   }
 }, release, '', '', drive)
 
+const seedAuthority = '34'.repeat(32)
+const seedSha256 = '56'.repeat(32)
+const seededRelease = releaseConfig({
+  substrateProfile: 'blind-v1',
+  relayHints: [],
+  productionPinHistoryBundle: 'peerit-production-pin-history-v1.cenc',
+  peeritSeedBootstrapBundle: 'deploy/peerit-seed-bootstrap-v1-seq13.json',
+  peeritSeedDiscoveryAuthorityPublicKey: seedAuthority,
+  releaseSequence: 13,
+  pinnedReleaseKey: key
+})
+const seededManifest = {
+  releaseSequence: 13,
+  driveKey: drive,
+  files: { 'index.html': 'ef'.repeat(32) },
+  webRelease: {
+    releaseSequence: 13,
+    transport: 'blind-substrate',
+    substrateProfile: 'blind-v1',
+    relayHints: [],
+    networkDelivery: 'profile-gated',
+    legacyDestination: null,
+    productionPinHistory: '/peerit-production-pin-history-v1.cenc',
+    appArtifact: `/${PEERIT_APP_ARTIFACT_PATH}`,
+    appArtifactHash: 'ef'.repeat(32),
+    canonicalWebAssetManifest: `/${PEERIT_WEB_ASSET_MANIFEST_PATH}`,
+    canonicalWebAssetManifestHash: '12'.repeat(32),
+    peeritSeedBootstrap: '/peerit-seed-bootstrap-v1.json',
+    peeritSeedBootstrapSha256: seedSha256,
+    peeritSeedDiscoveryAuthorityPublicKey: seedAuthority,
+    peeritSeedBootstrapReleaseSequence: 13,
+    releaseKey: key
+  }
+}
+verifyManifestConfig(seededManifest, seededRelease, '', '', drive, seedSha256)
+assert.throws(
+  () => verifyManifestConfig(seededManifest, seededRelease, '', '', drive, '78'.repeat(32)),
+  /webRelease does not match/,
+  'the deployed manifest must bind the exact local seed bootstrap bytes')
+assert.throws(() => releaseConfig({
+  substrateProfile: 'blind-v1',
+  relayHints: [],
+  releaseSequence: 13,
+  pinnedReleaseKey: key
+}), /requires a seed bootstrap bundle/)
+
 const publishSource = readFileSync(new URL('../publish.mjs', import.meta.url), 'utf8')
 assert.ok(publishSource.indexOf('assertPeeritBlindProductReleaseReady(release)') < publishSource.indexOf('await loadHiveRelayClient()'),
   'public publish checks composed product readiness before loading or starting a network client')

@@ -27,9 +27,11 @@ import {
   createPeeritRelayRequalificationScheduler
 } from './relay-requalification-scheduler.js'
 import {
+  getVerifiedPeeritBrowserSeedBootstrapV1,
   getVerifiedPeeritBrowserRuntimeAssembly,
   isVerifiedPeeritBrowserRuntimeAuthority
 } from './browser-runtime-authority.mjs'
+import { verifyPeeritSeedBootstrapV1 } from './seed-bootstrap-v1.mjs'
 
 const MAX_HINTS = 128
 const MAX_HINTS_PER_SOURCE = MAX_HINTS / 4
@@ -1228,6 +1230,403 @@ export async function recoverPeeritSeedFromActiveRelayInstallationV1 (options = 
     if (installation.recoveryController === controller) installation.recoveryController = null
     for (const [signal, listener] of listeners) signal.removeEventListener('abort', listener)
   }
+}
+
+function exactLimitedCellGetControl (value) {
+  if (!value || typeof value !== 'object' ||
+      typeof value.createBlindCellGetControl !== 'function' ||
+      typeof value.createBrowserCryptoRuntime !== 'function' ||
+      Object.keys(value).sort().join('\0') !==
+        ['createBlindCellGetControl', 'createBrowserCryptoRuntime'].sort().join('\0')) {
+    throw qualificationError('PEERIT_LIMITED_CELL_GET_CONTROL_INVALID',
+      'authenticated limited Cell-GET module is not the exact two-export surface')
+  }
+  return value
+}
+
+function sameLimitedAdmissionProfile (actual, expected) {
+  return actual && expected &&
+    actual.profileId === expected.profileId &&
+    actual.schemeId === expected.schemeId &&
+    actual.conformanceClass === expected.conformanceClass &&
+    actual.roleBits === expected.roleBits &&
+    actual.parameterUrl == null && expected.parameterUrl == null &&
+    bytesEqual(actual.parameterHash, expected.parameterHash)
+}
+
+function assertLimitedRelayContext (context, relay, head, requirement) {
+  const expected = {
+    descriptorHash: fixedHex(head.descriptorHash),
+    continuityRoot: relay.continuityRootRelayPublicKey,
+    storeId: relay.storeId,
+    familyId: requirement.familyId,
+    operationId: requirement.operationId,
+    endpointId: requirement.endpointId,
+    transportId: 1,
+    transportSupportBit: requirement.transportSupportBit,
+    privacyProfileBit: requirement.privacyProfileBit
+  }
+  for (const field of ['descriptorHash', 'continuityRoot', 'storeId']) {
+    if (fixedHex(context[field]) !== expected[field]) {
+      throw qualificationError('PEERIT_LIMITED_CELL_GET_CONTEXT_DRIFT',
+        `qualified relay changed ${field}`)
+    }
+  }
+  for (const field of [
+    'familyId', 'operationId', 'endpointId', 'transportId',
+    'transportSupportBit', 'privacyProfileBit'
+  ]) {
+    if (context[field] !== expected[field]) {
+      throw qualificationError('PEERIT_LIMITED_CELL_GET_CONTEXT_DRIFT',
+        `qualified relay changed ${field}`)
+    }
+  }
+}
+
+async function qualifyLimitedSeedRelay ({
+  control,
+  relay,
+  relayProfile,
+  profile,
+  nowEpoch,
+  monotonicMillis,
+  signal,
+  timeoutMillis
+}) {
+  const canonicalUrl = new TextEncoder().encode(relay.canonicalDescribeUrl)
+  const headDescriptor = await control.fetchDescriptorHead({
+    canonicalUrl,
+    signal,
+    timeoutMillis
+  })
+  const head = control.descriptorLinkage(headDescriptor)
+  if (head.descriptorSequence < BigInt(relay.minimumDescriptorSequence) ||
+      fixedHex(head.storeId) !== relay.storeId) {
+    throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_HEAD_INVALID',
+      'current descriptor head is below or outside the signed seed relay anchor')
+  }
+
+  const descending = [headDescriptor]
+  const seen = new Set([fixedHex(head.descriptorHash)])
+  let current = head
+  while (current.descriptorSequence > 0n) {
+    if (descending.length >= profile.maximumDescriptorHistory ||
+        current.previousDescriptorHash == null) {
+      throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_CHAIN_INCOMPLETE',
+        'descriptor history did not reach signed genesis within its closed bound')
+    }
+    const previousHash = fixedHex(current.previousDescriptorHash)
+    if (seen.has(previousHash)) {
+      throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_CHAIN_DUPLICATE',
+        'descriptor history repeated a hash')
+    }
+    const previousDescriptor = await control.fetchDescriptorHistory({
+      canonicalUrl,
+      expectedDescriptorHash: current.previousDescriptorHash,
+      signal,
+      timeoutMillis
+    })
+    const previous = control.descriptorLinkage(previousDescriptor)
+    if (previous.descriptorSequence + 1n !== current.descriptorSequence ||
+        fixedHex(previous.descriptorHash) !== previousHash ||
+        fixedHex(previous.storeId) !== relay.storeId) {
+      throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_CHAIN_INVALID',
+        'descriptor history has a sequence, hash, or store discontinuity')
+    }
+    seen.add(previousHash)
+    descending.push(previousDescriptor)
+    current = previous
+  }
+  if (current.previousDescriptorHash != null ||
+      fixedHex(current.descriptorHash) !== relay.descriptorGenesisHash ||
+      fixedHex(current.relayPublicKey) !== relay.continuityRootRelayPublicKey ||
+      fixedHex(current.storeId) !== relay.storeId) {
+    throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_GENESIS_MISMATCH',
+      'descriptor history does not terminate at the signed relay genesis')
+  }
+
+  const ascending = descending.reverse()
+  let trusted = await control.acceptDescriptor(ascending[0], {
+    pinnedDescriptorHash: bytes(relay.descriptorGenesisHash, 'descriptor genesis hash', 32),
+    continuityRootRelayPublicKey: bytes(
+      relay.continuityRootRelayPublicKey, 'continuity root relay public key', 32)
+  })
+  for (let index = 1; index < ascending.length; index++) {
+    trusted = await control.acceptDescriptor(ascending[index], {
+      continuityRootRelayPublicKey: bytes(
+        relay.continuityRootRelayPublicKey, 'continuity root relay public key', 32)
+    })
+  }
+  if (fixedHex(trusted.descriptorHash) !== fixedHex(head.descriptorHash)) {
+    throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_CHAIN_INVALID',
+      'accepted descriptor chain did not terminate at the fetched head')
+  }
+  const advertised = control.trustedAdmissionProfile(
+    trusted, relayProfile.admissionProfile.profileId)
+  if (!sameLimitedAdmissionProfile(advertised, relayProfile.admissionProfile)) {
+    throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_ADMISSION_PROFILE_DRIFT',
+      'descriptor does not carry the release-signed admission-v3 profile')
+  }
+
+  const qualified = await control.qualifyCellGetCandidate({
+    canonicalUrl,
+    expectedDescriptorHash: head.descriptorHash,
+    continuityRootRelayPublicKey: bytes(
+      relay.continuityRootRelayPublicKey, 'continuity root relay public key', 32)
+  }, {
+    endpointId: profile.requirement.endpointId,
+    requiredRoleBits: profile.requirement.requiredRoleBits,
+    privacyProfileBit: profile.requirement.privacyProfileBit,
+    transportSupportBit: profile.requirement.transportSupportBit,
+    signal,
+    timeoutMillis
+  })
+  // The health proof was observed inside the qualifier before it returned.
+  // This post-return snapshot is therefore conservative; never restart that
+  // proof's local freshness window when adapters are assembled later.
+  const qualifiedAtMonotonicMillis = monotonicMillis()
+  const context = control.endpointContext(qualified.endpoint)
+  assertLimitedRelayContext(context, relay, head, profile.requirement)
+  const validity = control.trustedDescriptorValidity(qualified.trustedDescriptor)
+  const epoch = nowEpoch()
+  if (!validity || epoch < validity.issuedEpoch || epoch >= validity.expiresEpoch) {
+    throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_EXPIRED',
+      'qualified descriptor is outside its signed epoch window')
+  }
+  return Object.freeze({
+    qualified,
+    qualifiedAtMonotonicMillis,
+    context,
+    head,
+    validity
+  })
+}
+
+function brandedLimitedSeedAdapter ({
+  relay,
+  control,
+  qualification,
+  nowEpoch,
+  monotonicMillis,
+  signal,
+  timeoutMillis
+}) {
+  const qualifiedAt = qualification.qualifiedAtMonotonicMillis
+  if (typeof qualifiedAt !== 'number' || !Number.isFinite(qualifiedAt) ||
+      qualifiedAt < 0) {
+    throw qualificationError('PEERIT_LIMITED_CELL_GET_QUALIFICATION_INVALID',
+      'limited Cell-GET qualification has no trusted monotonic observation')
+  }
+  const localHealthDeadline = qualifiedAt + 60_000
+  const assertFresh = () => {
+    if (signal && signal.aborted) throw signal.reason
+    const monotonic = monotonicMillis()
+    const epoch = nowEpoch()
+    if (monotonic < qualifiedAt || monotonic >= localHealthDeadline ||
+        epoch < qualification.validity.issuedEpoch ||
+        epoch >= qualification.validity.expiresEpoch) {
+      throw qualificationError('PEERIT_LIMITED_CELL_GET_QUALIFICATION_EXPIRED',
+        'ephemeral signed-health Cell-GET qualification expired')
+    }
+  }
+  const readCellCapability = async (request, operationContext = {}) => {
+    assertFresh()
+    const result = await control.readCell({
+      endpoint: qualification.qualified.endpoint,
+      readCap: request.readCapability,
+      signal: operationContext.signal || signal,
+      timeoutMillis
+    })
+    const verified = Object.freeze({
+      relayId: String(request.relayId),
+      targetId: String(request.targetId),
+      innerBytes: bytes(result.structuredContent, 'verified limited Cell GET innerBytes'),
+      evidenceRef: `cell-get:${relay.relayId}:${fixedHex(qualification.head.descriptorHash)}:${fixedHex(result.requestCommitment)}`
+    })
+    VERIFIED_RELAY_CELL_GET_RESULTS.add(verified)
+    assertFresh()
+    return verified
+  }
+  assertFresh()
+  const context = Object.freeze({
+    canonicalDescribeUrl: relay.canonicalDescribeUrl,
+    continuityRootRelayPublicKey: relay.continuityRootRelayPublicKey,
+    storeId: relay.storeId,
+    descriptorGenesisHash: relay.descriptorGenesisHash,
+    descriptorHeadHash: fixedHex(qualification.head.descriptorHash),
+    descriptorSequence: qualification.context.descriptorSequence,
+    familyId: qualification.context.familyId,
+    operationId: qualification.context.operationId,
+    endpointId: qualification.context.endpointId,
+    transportId: qualification.context.transportId,
+    transportSupportBit: qualification.context.transportSupportBit,
+    privacyProfileBit: qualification.context.privacyProfileBit
+  })
+  const adapter = Object.freeze({
+    id: `limited-seed:${relay.relayId}:${context.descriptorHeadHash}`,
+    compatible: true,
+    readCellCapability
+  })
+  VERIFIED_RELAY_ADAPTERS.add(adapter)
+  VERIFIED_RELAY_ADAPTER_CONTEXTS.set(adapter, context)
+  return adapter
+}
+
+async function limitedSeedCachedResult (sync, seed, signal) {
+  if (!sync || typeof sync.discoveryFloor !== 'function' ||
+      typeof sync.ingestVerifiedRemoteBatch !== 'function') {
+    throw new TypeError('limited seed recovery requires the remote-ingest substrate sync boundary')
+  }
+  if (signal && signal.aborted) throw signal.reason
+  const floor = await sync.discoveryFloor(seed.sourceId)
+  if (signal && signal.aborted) throw signal.reason
+  if (!floor) {
+    if (seed.payload.bootstrapSequence !== 0 ||
+        seed.payload.previousBootstrapHash != null) {
+      throw qualificationError('PEERIT_COLD_READER_GAP',
+        'cold browser requires bootstrap sequence zero')
+    }
+    return null
+  }
+  if (seed.payload.bootstrapSequence < floor.checkpointSequence) {
+    throw qualificationError('PEERIT_COLD_READER_ROLLBACK',
+      'signed bootstrap is below the persisted source floor')
+  }
+  if (seed.payload.bootstrapSequence === floor.checkpointSequence) {
+    if (seed.artifactHash !== floor.checkpointHash) {
+      throw qualificationError('PEERIT_COLD_READER_FORK',
+        'signed bootstrap conflicts at the persisted source floor')
+    }
+    return Object.freeze({
+      ok: true,
+      cached: true,
+      networkGets: 0,
+      networkPuts: 0,
+      sourceId: seed.sourceId,
+      checkpointSequence: floor.checkpointSequence,
+      checkpointHash: floor.checkpointHash,
+      recordCount: seed.payload.records.length,
+      fallbackCount: 0
+    })
+  }
+  if (seed.payload.bootstrapSequence !== floor.checkpointSequence + 1 ||
+      seed.payload.previousBootstrapHash !== floor.checkpointHash) {
+    throw qualificationError('PEERIT_COLD_READER_GAP',
+      'signed bootstrap does not directly extend the persisted source floor')
+  }
+  return null
+}
+
+// Release-scoped, non-installing recovery seam. It verifies the signed seed
+// before the first relay fetch, walks both current descriptor heads to the
+// signed genesis anchors, health-qualifies only CELL.GET, ingests the verified
+// records, and never calls sync.setRelays or prepares a PUT.
+export async function recoverPeeritSeedWithLimitedCellGetAuthorityV1 (options = {}) {
+  if (Object.prototype.hasOwnProperty.call(options, 'artifactBytes') ||
+      Object.prototype.hasOwnProperty.call(options, 'verification')) {
+    throw qualificationError('PEERIT_LIMITED_SEED_AUTHORITY_INJECTION',
+      'limited recovery seed bytes and verification are fixed by the signed runtime authority')
+  }
+  if (!isVerifiedPeeritBrowserRuntimeAuthority(options.releaseAuthority)) {
+    throw qualificationError('PEERIT_AUTHENTICATED_RELAY_RUNTIME_AUTHORITY_REQUIRED',
+      'limited seed recovery requires the signed browser runtime authority')
+  }
+  const runtimeAssembly = getVerifiedPeeritBrowserRuntimeAssembly(options.releaseAuthority)
+  const limited = runtimeAssembly.limitedCellGet
+  const seedBootstrap = getVerifiedPeeritBrowserSeedBootstrapV1(
+    options.releaseAuthority)
+  const namespace = exactLimitedCellGetControl(limited && limited.control)
+  const profile = limited && typeof limited.profileSnapshot === 'function'
+    ? limited.profileSnapshot()
+    : null
+  if (!profile || profile.networkPuts !== 0 || profile.ordinaryDelivery !== 'local-only') {
+    throw qualificationError('PEERIT_LIMITED_CELL_GET_PROFILE_INVALID',
+      'signed limited recovery profile is unavailable')
+  }
+  if (!seedBootstrap || !seedBootstrap.artifactBytes || !seedBootstrap.verification) {
+    throw qualificationError('PEERIT_AUTHENTICATED_SEED_BOOTSTRAP_REQUIRED',
+      'signed runtime authority does not bind a seed bootstrap')
+  }
+  const now = typeof options.now === 'function' ? options.now : Date.now
+  const nowEpoch = () => Math.floor(now() / 21_600_000)
+  const monotonicMillis = typeof options.monotonicMillis === 'function'
+    ? options.monotonicMillis
+    : () => globalThis.performance && typeof globalThis.performance.now === 'function'
+        ? globalThis.performance.now()
+        : Date.now()
+  const seed = await verifyPeeritSeedBootstrapV1(seedBootstrap.artifactBytes, {
+    ...seedBootstrap.verification,
+    now: now()
+  })
+  if (options.signal && options.signal.aborted) throw options.signal.reason
+  const cached = await limitedSeedCachedResult(options.sync, seed, options.signal)
+  if (cached) {
+    return Object.freeze({
+      ...cached,
+      qualifiedRelayCount: 0,
+      ordinaryDelivery: 'local-only',
+      descriptorHeads: Object.freeze([])
+    })
+  }
+
+  const runtime = namespace.createBrowserCryptoRuntime(options.webCrypto || globalThis.crypto)
+  const control = namespace.createBlindCellGetControl({
+    runtime,
+    nowEpoch,
+    monotonicMillis,
+    supportedProtocolProfiles: profile.supportedProtocolProfiles,
+    supportedTransportProfiles: profile.supportedTransportProfiles,
+    fetch: options.fetch || globalThis.fetch
+  })
+  const profileRelays = new Map(profile.relays.map(relay => [relay.relayId, relay]))
+  const qualifications = await Promise.all(seed.payload.relays.map(async relay => {
+    const relayProfile = profileRelays.get(relay.relayId)
+    if (!relayProfile) {
+      throw qualificationError('PEERIT_LIMITED_CELL_GET_PROFILE_INVALID',
+        'signed seed relay has no signed admission profile')
+    }
+    return qualifyLimitedSeedRelay({
+      control,
+      relay,
+      relayProfile,
+      profile,
+      nowEpoch,
+      monotonicMillis,
+      signal: options.signal,
+      timeoutMillis: options.timeoutMillis
+    })
+  }))
+  const adapters = seed.payload.relays.map((relay, index) => brandedLimitedSeedAdapter({
+    relay,
+    control,
+    qualification: qualifications[index],
+    nowEpoch,
+    monotonicMillis,
+    signal: options.signal,
+    timeoutMillis: options.timeoutMillis
+  }))
+  const { createPeeritSeedColdReaderV1 } = await import('./cold-reader.mjs')
+  const reader = createPeeritSeedColdReaderV1({
+    sync: options.sync,
+    relays: adapters,
+    signal: options.signal,
+    concurrency: options.concurrency,
+    timeoutMillis: options.timeoutMillis,
+    now
+  })
+  const recovered = await reader.read(
+    seedBootstrap.artifactBytes, seedBootstrap.verification)
+  return Object.freeze({
+    ...recovered,
+    qualifiedRelayCount: adapters.length,
+    ordinaryDelivery: 'local-only',
+    networkPuts: 0,
+    descriptorHeads: Object.freeze(qualifications.map((qualification, index) => Object.freeze({
+      relayId: seed.payload.relays[index].relayId,
+      descriptorSequence: qualification.context.descriptorSequence,
+      descriptorHeadHash: fixedHex(qualification.head.descriptorHash)
+    })))
+  })
 }
 
 function ownsRelayInstallation (sync, installation) {

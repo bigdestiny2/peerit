@@ -21,6 +21,10 @@ import {
   PEERIT_SEED_BOOTSTRAP_PATH,
   PEERIT_WEB_ASSET_MANIFEST_PATH
 } from './substrate-runtime-artifact.mjs'
+import {
+  PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE,
+  PEERIT_PRODUCTION_CEREMONY_MIN_RELEASE_SEQUENCE
+} from './production-pin-history-ceremony.mjs'
 
 export const PEERIT_WEB_RELEASE_PIN_HISTORY_SCHEMA_V1 =
   'peerit-web-release-pin-history/v1'
@@ -70,9 +74,11 @@ function bytesOrFile (options, key, path) {
 function normalizedConfig (value) {
   const releaseSequence = Number(value.releaseSequence)
   if (value.substrateProfile !== 'blind-v1' ||
-      !Number.isSafeInteger(releaseSequence) || releaseSequence < 13 || releaseSequence > 14 ||
+      !Number.isSafeInteger(releaseSequence) ||
+      releaseSequence < PEERIT_PRODUCTION_CEREMONY_MIN_RELEASE_SEQUENCE ||
+      releaseSequence > PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE ||
       value.productionPinHistoryBundle !== PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)) {
-    fail('release config must select exact blind-v1 sequence 13/14 and the fixed production pin-history path')
+    fail(`release config must select exact blind-v1 sequence ${PEERIT_PRODUCTION_CEREMONY_MIN_RELEASE_SEQUENCE}..${PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE} and the fixed production pin-history path`)
   }
   return Object.freeze({
     releaseSequence,

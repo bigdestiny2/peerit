@@ -3,8 +3,9 @@
 // Offline, two-phase production pin-history ceremony. The command accepts the
 // signing seed only from process environment, never from argv or a file. Phase
 // one reconstructs and signs the disclosed 0..12 prefix and compiles its trust
-// root. Phase two appends exactly one predicted runtime (13, then optionally
-// 14) after checking the signed seed bootstrap and canonical Web closure.
+// root. Phase two appends exactly one predicted runtime (13 through 16) after
+// checking the signed seed bootstrap and canonical Web closure. Sequence 15 is
+// the bounded Cell GET recovery release; sequence 16 is its monotonic rollback.
 
 import {
   createHash,
@@ -74,6 +75,8 @@ import {
 export const PEERIT_PRODUCTION_CEREMONY_SCHEMA_V1 = 'peerit-production-pin-history-ceremony-v1'
 export const PEERIT_SEED_BOOTSTRAP_PATH = '/peerit-seed-bootstrap-v1.json'
 export const PEERIT_PRODUCTION_PREFIX_TERMINAL_SEQUENCE = 12
+export const PEERIT_PRODUCTION_CEREMONY_MIN_RELEASE_SEQUENCE = 13
+export const PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE = 16
 export const PEERIT_ACCEPTED_SEQUENCE_12_APP_HASH = 'b34628cb7580e8decb9f3dfced4dceaff6220573d6cba31970f3b1b7f165c292'
 export const PEERIT_ACCEPTED_SEQUENCE_12_WEB_HASH = 'fb79fd6c8ec4bd628aff8a1007a88f9200117903f6356cc41ab16bc1d308229c'
 
@@ -413,8 +416,10 @@ function parseAppArtifact (bytes, sequence, publicKey, bootstrapSha256, discover
 export async function finalizeProductionPinHistoryV1 (options = {}) {
   const root = resolve(options.root || ROOT)
   const sequence = Number(options.releaseSequence)
-  if (!Number.isSafeInteger(sequence) || (sequence !== 13 && sequence !== 14)) {
-    fail('finalization releaseSequence must be exactly 13 or 14')
+  if (!Number.isSafeInteger(sequence) ||
+      sequence < PEERIT_PRODUCTION_CEREMONY_MIN_RELEASE_SEQUENCE ||
+      sequence > PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE) {
+    fail(`finalization releaseSequence must be between ${PEERIT_PRODUCTION_CEREMONY_MIN_RELEASE_SEQUENCE} and ${PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE}`)
   }
   const issuedUnixMillis = typeof options.issuedUnixMillis === 'bigint'
     ? options.issuedUnixMillis

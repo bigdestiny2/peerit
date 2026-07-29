@@ -31,7 +31,10 @@ import {
   verifyPeeritSeedBootstrapV1
 } from '../js/substrate/seed-bootstrap-v1.mjs'
 import { SUBSTRATE_SITE_FILES } from '../publish.mjs'
-import { deriveProductionPinBindingsV1 } from './production-pin-history-ceremony.mjs'
+import {
+  PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE,
+  deriveProductionPinBindingsV1
+} from './production-pin-history-ceremony.mjs'
 import {
   verifyPeeritPinHistoryReleaseBundleV1,
   verifyPeeritProductionPinHistoryReleaseV1
@@ -104,10 +107,10 @@ function normalizeConfig (bytes) {
   if (value.substrateProfile !== 'blind-v1' ||
       !Number.isSafeInteger(releaseSequence) ||
       releaseSequence < PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE ||
-      releaseSequence > PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE + 1 ||
+      releaseSequence > PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE ||
       !Array.isArray(value.relayHints) ||
       value.productionPinHistoryBundle !== PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)) {
-    fail('release config must select exact blind-v1 sequence 13/14 with the fixed production pin-history path')
+    fail(`release config must select exact blind-v1 sequence ${PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE}..${PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE} with the fixed production pin-history path`)
   }
   const relayHints = normalizePeeritReleaseRelayHintsV1(
     value.relayHints, 'production runtime prediction config')

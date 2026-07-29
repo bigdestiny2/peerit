@@ -343,6 +343,66 @@ assert.equal(decodePeeritHiveRelayProfilePinV1(final14Bundle.pins[14]).releaseSe
 assert.equal(final14.metadata.seedBootstrap.bootstrapSequence, 0)
 assert.equal(final14.metadata.seedBootstrap.previousBootstrapHash, null)
 
+async function finalizeSuccessor (sequence, prefixBundleBytes, issuedAt) {
+  const successorBootstrap = await createPeeritSeedBootstrapV1({
+    ...bootstrap.payload,
+    bootstrapSequence: 0,
+    previousBootstrapHash: null,
+    releaseSequence: sequence,
+    issuedAt,
+    expiresAt: issuedAt + 10_000
+  }, { seedHex: discoverySeed })
+  const successorBootstrapBytes = encodePeeritSeedBootstrapV1(successorBootstrap)
+  const prediction = await predictPeeritProductionRuntimeV1({
+    root: fixtureRoot,
+    fixtureOnly: true,
+    configBytes: predictionConfig(sequence),
+    pinHistoryBytes: prefixBundleBytes,
+    seedBootstrapBytes: successorBootstrapBytes,
+    sourceFiles: predictionSourceFiles,
+    outputDirectory: mkdtempSync(join(tmpdir(), `peerit-predict-${sequence}-`))
+  })
+  const finalized = await finalizeProductionPinHistoryV1({
+    root: fixtureRoot,
+    seedHex: releaseSeed,
+    releaseSequence: sequence,
+    issuedUnixMillis: BigInt(issuedAt),
+    prefixBundleBytes,
+    seedBootstrapBytes: successorBootstrapBytes,
+    appArtifactBytes: prediction.appArtifactBytes,
+    webAssetManifestBytes: prediction.webAssetManifestBytes
+  })
+  const bundle = decodePeeritPinHistoryBundleV1(finalized.bundleBytes)
+  assert.equal(bundle.pins.length, sequence + 1)
+  assert.equal(decodePeeritHiveRelayProfilePinV1(bundle.pins[sequence]).releaseSequence,
+    BigInt(sequence))
+  assert.equal(finalized.metadata.terminalReleaseSequence, sequence)
+  assert.equal(finalized.metadata.seedBootstrap.bootstrapSequence, 0)
+  assert.equal(finalized.metadata.seedBootstrap.previousBootstrapHash, null)
+  return finalized
+}
+
+const final15 = await finalizeSuccessor(15, final14.bundleBytes, 20_000)
+const final16 = await finalizeSuccessor(16, final15.bundleBytes, 30_000)
+assert.equal(decodePeeritPinHistoryBundleV1(final16.bundleBytes).pins.length, 17)
+await assert.rejects(predictPeeritProductionRuntimeV1({
+  root: fixtureRoot,
+  fixtureOnly: true,
+  configBytes: predictionConfig(17),
+  pinHistoryBytes: final16.bundleBytes,
+  seedBootstrapBytes: bootstrap14Bytes,
+  sourceFiles: predictionSourceFiles
+}), /sequence 13\.\.16/)
+await assert.rejects(finalizeProductionPinHistoryV1({
+  ...finalizeOptions,
+  releaseSequence: 17,
+  prefixBundleBytes: final16.bundleBytes
+}), /between 13 and 16/)
+await assert.rejects(finalizeProductionPinHistoryV1({
+  ...finalizeOptions,
+  releaseSequence: 12
+}), /between 13 and 16/)
+
 const tampered = Buffer.from(prefixA.bundleBytes)
 tampered[tampered.length - 1] ^= 1
 await assert.rejects(finalizeProductionPinHistoryV1({ ...finalizeOptions, prefixBundleBytes: tampered }))
@@ -359,4 +419,4 @@ await assert.rejects(finalizeProductionPinHistoryV1({
   seedBootstrapBytes: wrongBootstrap
 }))
 
-console.log('peerit-production-pin-history-ceremony: deterministic prefix/finalization, exact bindings, tamper/wrong-key/order rejection green')
+console.log('peerit-production-pin-history-ceremony: deterministic 13..16 prefix/finalization, exact bindings, tamper/wrong-key/order rejection green')

@@ -3,7 +3,6 @@
 // install zero relay targets but never turn a healthy local journal read-only.
 
 import {
-  getVerifiedPeeritBrowserSeedBootstrapV1,
   loadPeeritBrowserRuntimeAuthorityV1
 } from './browser-runtime-authority.mjs'
 import { loadPeeritProductionPinHistoryTerminalV1 } from './pin-history-bootstrap.mjs'
@@ -11,7 +10,7 @@ import { createPeeritProductRuntimeV1 } from './peerit-product-runtime.js'
 import { mountPeeritProductUiV1 } from './peerit-product-ui.js'
 import {
   installPeeritBlindRelayConsumer,
-  recoverPeeritSeedFromActiveRelayInstallationV1,
+  recoverPeeritSeedWithLimitedCellGetAuthorityV1,
   stopPeeritBlindRelayConsumer
 } from './relay-consumer.js'
 import {
@@ -44,6 +43,15 @@ function immutableNetworkStatus (parts) {
   const authority = parts[2]
   const consumer = parts[3]
   const seedRecovery = parts[4]
+  if (seedRecovery && seedRecovery.active === true) {
+    return Object.freeze({
+      state: seedRecovery.state,
+      active: authority && authority.active === true,
+      mode: 'limited-cell-get-seed-recovery',
+      ordinaryDelivery: consumer && consumer.active === true ? 'active' : 'local-only',
+      releaseBlockers: Object.freeze([])
+    })
+  }
   return Object.freeze({
     state: seedRecovery && seedRecovery.active === false
       ? seedRecovery.state
@@ -55,6 +63,8 @@ function immutableNetworkStatus (parts) {
     active: authority && authority.active === true &&
       consumer && consumer.active === true &&
       (!seedRecovery || seedRecovery.active === true),
+    mode: 'ordinary-relay-delivery',
+    ordinaryDelivery: consumer && consumer.active === true ? 'active' : 'local-only',
     releaseBlockers: Object.freeze(releaseBlockers)
   })
 }
@@ -163,16 +173,14 @@ export async function bootPeeritReplacementOnly (options = {}) {
     let seedRecovery = null
     if (release.seedBootstrap) {
       try {
-        if (!authority.active || !consumer.active || consumer.qualifiedRelayCount !== 2) {
-          throw Object.assign(new Error('seed recovery requires the authenticated exact two-relay runtime'), {
-            code: 'PEERIT_SEED_RECOVERY_TWO_QUALIFIED_RELAYS_REQUIRED'
+        if (!authority.active) {
+          throw Object.assign(new Error('seed recovery requires authenticated browser runtime authority'), {
+            code: 'PEERIT_AUTHENTICATED_RELAY_RUNTIME_AUTHORITY_REQUIRED'
           })
         }
-        const seed = getVerifiedPeeritBrowserSeedBootstrapV1(authority.authority)
-        const recovered = await recoverPeeritSeedFromActiveRelayInstallationV1({
+        const recovered = await recoverPeeritSeedWithLimitedCellGetAuthorityV1({
           sync: product.sync,
-          artifactBytes: seed.artifactBytes,
-          verification: seed.verification,
+          releaseAuthority: authority.authority,
           signal: lifecycle.signal
         })
         seedRecovery = Object.freeze({

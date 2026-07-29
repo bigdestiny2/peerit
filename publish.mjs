@@ -147,6 +147,7 @@ export const SUBSTRATE_SITE_FILES = Object.freeze([
   'js/substrate/descriptor-trust-backend.js',
   'js/substrate/local-identity.js',
   'js/substrate/legacy-rk-posture.mjs',
+  'js/substrate/limited-cell-get-profile.mjs',
   'js/substrate/portable-pin-history.mjs',
   'js/substrate/production-release-binding.mjs',
   'js/substrate/service-worker-trust-inputs.mjs',
@@ -191,11 +192,17 @@ export const SUBSTRATE_SITE_FILES = Object.freeze([
   'protocol/validator/peerit-validator-v1.manifest.cenc',
   'protocol/availability-policy-v1.cenc',
   'protocol/vectors/peerit-recovery-contract-v2.manifest.json',
+  'peerit-limited-cell-get-profile-v1.json',
   'vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs',
   'vendor/hiverelay-blind-client-v1/blind-client-control-v1.manifest.cenc',
   'vendor/hiverelay-blind-client-v1/blind-client-control-v1.chromium-evidence.json',
   'vendor/hiverelay-blind-client-v1/blind-client-control-v1.cross-host-evidence.json',
-  'vendor/hiverelay-blind-client-v1/authority.json'
+  'vendor/hiverelay-blind-client-v1/authority.json',
+  'vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.mjs',
+  'vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.manifest.cenc',
+  'vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.chromium-evidence.json',
+  'vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.cross-host-evidence.json',
+  'vendor/hiverelay-blind-cell-get-v1/authority.json'
 ])
 
 export const SITE_FILES = [
@@ -204,9 +211,10 @@ export const SITE_FILES = [
   'js/identity.js', 'js/identity-export.js', 'js/identity-primitives.js', 'js/identity-store.js', 'js/identity-vault.js', 'js/lazy-pool.js', 'js/live-refresh.js', 'js/markdown.js', 'js/model.js', 'js/onboarding.js', 'js/pear-api.js', 'js/qr.js',
   'js/prefs.js', 'js/pow.js', 'js/pow-current.js', 'js/legacy-v2-pow-allowlist.js', 'js/legacy-action-allowlist.js', 'js/ranking.js', 'js/reader-bundle.js', 'js/recovery.js', 'js/relay-pool.js', 'js/relay-roster.js', 'js/release-verify.js', 'js/release-update.js',
   'js/runtime.js', 'js/seal.js', 'js/shard-roster.js', 'js/sync.js', 'js/substrate/capability-vault.js', 'js/substrate/cold-reader.mjs', 'js/substrate/descriptor-trust-backend.js', 'js/substrate/peerit-journal-backend.js', 'js/substrate/peerit-journal.js', 'js/substrate/peerit-operation-authority-v1.js', 'js/substrate/peerit-substrate-sync.js', 'js/substrate/pin-history-witness-backend.mjs', 'js/substrate/product-release-status.mjs', 'js/substrate/profile-status.mjs', 'js/substrate/publication-status.js', 'js/substrate/relay-consumer.js', 'js/substrate/relay-requalification-scheduler.js', 'js/substrate/remote-record-ingest.mjs', 'js/substrate/release-authority-transition.mjs', 'js/substrate/release-control-codec.mjs', 'js/substrate/release-control-primitives.mjs', 'js/substrate/release-control-registry.mjs', 'js/substrate/release-control-verifier.mjs', 'js/substrate/seed-bootstrap-v1.mjs', 'js/util.js', 'js/verify.js',
-  'js/substrate/availability-policy.mjs', 'js/substrate/author-bind-inner-envelope-policy.mjs', 'js/substrate/blind-client-browser-verifier.mjs', 'js/substrate/blind-client-relay.js', 'js/substrate/browser-runtime-authority.mjs', 'js/substrate/profile-artifact-codec.mjs', 'js/substrate/profile-codec-ir.mjs', 'js/substrate/profile-external-authority.mjs', 'js/substrate/profile-inventory-scan.mjs', 'js/substrate/validator-artifact.mjs', 'js/substrate/web-asset-manifest.mjs',
+  'js/substrate/availability-policy.mjs', 'js/substrate/author-bind-inner-envelope-policy.mjs', 'js/substrate/blind-client-browser-verifier.mjs', 'js/substrate/blind-client-relay.js', 'js/substrate/browser-runtime-authority.mjs', 'js/substrate/limited-cell-get-profile.mjs', 'js/substrate/profile-artifact-codec.mjs', 'js/substrate/profile-codec-ir.mjs', 'js/substrate/profile-external-authority.mjs', 'js/substrate/profile-inventory-scan.mjs', 'js/substrate/validator-artifact.mjs', 'js/substrate/web-asset-manifest.mjs',
   'docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md', 'protocol/peerit-profile-v1.cenc', 'protocol/vectors/peerit-profile-v1.manifest.cenc', 'protocol/validator/peerit-validator-v1.bare.mjs', 'protocol/validator/peerit-validator-v1.manifest.cenc', 'protocol/availability-policy-v1.cenc',
   'vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs', 'vendor/hiverelay-blind-client-v1/blind-client-control-v1.manifest.cenc', 'vendor/hiverelay-blind-client-v1/blind-client-control-v1.chromium-evidence.json', 'vendor/hiverelay-blind-client-v1/blind-client-control-v1.cross-host-evidence.json', 'vendor/hiverelay-blind-client-v1/authority.json',
+  'vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.mjs', 'vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.manifest.cenc', 'vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.chromium-evidence.json', 'vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.cross-host-evidence.json', 'vendor/hiverelay-blind-cell-get-v1/authority.json', 'peerit-limited-cell-get-profile-v1.json',
   'js/vendor/noble-hashes/sha2.js', 'js/vendor/noble-hashes/_md.js', 'js/vendor/noble-hashes/_u64.js', 'js/vendor/noble-hashes/utils.js',
   'config/shard-roster.public.json'
 ]

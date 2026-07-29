@@ -81,7 +81,7 @@ function originalAssets () {
     .map(assetPath => [assetPath, fileBytes(assetPath)]))
 }
 
-function pre15Assets () {
+function withoutLimitedCellGetAssets () {
   const assets = originalAssets()
   for (const [name, assetPath] of Object.entries(
     PEERIT_BROWSER_RUNTIME_ASSET_PATHS)) {
@@ -162,14 +162,14 @@ const decodedVector = decodePeeritWebAssetManifestV1(canonicalVector)
 assert.equal(bytesEqual(encodePeeritWebAssetManifestV1(decodedVector), canonicalVector), true,
   'dedicated WebAssetManifestV1 codec equals the generated profile codec vector')
 
-const valid = signedInputs(pre15Assets())
+const valid = signedInputs(withoutLimitedCellGetAssets())
 const authority = await assemblePeeritBrowserRuntimeAuthorityNodeTestV1(valid)
 assert.equal(isVerifiedPeeritBrowserRuntimeAuthority(authority), true)
 assert.equal(isVerifiedPeeritBrowserRuntimeAuthority({ ...authority }), false,
   'shape-copying an authority cannot copy its module brand')
 const assembled = getVerifiedPeeritBrowserRuntimeAssembly(authority)
 assert.equal(assembled.limitedCellGet, null,
-  'pre-sequence-15 authorities do not assemble the limited recovery surface')
+  'authorities outside sequence 17 do not assemble the limited recovery surface')
 assert.equal(typeof assembled.control.createCellReplica, 'function')
 assert.equal(typeof assembled.control.decodeBlindExternalProfileValueV1, 'function')
 assert.equal(assembled.validatorArtifactAuthenticated, true)
@@ -242,7 +242,7 @@ const seedAppArtifactBytes = new TextEncoder().encode(JSON.stringify({
   peeritSeedDiscoveryAuthorityPublicKey: seedAuthorityPublicKey,
   peeritSeedBootstrapReleaseSequence: 13
 }) + '\n')
-const seedAssets = pre15Assets()
+const seedAssets = withoutLimitedCellGetAssets()
 seedAssets.set(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.appArtifact, seedAppArtifactBytes)
 seedAssets.set('/peerit-seed-bootstrap-v1.json', seedBytes)
 const seedDomainHash = hashPeeritBootstrapV1(seedBytes)
@@ -250,7 +250,7 @@ const seededAuthority = await assemblePeeritBrowserRuntimeAuthorityNodeTestV1(
   signedInputs(seedAssets, { releaseSequence: 13n, recommendedBootstrapHashes: [seedDomainHash] }))
 const authenticatedSeed = getVerifiedPeeritBrowserSeedBootstrapV1(seededAuthority)
 assert.equal(getVerifiedPeeritBrowserRuntimeAssembly(seededAuthority).limitedCellGet, null,
-  'sequence 13 remains compatible without the sequence-15 recovery assets')
+  'sequence 13 remains compatible without the sequence-17 recovery assets')
 assert.deepEqual(authenticatedSeed.artifactBytes, seedBytes)
 assert.deepEqual(authenticatedSeed.verification, {
   authorityPublicKey: seedAuthorityPublicKey,
@@ -267,72 +267,102 @@ await assert.rejects(assemblePeeritBrowserRuntimeAuthorityNodeTestV1(signedInput
   { releaseSequence: 13n, recommendedBootstrapHashes: [hashPeeritBootstrapV1(reboundTamper)] }
 )), error => error.code === 'PRODUCTION_SEED_BOOTSTRAP_BINDING_MISMATCH')
 
-const seed15Value = JSON.parse(new TextDecoder().decode(seedBytes))
-const seed15Authority = await genKeyPair()
-seed15Value.payload.releaseSequence = 15
-seed15Value.payload.authorityPublicKey = seed15Authority.pubHex
-seed15Value.payload.issuedAt = 1_000
-seed15Value.payload.expiresAt = 10_000
-const seed15Artifact = await createPeeritSeedBootstrapV1(
-  seed15Value.payload, { seedHex: seed15Authority.seedHex })
-const seed15Bytes = new Uint8Array(encodePeeritSeedBootstrapV1(seed15Artifact))
-const seed15Sha256 = createHash('sha256').update(seed15Bytes).digest('hex')
-const seed15AppArtifactBytes = new TextEncoder().encode(JSON.stringify({
+const seed17Value = JSON.parse(new TextDecoder().decode(seedBytes))
+const seed17Authority = await genKeyPair()
+seed17Value.payload.releaseSequence = 17
+seed17Value.payload.authorityPublicKey = seed17Authority.pubHex
+seed17Value.payload.issuedAt = 1_000
+seed17Value.payload.expiresAt = 10_000
+const seed17Artifact = await createPeeritSeedBootstrapV1(
+  seed17Value.payload, { seedHex: seed17Authority.seedHex })
+const seed17Bytes = new Uint8Array(encodePeeritSeedBootstrapV1(seed17Artifact))
+const seed17Sha256 = createHash('sha256').update(seed17Bytes).digest('hex')
+const seed17AppArtifactBytes = new TextEncoder().encode(JSON.stringify({
   schema: 'peerit-app-artifact-v1',
-  releaseSequence: 15,
+  releaseSequence: 17,
   peeritSeedBootstrap: '/peerit-seed-bootstrap-v1.json',
-  peeritSeedBootstrapSha256: seed15Sha256,
-  peeritSeedDiscoveryAuthorityPublicKey: seed15Authority.pubHex,
-  peeritSeedBootstrapReleaseSequence: 15
+  peeritSeedBootstrapSha256: seed17Sha256,
+  peeritSeedDiscoveryAuthorityPublicKey: seed17Authority.pubHex,
+  peeritSeedBootstrapReleaseSequence: 17
 }) + '\n')
-const seed15Assets = originalAssets()
-seed15Assets.set(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.appArtifact, seed15AppArtifactBytes)
-seed15Assets.set('/peerit-seed-bootstrap-v1.json', seed15Bytes)
-const seed15DomainHash = hashPeeritBootstrapV1(seed15Bytes)
-const authority15 = await assemblePeeritBrowserRuntimeAuthorityNodeTestV1(
-  signedInputs(seed15Assets, {
-    releaseSequence: 15n,
-    recommendedBootstrapHashes: [seed15DomainHash]
+const seed17Assets = originalAssets()
+seed17Assets.set(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.appArtifact, seed17AppArtifactBytes)
+seed17Assets.set('/peerit-seed-bootstrap-v1.json', seed17Bytes)
+const seed17DomainHash = hashPeeritBootstrapV1(seed17Bytes)
+const authority17 = await assemblePeeritBrowserRuntimeAuthorityNodeTestV1(
+  signedInputs(seed17Assets, {
+    releaseSequence: 17n,
+    recommendedBootstrapHashes: [seed17DomainHash]
   }))
-const assembled15 = getVerifiedPeeritBrowserRuntimeAssembly(authority15)
-assert.equal(Object.hasOwn(assembled15, 'seedBootstrap'), false,
+const assembled17 = getVerifiedPeeritBrowserRuntimeAssembly(authority17)
+assert.equal(Object.hasOwn(assembled17, 'seedBootstrap'), false,
   'release-bound seed bytes remain outside the exposed runtime assembly')
-assert.deepEqual(Object.keys(assembled15.limitedCellGet.control).sort(), [
+assert.deepEqual(Object.keys(assembled17.limitedCellGet.control).sort(), [
   'createBlindCellGetControl',
   'createBrowserCryptoRuntime'
 ])
-const limitedProfile15 = assembled15.limitedCellGet.profileSnapshot()
-assert.equal(limitedProfile15.releaseSequence, 15)
-assert.equal(limitedProfile15.networkPuts, 0)
-assert.equal(limitedProfile15.ordinaryDelivery, 'local-only')
-assert.equal(limitedProfile15.requirement.familyId, 2)
-assert.equal(limitedProfile15.requirement.operationId, 2)
-limitedProfile15.supportedProtocolProfiles[0].profileHash[0] ^= 0xff
-limitedProfile15.relays[0].admissionProfile.parameterHash[0] ^= 0xff
-const secondLimitedProfile15 = assembled15.limitedCellGet.profileSnapshot()
-assert.equal(secondLimitedProfile15.supportedProtocolProfiles[0].profileHash[0], 0x0a)
-assert.equal(secondLimitedProfile15.relays[0].admissionProfile.parameterHash[0], 0x87)
+const limitedProfile17 = assembled17.limitedCellGet.profileSnapshot()
+assert.equal(limitedProfile17.releaseSequence, 17)
+assert.equal(limitedProfile17.networkPuts, 0)
+assert.equal(limitedProfile17.ordinaryDelivery, 'local-only')
+assert.equal(limitedProfile17.requirement.familyId, 2)
+assert.equal(limitedProfile17.requirement.operationId, 2)
+assert.equal(Buffer.from(limitedProfile17.relays[0].admissionProfile.parameterUrl).toString('hex'),
+  '68747470733a2f2f65766964656e63652e6578616d706c653a3434332f61646d697373696f6e2e63656e63')
+limitedProfile17.supportedProtocolProfiles[0].profileHash[0] ^= 0xff
+limitedProfile17.relays[0].admissionProfile.parameterUrl[0] ^= 0xff
+limitedProfile17.relays[0].admissionProfile.parameterHash[0] ^= 0xff
+const secondLimitedProfile17 = assembled17.limitedCellGet.profileSnapshot()
+assert.equal(secondLimitedProfile17.supportedProtocolProfiles[0].profileHash[0], 0x0a)
+assert.equal(secondLimitedProfile17.relays[0].admissionProfile.parameterUrl[0], 0x68)
+assert.equal(secondLimitedProfile17.relays[0].admissionProfile.parameterHash[0], 0x87)
 
-const verifiedSeed15 = await verifyPeeritSeedBootstrapV1(seed15Bytes, {
-  authorityPublicKey: seed15Authority.pubHex,
-  releaseSequence: 15,
-  expectedArtifactHash: seed15Sha256,
+for (const sequence of [15, 16]) {
+  const priorPayload = JSON.parse(JSON.stringify(seed17Value.payload))
+  priorPayload.releaseSequence = sequence
+  const priorArtifact = await createPeeritSeedBootstrapV1(
+    priorPayload, { seedHex: seed17Authority.seedHex })
+  const priorBytes = new Uint8Array(encodePeeritSeedBootstrapV1(priorArtifact))
+  const priorAppArtifactBytes = new TextEncoder().encode(JSON.stringify({
+    schema: 'peerit-app-artifact-v1',
+    releaseSequence: sequence,
+    peeritSeedBootstrap: '/peerit-seed-bootstrap-v1.json',
+    peeritSeedBootstrapSha256: createHash('sha256').update(priorBytes).digest('hex'),
+    peeritSeedDiscoveryAuthorityPublicKey: seed17Authority.pubHex,
+    peeritSeedBootstrapReleaseSequence: sequence
+  }) + '\n')
+  const priorAssets = withoutLimitedCellGetAssets()
+  priorAssets.set(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.appArtifact, priorAppArtifactBytes)
+  priorAssets.set('/peerit-seed-bootstrap-v1.json', priorBytes)
+  const priorAuthority = await assemblePeeritBrowserRuntimeAuthorityNodeTestV1(
+    signedInputs(priorAssets, {
+      releaseSequence: BigInt(sequence),
+      recommendedBootstrapHashes: [hashPeeritBootstrapV1(priorBytes)]
+    }))
+  assert.equal(getVerifiedPeeritBrowserRuntimeAssembly(priorAuthority).limitedCellGet, null,
+    `superseded sequence ${sequence} cannot acquire sequence-17 Cell GET authority`)
+}
+
+const verifiedSeed17 = await verifyPeeritSeedBootstrapV1(seed17Bytes, {
+  authorityPublicKey: seed17Authority.pubHex,
+  releaseSequence: 17,
+  expectedArtifactHash: seed17Sha256,
   previousBootstrapHash: null,
   now: 5_000
 })
-const returnedSeed15 = getVerifiedPeeritBrowserSeedBootstrapV1(authority15)
-returnedSeed15.artifactBytes[0] ^= 0xff
+const returnedSeed17 = getVerifiedPeeritBrowserSeedBootstrapV1(authority17)
+returnedSeed17.artifactBytes[0] ^= 0xff
 assert.deepEqual(
-  getVerifiedPeeritBrowserSeedBootstrapV1(authority15).artifactBytes,
-  seed15Bytes,
+  getVerifiedPeeritBrowserSeedBootstrapV1(authority17).artifactBytes,
+  seed17Bytes,
   'returned seed bytes cannot mutate the authority-owned recovery input')
 let limitedRecoveryFetches = 0
 const cachedRecoverySync = {
   async discoveryFloor (sourceId) {
-    assert.equal(sourceId, verifiedSeed15.sourceId)
+    assert.equal(sourceId, verifiedSeed17.sourceId)
     return {
-      checkpointSequence: verifiedSeed15.payload.bootstrapSequence,
-      checkpointHash: verifiedSeed15.artifactHash
+      checkpointSequence: verifiedSeed17.payload.bootstrapSequence,
+      checkpointHash: verifiedSeed17.artifactHash
     }
   },
   async ingestVerifiedRemoteBatch () {
@@ -343,7 +373,7 @@ const cachedRecoverySync = {
   }
 }
 const cachedRecovery = await recoverPeeritSeedWithLimitedCellGetAuthorityV1({
-  releaseAuthority: authority15,
+  releaseAuthority: authority17,
   sync: cachedRecoverySync,
   now: () => 5_000,
   fetch: async () => {
@@ -357,50 +387,50 @@ assert.equal(cachedRecovery.networkPuts, 0)
 assert.equal(cachedRecovery.qualifiedRelayCount, 0)
 assert.equal(limitedRecoveryFetches, 0)
 await assert.rejects(recoverPeeritSeedWithLimitedCellGetAuthorityV1({
-  releaseAuthority: authority15,
+  releaseAuthority: authority17,
   sync: cachedRecoverySync,
-  artifactBytes: seed15Bytes,
+  artifactBytes: seed17Bytes,
   verification: {},
   fetch: async () => { limitedRecoveryFetches++ }
 }), error => error.code === 'PEERIT_LIMITED_SEED_AUTHORITY_INJECTION')
 assert.equal(limitedRecoveryFetches, 0,
   'caller seed substitution fails before relay I/O')
 
-const seed16Payload = JSON.parse(JSON.stringify(seed15Value.payload))
-seed16Payload.releaseSequence = 16
-const seed16Artifact = await createPeeritSeedBootstrapV1(
-  seed16Payload, { seedHex: seed15Authority.seedHex })
-const seed16Bytes = new Uint8Array(encodePeeritSeedBootstrapV1(seed16Artifact))
-const seed16Sha256 = createHash('sha256').update(seed16Bytes).digest('hex')
-const seed16AppArtifactBytes = new TextEncoder().encode(JSON.stringify({
+const seed18Payload = JSON.parse(JSON.stringify(seed17Value.payload))
+seed18Payload.releaseSequence = 18
+const seed18Artifact = await createPeeritSeedBootstrapV1(
+  seed18Payload, { seedHex: seed17Authority.seedHex })
+const seed18Bytes = new Uint8Array(encodePeeritSeedBootstrapV1(seed18Artifact))
+const seed18Sha256 = createHash('sha256').update(seed18Bytes).digest('hex')
+const seed18AppArtifactBytes = new TextEncoder().encode(JSON.stringify({
   schema: 'peerit-app-artifact-v1',
-  releaseSequence: 16,
+  releaseSequence: 18,
   peeritSeedBootstrap: '/peerit-seed-bootstrap-v1.json',
-  peeritSeedBootstrapSha256: seed16Sha256,
-  peeritSeedDiscoveryAuthorityPublicKey: seed15Authority.pubHex,
-  peeritSeedBootstrapReleaseSequence: 16
+  peeritSeedBootstrapSha256: seed18Sha256,
+  peeritSeedDiscoveryAuthorityPublicKey: seed17Authority.pubHex,
+  peeritSeedBootstrapReleaseSequence: 18
 }) + '\n')
-const seed16Assets = pre15Assets()
-seed16Assets.set(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.appArtifact, seed16AppArtifactBytes)
-seed16Assets.set('/peerit-seed-bootstrap-v1.json', seed16Bytes)
-const authority16 = await assemblePeeritBrowserRuntimeAuthorityNodeTestV1(
-  signedInputs(seed16Assets, {
-    releaseSequence: 16n,
-    recommendedBootstrapHashes: [hashPeeritBootstrapV1(seed16Bytes)]
+const seed18Assets = withoutLimitedCellGetAssets()
+seed18Assets.set(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.appArtifact, seed18AppArtifactBytes)
+seed18Assets.set('/peerit-seed-bootstrap-v1.json', seed18Bytes)
+const authority18 = await assemblePeeritBrowserRuntimeAuthorityNodeTestV1(
+  signedInputs(seed18Assets, {
+    releaseSequence: 18n,
+    recommendedBootstrapHashes: [hashPeeritBootstrapV1(seed18Bytes)]
   }))
-assert.equal(getVerifiedPeeritBrowserRuntimeAssembly(authority16).limitedCellGet, null,
-  'sequence 16 restores the sequence-14 fail-closed runtime without GET authority')
-let rollback16Fetches = 0
+assert.equal(getVerifiedPeeritBrowserRuntimeAssembly(authority18).limitedCellGet, null,
+  'sequence 18 is a cold fail-closed runtime without GET authority')
+let rollback18Fetches = 0
 await assert.rejects(recoverPeeritSeedWithLimitedCellGetAuthorityV1({
-  releaseAuthority: authority16,
+  releaseAuthority: authority18,
   sync: cachedRecoverySync,
   now: () => 5_000,
-  fetch: async () => { rollback16Fetches++ }
+  fetch: async () => { rollback18Fetches++ }
 }), error => error.code === 'PEERIT_LIMITED_CELL_GET_CONTROL_INVALID')
-assert.equal(rollback16Fetches, 0,
-  'sequence-16 rollback fails closed before relay I/O')
+assert.equal(rollback18Fetches, 0,
+  'sequence-18 rollback fails closed before relay I/O')
 
-const badLimitedProfileAssets = new Map(seed15Assets)
+const badLimitedProfileAssets = new Map(seed17Assets)
 const badLimitedProfilePath = PEERIT_BROWSER_RUNTIME_ASSET_PATHS.limitedCellGetProfile
 const badLimitedProfile = JSON.parse(new TextDecoder().decode(
   badLimitedProfileAssets.get(badLimitedProfilePath)))
@@ -409,8 +439,8 @@ badLimitedProfileAssets.set(badLimitedProfilePath,
   new TextEncoder().encode(JSON.stringify(badLimitedProfile, null, 2) + '\n'))
 await assert.rejects(assemblePeeritBrowserRuntimeAuthorityNodeTestV1(
   signedInputs(badLimitedProfileAssets, {
-    releaseSequence: 15n,
-    recommendedBootstrapHashes: [seed15DomainHash]
+    releaseSequence: 17n,
+    recommendedBootstrapHashes: [seed17DomainHash]
   })), error => error.code === 'PEERIT_LIMITED_CELL_GET_PROFILE_INVALID')
 
 const productionExternalAuthorities = await assemblePeeritProfileExternalCodecAuthoritiesV1(authority)

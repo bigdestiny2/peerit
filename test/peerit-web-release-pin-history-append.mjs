@@ -179,11 +179,21 @@ const sequence16 = appendPeeritWebReleasePinHistoryV1(
 assert.deepEqual(sequence16.value.entries.map(entry => entry.releaseSequence), [14, 15, 16])
 assert.equal(sequence16.value.entries.at(-1).note,
   'bounded local public-test release sequence 16; not a GA claim')
+const sequence17 = appendPeeritWebReleasePinHistoryV1(
+  successorOptions(17, sequence16.value))
+const sequence18 = appendPeeritWebReleasePinHistoryV1(
+  successorOptions(18, sequence17.value))
+assert.deepEqual(sequence18.value.entries.map(entry => entry.releaseSequence),
+  [14, 15, 16, 17, 18])
+assert.equal(sequence17.value.entries.at(-1).note,
+  'bounded local public-test release sequence 17; not a GA claim')
+assert.equal(sequence18.value.entries.at(-1).note,
+  'bounded local public-test release sequence 18; not a GA claim')
 assert.throws(() => appendPeeritWebReleasePinHistoryV1(
-  successorOptions(17, sequence16.value)), /sequence 13\.\.16/)
+  successorOptions(19, sequence18.value)), /sequence 13\.\.18/)
 assert.throws(() => appendPeeritWebReleasePinHistoryV1(successorOptions(12, {
   schema: 'peerit-web-release-pin-history/v1',
   entries: [{ releaseSequence: 11 }]
-})), /sequence 13\.\.16/)
+})), /sequence 13\.\.18/)
 
-console.log('peerit-web-release-pin-history-append: exact 13..16 request/config copy, contiguous predecessor, stale-note replacement and drift rejection green')
+console.log('peerit-web-release-pin-history-append: exact 13..18 request/config copy, contiguous predecessor, stale-note replacement and drift rejection green')

@@ -1,0 +1,98 @@
+{
+  "schema_version": 4,
+  "decision_id": "peerit-seq17-exact-admission-url-recovery-two-relay-public-test-20260729",
+  "decided_at": "2026-07-29T20:05:40Z",
+  "decided_by": "owner authority executed by the active sole Codex conductor",
+  "status": "DECIDED",
+  "decision": "ACCEPT Peerit release sequence 17 as the narrow corrective functional release for exact signed admission parameterUrl comparison and GET-only recovery of the three already-published posts from Sydney and Dallas. Prepare direct-child release sequence 18 only as the cold monotonic rollback. The parameterUrl is an evidence-mirror hint and MUST NOT be fetched, resolved, or added to CSP. Ordinary delivery remains LOCAL_ONLY, recovery performs zero network PUTs, the all-five successor remains excluded, and the GA product gate remains blocked.",
+  "authority": {
+    "kind": "direct-owner-corrective-successor-authorization",
+    "owner_instruction": "Execute Peerit sequence 17 functional plus direct-child sequence 18 cold rollback, binding the exact signed parameterUrl bytes without fetching or resolving them and with no relay, fleet, DNS, or CSP mutation.",
+    "baseline_commit": "0cd7b400d073d77b8b78938228c1c6c1b0106077",
+    "baseline_tree": "22e80f8694d633cd18a8447aa29999aa856cdc83",
+    "rejected_sequence_15_commit": "88dee4388c62593197b4dc18aa383c2cb4f044e2",
+    "incident_evidence_sha256": "750d28cab9d67dedec180fd07977292a6dd67cd657cf16830ff7733e80fc056a",
+    "incident_handoff_sha256": "83449c74bcc78bfe45e631dcf73e39542c0689e3b01dc4a27d7a2386f55afa24"
+  },
+  "activation": {
+    "functional_release_sequence": 17,
+    "rollback_release_sequence": 18,
+    "rollback_policy": "PRESEAL_AS_DIRECT_CHILD; deploy sequence 18 only if sequence 17 fails its live recovery gate",
+    "rollback_posture": "COLD_FAIL_CLOSED_BEFORE_RELAY_IO_AT_SEQUENCE_18",
+    "limited_cell_get_authority_release_sequence": 17,
+    "rollback_requires_limited_cell_get_assets": false,
+    "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+    "relays": [
+      "syd-1",
+      "dal-1"
+    ],
+    "required_live_recovery_proof": "signed descriptor continuity and health challenge followed by capability-bound CELL.GET and byte-exact post readback on both relays",
+    "allowed_browser_operations": [
+      "DESCRIBE.GET",
+      "DESCRIBE.CHALLENGE",
+      "CELL.GET"
+    ],
+    "network_puts_during_recovery": 0,
+    "ordinary_delivery": "LOCAL_ONLY",
+    "seed_record_count": 4,
+    "historical_seed_put_count": 8,
+    "post_cids": [
+      "f68ae14dcd4fb0764b0c5669a03ebb7d68993b7cddc31f1552b85c2cba67536f",
+      "fc80b076becb28c9fbda596def255246cd506fc5ed4e5f4d22499c5cdad95f1b",
+      "52f99d16c0ab47bdad025cbd4138549802e552d55835435588887e7ca178e3a6"
+    ],
+    "all_five_successor": "EXCLUDED_AND_LOCKED_UNTIL_AFTER_SEQUENCE_17_LIVE_ACCEPTANCE"
+  },
+  "exact_admission_parameter_url": {
+    "utf8": "https://evidence.example:443/admission.cenc",
+    "utf8_hex": "68747470733a2f2f65766964656e63652e6578616d706c653a3434332f61646d697373696f6e2e63656e63",
+    "semantics": "EVIDENCE_MIRROR_HINT_ONLY",
+    "browser_fetch": "FORBIDDEN",
+    "dns_resolution": "FORBIDDEN",
+    "url_parsing_or_normalization": "FORBIDDEN",
+    "csp_change": "FORBIDDEN",
+    "comparison": "EXACT_SIGNED_UTF8_BYTES"
+  },
+  "fixed_cell_get_authority": {
+    "hiverelay_commit": "c284435c1d075423a8d1bfcea04c3e171c6757ca",
+    "hiverelay_tree": "02b11d448efdef693e49fec3b9d078643d8f4086",
+    "artifact_sha256": "653cba3c78d3b26b1e4f06a22fff8a5896a5c5158bc24c8b06ad577196429eed",
+    "artifact_domain_hash": "e04b514a4f828d8b557b833c37cea00fab37046bbc2d108c557924a9302259e1",
+    "manifest_sha256": "6992ea2f8ab4733aaecdfbb277b818bacb853b8d0141291abcc9386f3342fcc8",
+    "manifest_domain_hash": "80fbff28284f1ef2e369871090be260050482b5b8d62b92b3d38670381f5a17d",
+    "source_closure_sha256": "ed40292d9c1154e50607188cff6ffcc7df534b203c4ecf3ebccbd64099b24830",
+    "public_exports": [
+      "createBlindCellGetControl",
+      "createBrowserCryptoRuntime"
+    ]
+  },
+  "relay_authority": {
+    "syd-1": {
+      "minimum_descriptor_sequence": 8,
+      "descriptor_head_sha256": "a4cbfe23176862cf5dbfae962ad3b919063073c4a51abe20ef4ae06c05a32153",
+      "admission_protocol_sha256": "a474226ced549bea08cb1e7af20f4104561a4818482b20815f6c63b632e0762b"
+    },
+    "dal-1": {
+      "minimum_descriptor_sequence": 5,
+      "descriptor_head_sha256": "549fd1df9b5cdba8ca2d97ab842bbda6a4a1433d79a82e230d8807bbd97cfebe",
+      "admission_protocol_sha256": "8748eaafd273695eb1d22282c8278cd733898f00ff137f238d8d5e300a148cc4"
+    }
+  },
+  "disclosures": [
+    "This is a bounded production-origin public test, not GA and not a public launch declaration.",
+    "Sequence 17 authorizes only signed seed recovery through the fixed Cell GET facade; it does not authorize ordinary network delivery or browser PUT/FORWARD.",
+    "The admission parameterUrl is compared as signed bytes and is never fetched or resolved.",
+    "Sydney and Dallas are owner-operated relays, not independent-operator evidence.",
+    "The all-five successor is deliberately excluded from this activation and must be qualified separately afterward.",
+    "Descriptor validity, relay reachability, signed health, and byte-exact post recovery must be re-proven against the sealed sequence-17 artifact before activation.",
+    "The GA product gate remains honestly blocked."
+  ],
+  "followups": [
+    "seal and independently accept the exact sequence-17 source and signed artifact closure",
+    "preseal sequence 18 as the direct-child cold rollback without activating it",
+    "activate sequence 17 only after two-relay GET recovery succeeds with zero network PUTs",
+    "qualify the all-five successor only after peerit.site sequence 17 is verified",
+    "complete independent-operator, long-duration, recovery, and distribution evidence before GA",
+    "GA product gate remains honestly blocked"
+  ]
+}

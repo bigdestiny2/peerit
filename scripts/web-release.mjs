@@ -758,10 +758,11 @@ function verifyDocs () {
 // CANARY SCOPE: LIMITED_PUBLIC_TEST_V1
 //
 // The owner's recorded canary decisions bind two successive bounded releases:
-// 13/14 for the original two-relay three-post publication and 15/16 for fixed,
-// GET-only recovery of those posts. In both pairs the even sequence is prepared
-// only as the monotonic rollback. The all-five successor remains excluded and
-// the GA product gate remains honestly blocked. This scope verifies everything
+// 13/14 for the original two-relay three-post publication, 15/16 for the rejected
+// null-URL recovery attempt and its containment rollback, and 17/18 for the exact
+// signed parameter-URL correction and its cold rollback. In each pair the even
+// sequence is prepared only as the monotonic rollback. The all-five successor
+// remains excluded and the GA product gate remains honestly blocked. This scope verifies everything
 // the selected canary actually is — frozen signed artifact bytes, manifest,
 // pin-history continuity, substrate profile blind-v1, both relay hints, CSP
 // origins, and the byte-pinned owner decision — and reports EVERY GA product
@@ -771,6 +772,10 @@ const CANARY_DECISION_FILE = 'deploy/canary-decision-peerit-seq13-three-post-act
 const CANARY_DECISION_SHA256 = '86130d0257105aecff2a40fee4656edabbffb531ac94854759138a13c06b59b0'
 const CANARY_RECOVERY_DECISION_FILE = 'deploy/canary-decision-peerit-seq15-seed-recovery-20260729t172519z.json'
 const CANARY_RECOVERY_DECISION_SHA256 = '11d95b7abd52d7c4d443548089a8dd5455be87ee81ececf50314047a6b10ba50'
+const CANARY_EXACT_ADMISSION_URL_DECISION_FILE =
+  'deploy/canary-decision-peerit-seq17-exact-admission-url-recovery-20260729.json'
+const CANARY_EXACT_ADMISSION_URL_DECISION_SHA256 =
+  'd218d4c2ff9c651b96450e5caf85911fe1e715767eecd129c8a7c20ad443297a'
 const CANARY_PIN_HISTORY_FILE = 'deploy/web-release-pin-history.json'
 const CANARY_PIN_HISTORY_SIG_FILE = 'deploy/web-release-pin-history.json.sig.json'
 
@@ -791,6 +796,70 @@ function verifyCanaryOwnerDecision (release) {
     'fc80b076becb28c9fbda596def255246cd506fc5ed4e5f4d22499c5cdad95f1b',
     '52f99d16c0ab47bdad025cbd4138549802e552d55835435588887e7ca178e3a6'
   ]
+  if (release.releaseSequence >= 17 && release.releaseSequence <= 18) {
+    const decision = readCanaryOwnerDecision(
+      CANARY_EXACT_ADMISSION_URL_DECISION_FILE,
+      CANARY_EXACT_ADMISSION_URL_DECISION_SHA256)
+    const activation = decision.activation || {}
+    const exactUrl = decision.exact_admission_parameter_url || {}
+    const authority = decision.fixed_cell_get_authority || {}
+    const followups = Array.isArray(decision.followups) ? decision.followups.join('\n') : ''
+    if (decision.schema_version !== 4 ||
+        decision.decision_id !==
+          'peerit-seq17-exact-admission-url-recovery-two-relay-public-test-20260729' ||
+        decision.status !== 'DECIDED' ||
+        !String(decision.decision || '').startsWith('ACCEPT Peerit release sequence 17') ||
+        !followups.includes('GA product gate remains honestly blocked')) {
+      throw new Error('sequence-17 corrective decision is not the recorded owner ACCEPT')
+    }
+    if (activation.functional_release_sequence !== 17 ||
+        activation.rollback_release_sequence !== 18 ||
+        activation.rollback_posture !== 'COLD_FAIL_CLOSED_BEFORE_RELAY_IO_AT_SEQUENCE_18' ||
+        activation.limited_cell_get_authority_release_sequence !== 17 ||
+        activation.rollback_requires_limited_cell_get_assets !== false ||
+        activation.claim_boundary !== 'LIVE_PUBLIC_TEST_ONLY' ||
+        JSON.stringify(activation.relays) !== JSON.stringify(['syd-1', 'dal-1']) ||
+        JSON.stringify(activation.allowed_browser_operations) !==
+          JSON.stringify(['DESCRIBE.GET', 'DESCRIBE.CHALLENGE', 'CELL.GET']) ||
+        activation.network_puts_during_recovery !== 0 ||
+        activation.ordinary_delivery !== 'LOCAL_ONLY' ||
+        activation.seed_record_count !== 4 || activation.historical_seed_put_count !== 8 ||
+        JSON.stringify(activation.post_cids) !== JSON.stringify(exactPostCids) ||
+        activation.all_five_successor !==
+          'EXCLUDED_AND_LOCKED_UNTIL_AFTER_SEQUENCE_17_LIVE_ACCEPTANCE') {
+      throw new Error('corrective decision does not bind the exact seq17/seq18 two-relay recovery scope')
+    }
+    if (exactUrl.utf8 !== 'https://evidence.example:443/admission.cenc' ||
+        exactUrl.utf8_hex !==
+          '68747470733a2f2f65766964656e63652e6578616d706c653a3434332f61646d697373696f6e2e63656e63' ||
+        exactUrl.semantics !== 'EVIDENCE_MIRROR_HINT_ONLY' ||
+        exactUrl.browser_fetch !== 'FORBIDDEN' ||
+        exactUrl.dns_resolution !== 'FORBIDDEN' ||
+        exactUrl.url_parsing_or_normalization !== 'FORBIDDEN' ||
+        exactUrl.csp_change !== 'FORBIDDEN' ||
+        exactUrl.comparison !== 'EXACT_SIGNED_UTF8_BYTES') {
+      throw new Error('corrective decision does not bind the exact no-fetch parameterUrl contract')
+    }
+    if (authority.hiverelay_commit !== 'c284435c1d075423a8d1bfcea04c3e171c6757ca' ||
+        authority.hiverelay_tree !== '02b11d448efdef693e49fec3b9d078643d8f4086' ||
+        authority.artifact_sha256 !== '653cba3c78d3b26b1e4f06a22fff8a5896a5c5158bc24c8b06ad577196429eed' ||
+        authority.artifact_domain_hash !== 'e04b514a4f828d8b557b833c37cea00fab37046bbc2d108c557924a9302259e1' ||
+        authority.manifest_sha256 !== '6992ea2f8ab4733aaecdfbb277b818bacb853b8d0141291abcc9386f3342fcc8' ||
+        authority.manifest_domain_hash !== '80fbff28284f1ef2e369871090be260050482b5b8d62b92b3d38670381f5a17d' ||
+        authority.source_closure_sha256 !== 'ed40292d9c1154e50607188cff6ffcc7df534b203c4ecf3ebccbd64099b24830' ||
+        JSON.stringify(authority.public_exports) !==
+          JSON.stringify(['createBlindCellGetControl', 'createBrowserCryptoRuntime'])) {
+      throw new Error('corrective decision does not bind the accepted fixed Cell GET authority')
+    }
+    addCheck('canary:owner-decision', 'pass', `Owner corrective decision verified byte-exact (sha256 ${CANARY_EXACT_ADMISSION_URL_DECISION_SHA256.slice(0, 12)}...): ACCEPT seq-17 exact parameterUrl GET recovery with direct-child seq-18 cold rollback; no URL fetch/DNS/CSP, zero PUTs, all-five excluded, GA gate still blocked.`, {
+      file: CANARY_EXACT_ADMISSION_URL_DECISION_FILE,
+      sha256: CANARY_EXACT_ADMISSION_URL_DECISION_SHA256,
+      decidedAt: decision.decided_at,
+      functionalReleaseSequence: 17,
+      rollbackReleaseSequence: 18
+    })
+    return
+  }
   if (release.releaseSequence >= 15 && release.releaseSequence <= 16) {
     const decision = readCanaryOwnerDecision(
       CANARY_RECOVERY_DECISION_FILE, CANARY_RECOVERY_DECISION_SHA256)
@@ -936,8 +1005,21 @@ function verifyCanaryCspOrigins (release) {
   if (!cspMatch) throw new Error('render.yaml does not pin a Content-Security-Policy header')
   const connectSrc = (cspMatch[1].split(';').map((v) => v.trim()).find((v) => v.startsWith('connect-src ')) || '')
   if (!connectSrc) throw new Error('render.yaml CSP has no connect-src directive')
-  const missing = release.relayHints.filter((hint) => !connectSrc.includes(new URL(hint).origin))
-  if (missing.length) throw new Error(`render.yaml CSP connect-src does not allow every relay hint origin: ${missing.join(', ')}`)
+  const expectedTokens = ['connect-src', '\'self\'', 'hyper:', 'pear:',
+    ...release.relayHints.map((hint) => new URL(hint).origin)]
+  const actualTokens = connectSrc.split(/\s+/)
+  if (JSON.stringify(actualTokens) !== JSON.stringify(expectedTokens)) {
+    throw new Error(`render.yaml CSP connect-src is not the exact bounded origin set: ${actualTokens.join(' ')}`)
+  }
+  if (blueprint.includes('evidence.example')) {
+    throw new Error('render.yaml must not add the admission evidence hint to CSP')
+  }
+  const headerPolicy = JSON.parse(readFileSync(join(ROOT, 'deploy', 'render-security-headers.json'), 'utf8'))
+  const headerCsp = headerPolicy.headers?.find((header) =>
+    String(header.name).toLowerCase() === 'content-security-policy')?.value
+  if (headerCsp !== cspMatch[1] || String(headerCsp).includes('evidence.example')) {
+    throw new Error('deploy/render-security-headers.json must byte-match the bounded blueprint CSP')
+  }
   addCheck('canary:csp-origins', 'pass', `render.yaml CSP connect-src allows exactly the canary relay hint origins (${release.relayHints.map((hint) => new URL(hint).origin).join(', ')}).`)
 }
 

@@ -3,9 +3,9 @@
 // Offline, two-phase production pin-history ceremony. The command accepts the
 // signing seed only from process environment, never from argv or a file. Phase
 // one reconstructs and signs the disclosed 0..12 prefix and compiles its trust
-// root. Phase two appends exactly one predicted runtime (13 through 16) after
-// checking the signed seed bootstrap and canonical Web closure. Sequence 15 is
-// the bounded Cell GET recovery release; sequence 16 is its monotonic rollback.
+// root. Phase two appends exactly one predicted runtime (13 through 18) after
+// checking the signed seed bootstrap and canonical Web closure. Sequence 17 is
+// the exact-URL Cell GET recovery release; sequence 18 is its cold rollback.
 
 import {
   createHash,
@@ -76,7 +76,7 @@ export const PEERIT_PRODUCTION_CEREMONY_SCHEMA_V1 = 'peerit-production-pin-histo
 export const PEERIT_SEED_BOOTSTRAP_PATH = '/peerit-seed-bootstrap-v1.json'
 export const PEERIT_PRODUCTION_PREFIX_TERMINAL_SEQUENCE = 12
 export const PEERIT_PRODUCTION_CEREMONY_MIN_RELEASE_SEQUENCE = 13
-export const PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE = 16
+export const PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE = 18
 export const PEERIT_ACCEPTED_SEQUENCE_12_APP_HASH = 'b34628cb7580e8decb9f3dfced4dceaff6220573d6cba31970f3b1b7f165c292'
 export const PEERIT_ACCEPTED_SEQUENCE_12_WEB_HASH = 'fb79fd6c8ec4bd628aff8a1007a88f9200117903f6356cc41ab16bc1d308229c'
 

@@ -9,6 +9,9 @@ export const PEERIT_LIMITED_CELL_GET_MANIFEST_PATH_V1 =
 
 const HEX_32 = /^[0-9a-f]{64}$/
 const decoder = new TextDecoder('utf-8', { fatal: true })
+const encoder = new TextEncoder()
+export const PEERIT_LIMITED_CELL_GET_PARAMETER_URL_V1 =
+  'https://evidence.example:443/admission.cenc'
 
 function fail (code, message) {
   const error = new Error(message)
@@ -69,15 +72,16 @@ function admissionProfile (value, relayId) {
     'profileId', 'schemeId', 'conformanceClass', 'roleBits',
     'parameterUrl', 'parameterHash'
   ], `${relayId}.admissionProfile`)
-  if (value.parameterUrl !== null) {
-    fail('PEERIT_LIMITED_CELL_GET_PROFILE_INVALID', `${relayId} admission parameterUrl must be null`)
+  if (value.parameterUrl !== PEERIT_LIMITED_CELL_GET_PARAMETER_URL_V1) {
+    fail('PEERIT_LIMITED_CELL_GET_PROFILE_INVALID',
+      `${relayId} admission parameterUrl must match the exact signed evidence hint`)
   }
   return {
     profileId: integer(value.profileId, `${relayId}.profileId`, 7, 7),
     schemeId: integer(value.schemeId, `${relayId}.schemeId`, 9, 9),
     conformanceClass: integer(value.conformanceClass, `${relayId}.conformanceClass`, 1, 1),
     roleBits: integer(value.roleBits, `${relayId}.roleBits`, 49, 49),
-    parameterUrl: null,
+    parameterUrl: encoder.encode(value.parameterUrl),
     parameterHash: fromHex(hex32(value.parameterHash, `${relayId}.parameterHash`))
   }
 }

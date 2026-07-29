@@ -1245,12 +1245,16 @@ function exactLimitedCellGetControl (value) {
 }
 
 function sameLimitedAdmissionProfile (actual, expected) {
+  const sameParameterUrl =
+    ((actual?.parameterUrl == null && expected?.parameterUrl == null) ||
+      (actual?.parameterUrl != null && expected?.parameterUrl != null &&
+        bytesEqual(actual.parameterUrl, expected.parameterUrl)))
   return actual && expected &&
     actual.profileId === expected.profileId &&
     actual.schemeId === expected.schemeId &&
     actual.conformanceClass === expected.conformanceClass &&
     actual.roleBits === expected.roleBits &&
-    actual.parameterUrl == null && expected.parameterUrl == null &&
+    sameParameterUrl &&
     bytesEqual(actual.parameterHash, expected.parameterHash)
 }
 

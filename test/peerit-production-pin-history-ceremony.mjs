@@ -384,24 +384,26 @@ async function finalizeSuccessor (sequence, prefixBundleBytes, issuedAt) {
 
 const final15 = await finalizeSuccessor(15, final14.bundleBytes, 20_000)
 const final16 = await finalizeSuccessor(16, final15.bundleBytes, 30_000)
-assert.equal(decodePeeritPinHistoryBundleV1(final16.bundleBytes).pins.length, 17)
+const final17 = await finalizeSuccessor(17, final16.bundleBytes, 40_000)
+const final18 = await finalizeSuccessor(18, final17.bundleBytes, 50_000)
+assert.equal(decodePeeritPinHistoryBundleV1(final18.bundleBytes).pins.length, 19)
 await assert.rejects(predictPeeritProductionRuntimeV1({
   root: fixtureRoot,
   fixtureOnly: true,
-  configBytes: predictionConfig(17),
-  pinHistoryBytes: final16.bundleBytes,
+  configBytes: predictionConfig(19),
+  pinHistoryBytes: final18.bundleBytes,
   seedBootstrapBytes: bootstrap14Bytes,
   sourceFiles: predictionSourceFiles
-}), /sequence 13\.\.16/)
+}), /sequence 13\.\.18/)
 await assert.rejects(finalizeProductionPinHistoryV1({
   ...finalizeOptions,
-  releaseSequence: 17,
-  prefixBundleBytes: final16.bundleBytes
-}), /between 13 and 16/)
+  releaseSequence: 19,
+  prefixBundleBytes: final18.bundleBytes
+}), /between 13 and 18/)
 await assert.rejects(finalizeProductionPinHistoryV1({
   ...finalizeOptions,
   releaseSequence: 12
-}), /between 13 and 16/)
+}), /between 13 and 18/)
 
 const tampered = Buffer.from(prefixA.bundleBytes)
 tampered[tampered.length - 1] ^= 1
@@ -419,4 +421,4 @@ await assert.rejects(finalizeProductionPinHistoryV1({
   seedBootstrapBytes: wrongBootstrap
 }))
 
-console.log('peerit-production-pin-history-ceremony: deterministic 13..16 prefix/finalization, exact bindings, tamper/wrong-key/order rejection green')
+console.log('peerit-production-pin-history-ceremony: deterministic 13..18 prefix/finalization, exact bindings, tamper/wrong-key/order rejection green')

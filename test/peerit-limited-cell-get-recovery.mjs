@@ -86,7 +86,9 @@ const sodium = sodiumModule.default || sodiumModule
 
 const TEST_EPOCH = 101
 const TEST_NOW = TEST_EPOCH * 21_600_000 + 1_000
-const RELEASE_SEQUENCE = 15n
+const RELEASE_SEQUENCE = 17n
+const EXACT_PARAMETER_URL = 'https://evidence.example:443/admission.cenc'
+const EXACT_PARAMETER_URL_BYTES = Buffer.from(EXACT_PARAMETER_URL, 'utf8')
 const textEncoder = new TextEncoder()
 const textDecoder = new TextDecoder()
 const releaseFixture = buildReleaseControlFixture()
@@ -143,6 +145,7 @@ function signedDescriptor ({
   keys,
   canonicalDescribeUrl,
   storeId,
+  admissionParameterUrl,
   admissionParameterHash,
   descriptorSequence,
   previousDescriptorHash,
@@ -190,7 +193,7 @@ function signedDescriptor ({
     schemeId: 9,
     conformanceClass: 1,
     roleBits: 49,
-    parameterUrl: null,
+    parameterUrl: Buffer.from(admissionParameterUrl),
     parameterHash: Buffer.from(admissionParameterHash)
   }]
   value.issuedEpoch = TEST_EPOCH - 1
@@ -224,6 +227,7 @@ function relayChain (relayId, seedByte, storeByte, admissionParameterHash) {
     keys,
     canonicalDescribeUrl,
     storeId,
+    admissionParameterUrl: EXACT_PARAMETER_URL_BYTES,
     admissionParameterHash,
     descriptorSequence: 0,
     previousDescriptorHash: null,
@@ -233,6 +237,7 @@ function relayChain (relayId, seedByte, storeByte, admissionParameterHash) {
     keys,
     canonicalDescribeUrl,
     storeId,
+    admissionParameterUrl: EXACT_PARAMETER_URL_BYTES,
     admissionParameterHash,
     descriptorSequence: 1,
     previousDescriptorHash: genesis.hash,
@@ -243,6 +248,7 @@ function relayChain (relayId, seedByte, storeByte, admissionParameterHash) {
     keys,
     canonicalDescribeUrl,
     storeId,
+    admissionParameterUrl: bytes(EXACT_PARAMETER_URL_BYTES),
     admissionParameterHash,
     genesis,
     head,
@@ -479,12 +485,15 @@ function relayServer ({
   const fetch = async (url, init) => {
     checkedHeaders(init)
     const parsedUrl = new URL(url)
+    assert.notEqual(parsedUrl.origin, 'https://evidence.example:443',
+      'admission parameterUrl is an evidence hint and must never be fetched')
     const relay = byHost.get(parsedUrl.host)
     assert.ok(relay, `unknown relay host ${parsedUrl.host}`)
     const request = protocol.decodeOuterEnvelope(init.body, { copyBody: true })
     assert.equal(request.frame.frameKind, protocol.FRAME_KIND.REQUEST)
     requests.push(Object.freeze({
       relayId: relay.relayId,
+      origin: parsedUrl.origin,
       path: parsedUrl.pathname,
       familyId: request.frame.familyId,
       operationId: request.frame.operationId
@@ -584,6 +593,7 @@ async function expectRecoveryFailure ({
   code,
   heads,
   history,
+  beforeHealth = false,
   monotonicMillis = () => 1_000
 }) {
   const server = relayServer({ relays, heads, history })
@@ -602,6 +612,12 @@ async function expectRecoveryFailure ({
   assert.equal(server.requests.some(request =>
     request.familyId === protocol.FAMILY.CELL), false,
   `${code} must fail before Cell GET`)
+  if (beforeHealth) {
+    assert.equal(server.requests.some(request =>
+      request.familyId === protocol.FAMILY.DESCRIBE &&
+      request.operationId === protocol.OPERATION.DESCRIBE.CHALLENGE), false,
+    `${code} must fail before signed health challenge`)
+  }
 }
 
 await cryptoReady()
@@ -740,6 +756,10 @@ const allowed = new Set([
 ])
 assert.equal(successServer.requests.every(request =>
   allowed.has(`${request.familyId}:${request.operationId}`)), true)
+assert.equal(successServer.requests.every(request =>
+  ['https://dal-1.example', 'https://syd-1.example'].includes(request.origin)), true)
+assert.equal(successServer.requests.some(request =>
+  request.origin.includes('evidence.example')), false)
 assert.equal(successServer.requests.some(request =>
   request.familyId === protocol.FAMILY.CELL &&
   request.operationId === protocol.OPERATION.CELL.PUT), false)
@@ -763,6 +783,7 @@ const gapHeads = new Map(relays.map(relay => [relay.relayId, signedDescriptor({
   keys: relay.keys,
   canonicalDescribeUrl: relay.canonicalDescribeUrl,
   storeId: relay.storeId,
+  admissionParameterUrl: relay.admissionParameterUrl,
   admissionParameterHash: relay.admissionParameterHash,
   descriptorSequence: 2,
   previousDescriptorHash: relay.genesis.hash,
@@ -795,6 +816,7 @@ for (const relay of relays) {
     keys: relay.keys,
     canonicalDescribeUrl: relay.canonicalDescribeUrl,
     storeId: fill(32, relay.relayId === 'dal-1' ? 0x36 : 0x46),
+    admissionParameterUrl: relay.admissionParameterUrl,
     admissionParameterHash: relay.admissionParameterHash,
     descriptorSequence: 0,
     previousDescriptorHash: null,
@@ -804,6 +826,7 @@ for (const relay of relays) {
     keys: relay.keys,
     canonicalDescribeUrl: relay.canonicalDescribeUrl,
     storeId: relay.storeId,
+    admissionParameterUrl: relay.admissionParameterUrl,
     admissionParameterHash: relay.admissionParameterHash,
     descriptorSequence: 1,
     previousDescriptorHash: wrongStoreGenesis.hash,
@@ -829,6 +852,7 @@ const admissionDriftHeads = new Map(relays.map(relay => [
     keys: relay.keys,
     canonicalDescribeUrl: relay.canonicalDescribeUrl,
     storeId: relay.storeId,
+    admissionParameterUrl: relay.admissionParameterUrl,
     admissionParameterHash: fill(32, 0xee),
     descriptorSequence: 1,
     previousDescriptorHash: relay.genesis.hash,
@@ -839,6 +863,28 @@ await expectRecoveryFailure({
   authority,
   relays,
   heads: admissionDriftHeads,
+  code: 'PEERIT_LIMITED_DESCRIPTOR_ADMISSION_PROFILE_DRIFT'
+})
+
+const parameterUrlDriftHeads = new Map(relays.map(relay => {
+  const drift = bytes(relay.admissionParameterUrl)
+  drift[drift.byteLength - 1] ^= 0x01
+  return [relay.relayId, signedDescriptor({
+    keys: relay.keys,
+    canonicalDescribeUrl: relay.canonicalDescribeUrl,
+    storeId: relay.storeId,
+    admissionParameterUrl: drift,
+    admissionParameterHash: relay.admissionParameterHash,
+    descriptorSequence: 1,
+    previousDescriptorHash: relay.genesis.hash,
+    nonceByte: relay.relayId === 'dal-1' ? 0x3a : 0x4a
+  })]
+}))
+await expectRecoveryFailure({
+  authority,
+  relays,
+  heads: parameterUrlDriftHeads,
+  beforeHealth: true,
   code: 'PEERIT_LIMITED_DESCRIPTOR_ADMISSION_PROFILE_DRIFT'
 })
 

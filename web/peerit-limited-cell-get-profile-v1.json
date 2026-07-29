@@ -1,7 +1,7 @@
 {
   "schema": "peerit-limited-cell-get-profile-v1",
   "version": 1,
-  "releaseSequence": 15,
+  "releaseSequence": 17,
   "mode": "seed-recovery-only",
   "ordinaryDelivery": "local-only",
   "networkPuts": 0,
@@ -61,7 +61,7 @@
         "schemeId": 9,
         "conformanceClass": 1,
         "roleBits": 49,
-        "parameterUrl": null,
+        "parameterUrl": "https://evidence.example:443/admission.cenc",
         "parameterHash": "8748eaafd273695eb1d22282c8278cd733898f00ff137f238d8d5e300a148cc4"
       }
     },
@@ -72,7 +72,7 @@
         "schemeId": 9,
         "conformanceClass": 1,
         "roleBits": 49,
-        "parameterUrl": null,
+        "parameterUrl": "https://evidence.example:443/admission.cenc",
         "parameterHash": "a474226ced549bea08cb1e7af20f4104561a4818482b20815f6c63b632e0762b"
       }
     }

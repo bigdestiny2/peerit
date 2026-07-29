@@ -1,6 +1,6 @@
 # Founder Packet: r/cypherpunk
 
-Sources: `launch/communities.json` (4bbb63e36ad5), `docs/GROWTH_AUTOMATION_SPEC.md` (129f5da753f7)
+Sources: `launch/communities.json` (b21d5b8605f6), `docs/GROWTH_AUTOMATION_SPEC.md` (f56ae9fe0dee)
 
 ## Board Brief
 
@@ -9,6 +9,7 @@ Sources: `launch/communities.json` (4bbb63e36ad5), `docs/GROWTH_AUTOMATION_SPEC.
 - Launch role: Narrative engine for signed records and PoW-gated posting.
 - Founder brief: Keep discussion technical and lawful. No darknet-market positioning.
 - Moderation risk: medium
+- Activation phase: initial
 
 ## Deliverables
 
@@ -46,16 +47,16 @@ Read on the gateway. Post through PearBrowser.
 | 1 | Nostr | strong | `nostr` / `organic_social` |
 | 3 | Privacy and degoogle communities | strong | `privacy_communities` / `community_post` |
 | 6 | Bitcoin/Lightning/cypherpunk | primary | `bitcoin_cypherpunk` / `creator_sponsorship` |
-| 9 | 4chan /biz/ only as a small crypto-native experiment | primary | `4chan_biz_paid_banner` / `paid_banner` |
+| 9 | 4chan /biz/ only as a small crypto-native experiment | strong | `4chan_biz_paid_banner` / `paid_banner` |
 
 ## Board Links
 
 | Channel | Fit | Tagged Gateway Link |
 | --- | --- | --- |
 | Bitcoin/Lightning/cypherpunk | primary | https://peerit.site/?utm_source=bitcoin_cypherpunk&utm_medium=creator_sponsorship&utm_campaign=peerit_launch_2026_06&utm_content=p2p-reddit.cypherpunk&utm_term=cypherpunk&peerit_campaign_tag=peerit_launch_2026_06%3Abitcoin-lightning-cypherpunk%3Ap2p-reddit%3Acypherpunk&peerit_channel=bitcoin-lightning-cypherpunk&peerit_board=cypherpunk#/r/cypherpunk |
-| 4chan /biz/ only as a small crypto-native experiment | primary | https://peerit.site/?utm_source=4chan_biz_paid_banner&utm_medium=paid_banner&utm_campaign=peerit_launch_2026_06&utm_content=p2p-reddit.cypherpunk&utm_term=cypherpunk&peerit_campaign_tag=peerit_launch_2026_06%3A4chan-biz-only-as-a-small-crypto-native-experiment%3Ap2p-reddit%3Acypherpunk&peerit_channel=4chan-biz-only-as-a-small-crypto-native-experiment&peerit_board=cypherpunk#/r/cypherpunk |
 | Nostr | strong | https://peerit.site/?utm_source=nostr&utm_medium=organic_social&utm_campaign=peerit_launch_2026_06&utm_content=p2p-reddit.cypherpunk&utm_term=cypherpunk&peerit_campaign_tag=peerit_launch_2026_06%3Anostr%3Ap2p-reddit%3Acypherpunk&peerit_channel=nostr&peerit_board=cypherpunk#/r/cypherpunk |
 | Privacy and degoogle communities | strong | https://peerit.site/?utm_source=privacy_communities&utm_medium=community_post&utm_campaign=peerit_launch_2026_06&utm_content=p2p-reddit.cypherpunk&utm_term=cypherpunk&peerit_campaign_tag=peerit_launch_2026_06%3Aprivacy-and-degoogle-communities%3Ap2p-reddit%3Acypherpunk&peerit_channel=privacy-and-degoogle-communities&peerit_board=cypherpunk#/r/cypherpunk |
+| 4chan /biz/ only as a small crypto-native experiment | strong | https://peerit.site/?utm_source=4chan_biz_paid_banner&utm_medium=paid_banner&utm_campaign=peerit_launch_2026_06&utm_content=p2p-reddit.cypherpunk&utm_term=cypherpunk&peerit_campaign_tag=peerit_launch_2026_06%3A4chan-biz-only-as-a-small-crypto-native-experiment%3Ap2p-reddit%3Acypherpunk&peerit_channel=4chan-biz-only-as-a-small-crypto-native-experiment&peerit_board=cypherpunk#/r/cypherpunk |
 | Lemmy/Fediverse/Mbin | general | https://peerit.site/?utm_source=fediverse&utm_medium=organic_community&utm_campaign=peerit_launch_2026_06&utm_content=p2p-reddit.cypherpunk&utm_term=cypherpunk&peerit_campaign_tag=peerit_launch_2026_06%3Alemmy-fediverse-mbin%3Ap2p-reddit%3Acypherpunk&peerit_channel=lemmy-fediverse-mbin&peerit_board=cypherpunk#/r/cypherpunk |
 | Self-hosting, homelab, Linux, FOSS | general | https://peerit.site/?utm_source=selfhosted_foss&utm_medium=community_post&utm_campaign=peerit_launch_2026_06&utm_content=p2p-reddit.cypherpunk&utm_term=cypherpunk&peerit_campaign_tag=peerit_launch_2026_06%3Aself-hosting-homelab-linux-foss%3Ap2p-reddit%3Acypherpunk&peerit_channel=self-hosting-homelab-linux-foss&peerit_board=cypherpunk#/r/cypherpunk |
 

@@ -135,6 +135,7 @@ function renderFounderPacket (community, { spec, sourceMeta, matrix }) {
   lines.push(`- Launch role: ${community.launchRole}`)
   lines.push(`- Founder brief: ${community.founderBrief}`)
   lines.push(`- Moderation risk: ${community.risk}`)
+  lines.push(`- Activation phase: ${community.launchPhase || 'initial'}`)
   lines.push('')
   lines.push('## Deliverables')
   lines.push('')
@@ -165,6 +166,12 @@ function renderFounderPacket (community, { spec, sourceMeta, matrix }) {
   lines.push(`- "What should r/${community.slug} moderate quickly during launch week?"`)
   lines.push(`- "Where does Peerit's P2P model fit this audience, and where is it still rough?"`)
   lines.push('')
+  if (Array.isArray(community.seedThemes) && community.seedThemes.length) {
+    lines.push('## Board-Specific Seed Themes')
+    lines.push('')
+    for (const theme of community.seedThemes) lines.push(`- ${theme}`)
+    lines.push('')
+  }
   lines.push('## Preferred Launch Channels')
   lines.push('')
   if (channelFits.length) {
@@ -187,6 +194,9 @@ function renderFounderPacket (community, { spec, sourceMeta, matrix }) {
   lines.push('')
   lines.push('## Safety Boundaries')
   lines.push('')
+  if (Array.isArray(community.moderationBoundaries)) {
+    for (const boundary of community.moderationBoundaries) lines.push(`- ${boundary}`)
+  }
   for (const avoid of spec.narrative.avoid) lines.push(`- Do not say: ${avoid}`)
   for (const exclusion of spec.exclusions) lines.push(`- ${exclusion}`)
   return lines.join('\n')
@@ -205,10 +215,10 @@ function renderFounderIndex ({ communities, spec, sourceMeta, matrix }) {
   lines.push('')
   lines.push('## Board Index')
   lines.push('')
-  lines.push('| Board | Starter Posts | Prompts | Risk | Launch Role | Packet |')
-  lines.push('| --- | ---: | ---: | --- | --- | --- |')
+  lines.push('| Board | Phase | Starter Posts | Prompts | Risk | Launch Role | Packet |')
+  lines.push('| --- | --- | ---: | ---: | --- | --- | --- |')
   for (const community of communities) {
-    lines.push(`| r/${mdEscape(community.slug)} | ${Number(community.starterPostCount) || 0} | ${Number(community.discussionPromptCount) || 0} | ${mdEscape(community.risk)} | ${mdEscape(community.launchRole)} | [packet](founder-packets/${community.slug}.md) |`)
+    lines.push(`| r/${mdEscape(community.slug)} | ${mdEscape(community.launchPhase || 'initial')} | ${Number(community.starterPostCount) || 0} | ${Number(community.discussionPromptCount) || 0} | ${mdEscape(community.risk)} | ${mdEscape(community.launchRole)} | [packet](founder-packets/${community.slug}.md) |`)
   }
   lines.push('')
   lines.push('## Shared Founder Requirements')

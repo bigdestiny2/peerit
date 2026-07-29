@@ -9,3 +9,25 @@ node_modules/
 *.log
 web/
 dist/
+.seed-personas-store.json
+
+# launch seed ops (private — never commit to the public repo)
+launch/seed-identities.json
+launch/seed-identities.pubkey-map.example.json
+launch/seed-posts/
+launch/FINAL-SEED-MANIFEST.json
+launch/SEED-PREVIEW.html
+launch/SEED-PREVIEW.original-backup.html
+launch/reports/SEED-CURATION-REPORT.md
+launch/reports/SEED-PUBLISH-BLIND-DRYRUN.md
+launch/reports/SEED-PUBLISH-DRYRUN.md
+launch/reports/seed-plan.md
+scripts/build-seed-manifest.mjs
+scripts/publish-seed-waves.mjs
+scripts/publish-seed-waves-blind.mjs
+scripts/prove-sydney-cell-classes.mjs
+
+# misplaced here — belongs to pear-agent-system / hiverelay repos (pending relocation)
+assignments/
+pear-agent-system/
+truenas-app/

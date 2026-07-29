@@ -1,22 +1,36 @@
 # Founder Packet: r/showcase
 
-Sources: `launch/communities.json` (4bbb63e36ad5), `docs/GROWTH_AUTOMATION_SPEC.md` (129f5da753f7)
+Sources: `launch/communities.json`, `docs/GROWTH_AUTOMATION_SPEC.md`, `launch/seed-identities.json`
 
 ## Board Brief
 
 - Title: Showcase
 - Audience: People launching demos, tools, boards, bots, and importers.
 - Launch role: Front-page freshness and builder momentum.
-- Founder brief: Keep this useful: demos, screenshots, source links, and feedback requests.
+- Founder brief: Keep this useful: demos, screenshots, source links, and feedback requests. Weekly "shipped this week" megathread. Cross-post the r/llmjailbreaks $400 open-weight model bounty and the $200 best-living-board contest so the front page has stakes.
+- **Multi-identity cast:** `mod-flagship`, `builder-core`, `enthusiast-try`, `research-ablate`, `ops-relay` (≥4 distinct authors).
 - Moderation risk: low
+- Activation phase: initial
+
+## Multi-identity casting (required)
+
+| Post type | OP | Typical replies |
+| --- | --- | --- |
+| Norms pin | mod-flagship | — |
+| Weekly shipped megathread | enthusiast-try | builder-core, research-ablate, ops-relay |
+| Bounty cross-post ($400 models) | research-ablate or enthusiast-try | mod-flagship (rules reminder) |
+| Living-board contest ($200) | mod-flagship | enthusiast-try, builder-core |
+| Demo / screenshot posts | builder-core, ops-relay, research-ablate | enthusiast-try always first “nice / I tried” |
+
+Never fill the front page from a single key.
 
 ## Deliverables
 
-- Create one owner/moderator identity for r/showcase.
-- Publish 10 quality starter posts before paid traffic.
-- Publish at least 3 open-ended discussion prompts.
-- Pin one norms post and exercise the moderation overlay before launch.
-- Reply daily during the first launch week so the board does not feel empty.
+- Activate **≥4** seed identities for r/showcase.
+- Publish 10 quality starter posts from mixed keys before paid traffic.
+- Publish at least 3 open-ended discussion prompts with multi-voice replies.
+- Pin one norms post from **mod-flagship** and exercise the moderation overlay before launch.
+- Reply daily from rotating identities during the first launch week.
 
 ## Pinned Norms Post Template
 
@@ -34,9 +48,10 @@ Read on the gateway. Post through PearBrowser.
 
 ## Starter Prompt Checklist
 
-- "What is one Showcase workflow that would benefit from no central account or server?"
-- "Show a concrete Showcase build, benchmark, migration, or failure report."
-- "What should r/showcase moderate quickly during launch week?"
+- "Shipped this week — drop link + one failure."
+- "Cross-post: open-weight uncensored model bounty → r/llmjailbreaks ($400)."
+- "Best living board contest ($200) — which board should win and why?"
+- "Show a concrete demo with a clickable pear://, hyper://, or https link."
 - "Where does Peerit's P2P model fit this audience, and where is it still rough?"
 
 ## Preferred Launch Channels

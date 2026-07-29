@@ -1,6 +1,6 @@
 # Founder Packet: r/hiverelay
 
-Sources: `launch/communities.json` (4bbb63e36ad5), `docs/GROWTH_AUTOMATION_SPEC.md` (129f5da753f7)
+Sources: `launch/communities.json` (b21d5b8605f6), `docs/GROWTH_AUTOMATION_SPEC.md` (f56ae9fe0dee)
 
 ## Board Brief
 
@@ -9,6 +9,7 @@ Sources: `launch/communities.json` (4bbb63e36ad5), `docs/GROWTH_AUTOMATION_SPEC.
 - Launch role: Infrastructure-as-growth channel for Peerit and PearBrowser.
 - Founder brief: Seed posts about running nodes, proof receipts, app/outbox seeding, referral links, regional coverage, and operator rewards.
 - Moderation risk: low
+- Activation phase: initial
 
 ## Deliverables
 

@@ -1,6 +1,6 @@
 # Founder Packet: r/fediverse
 
-Sources: `launch/communities.json` (4bbb63e36ad5), `docs/GROWTH_AUTOMATION_SPEC.md` (129f5da753f7)
+Sources: `launch/communities.json` (b21d5b8605f6), `docs/GROWTH_AUTOMATION_SPEC.md` (f56ae9fe0dee)
 
 ## Board Brief
 
@@ -9,6 +9,7 @@ Sources: `launch/communities.json` (4bbb63e36ad5), `docs/GROWTH_AUTOMATION_SPEC.
 - Launch role: Warm decentralized-community audience.
 - Founder brief: Frame Peerit as a no-server experiment, not a replacement war. Invite bridge ideas.
 - Moderation risk: medium
+- Activation phase: initial
 
 ## Deliverables
 

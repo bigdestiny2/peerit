@@ -26,10 +26,10 @@ function render () {
   lines.push('')
   lines.push('## Board Briefs')
   lines.push('')
-  lines.push('| Board | Starter Posts | Prompts | Risk | Founder Brief |')
-  lines.push('| --- | ---: | ---: | --- | --- |')
+  lines.push('| Board | Phase | Starter Posts | Prompts | Risk | Founder Brief |')
+  lines.push('| --- | --- | ---: | ---: | --- | --- |')
   for (const c of communities) {
-    lines.push(`| r/${mdEscape(c.slug)} | ${Number(c.starterPostCount) || 0} | ${Number(c.discussionPromptCount) || 0} | ${mdEscape(c.risk)} | ${mdEscape(c.founderBrief)} |`)
+    lines.push(`| r/${mdEscape(c.slug)} | ${mdEscape(c.launchPhase || 'initial')} | ${Number(c.starterPostCount) || 0} | ${Number(c.discussionPromptCount) || 0} | ${mdEscape(c.risk)} | ${mdEscape(c.founderBrief)} |`)
   }
   lines.push('')
   lines.push('## 14-Day Operating Rhythm')
@@ -47,6 +47,13 @@ function render () {
   lines.push('- 3+ open-ended discussion prompts.')
   lines.push('- Daily replies for the first launch week.')
   lines.push('- Escalation note for spam, illegal content, and harassment.')
+  lines.push('')
+  lines.push('## Post-Stand-Up Activation')
+  lines.push('')
+  lines.push('- Do not open post-stand-up boards until the writable service and moderation overlay are verified.')
+  lines.push('- Assign a named founder/moderator before publishing any starter posts.')
+  lines.push('- Open high-risk boards one at a time, verify reporting and removal paths, then continue.')
+  lines.push('- Label sponsorships, holdings, jurisdictions, sources, and test conditions wherever the board brief requires them.')
   return lines.join('\n')
 }
 

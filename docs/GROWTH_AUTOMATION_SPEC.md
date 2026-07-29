@@ -69,6 +69,31 @@ Acceptance criteria:
 Ads into empty boards will convert poorly. Before paid traffic, seed 8-15 boards
 with founders, starter posts, norms, and moderation overlays.
 
+**Multi-identity requirement:** seeding must use **many distinct Peerit
+identities** (separate keypairs / PearBrowser profiles), cast into roles (mod,
+builder, operator, researcher, skeptic, enthusiast, newcomer). A board is not
+seeded if one operator identity authors nearly everything. **Discussions** are
+also multi-identity: thread recipes require OP + cross-author replies so boards
+look like conversations, not a single-operator megaphone.
+
+See:
+
+- `launch/seed-identities.json` — roster, boardAssignments, threadRecipes, discussionCasting
+- `launch/seed-posts/*.md` — per-post OP + reply identity casting tables
+- `launch/reports/seed-plan.md` § Multi-identity seeding
+- `launch/seed-identities.pubkey-map.example.json` — private ops map template
+
+Minimums before paid traffic:
+
+- ≥4 distinct seed authors with ≥1 post or substantive reply on each live board
+- ≥6 distinct authors appearing on the front page on a typical launch day
+- No single seed identity >35% of starter posts on a board
+- Every seeded OP has ≥1 reply from a **different** identity within 24h
+  (ideal: 3 voices — OP + question/try + pushback)
+- Mod identities pin norms/bounties; they do not dominate content volume
+- Seed personas do not claim cash bounties (example reports only)
+- Flagship seed posts execute the casting tables in `seed-posts/` (named roster ids)
+
 Initial board list:
 
 | Board | Audience | Launch Role |
@@ -87,14 +112,33 @@ Initial board list:
 | `homelab` | Operators and seeders | Future relay/operator channel. |
 | `showcase` | Launch demos and user projects | Keeps the first screen alive. |
 
+Post-stand-up expansion boards (activate only after the writable service and
+moderation overlay are verified):
+
+| Board | Audience | Launch Role |
+| --- | --- | --- |
+| `geopolitics` | Source-led current affairs and international relations | Daily-return discussion with strict sourcing and safety rules. |
+| `p2pnetworking` | P2P protocol engineers and operators | Deep networking, replication, discovery, relay, and performance work. |
+| `p2papps` | Builders, reviewers, and users of P2P applications | Turns protocol interest into software people can try. |
+| `cryptolaunches` | Crypto launch watchers, founders, and skeptics | Launch banter, due diligence, disclosed AMAs, and post-launch scorecards. |
+| `gambling` | Adults discussing betting, promotions, regulation, and harm reduction | High-engagement board with age, jurisdiction, and disclosure controls. |
+| `llmjailbreaks` | AI red-teamers, local uncensored/abliterated model users, prompt-injection researchers | High-energy research board + **$400 open-weight model pack bounty** (synthetic evals only). |
+
 Acceptance criteria:
 
-- Each board has an owner/moderator identity.
+- Each board has an owner/moderator identity **plus** ≥3 other seed identities
+  participating on that board.
 - Each board has 10-20 starter posts, at least 3 discussion prompts, and a pinned
   norms post.
-- At least 20 founding posters exist across the network.
-- The front page has fresh posts every day for the first 14 days.
+- Starter posts are cast across the seed roster (see `seed-identities.json`);
+  casting is logged privately (post → author roster id).
+- Thread recipes produce visible multi-author discussion (OP ≠ only voice).
+- At least 20 founding posters exist across the network (seed + real).
+- The front page has fresh posts every day for the first 14 days from mixed
+  identities.
 - Moderation overlay is exercised before launch.
+- High-risk post-stand-up boards open one at a time with a named moderator,
+  working report/removal paths, and board-specific disclosure rules.
 
 ### Gate 3: Kill Install Friction
 
@@ -226,6 +270,17 @@ launch/
   reports/
 ```
 
+Seed content lives under:
+
+```text
+launch/
+  communities.json          # boards + launchBounties
+  seed-identities.json      # multi-persona roster, roles, board casting
+  seed-posts/               # ready-to-post drafts (with identity casting)
+  reports/seed-plan.md      # editorial plan + bounty + multi-identity rules
+  reports/founder-packets/  # per-board founder kits
+```
+
 Recommended automation:
 
 - `npm run launch:readiness`
@@ -261,8 +316,28 @@ Use `$20,000` in sequence, not all at once.
 | Reddit/community ads | `$2,500` | Privacy, self-hosted, FOSS, Reddit-alternative audiences. |
 | Alt-network ads | `$2,000` | Brave, 4chan `/g/` and `/biz/`, crypto/privacy networks. |
 | HiveRelay operator growth | `$1,500` | Operator launch kits, node proof pages, referral bounties. |
-| Prizes/bounties | `$1,000` | Best board, importer, bot, moderation tool. |
+| Prizes/bounties | `$1,000` | See **Launch bounties** below — pay for reusable artifacts, not vibes. |
 | Reserve | `$500` | Double down only after activation data. |
+
+### Launch bounties (make boards interesting)
+
+Seed content must give people a **reason to return**: numbers, repro, ship logs, and cash-for-artifacts.
+
+| Prize | Board | USD | Artifact |
+| --- | --- | ---: | --- |
+| Open-weight uncensored / abliterated model pack | `llmjailbreaks` | **400** | License-clean open weights + local run recipe + **synthetic-only** bench results + VRAM/tok/s card |
+| Synthetic refusal / injection harness | `llmjailbreaks` | 200 | Offline MIT/Apache harness; stamps model+version in JSON |
+| Best living board (14 days) | `showcase` | 200 | 10+ distinct posters, quality replies, clean mod |
+| Best HiveRelay operator proof page | `hiverelay` | 200 | Public proof age, apps/outboxes seeded, honest region metrics |
+
+**Uncensored / “jailbroken model” bounty rules (non-negotiable):**
+
+- Means **open-weight local models** (abliteration, uncensor fine-tunes, weak-system-prompt models) for **red-team measurement** — not crime kits.
+- Required: public weights link, **license**, local recipe (ollama/llama.cpp/MLX/vLLM), synthetic eval + commands, quant/VRAM/GPU stamp.
+- **Disallowed:** stolen/leaked proprietary weights; credential theft; malware; personal-data extraction against real systems; “attack company X” guides.
+- Judging: reproducibility 40%, usefulness for local benches 30%, clarity 20%, engagement 10%.
+
+Full post copy and templates: `launch/seed-posts/llmjailbreaks.md`, `launch/reports/seed-plan.md`, `launch/communities.json` → `launchBounties`.
 
 Kill rules:
 

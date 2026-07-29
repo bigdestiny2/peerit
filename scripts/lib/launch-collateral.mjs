@@ -247,15 +247,15 @@ export function launchCreatives (spec) {
 }
 
 const focusBoardsByChannel = {
-  nostr: ['nostr', 'p2pbuilders', 'cypherpunk', 'privacy'],
+  nostr: ['nostr', 'p2pbuilders', 'p2pnetworking', 'p2papps', 'cypherpunk', 'privacy'],
   'lemmy-fediverse-mbin': ['fediverse', 'redditalternatives', 'localfirst', 'privacy'],
-  'privacy-and-degoogle-communities': ['privacy', 'cypherpunk', 'redditalternatives', 'linux'],
-  'self-hosting-homelab-linux-foss': ['selfhosted', 'homelab', 'linux', 'hiverelay', 'p2pbuilders'],
-  'hiverelay-operators-and-node-curious-homelab-users': ['hiverelay', 'homelab', 'selfhosted', 'p2pbuilders'],
-  'bitcoin-lightning-cypherpunk': ['cypherpunk', 'nostr', 'privacy', 'hiverelay'],
-  'reddit-alternatives-and-deplatformed-but-lawful-communities': ['redditalternatives', 'fediverse', 'privacy', 'showcase'],
-  'hacker-news-lobsters-tildes-and-g-as-technical-proof-channels': ['p2pbuilders', 'localfirst', 'linux', 'showcase', 'ai_local'],
-  '4chan-biz-only-as-a-small-crypto-native-experiment': ['cypherpunk', 'redditalternatives', 'privacy', 'ai_local']
+  'privacy-and-degoogle-communities': ['privacy', 'cypherpunk', 'redditalternatives', 'linux', 'llmjailbreaks'],
+  'self-hosting-homelab-linux-foss': ['selfhosted', 'homelab', 'linux', 'hiverelay', 'p2pbuilders', 'p2pnetworking', 'p2papps'],
+  'hiverelay-operators-and-node-curious-homelab-users': ['hiverelay', 'homelab', 'selfhosted', 'p2pbuilders', 'p2pnetworking'],
+  'bitcoin-lightning-cypherpunk': ['cypherpunk', 'cryptolaunches', 'nostr', 'privacy', 'hiverelay'],
+  'reddit-alternatives-and-deplatformed-but-lawful-communities': ['redditalternatives', 'fediverse', 'privacy', 'showcase', 'geopolitics'],
+  'hacker-news-lobsters-tildes-and-g-as-technical-proof-channels': ['p2pbuilders', 'p2pnetworking', 'p2papps', 'localfirst', 'linux', 'showcase', 'ai_local', 'llmjailbreaks'],
+  '4chan-biz-only-as-a-small-crypto-native-experiment': ['cryptolaunches', 'cypherpunk', 'redditalternatives', 'privacy', 'ai_local']
 }
 
 export function boardFit (channel, community) {

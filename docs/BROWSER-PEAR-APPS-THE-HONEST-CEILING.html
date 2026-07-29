@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Browser Pear Apps — The Honest Ceiling</title>
+<style>
+  :root{
+    --bg:#0a0e14; --panel:#111821; --panel-2:#0d141d;
+    --ink:#e8eef6; --dim:#8b9bb0; --faint:#5b6b80;
+    --line:#1f2a3a; --line-2:#152028;
+    --accent:#4fd1c5; --accent-2:#5b9fd4; --gold:#e0a54b; --rose:#e0533d; --violet:#9b7ed9; --green:#3ecf8e;
+    --cutover:#22d3ee;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--accent-2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{background:#0a0f16;border:1px solid var(--line);padding:.05em .4em;border-radius:4px;
+    font:.88em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cfe3ff}
+
+  .wrap{max-width:980px;margin:0 auto;padding:0 1.4em}
+  main{padding-bottom:6em}
+
+  header.hero{padding:4.5em 0 3em;border-bottom:1px solid var(--line);
+    background:radial-gradient(ellipse at top,rgba(79,209,197,.08),transparent 60%)}
+  .eyebrow{color:var(--accent);font-size:.8em;font-weight:700;letter-spacing:.18em;text-transform:uppercase;margin:0 0 .8em}
+  h1{font-size:2.6em;line-height:1.1;margin:.1em 0 .3em;letter-spacing:-.025em;font-weight:800}
+  h1 .grad{background:linear-gradient(120deg,var(--accent),var(--accent-2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:1.2em;color:var(--dim);max-width:64ch;margin:1em 0 0}
+  .meta{margin-top:2em;display:flex;flex-wrap:wrap;gap:.6em;font-size:.82em;color:var(--faint)}
+  .meta span{padding:.3em .7em;border:1px solid var(--line);border-radius:999px;background:var(--panel)}
+
+  section{padding:3em 0;border-bottom:1px solid var(--line-2)}
+  section:last-of-type{border-bottom:0}
+  h2{font-size:1.7em;letter-spacing:-.015em;margin:0 0 .6em;font-weight:700}
+  h2 .num{color:var(--accent);font-variant-numeric:tabular-nums;margin-right:.5em;font-weight:800}
+  h3{font-size:1.2em;margin:1.6em 0 .5em;font-weight:700;letter-spacing:-.01em}
+  h4{font-size:1.02em;margin:1.4em 0 .4em;color:var(--accent-2);font-weight:700}
+  p{margin:.7em 0}
+  ul,ol{margin:.7em 0;padding-left:1.5em}
+  li{margin:.35em 0}
+  .lead{font-size:1.08em;color:#cdd6e3}
+
+  .callout{border-left:3px solid var(--accent);background:rgba(79,209,197,.05);
+    padding:1em 1.3em;border-radius:0 10px 10px 0;margin:1.4em 0}
+  .callout.warn{border-color:var(--gold);background:rgba(224,165,75,.06)}
+  .callout.danger{border-color:var(--rose);background:rgba(224,83,61,.06)}
+  .callout.violet{border-color:var(--violet);background:rgba(155,126,215,.06)}
+  .callout.cutover{border-color:var(--cutover);background:rgba(34,211,238,.07)}
+  .callout h4{margin:.2em 0 .4em;color:inherit;font-size:.78em;text-transform:uppercase;letter-spacing:.1em}
+  .callout.warn h4{color:var(--gold)}
+  .callout.danger h4{color:var(--rose)}
+  .callout.violet h4{color:var(--violet)}
+  .callout.cutover h4{color:var(--cutover)}
+  .callout p:last-child{margin-bottom:0}
+
+  figure{margin:2em 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:1.6em 1.4em 1.2em}
+  figure svg{width:100%;height:auto;display:block}
+  figcaption{color:var(--dim);font-size:.86em;margin-top:1em;text-align:center;font-style:italic}
+
+  table{border-collapse:collapse;width:100%;margin:1.2em 0;font-size:.94em}
+  th,td{border:1px solid var(--line);padding:.6em .8em;text-align:left;vertical-align:top}
+  th{background:#0a0f16;color:var(--dim);font-weight:600;font-size:.84em;text-transform:uppercase;letter-spacing:.04em}
+
+  .status{display:inline-block;padding:.15em .55em;border-radius:4px;font-size:.74em;font-weight:700;text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--line)}
+  .s-yes{color:var(--green);border-color:#1d3a2c;background:rgba(62,207,142,.08)}
+  .s-no{color:var(--rose);border-color:#3a1d18;background:rgba(224,83,61,.1)}
+  .s-cutover{color:var(--cutover);border-color:#0f3a44;background:rgba(34,211,238,.1)}
+  .s-future{color:var(--gold);border-color:#3a2a14;background:rgba(224,165,75,.08)}
+
+  nav.toc{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.2em 1.4em;margin:2em 0}
+  nav.toc h3{margin:0 0 .6em;font-size:.82em;text-transform:uppercase;letter-spacing:.1em;color:var(--dim)}
+  nav.toc ol{margin:0;padding-left:1.3em;columns:2;column-gap:2em}
+  nav.toc li{margin:.2em 0;break-inside:avoid}
+  nav.toc a{color:var(--ink);font-size:.94em}
+
+  .rung{display:grid;grid-template-columns:auto 1fr auto;gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:1em 0;align-items:stretch}
+  .rung > div{padding:.9em 1.1em;border-bottom:1px solid var(--line)}
+  .rung:last-child > div{border-bottom:0}
+  .rung .lvl{font-weight:800;color:var(--accent);background:#0a0f16;display:flex;align-items:center;font-family:ui-monospace,monospace;min-width:90px;justify-content:center;font-size:1.1em}
+  .rung .desc{color:var(--dim)}
+  .rung .desc strong{color:var(--ink);display:block;margin-bottom:.15em;font-size:1.02em}
+  .rung .badge-cell{display:flex;align-items:center;justify-content:center;min-width:140px;background:#0a0f16;border-left:1px solid var(--line)}
+
+  footer{padding:2.5em 0 0;border-top:1px solid var(--line);margin-top:3em;color:var(--faint);font-size:.86em}
+  footer p{margin:.4em 0}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Doc 4 of 4 · the central design question, answered honestly</p>
+    <h1>Browser Pear Apps:<br><span class="grad">The Honest Ceiling</span></h1>
+    <p class="lede">Can you really run a decentralized Pear app in a normal browser, blind over
+       HiveRelay? Yes — and taken as far as the architecture allows, it gets shockingly close to
+       full-P2P quality. There is one hard ceiling, and it's a platform limit, not a code problem.</p>
+    <div class="meta">
+      <span>Companion to the Honest Stack</span>
+      <span>For: anyone asking "can I really do this in Chrome?"</span>
+      <span>Answer: yes, with one specific limit</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="callout cutover">
+    <h4>Live state (this week)</h4>
+    <p>The blind substrate is being deployed on 2 relays right now, with peerit standing up on it
+       with seed content. This doc describes the full target architecture — what becomes possible
+       as each piece lands. Every claim is badged with its current status. Don't promote a claim
+       past its badge.</p>
+  </div>
+
+  <div class="callout danger">
+    <h4>One thing to internalize before reading</h4>
+    <p><strong>"P2P app in a browser"</strong> is doing too much work in most conversations. There
+       are actually four independent axes bundled into that phrase — trust, data, storage, and
+       networking — and a browser can hit three of them fully. The fourth (no relay in the path) is
+       impossible for any browser, on any stack, forever. This doc separates them so you can reason
+       about what's real instead of arguing past the ceiling.</p>
+  </div>
+
+  <nav class="toc">
+    <h3>What's inside</h3>
+    <ol>
+      <li><a href="#answer">The short answer</a></li>
+      <li><a href="#four-axes">The four axes of "decentralized"</a></li>
+      <li><a href="#capabilities">What a browser can actually do</a></li>
+      <li><a href="#five-rungs">The five rungs to the ceiling</a></li>
+      <li><a href="#the-wall">The one wall that doesn't move</a></li>
+      <li><a href="#honest-claims">Claims you can and can't make</a></li>
+      <li><a href="#big-picture">The big picture</a></li>
+      <li><a href="#takeaway">The one-sentence takeaway</a></li>
+    </ol>
+  </nav>
+
+<!-- ============================================================== -->
+<section id="answer">
+  <h2><span class="num">01</span>The short answer</h2>
+
+  <p class="lead">Yes. You can build full Pear apps that run in any browser and are blind over
+     HiveRelay. The browser is always a <em>client</em> of the relay network, never a <em>peer</em>
+     in the DHT — but "blind client of a blind relay network" achieves most of what makes
+     decentralization matter.</p>
+
+  <p>Here's the version that's honest and still exciting:</p>
+
+  <blockquote style="border-left:3px solid var(--accent);margin:1.5em 0;padding:1.2em 1.5em;background:rgba(79,209,197,.06);border-radius:0 10px 10px 0;color:#cdd6e3;font-size:1.05em;line-height:1.55">
+    A browser-based Pear app on HiveRelay can be built so that <strong>no relay can forge content,
+    read what it holds, attribute it to an app or author, or be seized as a single point of
+    failure</strong>. The browser holds the keys, verifies every signature, and assembles the feed
+    locally. The relay's role shrinks to carrying opaque encrypted bytes between parties who chose
+    to be online.
+  </blockquote>
+
+  <p>The one thing it cannot do: <strong>eliminate the relay entirely.</strong> Two browsers behind
+     NAT cannot introduce each other without a third party. That's not a HiveRelay limitation — it's
+     a hard limit of the web platform, and it applies to every "decentralized web" project equally,
+     whether they admit it or not.</p>
+
+  <div class="callout">
+    <h4>The reframe that matters</h4>
+    <p>The honest question isn't <em>"can the browser be a peer?"</em> (no) — it's <em>"can the
+       relay be made blind enough that it doesn't matter?"</em> (mostly yes). This doc is about how
+       far "mostly yes" goes.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="four-axes">
+  <h2><span class="num">02</span>The four axes of "decentralized"</h2>
+
+  <p class="lead">Separate these, and the whole conversation gets clearer.</p>
+
+  <p>When people say "decentralized app," they usually mean all four of these at once. But they're
+     independent. A browser-based Pear app hits three fully and one not at all:</p>
+
+  <figure>
+    <svg viewBox="0 0 900 380" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <text x="450" y="24" text-anchor="middle" fill="#8b9bb0" font-size="12" font-weight="700">FOUR AXES OF "DECENTRALIZED" — BROWSER SCORECARD</text>
+
+      <!-- Axis 1: Trust -->
+      <rect x="20" y="50" width="210" height="300" rx="12" fill="#0f2018" stroke="#3ecf8e" stroke-width="2"/>
+      <text x="125" y="76" text-anchor="middle" fill="#3ecf8e" font-size="12" font-weight="700">1 · TRUST MODEL</text>
+      <text x="125" y="94" text-anchor="middle" fill="#8b9bb0" font-size="10">signatures are authority</text>
+      <text x="35" y="124" fill="#3ecf8e" font-size="28" font-weight="800">✓</text>
+      <text x="35" y="148" fill="#cdd6e3" font-size="11" font-weight="700">FULLY</text>
+      <g font-size="10" fill="#cdd6e3">
+        <text x="35" y="178">Every record is signed</text>
+        <text x="35" y="194">by its author's key.</text>
+        <text x="35" y="214">The browser verifies</text>
+        <text x="35" y="230">every signature itself.</text>
+        <text x="35" y="250">A relay cannot forge</text>
+        <text x="35" y="266">or tamper — only</text>
+        <text x="35" y="282">withhold.</text>
+      </g>
+      <text x="125" y="324" text-anchor="middle" fill="#3ecf8e" font-size="9" font-style="italic">no server trust needed</text>
+      <text x="125" y="338" text-anchor="middle" fill="#3ecf8e" font-size="9" font-style="italic">for integrity</text>
+
+      <!-- Axis 2: Data -->
+      <rect x="245" y="50" width="210" height="300" rx="12" fill="#0f2018" stroke="#3ecf8e" stroke-width="2"/>
+      <text x="350" y="76" text-anchor="middle" fill="#3ecf8e" font-size="12" font-weight="700">2 · DATA MODEL</text>
+      <text x="350" y="94" text-anchor="middle" fill="#8b9bb0" font-size="10">no central database</text>
+      <text x="260" y="124" fill="#3ecf8e" font-size="28" font-weight="800">✓</text>
+      <text x="260" y="148" fill="#cdd6e3" font-size="11" font-weight="700">FULLY</text>
+      <g font-size="10" fill="#cdd6e3">
+        <text x="260" y="178">Each author writes</text>
+        <text x="260" y="194">their own outbox.</text>
+        <text x="260" y="214">The browser merges</text>
+        <text x="260" y="230">outboxes locally into</text>
+        <text x="260" y="246">a feed.</text>
+        <text x="260" y="266">No DB to subpoena.</text>
+        <text x="260" y="282">No admin can edit.</text>
+      </g>
+      <text x="350" y="324" text-anchor="middle" fill="#3ecf8e" font-size="9" font-style="italic">data is user-owned,</text>
+      <text x="350" y="338" text-anchor="middle" fill="#3ecf8e" font-size="9" font-style="italic">distributed at rest</text>
+
+      <!-- Axis 3: Storage -->
+      <rect x="470" y="50" width="210" height="300" rx="12" fill="#0f3a44" stroke="#22d3ee" stroke-width="2"/>
+      <text x="575" y="76" text-anchor="middle" fill="#22d3ee" font-size="12" font-weight="700">3 · STORAGE BLINDNESS</text>
+      <text x="575" y="94" text-anchor="middle" fill="#8b9bb0" font-size="10">relay can't read it</text>
+      <text x="485" y="124" fill="#22d3ee" font-size="28" font-weight="800">✓</text>
+      <text x="485" y="148" fill="#cdd6e3" font-size="11" font-weight="700">CUTOVER</text>
+      <g font-size="10" fill="#cdd6e3">
+        <text x="485" y="178">Substrate going live:</text>
+        <text x="485" y="194">opaque cells at random</text>
+        <text x="485" y="210">addresses.</text>
+        <text x="485" y="230">+ BlindShard (gated):</text>
+        <text x="485" y="246">bodies split across</text>
+        <text x="485" y="262">independent operators.</text>
+        <text x="485" y="282">No single relay holds</text>
+        <text x="485" y="298">readable content.</text>
+      </g>
+      <text x="575" y="324" text-anchor="middle" fill="#22d3ee" font-size="9" font-style="italic">relay sees only opaque</text>
+      <text x="575" y="338" text-anchor="middle" fill="#22d3ee" font-size="9" font-style="italic">bytes, no graph</text>
+
+      <!-- Axis 4: Networking -->
+      <rect x="695" y="50" width="185" height="300" rx="12" fill="#1a0e0a" stroke="#e0533d" stroke-width="2"/>
+      <text x="787" y="76" text-anchor="middle" fill="#e0533d" font-size="12" font-weight="700">4 · NETWORK TOPOLOGY</text>
+      <text x="787" y="94" text-anchor="middle" fill="#8b9bb0" font-size="10">no relay in the path</text>
+      <text x="710" y="124" fill="#e0533d" font-size="28" font-weight="800">✗</text>
+      <text x="710" y="148" fill="#e0533d" font-size="11" font-weight="700">NEVER</text>
+      <g font-size="10" fill="#cdd6e3">
+        <text x="710" y="178">Browsers cannot</text>
+        <text x="710" y="194">open UDP sockets.</text>
+        <text x="710" y="214">Cannot hold DHT</text>
+        <text x="710" y="230">routing slots.</text>
+        <text x="710" y="250">Cannot listen on</text>
+        <text x="710" y="266">any port.</text>
+        <text x="710" y="286">Always need a relay</text>
+        <text x="710" y="302">to make first hop.</text>
+      </g>
+      <text x="787" y="324" text-anchor="middle" fill="#e0533d" font-size="9" font-style="italic">hard platform limit —</text>
+      <text x="787" y="338" text-anchor="middle" fill="#e0533d" font-size="9" font-style="italic">not a code problem</text>
+    </svg>
+    <figcaption>A browser-based Pear app hits three of four axes fully. The fourth is impossible on any stack.</figcaption>
+  </figure>
+
+  <div class="callout warn">
+    <h4>Why the distinction matters</h4>
+    <p>Most "decentralized web" projects conflate these axes. They claim "P2P" because they hit axis
+       1 (signatures) and axis 2 (distributed data) but quietly depend on a central server for axis
+       4 (networking) and don't even attempt axis 3 (storage blindness). The Pear + HiveRelay stack
+       is unusual in that it <em>does</em> attempt axis 3 seriously — and is honest about axis 4
+       being out of reach for browsers.</p>
+    <p>The thing that actually defines "decentralized" in the load-bearing sense — <em>can the
+       server forge content, can it be seized, can it be compelled to edit your words</em> — is axes
+       1 and 3. Both are achievable in a browser. Axis 4 is the one piece that's genuinely
+       different, and even it can be made <em>blind</em> if not <em>absent</em>.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="capabilities">
+  <h2><span class="num">03</span>What a browser can actually do</h2>
+
+  <p class="lead">The capability matrix. Six things browsers can do today; one they can't, ever.</p>
+
+  <table>
+    <thead><tr><th>Capability</th><th>Browser?</th><th>How</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Hold your Ed25519 identity locally</strong></td>
+        <td><span class="status s-yes">Yes</span></td>
+        <td>WebCrypto generates and stores the keypair in the browser. Never leaves.</td>
+        <td><span class="status s-yes">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>Sign and verify every record</strong></td>
+        <td><span class="status s-yes">Yes</span></td>
+        <td>WebCrypto Ed25519 (or <code>node:crypto</code> in tests). Every record signed before send, verified on receipt.</td>
+        <td><span class="status s-yes">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>AES-GCM encrypt/decrypt post bodies</strong></td>
+        <td><span class="status s-yes">Yes</span></td>
+        <td>WebCrypto AES-256-GCM, hardware-accelerated. Sub-millisecond for typical bodies.</td>
+        <td><span class="status s-yes">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>Fetch the app's HTML/JS over HTTPS</strong></td>
+        <td><span class="status s-yes">Yes</span></td>
+        <td>Standard <code>fetch</code>. Pear app is just a Hyperdrive of static files.</td>
+        <td><span class="status s-yes">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>Write/read opaque cells to a blind relay</strong></td>
+        <td><span class="status s-yes">Yes</span></td>
+        <td>Blind Cells profile — HTTP PUT/GET of fixed-size ciphertext at random slot addresses.</td>
+        <td><span class="status s-cutover">Cutover</span></td>
+      </tr>
+      <tr>
+        <td><strong>Verify the app bundle against an offline signing key</strong></td>
+        <td><span class="status s-yes">Yes</span></td>
+        <td><code>release-verify.js</code> + <code>pinnedReleaseKey</code>. Mirrors confirm bundle authenticity without trusting origin.</td>
+        <td><span class="status s-yes">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>PVSS-split post bodies across a cohort</strong></td>
+        <td><span class="status s-yes">Yes</span></td>
+        <td><code>blind-dealer.mjs</code> — dealer runs entirely client-side; relays receive only opaque shares.</td>
+        <td><span class="status s-future">Coded, gated on ≥3 operators</span></td>
+      </tr>
+      <tr>
+        <td><strong>Be a real Hyperswarm DHT node</strong></td>
+        <td><span class="status s-no">No</span></td>
+        <td>Browsers cannot open UDP sockets or hold routing slots. Hard platform limit. PearBrowser escapes this via Bare runtime.</td>
+        <td><span class="status s-no">Fantasy</span></td>
+      </tr>
+      <tr>
+        <td><strong>Reach the DHT through a WSS bridge</strong></td>
+        <td><span class="status s-yes">Yes (tunneled)</span></td>
+        <td><code>dht-relay-ws</code> carries opaque Noise frames. Browser participates, but through a bridge — not as a standalone node.</td>
+        <td><span class="status s-future">Coded, gated on upstream lib</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>Seven of nine capabilities work in a browser today or are in active cutover. One more is coded
+     but gated on operators. The last two — the DHT ones — are the ceiling, and only one of those
+     (the tunneled version) is reachable at all.</p>
+</section>
+
+<!-- ============================================================== -->
+<section id="five-rungs">
+  <h2><span class="num">04</span>The five rungs to the ceiling</h2>
+
+  <p class="lead">Each rung is achievable. Each shrinks what the relay knows. Stack them and you
+     arrive at the strongest defensible browser-based architecture.</p>
+
+  <div class="rung">
+    <div class="lvl">1</div>
+    <div class="desc"><strong>Blind storage — the substrate</strong>
+      Relay holds opaque cells at random addresses. Can't read content, can't enumerate the graph,
+      can't tell peerit apart from any other app. Browser reads/writes over HTTPS. Relay sees your
+      IP and sees that <em>some</em> opaque cell was requested.</div>
+    <div class="badge-cell"><span class="status s-cutover">Cutover</span></div>
+  </div>
+
+  <div class="rung">
+    <div class="lvl">2</div>
+    <div class="desc"><strong>BlindShard body dispersal</strong>
+      Post bodies are PVSS-split across a cohort of independent operators. No single relay holds a
+      readable or complete body. The browser does all gathering and reassembly locally. Reaching
+      this rung needs operators, not code.</div>
+    <div class="badge-cell"><span class="status s-future">Coded · needs ≥3 ops</span></div>
+  </div>
+
+  <div class="rung">
+    <div class="lvl">3</div>
+    <div class="desc"><strong>Split transport — OHTTP</strong>
+      Separate the ingress (sees your IP, can't see the request) from the gateway (sees the request,
+      can't see your IP). Hides the IP/storage correlation. Standard RFC 9458/9180 — not invented
+      here.</div>
+    <div class="badge-cell"><span class="status s-future">Spec'd</span></div>
+  </div>
+
+  <div class="rung">
+    <div class="lvl">4</div>
+    <div class="desc"><strong>dht-relay-ws bridge</strong>
+      Browser reaches the actual Hyperswarm DHT through a WSS bridge carrying opaque Noise-encrypted
+      frames. The browser still isn't a DHT node — but the bridge is reduced to a dumb byte-pipe that
+      stores nothing readable and serves nothing semantic. Closest a browser gets to "real P2P."</div>
+    <div class="badge-cell"><span class="status s-future">Coded · gated upstream</span></div>
+  </div>
+
+  <div class="rung">
+    <div class="lvl">5</div>
+    <div class="desc"><strong>Pure pipe end state</strong>
+      Founder's box stops being an <code>/api</code> aggregator. Multiple independent
+      <code>dht-relay-ws</code> endpoints exist; readers pick any. Browser's view assembled locally
+      from many blind sources. No single server holds "the feed."</div>
+    <div class="badge-cell"><span class="status s-future">Spec'd · end state</span></div>
+  </div>
+
+  <div class="callout">
+    <h4>The compounding effect</h4>
+    <p>Each rung doesn't just add a feature — it shrinks what the relay knows. Stacking rungs 1–3
+       means: the relay can't read content (1), can't hold complete bodies (2), and can't correlate
+       your IP to your reads (3). By rung 4, the relay is a dumb pipe that moves encrypted frames.
+       By rung 5, there's no single relay at all — just a fleet of blind byte-pipes, any of which
+       can be replaced.</p>
+    <p>That's a categorically different trust model than "the server owns the data." It just isn't
+       the same as "no relay exists," which is what PearBrowser gives you.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="the-wall">
+  <h2><span class="num">05</span>The one wall that doesn't move</h2>
+
+  <p class="lead">No matter how far you push rungs 1–5, a normal browser will always need at least
+     one reachable relay to make the first hop.</p>
+
+  <p>This isn't a HiveRelay limitation. It's not a peerit limitation. It's a hard architectural
+     limit of the web platform itself:</p>
+
+  <ul>
+    <li><strong>HyperDHT is UDP.</strong> Browsers cannot open UDP sockets — full stop. WebRTC has UDP, but HyperDHT uses its own protocol, not WebRTC's.</li>
+    <li><strong>DHT membership requires listening.</strong> To be a real DHT node you have to accept inbound routing traffic. Browsers can't listen on any port.</li>
+    <li><strong>The first-hop problem.</strong> Two browsers behind NAT cannot find each other without a third party to introduce them. There's no pure-P2P bootstrap from a cold browser.</li>
+  </ul>
+
+  <figure>
+    <svg viewBox="0 0 900 280" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <text x="450" y="24" text-anchor="middle" fill="#8b9bb0" font-size="12" font-weight="700">THE FIRST-HOP PROBLEM — WHY A RELAY IS ALWAYS NEEDED</text>
+
+      <!-- two browsers -->
+      <circle cx="120" cy="120" r="32" fill="#1a0e0a" stroke="#e0533d" stroke-width="2"/>
+      <text x="120" y="116" text-anchor="middle" fill="#e0533d" font-size="10" font-weight="700">Browser A</text>
+      <text x="120" y="130" text-anchor="middle" fill="#e0533d" font-size="9">behind NAT</text>
+
+      <circle cx="780" cy="120" r="32" fill="#1a0e0a" stroke="#e0533d" stroke-width="2"/>
+      <text x="780" y="116" text-anchor="middle" fill="#e0533d" font-size="10" font-weight="700">Browser B</text>
+      <text x="780" y="130" text-anchor="middle" fill="#e0533d" font-size="9">behind NAT</text>
+
+      <!-- failed direct connection -->
+      <path d="M 155 120 Q 450 60 745 120" stroke="#e0533d" stroke-width="2.5" stroke-dasharray="6 4" fill="none"/>
+      <text x="450" y="56" text-anchor="middle" fill="#e0533d" font-size="11" font-weight="700">✗ CANNOT CONNECT DIRECTLY</text>
+      <text x="450" y="74" text-anchor="middle" fill="#8b9bb0" font-size="9">no UDP · no listening · NAT blocks inbound</text>
+
+      <!-- relay in the middle -->
+      <rect x="380" y="150" width="140" height="70" rx="10" fill="#0f3a44" stroke="#22d3ee" stroke-width="2"/>
+      <text x="450" y="174" text-anchor="middle" fill="#22d3ee" font-size="11" font-weight="700">RELAY</text>
+      <text x="450" y="192" text-anchor="middle" fill="#8b9bb0" font-size="9">(introduces them)</text>
+      <text x="450" y="208" text-anchor="middle" fill="#22d3ee" font-size="8">can be made blind</text>
+
+      <path d="M 152 132 Q 260 180 380 175" stroke="#22d3ee" stroke-width="2" fill="none" marker-end="url(#w1)"/>
+      <path d="M 520 175 Q 640 180 748 132" stroke="#22d3ee" stroke-width="2" fill="none" marker-end="url(#w1)"/>
+
+      <text x="450" y="252" text-anchor="middle" fill="#8b9bb0" font-size="10" font-style="italic">Something reachable must introduce two browsers. That's the relay's irreducible role.</text>
+
+      <defs>
+        <marker id="w1" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#22d3ee"/></marker>
+      </defs>
+    </svg>
+    <figcaption>Two browsers cannot reach each other directly. The relay makes the introduction. Its role can be made blind, but not eliminated.</figcaption>
+  </figure>
+
+  <div class="callout danger">
+    <h4>The honest target, stated precisely</h4>
+    <p><strong>A normal browser is never a standalone DHT node. There is always a relay in the path.
+       The honest target is a <em>blind relay</em>, not <em>no relay</em>.</strong></p>
+    <p>If you remember one sentence from this document, remember that. Every "browser runs a real
+       DHT node" or "no relay in the path" claim — for normal browsers — is false and must not be
+       made. The relay's role can be shrunk until it carries only opaque bytes, but it cannot be
+       removed.</p>
+  </div>
+
+  <h3>What PearBrowser gets that browsers don't</h3>
+  <p>PearBrowser escapes this limit because it runs on the Pear/Bare runtime — a native process
+     with real UDP sockets, real Hyperswarm participation, real DHT membership. In PearBrowser:</p>
+  <ul>
+    <li>You <em>are</em> a peer. You hold routing slots. You serve blocks to other peers.</li>
+    <li>There is no relay in your path. You reach other peers directly over Hyperswarm.</li>
+    <li>The site is content-addressed (<code>hyper://</code>), zero origin, nothing to seize.</li>
+  </ul>
+  <p>This is why PearBrowser is "the strongest trust tier" in every diagram. It's the only mode
+     where axis 4 (network topology) is fully achieved. Normal browsers get axes 1–3 and a blind
+     version of the relay's role in axis 4.</p>
+</section>
+
+<!-- ============================================================== -->
+<section id="honest-claims">
+  <h2><span class="num">06</span>Claims you can and can't make</h2>
+
+  <p class="lead">The contract. If you can't defend it in front of a hostile auditor, don't say it.</p>
+
+  <h3>What you CAN say (present tense, defensible today or as cutover lands)</h3>
+
+  <ol>
+    <li><strong>"Your keys never leave your browser. Every record is signed and re-verified locally."</strong>
+        <span class="status s-yes">Shipped</span></li>
+    <li><strong>"The relay holds opaque ciphertext at random addresses. It cannot read your content, enumerate your social graph, or tell our app apart from any other."</strong>
+        <span class="status s-cutover">As substrate lands</span></li>
+    <li><strong>"Post bodies are split across independent operators. No single relay holds a readable or complete copy."</strong>
+        <span class="status s-future">When ≥3 operators join</span></li>
+    <li><strong>"Your IP can be hidden from the storage relay via split transport."</strong>
+        <span class="status s-future">When OHTTP ships</span></li>
+    <li><strong>"There is no central database to subpoena — only blind fragments across independent operators."</strong>
+        <span class="status s-future">At full deployment</span></li>
+    <li><strong>"The browser assembles your feed locally from signed records. No server decides what you see."</strong>
+        <span class="status s-yes">Shipped</span></li>
+    <li><strong>"The app bundle is verifiable against an offline signing key — mirrors and auditors can confirm authenticity without trusting the origin."</strong>
+        <span class="status s-yes">Shipped</span></li>
+  </ol>
+
+  <h3>What you CANNOT say — ever</h3>
+
+  <div class="callout danger">
+    <h4>Forbidden claims</h4>
+    <ul>
+      <li><strong>"The browser is a peer in the network."</strong> It isn't. It's a blind client of a blind relay network. PearBrowser is a peer; Chrome is not.</li>
+      <li><strong>"There's no relay in the path."</strong> There always is, for browsers. The relay can be made blind, not absent.</li>
+      <li><strong>"The operator can't read your posts."</strong> For public content, an operator who joins as a reader can reconstruct. Blindness is deniability, not secrecy.</li>
+      <li><strong>"It's anonymous."</strong> Metadata leaks: sizes, timing, IPs (without Tor), access patterns.</li>
+      <li><strong>"It works if every relay goes down."</strong> It doesn't. Browsers need at least one reachable relay to make the first hop.</li>
+      <li><strong>"It's serverless."</strong> It's not, for browsers. It's <em>blind-relay-served</em>, which is different. Reserve "serverless" for PearBrowser.</li>
+      <li><strong>"Browser-to-browser with no intermediary."</strong> Impossible behind NAT. Two browsers cannot introduce themselves.</li>
+    </ul>
+  </div>
+
+  <h3>The strongest honest one-liner</h3>
+
+  <blockquote style="border-left:3px solid var(--green);margin:1.5em 0;padding:1.2em 1.5em;background:rgba(62,207,142,.06);border-radius:0 10px 10px 0;color:#cdd6e3;font-size:1.1em;line-height:1.5">
+    <strong>"A browser-based Pear app on HiveRelay can be built so that no relay can forge your
+    content, read what it holds, attribute it to an app or author, or be seized as a single point of
+    failure. Your keys, your signatures, your locally-assembled feed. The relay's role is reduced to
+    carrying opaque encrypted bytes between parties who chose to be online."</strong>
+  </blockquote>
+
+  <p>That is the strongest defensible claim. Everything past it is either a future-tense conditional
+     ("when X ships, Y") or a fantasy.</p>
+</section>
+
+<!-- ============================================================== -->
+<section id="big-picture">
+  <h2><span class="num">07</span>The big picture</h2>
+
+  <p class="lead">One diagram showing both reader paths honestly — PearBrowser as true peer, browser
+     as blind client — with every component badged by status.</p>
+
+  <figure>
+    <svg viewBox="0 0 980 540" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <text x="490" y="24" text-anchor="middle" fill="#e8eef6" font-size="14" font-weight="700">BROWSER PEAR APPS — THE TWO READER PATHS</text>
+      <text x="490" y="40" text-anchor="middle" fill="#5b6b80" font-size="10">green=shipped · cyan=cutover · yellow=future · red=impossible</text>
+
+      <!-- ===== PATH 1: PearBrowser ===== -->
+      <rect x="20" y="60" width="940" height="180" rx="12" fill="#0f2018" stroke="#3ecf8e" stroke-width="2"/>
+      <text x="490" y="84" text-anchor="middle" fill="#3ecf8e" font-size="13" font-weight="700">PATH 1 · PearBrowser (native) — TRUE PEER · all four axes achieved</text>
+
+      <circle cx="90" cy="150" r="30" fill="#0a0f16" stroke="#3ecf8e" stroke-width="2"/>
+      <text x="90" y="146" text-anchor="middle" fill="#3ecf8e" font-size="10" font-weight="700">Pear</text>
+      <text x="90" y="160" text-anchor="middle" fill="#3ecf8e" font-size="10" font-weight="700">Browser</text>
+      <text x="90" y="200" text-anchor="middle" fill="#3ecf8e" font-size="9">real UDP · real DHT</text>
+
+      <path d="M 125 150 L 230 150" stroke="#3ecf8e" stroke-width="3" marker-end="url(#bp1)"/>
+      <text x="177" y="138" text-anchor="middle" fill="#3ecf8e" font-size="9" font-weight="700">direct</text>
+      <text x="177" y="168" text-anchor="middle" fill="#3ecf8e" font-size="8">no relay</text>
+
+      <rect x="240" y="110" width="180" height="90" rx="8" fill="#0a0f16" stroke="#3ecf8e"/>
+      <text x="330" y="134" text-anchor="middle" fill="#3ecf8e" font-size="10" font-weight="700">Hyperswarm DHT</text>
+      <text x="330" y="152" text-anchor="middle" fill="#8b9bb0" font-size="9">real routing node</text>
+      <text x="330" y="168" text-anchor="middle" fill="#8b9bb0" font-size="9">discovers authors</text>
+      <text x="330" y="184" text-anchor="middle" fill="#8b9bb0" font-size="9">pulls outboxes</text>
+
+      <path d="M 420 150 L 500 150" stroke="#3ecf8e" stroke-width="2.5" marker-end="url(#bp1)"/>
+
+      <rect x="510" y="110" width="160" height="90" rx="8" fill="#0a0f16" stroke="#3ecf8e"/>
+      <text x="590" y="134" text-anchor="middle" fill="#3ecf8e" font-size="10" font-weight="700">peer seeders</text>
+      <text x="590" y="152" text-anchor="middle" fill="#8b9bb0" font-size="9">other PearBrowsers</text>
+      <text x="590" y="168" text-anchor="middle" fill="#8b9bb0" font-size="9">+ blind seeders</text>
+      <text x="590" y="184" text-anchor="middle" fill="#3ecf8e" font-size="9">SHIPPED</text>
+
+      <path d="M 670 150 L 750 150" stroke="#3ecf8e" stroke-width="2" marker-end="url(#bp1)"/>
+
+      <rect x="760" y="110" width="180" height="90" rx="8" fill="#0f2018" stroke="#3ecf8e"/>
+      <text x="850" y="134" text-anchor="middle" fill="#3ecf8e" font-size="10" font-weight="700">verify + merge</text>
+      <text x="850" y="152" text-anchor="middle" fill="#8b9bb0" font-size="9">signature checks</text>
+      <text x="850" y="168" text-anchor="middle" fill="#8b9bb0" font-size="9">local feed assembly</text>
+      <text x="850" y="184" text-anchor="middle" fill="#3ecf8e" font-size="9">all in PearBrowser</text>
+
+      <!-- ===== PATH 2: Normal browser ===== -->
+      <rect x="20" y="260" width="940" height="260" rx="12" fill="#0a0f16" stroke="#22d3ee" stroke-width="2"/>
+      <text x="490" y="284" text-anchor="middle" fill="#22d3ee" font-size="13" font-weight="700">PATH 2 · Normal browser — BLIND CLIENT · axes 1-3 achieved, axis 4 via blind relay</text>
+
+      <circle cx="90" cy="370" r="30" fill="#1a0e0a" stroke="#e0533d" stroke-width="2"/>
+      <text x="90" y="366" text-anchor="middle" fill="#e0533d" font-size="10" font-weight="700">Chrome</text>
+      <text x="90" y="380" text-anchor="middle" fill="#e0533d" font-size="10" font-weight="700">/FF/Safari</text>
+      <text x="90" y="420" text-anchor="middle" fill="#e0533d" font-size="9">no UDP · not a peer</text>
+
+      <path d="M 125 370 L 230 370" stroke="#22d3ee" stroke-width="2.5" marker-end="url(#bp2)"/>
+      <text x="177" y="358" text-anchor="middle" fill="#22d3ee" font-size="9" font-weight="700">HTTPS</text>
+
+      <!-- substrate relay (cutover) -->
+      <rect x="240" y="310" width="200" height="120" rx="8" fill="#0f3a44" stroke="#22d3ee" stroke-width="2"/>
+      <text x="340" y="334" text-anchor="middle" fill="#22d3ee" font-size="11" font-weight="700">BLIND SUBSTRATE</text>
+      <text x="340" y="352" text-anchor="middle" fill="#8b9bb0" font-size="9">2 relays · cutover</text>
+      <g font-size="9" fill="#cdd6e3">
+        <text x="255" y="374">opaque cells at random slots</text>
+        <text x="255" y="388">can't read, attribute, or</text>
+        <text x="255" y="402">tell apps apart</text>
+        <text x="255" y="420" fill="#22d3ee" font-weight="700">CUTOVER</text>
+      </g>
+
+      <path d="M 440 370 L 510 370" stroke="#e0a54b" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#bp3)"/>
+
+      <!-- BlindShard cohort (future) -->
+      <rect x="520" y="310" width="180" height="120" rx="8" fill="#2a2110" stroke="#e0a54b" stroke-dasharray="4 3"/>
+      <text x="610" y="334" text-anchor="middle" fill="#e0a54b" font-size="11" font-weight="700">BLINDSHARD COHORT</text>
+      <text x="610" y="352" text-anchor="middle" fill="#8b9bb0" font-size="9">PVSS key-shares</text>
+      <g font-size="9" fill="#cdd6e3">
+        <text x="535" y="374">≥3 independent operators</text>
+        <text x="535" y="388">each holds one share</text>
+        <text x="535" y="402">browser reassembles locally</text>
+        <text x="535" y="420" fill="#e0a54b" font-weight="700">CODED · GATED</text>
+      </g>
+
+      <path d="M 700 370 L 760 370" stroke="#22d3ee" stroke-width="2" marker-end="url(#bp2)"/>
+
+      <rect x="770" y="310" width="170" height="120" rx="8" fill="#0f2018" stroke="#3ecf8e"/>
+      <text x="855" y="334" text-anchor="middle" fill="#3ecf8e" font-size="11" font-weight="700">VERIFY + MERGE</text>
+      <text x="855" y="352" text-anchor="middle" fill="#8b9bb0" font-size="9">in the browser</text>
+      <g font-size="9" fill="#cdd6e3">
+        <text x="785" y="374">signature checks</text>
+        <text x="785" y="388">decrypt locally</text>
+        <text x="785" y="402">assemble feed</text>
+        <text x="785" y="420" fill="#3ecf8e" font-weight="700">SHIPPED</text>
+      </g>
+
+      <!-- the wall callout -->
+      <rect x="240" y="450" width="700" height="50" rx="8" fill="#1a0e0a" stroke="#e0533d" opacity="0.6"/>
+      <text x="590" y="472" text-anchor="middle" fill="#e0533d" font-size="10" font-weight="700">THE WALL: a browser always needs at least one reachable relay to make the first hop.</text>
+      <text x="590" y="488" text-anchor="middle" fill="#8b9bb0" font-size="9">The relay can be made progressively more blind (substrate → shard → split transport → pure pipe), but it cannot be eliminated.</text>
+
+      <defs>
+        <marker id="bp1" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#3ecf8e"/></marker>
+        <marker id="bp2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#22d3ee"/></marker>
+        <marker id="bp3" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#e0a54b"/></marker>
+      </defs>
+    </svg>
+    <figcaption>Two paths, honestly distinguished. PearBrowser achieves all four axes. The browser achieves three fully and reaches the fourth through a progressively-more-blind relay that can never be eliminated.</figcaption>
+  </figure>
+</section>
+
+<!-- ============================================================== -->
+<section id="takeaway">
+  <h2><span class="num">08</span>The one-sentence takeaway</h2>
+
+  <p class="lead">If you read nothing else, read this.</p>
+
+  <blockquote style="border-left:3px solid var(--accent);margin:1.5em 0;padding:1.5em 1.8em;background:rgba(79,209,197,.06);border-radius:0 10px 10px 0;color:#cdd6e3;font-size:1.15em;line-height:1.55">
+    <strong>You can build a Pear app that runs in any browser and is blind over HiveRelay — where
+    no relay can forge your content, read what it holds, attribute it, or be seized as a single
+    point of failure. The browser holds the keys, verifies every signature, and assembles the feed
+    locally. The relay's role shrinks to carrying opaque bytes. The one thing you cannot do is
+    eliminate the relay entirely: a browser is always a blind client, never a peer. PearBrowser is
+    the only mode where the relay disappears.</strong>
+  </blockquote>
+
+  <p>That's the whole answer. Everything else in this doc and its three companions is the evidence
+     for that paragraph, and the discipline to never claim past it.</p>
+
+  <div class="callout violet">
+    <h4>The four docs, in order</h4>
+    <ol>
+      <li><strong><a href="BLIND-SUBSTRATE-EXPLAINER.html">The Blind Substrate</a></strong> — Layer 1: blinding the graph (storage keys, cells, the G0–G5 ladder).</li>
+      <li><strong><a href="BLINDSHARD-AND-PURE-PIPE-EXPLAINER.html">BlindShard &amp; the Pure Pipe</a></strong> — Layer 2: blinding the bodies (PVSS key-split, the end state where the founder's box serves nothing).</li>
+      <li><strong><a href="HONEST-STACK-AUTHORITATIVE.html">The Honest Stack</a></strong> — The authoritative correction: what's shipped vs target vs fantasy, with every overstatement catalogued.</li>
+      <li><strong>This doc</strong> — The central design question answered: can you really do decentralized Pear apps in a browser? Yes, with one ceiling.</li>
+    </ol>
+    <p>Read in order if you're new. Read doc 3 first if you're about to make a public claim.</p>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><strong>Purpose.</strong> Answers the single most common question about this stack: "can I
+       really run a decentralized app in a normal browser?" The answer is yes, with one specific
+       and permanent ceiling. This doc exists to make that answer precise and defensible.</p>
+    <p><strong>Status.</strong> Capability matrix reflects the current cutover state: substrate on
+       2 relays, peerit seeding on it, BlindShard gated on operators, dht-relay-ws gated on upstream,
+       pure pipe spec'd. Claims are badged accordingly. Don't promote past the badge.</p>
+    <p><strong>The ceiling, restated.</strong> A normal browser cannot open UDP sockets, cannot hold
+       DHT routing slots, and cannot introduce itself to another browser behind NAT. These are hard
+       platform limits. The honest target is a <em>blind relay</em>, not <em>no relay</em>.
+       PearBrowser is the only mode where no relay is needed.</p>
+    <p><strong>Companion docs.</strong> Read <a href="HONEST-STACK-AUTHORITATIVE.html">The Honest
+       Stack</a> for the full status matrix and corrections to overstated claims in the companion
+       explainers. This doc is consistent with that one; where they overlap, both agree.</p>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -519,6 +519,11 @@ async function runSmoke ({ browser, url, accessibility }) {
   const errors = []
   recordBrowserErrors(pageA, errors)
 
+  await pageA.goto(routeUrl(url, '#/about'), { waitUntil: 'domcontentloaded' })
+  await expectText(pageA, 'A community network with no company in the middle.')
+  await expectText(pageA, 'The network is the backend.')
+  if (accessibility) await assertAccessibility(pageA, 'product about view')
+
   await pageA.goto(routeUrl(url, '#/create'), { waitUntil: 'domcontentloaded' })
   await pageA.locator('#app').waitFor({ state: 'visible', timeout: DEFAULT_TIMEOUT_MS })
 

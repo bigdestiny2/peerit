@@ -1,6 +1,6 @@
 # Founder Packet: r/selfhosted
 
-Sources: `launch/communities.json` (4bbb63e36ad5), `docs/GROWTH_AUTOMATION_SPEC.md` (129f5da753f7)
+Sources: `launch/communities.json` (b21d5b8605f6), `docs/GROWTH_AUTOMATION_SPEC.md` (f56ae9fe0dee)
 
 ## Board Brief
 
@@ -9,6 +9,7 @@ Sources: `launch/communities.json` (4bbb63e36ad5), `docs/GROWTH_AUTOMATION_SPEC.
 - Launch role: Practical operator funnel for future HiveRelay nodes.
 - Founder brief: Focus on durable ownership, migration away from SaaS, and what should run at home versus on relays.
 - Moderation risk: low
+- Activation phase: initial
 
 ## Deliverables
 

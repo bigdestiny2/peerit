@@ -4,9 +4,9 @@
   "pearBase": "hyper://ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4/",
   "sourceMeta": {
     "communities": "launch/communities.json",
-    "communitiesSha256": "4bbb63e36ad5cca155ee7b9307127bef41920f8be520262f7218dd27c32d3f73",
+    "communitiesSha256": "b21d5b8605f62caa5c80c572ef2dd1613a0074f27136e6075796bff3468e5e1d",
     "spec": "docs/GROWTH_AUTOMATION_SPEC.md",
-    "specSha256": "129f5da753f73f7443d2b8d556c7e5e0f5c1f75fa1765392af2bfdaa08e9bf53"
+    "specSha256": "f56ae9fe0dee8e1ac8b293bc3802817664c42247e948094506092b47364cdad1"
   },
   "sponsorBriefPath": "launch/reports/sponsor-kol-briefs.md",
   "founderIndexPath": "launch/reports/founder-packets.md",
@@ -101,6 +101,48 @@
       "starterPostCount": 10,
       "discussionPromptCount": 3,
       "risk": "low"
+    },
+    {
+      "board": "geopolitics",
+      "path": "launch/reports/founder-packets/geopolitics.md",
+      "starterPostCount": 16,
+      "discussionPromptCount": 5,
+      "risk": "high"
+    },
+    {
+      "board": "p2pnetworking",
+      "path": "launch/reports/founder-packets/p2pnetworking.md",
+      "starterPostCount": 16,
+      "discussionPromptCount": 4,
+      "risk": "low"
+    },
+    {
+      "board": "p2papps",
+      "path": "launch/reports/founder-packets/p2papps.md",
+      "starterPostCount": 14,
+      "discussionPromptCount": 4,
+      "risk": "low"
+    },
+    {
+      "board": "cryptolaunches",
+      "path": "launch/reports/founder-packets/cryptolaunches.md",
+      "starterPostCount": 16,
+      "discussionPromptCount": 5,
+      "risk": "high"
+    },
+    {
+      "board": "gambling",
+      "path": "launch/reports/founder-packets/gambling.md",
+      "starterPostCount": 12,
+      "discussionPromptCount": 4,
+      "risk": "high"
+    },
+    {
+      "board": "llmjailbreaks",
+      "path": "launch/reports/founder-packets/llmjailbreaks.md",
+      "starterPostCount": 18,
+      "discussionPromptCount": 6,
+      "risk": "high"
     }
   ]
 }

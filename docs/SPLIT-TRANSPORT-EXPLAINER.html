@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Split Transport — Explained Simply</title>
+<style>
+  :root{
+    --bg:#0a0e14; --panel:#111821; --panel-2:#0d141d;
+    --ink:#e8eef6; --dim:#8b9bb0; --faint:#5b6b80;
+    --line:#1f2a3a; --line-2:#152028;
+    --accent:#4fd1c5; --accent-2:#5b9fd4; --gold:#e0a54b; --rose:#e0533d; --violet:#9b7ed9; --green:#3ecf8e;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font:17px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--accent-2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{background:#0a0f16;border:1px solid var(--line);padding:.05em .4em;border-radius:4px;
+    font:.85em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cfe3ff}
+
+  .wrap{max-width:880px;margin:0 auto;padding:0 1.4em}
+  main{padding-bottom:5em}
+
+  header.hero{padding:4em 0 2.5em;border-bottom:1px solid var(--line);
+    background:radial-gradient(ellipse at top,rgba(91,159,212,.08),transparent 60%)}
+  .eyebrow{color:var(--accent-2);font-size:.78em;font-weight:700;letter-spacing:.18em;text-transform:uppercase;margin:0 0 .8em}
+  h1{font-size:2.4em;line-height:1.1;margin:.1em 0 .3em;letter-spacing:-.025em;font-weight:800}
+  h1 .grad{background:linear-gradient(120deg,var(--accent-2),var(--accent));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:1.2em;color:var(--dim);max-width:62ch;margin:1em 0 0}
+
+  section{padding:2.5em 0;border-bottom:1px solid var(--line-2)}
+  section:last-of-type{border-bottom:0}
+  h2{font-size:1.5em;letter-spacing:-.015em;margin:0 0 .5em;font-weight:700}
+  h2 .num{color:var(--accent-2);font-variant-numeric:tabular-nums;margin-right:.5em;font-weight:800}
+  h3{font-size:1.15em;margin:1.4em 0 .4em;font-weight:700}
+  p{margin:.7em 0}
+  ul,ol{margin:.6em 0;padding-left:1.5em}
+  li{margin:.3em 0}
+
+  .callout{border-left:3px solid var(--accent);background:rgba(79,209,197,.05);
+    padding:.9em 1.2em;border-radius:0 10px 10px 0;margin:1.2em 0}
+  .callout.warn{border-color:var(--gold);background:rgba(224,165,75,.06)}
+  .callout.danger{border-color:var(--rose);background:rgba(224,83,61,.06)}
+  .callout.blue{border-color:var(--accent-2);background:rgba(91,159,212,.06)}
+  .callout h4{margin:.1em 0 .3em;color:inherit;font-size:.76em;text-transform:uppercase;letter-spacing:.1em}
+  .callout.warn h4{color:var(--gold)}
+  .callout.danger h4{color:var(--rose)}
+  .callout.blue h4{color:var(--accent-2)}
+  .callout p:last-child{margin-bottom:0}
+
+  figure{margin:1.8em 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:1.4em 1.2em 1em}
+  figure svg{width:100%;height:auto;display:block}
+  figcaption{color:var(--dim);font-size:.84em;margin-top:.8em;text-align:center;font-style:italic}
+
+  .analogy{background:linear-gradient(135deg,rgba(91,159,212,.06),rgba(79,209,197,.04));
+    border:1px solid var(--line);border-radius:14px;padding:1.5em 1.6em;margin:1.5em 0}
+  .analogy h4{color:var(--accent-2);font-size:.8em;text-transform:uppercase;letter-spacing:.1em;margin:0 0 .5em}
+  .analogy p{font-size:1.1em;color:#cdd6e3;margin:.4em 0}
+
+  .status{display:inline-block;padding:.12em .5em;border-radius:4px;font-size:.74em;font-weight:700;text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--line)}
+  .s-yes{color:var(--green);border-color:#1d3a2c;background:rgba(62,207,142,.08)}
+  .s-no{color:var(--rose);border-color:#3a1d18;background:rgba(224,83,61,.1)}
+  .s-partial{color:var(--gold);border-color:#3a2a14;background:rgba(224,165,75,.08)}
+
+  footer{padding:2em 0 0;border-top:1px solid var(--line);margin-top:2.5em;color:var(--faint);font-size:.84em}
+  footer p{margin:.4em 0}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Split transport · for people who don't read specs</p>
+    <h1>Split Transport,<br><span class="grad">explained simply</span></h1>
+    <p class="lede">Right now, when you read a post on peerit, the relay knows two things:
+       <em>who you are</em> (your IP address) and <em>what you asked for</em> (which post).
+       Split transport is how we separate those two things so no single relay knows both.</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="callout blue">
+    <h4>The one-sentence version</h4>
+    <p><strong>Split transport puts a middleman between you and the storage relay. The middleman
+       knows who you are but not what you asked for. The storage relay knows what you asked for
+       but not who you are. Neither has the full picture.</strong></p>
+  </div>
+
+<!-- ============================================================== -->
+<section>
+  <h2><span class="num">01</span>The problem: the relay sees everything</h2>
+
+  <p>Imagine you're at a library. You walk up to the desk and say "I want to borrow the book about
+     gardening." The librarian now knows two things:</p>
+  <ul>
+    <li><strong>Who you are</strong> — they can see your face</li>
+    <li><strong>What you're interested in</strong> — gardening</li>
+  </ul>
+
+  <p>That's how peerit works today. When your browser asks the relay for a post, the relay sees:</p>
+  <ul>
+    <li>Your <strong>IP address</strong> (who you are on the internet)</li>
+    <li>The <strong>post you requested</strong> (what you're reading)</li>
+    <li>The <strong>time</strong> you asked</li>
+  </ul>
+
+  <p>The relay can't read the <em>content</em> of the post (that's encrypted — the blind substrate
+     handles that). But it CAN build a profile: "this IP address reads a lot of posts in r/privacy,
+     asks for posts by Alice at 3am, and votes on crypto content." That's metadata. It leaks.</p>
+
+  <figure>
+    <svg viewBox="0 0 800 200" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <text x="400" y="22" text-anchor="middle" fill="#e0533d" font-size="13" font-weight="700">TODAY: the relay sees both "who" and "what"</text>
+
+      <circle cx="100" cy="110" r="32" fill="#0a0f16" stroke="#5b9fd4" stroke-width="2"/>
+      <text x="100" y="108" text-anchor="middle" fill="#5b9fd4" font-size="10" font-weight="700">YOU</text>
+      <text x="100" y="122" text-anchor="middle" fill="#8b9bb0" font-size="9">(browser)</text>
+      <text x="100" y="162" text-anchor="middle" fill="#5b9fd4" font-size="9">IP: 203.0.113.42</text>
+
+      <path d="M 140 110 L 320 110" stroke="#e0533d" stroke-width="3" marker-end="url(#p1)"/>
+      <text x="230" y="96" text-anchor="middle" fill="#e0533d" font-size="10" font-weight="700">"give me post a3f…"</text>
+      <text x="230" y="130" text-anchor="middle" fill="#8b9bb0" font-size="9">from IP 203.0.113.42</text>
+
+      <rect x="340" y="70" width="200" height="90" rx="10" fill="#1a0e0a" stroke="#e0533d" stroke-width="2"/>
+      <text x="440" y="94" text-anchor="middle" fill="#e0533d" font-size="11" font-weight="700">RELAY</text>
+      <text x="355" y="116" fill="#cdd6e3" font-size="9">✓ knows your IP</text>
+      <text x="355" y="132" fill="#cdd6e3" font-size="9">✓ knows what you read</text>
+      <text x="355" y="148" fill="#e0533d" font-size="9" font-weight="700">= can profile you</text>
+
+      <rect x="580" y="70" width="180" height="90" rx="10" fill="#0a0f16" stroke="#8b9bb0"/>
+      <text x="670" y="94" text-anchor="middle" fill="#8b9bb0" font-size="10" font-weight="700">THE PROBLEM</text>
+      <text x="595" y="116" fill="#cdd6e3" font-size="9">One relay knows both</text>
+      <text x="595" y="132" fill="#cdd6e3" font-size="9">your identity AND your</text>
+      <text x="595" y="148" fill="#e0533d" font-size="9" font-weight="700">reading habits</text>
+
+      <defs>
+        <marker id="p1" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L9,3 z" fill="#e0533d"/>
+        </marker>
+      </defs>
+    </svg>
+    <figcaption>One relay, two pieces of information. Put them together and you can profile anyone.</figcaption>
+  </figure>
+</section>
+
+<!-- ============================================================== -->
+<section>
+  <h2><span class="num">02</span>The fix: split "who" from "what"</h2>
+
+  <div class="analogy">
+    <h4>The mailbox analogy</h4>
+    <p>Instead of walking up to the librarian yourself, you send a <strong>friend</strong> to the desk.
+       The friend knows who you are (they're your friend) but the note they hand the librarian is in a
+       <strong>sealed envelope</strong> — the friend can't read it. The librarian opens the envelope,
+       gets the request ("gardening book"), but has <strong>no idea who really asked</strong> — they
+       only see your friend, who's running errands for dozens of people.</p>
+    <p>Your friend is the <strong>ingress</strong>. The librarian is the <strong>storage relay</strong>.
+       The sealed envelope is <strong>OHTTP encryption</strong>. Neither person has the full picture.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 800 280" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <text x="400" y="22" text-anchor="middle" fill="#3ecf8e" font-size="13" font-weight="700">WITH SPLIT TRANSPORT: "who" and "what" are separated</text>
+
+      <circle cx="80" cy="130" r="28" fill="#0a0f16" stroke="#5b9fd4" stroke-width="2"/>
+      <text x="80" y="128" text-anchor="middle" fill="#5b9fd4" font-size="9" font-weight="700">YOU</text>
+      <text x="80" y="142" text-anchor="middle" fill="#8b9bb0" font-size="8">(browser)</text>
+
+      <path d="M 112 130 L 200 130" stroke="#5b9fd4" stroke-width="2.5" marker-end="url(#g1)"/>
+      <text x="156" y="120" text-anchor="middle" fill="#5b9fd4" font-size="9" font-weight="700">sealed</text>
+      <text x="156" y="148" text-anchor="middle" fill="#5b6b80" font-size="8">envelope</text>
+
+      <rect x="210" y="90" width="160" height="90" rx="10" fill="#0a0f16" stroke="#e0a54b" stroke-width="2"/>
+      <text x="290" y="114" text-anchor="middle" fill="#e0a54b" font-size="11" font-weight="700">INGRESS</text>
+      <text x="290" y="132" text-anchor="middle" fill="#8b9bb0" font-size="9">(the friend)</text>
+      <text x="225" y="152" fill="#e0a54b" font-size="9">Knows: YOUR IP</text>
+      <text x="225" y="168" fill="#e0533d" font-size="9">Can't read: the request</text>
+
+      <path d="M 370 130 L 470 130" stroke="#e0a54b" stroke-width="2.5" marker-end="url(#y1)"/>
+      <text x="420" y="120" text-anchor="middle" fill="#e0a54b" font-size="9" font-weight="700">forwards</text>
+      <text x="420" y="148" text-anchor="middle" fill="#5b6b80" font-size="8">envelope only</text>
+
+      <rect x="480" y="90" width="180" height="90" rx="10" fill="#0a0f16" stroke="#e0533d" stroke-width="2"/>
+      <text x="570" y="114" text-anchor="middle" fill="#e0533d" font-size="11" font-weight="700">STORAGE RELAY</text>
+      <text x="570" y="132" text-anchor="middle" fill="#8b9bb0" font-size="9">(the librarian)</text>
+      <text x="495" y="152" fill="#e0533d" font-size="9">Knows: WHICH POST</text>
+      <text x="495" y="168" fill="#3ecf8e" font-size="9">Can't see: YOUR IP</text>
+
+      <rect x="690" y="90" width="90" height="90" rx="10" fill="#0f2018" stroke="#3ecf8e"/>
+      <text x="735" y="120" text-anchor="middle" fill="#3ecf8e" font-size="10" font-weight="700">RESULT</text>
+      <text x="700" y="140" fill="#cdd6e3" font-size="8">No single</text>
+      <text x="700" y="154" fill="#cdd6e3" font-size="8">relay knows</text>
+      <text x="700" y="168" fill="#3ecf8e" font-size="8" font-weight="700">both</text>
+
+      <text x="400" y="230" text-anchor="middle" fill="#5b6b80" font-size="9" font-style="italic">The ingress and the storage relay MUST be run by different operators. If they collude, the split breaks.</text>
+      <text x="400" y="248" text-anchor="middle" fill="#5b6b80" font-size="9" font-style="italic">That's the one assumption. Everything else is cryptographic.</text>
+
+      <defs>
+        <marker id="g1" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#5b9fd4"/></marker>
+        <marker id="y1" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#e0a54b"/></marker>
+      </defs>
+    </svg>
+    <figcaption>You → ingress (knows who, can't read request) → storage (can read request, doesn't know who). Split achieved.</figcaption>
+  </figure>
+</section>
+
+<!-- ============================================================== -->
+<section>
+  <h2><span class="num">03</span>How the "sealed envelope" works</h2>
+
+  <p>The sealed envelope isn't a metaphor — it's a real cryptographic protocol called <strong>OHTTP</strong>
+     (Oblivious HTTP, RFC 9458). It's an internet standard, not something we invented. Here's what
+     happens when you click on a post:</p>
+
+  <ol>
+    <li><strong>Your browser encrypts the request</strong> using a public key published by the storage
+        relay. This encryption is called HPKE (Hybrid Public Key Encryption, RFC 9180 — another standard).
+        Once encrypted, <em>only the storage relay can open it</em>. The ingress can't read it.</li>
+
+    <li><strong>Your browser sends the encrypted blob to the ingress.</strong> The ingress sees your IP
+        address and sees that you sent <em>something</em>, but it can't tell what's inside.</li>
+
+    <li><strong>The ingress strips your identity.</strong> It removes your IP, your browser's Origin
+        header, cookies, referer — everything that could identify you or the app you're using. Then it
+        forwards just the encrypted blob to the storage relay.</li>
+
+    <li><strong>The storage relay decrypts the request.</strong> Now it knows "someone wants post a3f…"
+        — but the only IP it sees is the ingress's IP, not yours. It has no idea who actually asked.</li>
+
+    <li><strong>The response goes back the same way</strong> — encrypted, through the ingress, back to
+        your browser. The ingress can't read the response either.</li>
+  </ol>
+
+  <div class="callout">
+    <h4>The key insight</h4>
+    <p>The ingress and the storage relay <strong>must be run by different operators</strong>. If the
+       same person runs both, they can compare notes and link your IP to your request. That's the one
+       assumption the whole thing rests on — and it's why we need <strong>multiple independent relay
+       operators</strong>, not just one.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section>
+  <h2><span class="num">04</span>Two flavors: browser and native</h2>
+
+  <p>The split works differently depending on what kind of app you're using:</p>
+
+  <h3>For browsers (Chrome, Firefox, Safari) — OHTTP</h3>
+  <p>Browsers can't do raw network tricks, so they use the <strong>OHTTP</strong> path described above.
+     Your browser encrypts the request, sends it to an ingress (a web endpoint), which strips your
+     identity and forwards it to the storage relay. Everything happens over normal HTTPS — no special
+     browser plugins needed.</p>
+  <p>The one tricky part: browsers automatically send an <code>Origin</code> header that says
+     "this request came from peerit.site." To hide that, the OHTTP client runs inside a special
+     sandboxed iframe that sends <code>Origin: null</code> instead. This works in theory; we need to
+     verify it on the wire across all three browser engines before claiming it's airtight.</p>
+
+  <h3>For native apps (PearBrowser, Bare, Node) — Protomux split</h3>
+  <p>Native apps have real network access — UDP sockets, real connections. They use a different path:
+     a <strong>two-hop Noise tunnel</strong>. Your app connects to an <strong>entry relay</strong>,
+     which forwards through an <strong>exit relay</strong> to the storage. The entry knows your IP
+     but not what you're asking for (it's encrypted). The exit knows what's being asked but not your
+     IP (it only sees the entry relay). The payload is end-to-end encrypted with Noise — neither
+     relay can read it.</p>
+  <p>This reuses HiveRelay's existing <code>forward-relay.js</code> — the byte-bridge that's already
+     shipped. We're upgrading its framing to add flow control and circuit identities, not building
+     something new.</p>
+
+  <table style="margin:1.2em 0;font-size:.92em">
+    <thead><tr><th></th><th>OHTTP (browser)</th><th>Protomux split (native)</th></tr></thead>
+    <tbody>
+      <tr><td><strong>How</strong></td><td>HPKE-encrypted HTTPS through an ingress</td><td>Noise tunnel through entry + exit relays</td></tr>
+      <tr><td><strong>Who sees your IP</strong></td><td>The ingress only</td><td>The entry relay only</td></tr>
+      <tr><td><strong>Who sees your request</strong></td><td>The storage relay only</td><td>The storage relay only</td></tr>
+      <tr><td><strong>Dependency</strong></td><td>RFC 9458 + 9180 (standards)</td><td>Existing forward-relay.js + Noise</td></tr>
+      <tr><td><strong>Status</strong></td><td><span class="status s-partial">Spec'd</span></td><td><span class="status s-partial">Spec'd</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================== -->
+<section>
+  <h2><span class="num">05</span>What this enables</h2>
+
+  <p>Split transport moves peerit up the honesty ladder. Specifically it achieves two new rungs:</p>
+
+  <table style="margin:1.2em 0">
+    <thead><tr><th>Rung</th><th>What it means</th><th>Before split transport</th><th>After</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>G2-W</strong><br>Wire opacity</td>
+        <td>The storage relay can't even tell <em>which app</em> you're using from the network traffic</td>
+        <td><span class="status s-no">No</span> — browser sends <code>Origin: peerit.site</code></td>
+        <td><span class="status s-yes">Yes</span> — Origin stripped; opaque request</td>
+      </tr>
+      <tr>
+        <td><strong>G4-T</strong><br>Route separation</td>
+        <td>The storage relay can't bind your request to your IP address</td>
+        <td><span class="status s-no">No</span> — direct HTTPS exposes your IP</td>
+        <td><span class="status s-yes">Yes</span> — ingress hides your IP from storage</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>In plain terms, after split transport ships, the storage relay knows <em>less about you</em> than
+     your ISP does when you browse any normal website. It knows a post was requested, but not by whom.</p>
+
+  <div class="callout blue">
+    <h4>What changes for the user</h4>
+    <p><strong>Nothing visible.</strong> The user opens peerit, reads posts, writes comments — exactly
+       as before. The split transport runs underneath. The only visible change is a privacy indicator
+       in the UI showing which tier they're on: "direct" (IP visible), "split" (IP hidden), or
+       "onion" (Tor, strongest). The user doesn't need to understand any of this to benefit from it.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section>
+  <h2><span class="num">06</span>What it does NOT do (the honest ceilings)</h2>
+
+  <p>Split transport is a real improvement, but it's not magic. Here's what it doesn't achieve:</p>
+
+  <table style="margin:1em 0">
+    <thead><tr><th>Claim</th><th>True?</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>"Your IP is hidden from the storage relay"</td>
+        <td><span class="status s-yes">Yes</span></td>
+        <td>Under non-collusion (ingress ≠ storage operator)</td>
+      </tr>
+      <tr>
+        <td>"The ingress can't read your requests"</td>
+        <td><span class="status s-yes">Yes</span></td>
+        <td>HPKE encryption — cryptographic, not just a policy</td>
+      </tr>
+      <tr>
+        <td>"The relay can't tell which post you're reading"</td>
+        <td><span class="status s-no">No</span></td>
+        <td>The storage relay decrypts the request and sees the slot. Hiding <em>which</em> slot you asked for needs PIR (Private Information Retrieval) — a harder, separate problem.</td>
+      </tr>
+      <tr>
+        <td>"Your traffic is anonymous"</td>
+        <td><span class="status s-no">No</span></td>
+        <td>Timing and volume are still observable. A determined adversary watching both the ingress and the storage could correlate traffic patterns. No cover traffic.</td>
+      </tr>
+      <tr>
+        <td>"It works against a global observer"</td>
+        <td><span class="status s-no">No</span></td>
+        <td>An adversary watching the entire network can see you → ingress → storage and connect the dots. This needs mixnets (like Nym), which are a different layer.</td>
+      </tr>
+      <tr>
+        <td>"No relay is needed"</td>
+        <td><span class="status s-no">No</span></td>
+        <td>The ingress IS a relay. It's just a blind one. Browsers always need a relay in the path — that's a hard platform limit.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <h4>The one assumption that matters</h4>
+    <p>Everything rests on <strong>non-collusion</strong>: the ingress and the storage relay must be
+       run by different operators who don't share data. If they're the same person, or if they
+       secretly cooperate, the split is useless — they can link your IP to your request trivially.</p>
+    <p>This is why recruiting <strong>independent relay operators</strong> is the real prerequisite
+       for split transport. The code is secondary; the operator diversity is what makes the privacy
+       claim real.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section>
+  <h2><span class="num">07</span>How it fits with everything else</h2>
+
+  <p>Split transport is one layer in a stack of privacy protections. Here's how they compose:</p>
+
+  <figure>
+    <svg viewBox="0 0 800 380" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <text x="400" y="22" text-anchor="middle" fill="#8b9bb0" font-size="12" font-weight="700">THE PRIVACY STACK — each layer adds a different protection</text>
+
+      <!-- Layer 1: signatures -->
+      <rect x="100" y="45" width="600" height="50" rx="8" fill="#0f2018" stroke="#3ecf8e" stroke-width="2"/>
+      <text x="120" y="68" fill="#3ecf8e" font-size="11" font-weight="700">Layer 1: SIGNATURES (G0)</text>
+      <text x="120" y="84" fill="#cdd6e3" font-size="10">"You can't fake my posts." ✅ Shipped.</text>
+      <text x="680" y="74" text-anchor="end" fill="#3ecf8e" font-size="9">always on</text>
+
+      <!-- Layer 2: blind substrate -->
+      <rect x="100" y="105" width="600" height="50" rx="8" fill="#0f3a44" stroke="#22d3ee" stroke-width="2"/>
+      <text x="120" y="128" fill="#22d3ee" font-size="11" font-weight="700">Layer 2: BLIND SUBSTRATE (G1, G2-S)</text>
+      <text x="120" y="144" fill="#cdd6e3" font-size="10">"You can't read my content or see my social graph." 🔄 Cutover.</text>
+      <text x="680" y="134" text-anchor="end" fill="#22d3ee" font-size="9">in progress</text>
+
+      <!-- Layer 3: BlindShard -->
+      <rect x="100" y="165" width="600" height="50" rx="8" fill="#2a2110" stroke="#e0a54b" stroke-width="2"/>
+      <text x="120" y="188" fill="#e0a54b" font-size="11" font-weight="700">Layer 3: BLINDSHARD (body dispersal)</text>
+      <text x="120" y="204" fill="#cdd6e3" font-size="10">"You can't read my post bodies — they're split across operators." ⏳ Needs ≥3 operators.</text>
+      <text x="680" y="194" text-anchor="end" fill="#e0a54b" font-size="9">coded, gated</text>
+
+      <!-- Layer 4: SPLIT TRANSPORT (this one) -->
+      <rect x="80" y="225" width="640" height="60" rx="10" fill="#0a1428" stroke="#5b9fd4" stroke-width="3"/>
+      <text x="110" y="250" fill="#5b9fd4" font-size="12" font-weight="700">Layer 4: SPLIT TRANSPORT (G2-W, G4-T) ← THIS IS WHAT WE'RE BUILDING</text>
+      <text x="110" y="268" fill="#cdd6e3" font-size="10">"You can't link my IP to my requests." ⏳ Spec'd, work plan ready.</text>
+      <text x="700" y="260" text-anchor="end" fill="#5b9fd4" font-size="9" font-weight="700">← YOU ARE HERE</text>
+
+      <!-- Layer 5: Nym / Tor -->
+      <rect x="100" y="300" width="600" height="50" rx="8" fill="#1a0e0a" stroke="#e0533d" stroke-width="1" stroke-dasharray="4 3"/>
+      <text x="120" y="323" fill="#e0533d" font-size="11" font-weight="700">Layer 5: NYM / TOR (traffic-analysis resistance)</text>
+      <text x="120" y="339" fill="#8b9bb0" font-size="10">"You can't correlate my traffic over time." 🔬 Research-grade, separate specs.</text>
+      <text x="680" y="329" text-anchor="end" fill="#5b6b80" font-size="9">future</text>
+    </svg>
+    <figcaption>Split transport (Layer 4) sits between body-level privacy (Layer 3) and traffic-analysis resistance (Layer 5). Each layer adds something different; none makes the others redundant.</figcaption>
+  </figure>
+
+  <p>Each layer protects against a different thing:</p>
+  <ul>
+    <li><strong>Signatures</strong> protect against forgery.</li>
+    <li><strong>Blind substrate</strong> protects against reading your content at rest.</li>
+    <li><strong>BlindShard</strong> protects against any single operator holding a complete readable body.</li>
+    <li><strong>Split transport</strong> protects against linking your identity to your reading habits.</li>
+    <li><strong>Nym/Tor</strong> would protect against timing correlation (future, much harder).</li>
+  </ul>
+
+  <p>None of these layers makes the others redundant. You need all of them for the full picture.
+     Split transport fills a specific gap: it's the layer that says <em>"the relay knows what I asked
+     for, but not that it was me asking."</em></p>
+</section>
+
+<!-- ============================================================== -->
+<section>
+  <h2><span class="num">08</span>The honest one-liner</h2>
+
+  <blockquote style="border-left:3px solid var(--accent-2);margin:1.5em 0;padding:1.2em 1.5em;background:rgba(91,159,212,.06);border-radius:0 10px 10px 0;color:#cdd6e3;font-size:1.1em;line-height:1.55">
+    <strong>Split transport separates "who you are" from "what you asked for" so no single relay knows
+    both. It uses standard encryption (OHTTP) to blind the middleman, and requires independent
+    operators so the two halves can't be put back together. It hides your IP from the storage relay
+    and your request content from the ingress — but it doesn't hide which post you're reading from
+    the storage relay, and it doesn't resist timing analysis. It's one important layer in a stack of
+    privacy protections, not the whole answer.</strong>
+  </blockquote>
+
+  <div class="callout">
+    <h4>What you can say when it ships</h4>
+    <ul>
+      <li>"Your IP address is hidden from the relay that stores your data."</li>
+      <li>"The middleman can't read your requests — they're encrypted."</li>
+      <li>"Neither half of the path knows both who you are and what you're reading."</li>
+    </ul>
+  </div>
+
+  <div class="callout danger">
+    <h4>What you must NOT say</h4>
+    <ul>
+      <li>"It's anonymous." (Timing still leaks.)</li>
+      <li>"The relay can't see what you're reading." (It can — just not WHO is reading.)</li>
+      <li>"No relay is needed." (The ingress IS a relay — just a blind one.)</li>
+      <li>"It's untraceable." (A global observer can correlate traffic.)</li>
+    </ul>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><strong>What this is.</strong> A plain-English companion to the full spec at
+       <a href="SPLIT-TRANSPORT-SPEC-V1-2026-07-26.html"><code>SPLIT-TRANSPORT-SPEC-V1-2026-07-26</code></a>.
+       Read the spec for wire formats, conformance gates, and dev-profile approvals.
+       Read this doc to understand what it <em>does</em> and why it matters.</p>
+    <p><strong>Companion docs.</strong>
+       <a href="BLIND-SUBSTRATE-EXPLAINER.html">Blind Substrate</a> ·
+       <a href="BLINDSHARD-AND-PURE-PIPE-EXPLAINER.html">BlindShard &amp; Pure Pipe</a> ·
+       <a href="HONEST-STACK-AUTHORITATIVE.html">The Honest Stack</a> ·
+       <a href="BROWSER-PEAR-APPS-THE-HONEST-CEILING.html">Browser Pear Apps</a></p>
+    <p><strong>Honesty.</strong> Split transport claims G2-W + G4-T under non-collusion. It does not
+       claim anonymity, G4-I, or global-observer resistance. The one-liner above is the contract.</p>
+  </div>
+</footer>
+
+</body>
+</html>

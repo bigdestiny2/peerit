@@ -879,6 +879,7 @@ function renderChrome () {
         <input name="q" placeholder="Search posts, comments, communities" autocomplete="off">
       </form>
       <div class="topbar-right">
+        <a class="topbar-link" href="#/about">About</a>
         <a class="btn btn-ghost" href="#/submit" title="Create a post">＋ Post</a>
         ${isReadOnly() ? '' : '<a class="btn btn-ghost inbox-btn" href="#/inbox" id="inbox-link" title="Inbox — replies to your posts and comments" aria-label="Inbox">✉<span class="notif-badge" id="notif-badge" hidden></span></a>'}
         <div class="usermenu" id="usermenu"></div>
@@ -956,6 +957,7 @@ async function renderUserMenu () {
       <a role="menuitem" href="#/submit">＋ Create post</a>
       <a role="menuitem" href="#/create">＋ Create community</a>
       <a role="menuitem" href="#/communities">Communities</a>
+      <a role="menuitem" href="#/about">About peerit</a>
       <div class="dd-sep"></div>
       ${me.pubkey
         ? `<a role="menuitem" href="#/u/${esc(me.pubkey)}">My profile</a>`
@@ -994,6 +996,7 @@ function route () {
   switch (path[0]) {
     case 'all': return viewFeed({ scope: 'all', query, guard, token })
     case 'popular': return viewFeed({ scope: 'all', query, guard, token })
+    case 'about': return viewAbout({ guard, token })
     case 'communities': return viewCommunities({ guard, token })
     case 'submit': return isReadOnly() ? viewReadOnlyParticipation({ guard, token }) : viewSubmit({ query, guard, token })
     case 'create': return isReadOnly() ? viewReadOnlyParticipation({ guard, token }) : viewCreateCommunity({ guard, token })
@@ -1010,6 +1013,106 @@ function route () {
       return viewFeed({ scope: 'community', community: path[1], query, guard, token })
     default: return guard(notFound())
   }
+}
+
+function viewAbout ({ guard, token }) {
+  guard(`<article class="about-page">
+    <section class="about-hero">
+      <div class="about-kicker"><span></span>The serverless social layer</div>
+      <h1>A community network with no company in the middle.</h1>
+      <p class="about-lede">peerit has the communities, conversations, votes, and moderation people already understand — but replaces the central database with signed personal outboxes that peers replicate and verify for themselves.</p>
+      <div class="about-actions">
+        <a class="btn btn-primary" href="#/communities">Explore communities</a>
+        <a class="btn btn-ghost" href="https://pears.com/" target="_blank" rel="noopener">Get PearBrowser ↗</a>
+      </div>
+      <div class="about-proofbar" aria-label="peerit at a glance">
+        <div><b>Yours</b><span>Your key signs every action</span></div>
+        <div><b>Verifiable</b><span>Your device checks every record</span></div>
+        <div><b>Serverless</b><span>No authoritative app server</span></div>
+      </div>
+    </section>
+
+    <section class="about-section" aria-labelledby="about-how-title">
+      <div class="about-section-head">
+        <span class="about-label">How it works</span>
+        <h2 id="about-how-title">The network is the backend.</h2>
+        <p>Instead of sending everything to one company's database, peerit turns each person into the trusted source for their own activity.</p>
+      </div>
+      <div class="about-flow">
+        <div class="about-step">
+          <span class="about-step-no">01</span>
+          <h3>Write to your outbox</h3>
+          <p>A post, comment, vote, or moderation action is appended to your own log and signed with your private key.</p>
+        </div>
+        <div class="about-flow-arrow" aria-hidden="true">→</div>
+        <div class="about-step">
+          <span class="about-step-no">02</span>
+          <h3>Replicate between peers</h3>
+          <p>Peers copy outboxes directly in PearBrowser. Optional relays and seeders can carry the same signed data for reach and availability.</p>
+        </div>
+        <div class="about-flow-arrow" aria-hidden="true">→</div>
+        <div class="about-step">
+          <span class="about-step-no">03</span>
+          <h3>Verify and assemble</h3>
+          <p>Your device rejects forged records, applies signed moderation, and deterministically merges valid activity into the feed you see.</p>
+        </div>
+      </div>
+      <p class="about-callout"><b>The important shift:</b> transport can help deliver data, but it does not become the authority. Authenticity comes from signatures and deterministic rules, not from trusting whoever carried the bytes.</p>
+    </section>
+
+    <section class="about-section" aria-labelledby="about-why-title">
+      <div class="about-section-head compact">
+        <span class="about-label">Why it matters</span>
+        <h2 id="about-why-title">The upsides are structural.</h2>
+      </div>
+      <div class="about-benefits">
+        <div class="about-benefit"><span class="about-benefit-icon">⌁</span><div><h3>No kill switch</h3><p>There is no single server, company account, or master database whose failure erases the whole network.</p></div></div>
+        <div class="about-benefit"><span class="about-benefit-icon">✓</span><div><h3>Proof over promises</h3><p>Authorship, edits, votes, and moderator actions are checked cryptographically on your device.</p></div></div>
+        <div class="about-benefit"><span class="about-benefit-icon">↗</span><div><h3>Portable by design</h3><p>Your identity and signed history are not trapped inside a platform-owned account or proprietary database.</p></div></div>
+        <div class="about-benefit"><span class="about-benefit-icon">◫</span><div><h3>Transparent rules</h3><p>Feed ranking and moderation are client-visible logic, so authority can be inspected instead of silently imposed.</p></div></div>
+      </div>
+    </section>
+
+    <section class="about-section about-first" aria-labelledby="about-first-title">
+      <div class="about-first-copy">
+        <span class="about-label">What makes it first of its kind</span>
+        <h2 id="about-first-title">A familiar social product with a sovereign architecture.</h2>
+        <p>The breakthrough is the combination. peerit keeps the useful grammar of a Reddit-style community — named spaces, threaded discussion, voting, ranking, and moderation — while removing the authoritative community server from the trust path.</p>
+        <p>Each ingredient has precedents. peerit makes them one coherent experience: personal signed outboxes, direct peer replication, deterministic local feeds, and verifiable community governance in a plain web app.</p>
+      </div>
+      <div class="about-contrast" aria-label="Architecture comparison">
+        <div class="about-contrast-row muted"><span>Typical social platform</span><b>Platform says it happened</b></div>
+        <div class="about-contrast-line" aria-hidden="true"></div>
+        <div class="about-contrast-row"><span>peerit</span><b>Your device proves it happened</b></div>
+      </div>
+    </section>
+
+    <section class="about-honest">
+      <span class="about-label">Serverless, honestly</span>
+      <h2>No central authority does not mean no infrastructure.</h2>
+      <p>Peers still need to be online for live replication, and optional seeders improve durability. Normal browsers may use untrusted relays because the web cannot join Hyperswarm directly; a relay can delay or withhold records, but it cannot forge a valid one. PearBrowser is the fully peer-to-peer path.</p>
+    </section>
+
+    <section class="about-cta">
+      <div><span class="about-label">See it in action</span><h2>Join a community. Keep your identity.</h2></div>
+      <div class="about-actions"><a class="btn btn-primary" href="#/communities">Browse peerit</a><a class="btn btn-ghost" href="#/settings">View your identity</a></div>
+    </section>
+  </article>`)
+  renderSidebar(aboutSidebar(), token)
+}
+
+function aboutSidebar () {
+  return `<div class="card side about-side">
+      <span class="about-label">peerit in one line</span>
+      <h3>Reddit-shaped. Peer-to-peer underneath.</h3>
+      <p class="small dim">Communities and conversations are assembled from signed personal outboxes instead of a central database.</p>
+    </div>
+    <div class="card side about-side">
+      <h3>Two ways to connect</h3>
+      <div class="about-mode"><b>PearBrowser</b><span>Direct P2P over Hyperswarm</span></div>
+      <div class="about-mode"><b>Normal browser</b><span>Verified records over untrusted relays</span></div>
+      <a class="btn btn-primary block" href="#/communities">Explore communities</a>
+    </div>`
 }
 
 function viewReadOnlyParticipation ({ guard, token }) {

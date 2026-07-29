@@ -1,6 +1,6 @@
 # Founder Packet: r/p2pbuilders
 
-Sources: `launch/communities.json` (4bbb63e36ad5), `docs/GROWTH_AUTOMATION_SPEC.md` (129f5da753f7)
+Sources: `launch/communities.json`, `docs/GROWTH_AUTOMATION_SPEC.md`, `launch/seed-posts/p2pbuilders.md`, `launch/seed-identities.json`
 
 ## Board Brief
 
@@ -8,15 +8,30 @@ Sources: `launch/communities.json` (4bbb63e36ad5), `docs/GROWTH_AUTOMATION_SPEC.
 - Audience: Pear, Holepunch, local-first, and decentralized app builders.
 - Launch role: Technical flagship and proof community.
 - Founder brief: Seed practical build logs, protocol questions, and demos. Keep posts concrete and source-linked.
+- **Multi-identity:** Six cast identities — mod, builders, skeptic, newcomer, enthusiast, Nostr bridge. See casting table in `seed-posts/p2pbuilders.md`.
 - Moderation risk: low
+- Activation phase: initial
+
+## Multi-identity cast (required)
+
+| Roster id | Role on this board |
+| --- | --- |
+| **mod-flagship** | Pin norms; light docs replies; does not dominate OPs |
+| **builder-core** | Ship logs, dual-ship, OutboxLog footguns (cap ≤35% of starters) |
+| **builder-nostr** | Gossip/Nostr dual-client comparisons |
+| **skeptic-ceilings** | PoW UX debate, SaaS-mental-model pushback |
+| **newcomer-q** | “What counts as ship?”, 400s war stories, bounty ideas |
+| **enthusiast-try** | Filled example logs, first-mint feel, thinner-clone notes |
+
+**Rules:** ≥4 distinct authors · every OP gets a different-identity reply within 24h · discussions use disagree / explain / alive patterns from `seed-identities.json`.
 
 ## Deliverables
 
-- Create one owner/moderator identity for r/p2pbuilders.
-- Publish 18 quality starter posts before paid traffic.
-- Publish at least 4 open-ended discussion prompts.
-- Pin one norms post and exercise the moderation overlay before launch.
-- Reply daily during the first launch week so the board does not feel empty.
+- Activate **six** seed identities for r/p2pbuilders (not one mod).
+- Publish 18 quality starter posts from **multiple** keys (casting schedule in `seed-posts/p2pbuilders.md`).
+- Publish at least 4 open-ended discussion prompts with multi-voice replies.
+- Pin one norms post from **mod-flagship** and exercise the moderation overlay before launch.
+- Reply daily from **rotating** identities during the first launch week.
 
 ## Pinned Norms Post Template
 

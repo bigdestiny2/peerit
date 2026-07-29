@@ -1,0 +1,1743 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>HiveRelay HTTPS Capability Map</title>
+<style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;max-width:736px;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
+</head>
+<body>
+<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" title="HiveRelay HTTPS Capability Map" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#x27;none&#x27;; script-src &#x27;unsafe-inline&#x27; &#x27;unsafe-eval&#x27; &#x27;wasm-unsafe-eval&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src &#x27;unsafe-inline&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src &#x27;none&#x27;; object-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;&quot;&gt;
+&lt;title&gt;HiveRelay HTTPS Capability Map&lt;/title&gt;
+&lt;style&gt;:root {
+  color-scheme: light dark;
+  background-color: var(--background) !important;
+
+  /* Agent-facing contract; keep in sync with SKILL.md. */
+  --background: light-dark(rgb(255 255 255), rgb(24 24 24));
+  --foreground: light-dark(rgb(26 28 31), rgb(255 255 255));
+  --card: color-mix(in oklab, var(--foreground) 5%, transparent);
+  --card-foreground: var(--foreground);
+  --popover: light-dark(rgb(255 255 255), rgb(45 45 45));
+  --popover-foreground: var(--foreground);
+  --primary: light-dark(rgb(51 156 255), rgb(131 195 255));
+  --primary-foreground: light-dark(rgb(255 255 255), rgb(13 13 13));
+  --secondary: light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%));
+  --secondary-foreground: var(--foreground);
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: light-dark(
+    rgb(26 28 31 / 49.4%),
+    rgb(255 255 255 / 49.8%)
+  );
+  --accent: light-dark(rgb(229 242 255), rgb(13 39 63));
+  --accent-foreground: var(--primary);
+  --destructive: light-dark(rgb(226 85 7), rgb(255 133 73));
+  --border: light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%));
+  --input: light-dark(
+    rgb(26 28 31 / 11.8%),
+    color-mix(in oklab, rgb(0 0 0) 10%, transparent)
+  );
+  --ring: light-dark(rgb(51 156 255), rgb(131 195 255 / 76%));
+  --font-size-base: 14px;
+  --viz-series-1: var(--primary);
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+
+  /* Internal implementation variables; not part of the agent contract. */
+  --font-sans: -apple-system, system-ui, &quot;Segoe UI&quot;, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, &quot;SF Mono&quot;, Menlo, Consolas, &quot;Liberation Mono&quot;,
+    monospace;
+  --font-size-normal: max(11px, var(--font-size-base));
+  --font-size-tooltip: calc(var(--font-size-base) - 1px);
+  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
+  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
+  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
+  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
+  --font-weight-normal: 430;
+  --font-weight-medium: 500;
+  --line-height-normal: calc(var(--font-size-normal) * 1.5);
+  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
+  --line-height-small: calc(var(--font-size-small) + 4px);
+  --radius: 12.5px;
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-2xl: calc(var(--radius) * 1.6);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
+  --checkmark-image: url(&quot;data:image/svg+xml,%3Csvg xmlns=&#x27;http://www.w3.org/2000/svg&#x27; viewBox=&#x27;0 0 17 17&#x27;%3E%3Cpath d=&#x27;M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z&#x27;/%3E%3C/svg%3E&quot;);
+
+  /* Legacy aliases; not part of the current agent contract. */
+  --viz-bg: transparent;
+  --viz-panel: var(--card);
+  --viz-border: var(--border);
+  --viz-text: var(--foreground);
+  --viz-muted: var(--muted-foreground);
+  --viz-accent: var(--primary);
+  --viz-accent-text: var(--primary-foreground);
+  --viz-accent-bg: var(--accent);
+  --viz-font-size: var(--font-size-base);
+  --viz-warning: var(--destructive);
+  --color-background-primary: var(--background);
+  --color-text-primary: var(--foreground);
+  --color-border-secondary: var(--border);
+}
+
+:root[data-theme=&quot;light&quot;] {
+  color-scheme: light;
+}
+
+:root[data-theme=&quot;dark&quot;] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html &gt; body {
+  margin: 0;
+  padding: 5px;
+  color: var(--foreground);
+  background: transparent !important;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-normal);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+}
+
+a {
+  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
+  cursor: pointer;
+  font-weight: var(--viz-font-weight-medium);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 0.5px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin-block: 0;
+}
+
+h1 {
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+}
+
+b,
+strong,
+th {
+  font-weight: var(--font-weight-medium);
+}
+
+code:not(pre code) {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+
+#widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+
+.card {
+  min-width: 0;
+  padding: 12px;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  border-radius: var(--radius-2xl);
+  corner-shape: superellipse(1.5);
+  color: var(--card-foreground);
+  background: var(--card);
+}
+
+#widget &gt; :not(.card) {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(
+    20rem,
+    var(--tooltip-available-width, calc(100vw - 10px)),
+    calc(100vw - 10px)
+  );
+  max-height: min(
+    var(--tooltip-available-height, calc(100vh - 10px)),
+    calc(100vh - 10px)
+  );
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--popover-foreground);
+  background: var(--popover);
+  box-shadow: none;
+  font-size: var(--font-size-tooltip);
+  line-height: var(--line-height-tooltip);
+  overflow-wrap: break-word;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+}
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
+  gap: 10px;
+}
+
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-stat-value {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+.viz-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.viz-badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  color: var(--accent-foreground);
+  background: var(--accent);
+  font-weight: var(--font-weight-medium);
+}
+
+small,
+.text-small,
+.viz-badge {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-controls &gt; .form-label {
+  display: grid;
+  min-width: min(100%, 260px);
+  flex: 1 1 280px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 0;
+}
+
+.viz-controls &gt; .form-label &gt; :is(.form-control, .form-range, .form-select) {
+  grid-column: 1 / -1;
+}
+
+.btn,
+.form-check-input,
+.form-control,
+.form-range,
+.form-select {
+  font: inherit;
+}
+
+.btn {
+  appearance: button;
+  display: inline-flex;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: var(--cursor-interaction, pointer);
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn:is(.btn-block, .viz-tile) {
+  inline-size: 100%;
+}
+
+.btn.viz-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.btn {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn-primary {
+  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  background-clip: padding-box;
+}
+
+.btn-primary .text-muted {
+  color: color-mix(in srgb, var(--primary-foreground) 50%, transparent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  background-clip: padding-box;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+[data-lucide] {
+  stroke-width: 1.6;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.form-control::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-control[type=&quot;file&quot;] {
+  padding: 0;
+  overflow: hidden;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control[type=&quot;file&quot;]::file-selector-button {
+  min-height: 26px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--input);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: inherit;
+  font: inherit;
+}
+
+.form-control[type=&quot;file&quot;]:not(:disabled):hover::file-selector-button {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-control-color[type=&quot;color&quot;] {
+  width: 40px;
+  height: 28px;
+  padding: 3px;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  corner-shape: superellipse(1.5);
+}
+
+textarea.form-control {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.form-control:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.form-select {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 32px 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background-color: var(--secondary);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%),
+    linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-repeat: no-repeat;
+  background-size: 4px 4px;
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-select:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-select:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-check {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-check-input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--input);
+  color: var(--primary-foreground);
+  background-color: transparent;
+  cursor: var(--cursor-interaction, default);
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+  border-color: var(--input);
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background-color: var(--secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input:not(:disabled):not(:checked):hover {
+  background-color: var(--card);
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;]:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:checked::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--primary-foreground);
+  content: &quot;&quot;;
+  mask: var(--checkmark-image) center / 12px 12px no-repeat;
+}
+
+.form-check-input[type=&quot;radio&quot;] {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+}
+
+.form-check-input[type=&quot;radio&quot;]:checked {
+  border: 2px solid var(--primary);
+  background:
+    radial-gradient(circle, var(--primary-foreground) 0 2.5px, transparent 3px),
+    var(--primary);
+}
+
+.form-check:not(.form-switch) .form-check-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+}
+
+.form-switch .form-check-input:disabled,
+.form-switch .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.form-check-label {
+  color: var(--foreground);
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-switch .form-check-input {
+  position: relative;
+  width: 32px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  box-shadow: none;
+  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+  box-shadow: var(--shadow-sm);
+  content: &quot;&quot;;
+  transform: translate(2px, -50%);
+  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input:checked {
+  background: var(--primary);
+}
+
+.form-switch .form-check-input:checked::before {
+  transform: translate(14px, -50%);
+}
+
+.form-switch .form-check-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 28px;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  outline: none;
+  border: 0;
+  accent-color: var(--primary);
+  background: linear-gradient(
+      color-mix(in srgb, var(--foreground) 7%, transparent),
+      color-mix(in srgb, var(--foreground) 7%, transparent)
+    )
+    center / 100% 2px no-repeat;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-webkit-slider-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range::-moz-range-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-moz-range-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.btn:not(.btn-primary, .viz-tile):is(
+    [aria-pressed=&quot;true&quot;],
+    [aria-selected=&quot;true&quot;],
+    .is-selected
+  ) {
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.btn.viz-tile:is([aria-pressed=&quot;true&quot;], [aria-selected=&quot;true&quot;], .is-selected) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#widget &gt; svg {
+  width: 100%;
+}
+
+.text-warning,
+.text-destructive {
+  color: var(--destructive);
+}
+
+html&gt;body{padding:0}&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div id=&quot;hiverelay-capability-map&quot;&gt;
+  &lt;style&gt;
+    #hiverelay-capability-map {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      width: 100%;
+    }
+
+    #hiverelay-capability-map .lead {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(180px, 0.8fr);
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    #hiverelay-capability-map .lead-copy,
+    #hiverelay-capability-map .lead-outcome,
+    #hiverelay-capability-map .section,
+    #hiverelay-capability-map .journey-detail,
+    #hiverelay-capability-map .recommendation {
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+
+    #hiverelay-capability-map .eyebrow {
+      color: var(--muted-foreground);
+      font-size: var(--font-size-small);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    #hiverelay-capability-map .lead-line {
+      font-size: var(--font-size-h1);
+      font-weight: 500;
+      line-height: 1.25;
+    }
+
+    #hiverelay-capability-map .lead-outcome {
+      justify-content: center;
+      padding-left: 14px;
+      border-left: 3px solid var(--viz-series-1);
+    }
+
+    #hiverelay-capability-map .section-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    #hiverelay-capability-map .section-kicker {
+      color: var(--muted-foreground);
+      font-size: var(--font-size-small);
+    }
+
+    #hiverelay-capability-map .stack-map {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    #hiverelay-capability-map .stack-row {
+      display: grid;
+      grid-template-columns: minmax(102px, 0.7fr) minmax(0, 1fr) 24px minmax(0, 1.15fr) 24px minmax(0, 1fr);
+      gap: 7px;
+      align-items: stretch;
+    }
+
+    #hiverelay-capability-map .lane-label {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2px;
+      color: var(--foreground);
+    }
+
+    #hiverelay-capability-map .lane-label span {
+      color: var(--muted-foreground);
+      font-size: var(--font-size-small);
+    }
+
+    #hiverelay-capability-map .node {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-width: 0;
+      min-height: 70px;
+      padding: 10px;
+      border-radius: var(--radius-lg);
+      background: color-mix(in srgb, var(--node-color) 13%, transparent);
+    }
+
+    #hiverelay-capability-map .node strong,
+    #hiverelay-capability-map .node span {
+      overflow-wrap: anywhere;
+    }
+
+    #hiverelay-capability-map .node span {
+      color: var(--muted-foreground);
+      font-size: var(--font-size-small);
+    }
+
+    #hiverelay-capability-map .consumer-node { --node-color: var(--viz-series-1); }
+    #hiverelay-capability-map .delivery-node { --node-color: var(--viz-series-3); }
+    #hiverelay-capability-map .data-node { --node-color: var(--viz-series-5); }
+    #hiverelay-capability-map .network-node { --node-color: var(--viz-series-6); }
+    #hiverelay-capability-map .preview-node { --node-color: var(--viz-series-2); }
+
+    #hiverelay-capability-map .arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted-foreground);
+      font-size: 20px;
+    }
+
+    #hiverelay-capability-map .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      color: var(--muted-foreground);
+      font-size: var(--font-size-small);
+    }
+
+    #hiverelay-capability-map .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    #hiverelay-capability-map .legend-mark {
+      width: 10px;
+      height: 10px;
+      border-radius: var(--radius-full);
+      background: var(--mark-color);
+    }
+
+    #hiverelay-capability-map .journey-detail[hidden] {
+      display: none;
+    }
+
+    #hiverelay-capability-map .journey-flow,
+    #hiverelay-capability-map .tunnel-flow,
+    #hiverelay-capability-map .publish-flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    #hiverelay-capability-map .step {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      min-width: 0;
+      padding: 10px 10px 10px 34px;
+      background: color-mix(in srgb, var(--viz-series-1) 9%, transparent);
+      border-radius: var(--radius-lg);
+    }
+
+    #hiverelay-capability-map .step-number {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border-radius: var(--radius-full);
+      color: var(--primary-foreground);
+      background: var(--primary);
+      font-size: var(--font-size-small);
+      font-weight: 500;
+    }
+
+    #hiverelay-capability-map .step span:not(.step-number) {
+      color: var(--muted-foreground);
+      font-size: var(--font-size-small);
+    }
+
+    #hiverelay-capability-map .trust-line {
+      padding-left: 10px;
+      border-left: 2px solid var(--border);
+      color: var(--muted-foreground);
+      font-size: var(--font-size-small);
+    }
+
+    #hiverelay-capability-map .matrix-wrap {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    #hiverelay-capability-map table {
+      width: 100%;
+      min-width: 680px;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    #hiverelay-capability-map th,
+    #hiverelay-capability-map td {
+      padding: 9px 8px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    #hiverelay-capability-map th {
+      color: var(--muted-foreground);
+      font-size: var(--font-size-small);
+    }
+
+    #hiverelay-capability-map td span {
+      display: block;
+      color: var(--muted-foreground);
+      font-size: var(--font-size-small);
+    }
+
+    #hiverelay-capability-map .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      color: var(--foreground);
+      font-size: var(--font-size-small);
+    }
+
+    #hiverelay-capability-map .status::before {
+      width: 8px;
+      height: 8px;
+      border-radius: var(--radius-full);
+      background: var(--status-color);
+      content: &quot;&quot;;
+    }
+
+    #hiverelay-capability-map .status-current { --status-color: var(--viz-series-3); }
+    #hiverelay-capability-map .status-staging { --status-color: var(--viz-series-2); }
+    #hiverelay-capability-map .status-target { --status-color: var(--viz-series-5); }
+    #hiverelay-capability-map .status-optional { --status-color: var(--viz-series-6); }
+
+    #hiverelay-capability-map .tunnel-flow .step {
+      background: color-mix(in srgb, var(--viz-series-2) 10%, transparent);
+    }
+
+    #hiverelay-capability-map .tunnel-flow .step-number {
+      color: var(--secondary-foreground);
+      background: color-mix(in srgb, var(--viz-series-2) 28%, var(--secondary));
+    }
+
+    #hiverelay-capability-map .mode-grid,
+    #hiverelay-capability-map .recommendation-grid,
+    #hiverelay-capability-map .guardrails {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    #hiverelay-capability-map .mode,
+    #hiverelay-capability-map .guardrail {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      min-width: 0;
+      padding: 10px;
+      background: color-mix(in srgb, var(--foreground) 4%, transparent);
+      border-radius: var(--radius-lg);
+    }
+
+    #hiverelay-capability-map .mode span,
+    #hiverelay-capability-map .guardrail span {
+      color: var(--muted-foreground);
+      font-size: var(--font-size-small);
+    }
+
+    #hiverelay-capability-map .publish-flow {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    #hiverelay-capability-map .publish-flow .step:nth-child(1) {
+      background: color-mix(in srgb, var(--viz-series-2) 10%, transparent);
+    }
+
+    #hiverelay-capability-map .publish-flow .step:nth-child(2) {
+      background: color-mix(in srgb, var(--viz-series-3) 10%, transparent);
+    }
+
+    #hiverelay-capability-map .publish-flow .step:nth-child(3) {
+      background: color-mix(in srgb, var(--viz-series-1) 10%, transparent);
+    }
+
+    #hiverelay-capability-map .recommendation-grid {
+      grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    }
+
+    #hiverelay-capability-map .recommended-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    #hiverelay-capability-map .stack-layer {
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr);
+      gap: 10px;
+      align-items: baseline;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    #hiverelay-capability-map .stack-layer:last-child {
+      border-bottom: 0;
+    }
+
+    #hiverelay-capability-map .stack-layer span {
+      color: var(--muted-foreground);
+      font-size: var(--font-size-small);
+    }
+
+    #hiverelay-capability-map .rank-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    #hiverelay-capability-map .rank-item {
+      display: grid;
+      grid-template-columns: 26px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+    }
+
+    #hiverelay-capability-map .rank-number {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      border-radius: var(--radius-full);
+      background: var(--muted);
+      font-size: var(--font-size-small);
+    }
+
+    #hiverelay-capability-map .rank-item span:not(.rank-number) {
+      display: block;
+      color: var(--muted-foreground);
+      font-size: var(--font-size-small);
+    }
+
+    #hiverelay-capability-map .source-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px 16px;
+      color: var(--muted-foreground);
+      font-size: var(--font-size-small);
+    }
+
+    #hiverelay-capability-map .source-list code {
+      color: var(--foreground);
+    }
+
+    @media (max-width: 620px) {
+      #hiverelay-capability-map .lead,
+      #hiverelay-capability-map .recommendation-grid,
+      #hiverelay-capability-map .mode-grid,
+      #hiverelay-capability-map .guardrails,
+      #hiverelay-capability-map .source-list {
+        grid-template-columns: 1fr;
+      }
+
+      #hiverelay-capability-map .lead-outcome {
+        padding-top: 9px;
+        padding-left: 0;
+        border-top: 3px solid var(--viz-series-1);
+        border-left: 0;
+      }
+
+      #hiverelay-capability-map .stack-row {
+        grid-template-columns: 1fr;
+      }
+
+      #hiverelay-capability-map .arrow {
+        min-height: 18px;
+        transform: rotate(90deg);
+      }
+
+      #hiverelay-capability-map .journey-flow,
+      #hiverelay-capability-map .tunnel-flow,
+      #hiverelay-capability-map .publish-flow {
+        grid-template-columns: 1fr;
+      }
+
+      #hiverelay-capability-map .matrix-wrap {
+        overflow: visible;
+      }
+
+      #hiverelay-capability-map table,
+      #hiverelay-capability-map tbody,
+      #hiverelay-capability-map tr,
+      #hiverelay-capability-map td {
+        display: block;
+        width: 100%;
+        min-width: 0;
+      }
+
+      #hiverelay-capability-map thead {
+        display: none;
+      }
+
+      #hiverelay-capability-map tr {
+        padding: 9px 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      #hiverelay-capability-map td {
+        display: grid;
+        grid-template-columns: 104px minmax(0, 1fr);
+        gap: 8px;
+        padding: 4px 0;
+        border-bottom: 0;
+      }
+
+      #hiverelay-capability-map td::before {
+        color: var(--muted-foreground);
+        font-size: var(--font-size-small);
+        content: &quot;&quot;;
+      }
+
+      #hiverelay-capability-map td:nth-child(1)::before { content: &quot;Surface&quot;; }
+      #hiverelay-capability-map td:nth-child(2)::before { content: &quot;Browser&quot;; }
+      #hiverelay-capability-map td:nth-child(3)::before { content: &quot;Decentralization&quot;; }
+      #hiverelay-capability-map td:nth-child(4)::before { content: &quot;Posture&quot;; }
+      #hiverelay-capability-map td:nth-child(5)::before { content: &quot;Best use&quot;; }
+    }
+  &lt;/style&gt;
+
+  &lt;section class=&quot;lead&quot; aria-label=&quot;Recommended HiveRelay HTTPS product shape&quot;&gt;
+    &lt;div class=&quot;lead-copy&quot;&gt;
+      &lt;span class=&quot;eyebrow&quot;&gt;Consumer surface&lt;/span&gt;
+      &lt;div class=&quot;lead-line&quot;&gt;One familiar HTTPS link, with replaceable gateways and verifiable P2P state underneath.&lt;/div&gt;
+      &lt;p class=&quot;text-muted&quot;&gt;The public URL is the entrance. The app key is the identity. Relays are replaceable availability and transport providers.&lt;/p&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;lead-outcome&quot;&gt;
+      &lt;span class=&quot;eyebrow&quot;&gt;Best overall&lt;/span&gt;
+      &lt;strong&gt;Publisher-owned domain&lt;/strong&gt;
+      &lt;span class=&quot;text-muted&quot;&gt;Multiple T1 gateways for app bytes, multiple blind relays for writes, native P2P as a progressive upgrade.&lt;/span&gt;
+    &lt;/div&gt;
+  &lt;/section&gt;
+
+  &lt;section class=&quot;section&quot; aria-labelledby=&quot;map-heading&quot;&gt;
+    &lt;div class=&quot;section-head&quot;&gt;
+      &lt;h2 id=&quot;map-heading&quot;&gt;Capability stack&lt;/h2&gt;
+      &lt;span class=&quot;section-kicker&quot;&gt;The browser sees HTTPS; each lower layer has a narrower responsibility.&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;stack-map&quot; role=&quot;img&quot; aria-label=&quot;Five HiveRelay capability lanes for consumer access, app delivery, application data, direct networking, and developer previews&quot;&gt;
+      &lt;div class=&quot;stack-row&quot;&gt;
+        &lt;div class=&quot;lane-label&quot;&gt;&lt;strong&gt;Consumer&lt;/strong&gt;&lt;span&gt;Familiar entrance&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;node consumer-node&quot;&gt;&lt;strong&gt;Normal browser&lt;/strong&gt;&lt;span&gt;No extension, wallet, key paste, or relay selection&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;arrow&quot; aria-hidden=&quot;true&quot;&gt;→&lt;/div&gt;
+        &lt;div class=&quot;node consumer-node&quot;&gt;&lt;strong&gt;https://app.example&lt;/strong&gt;&lt;span&gt;Stable origin for passkeys, PWA state, OAuth, and links&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;arrow&quot; aria-hidden=&quot;true&quot;&gt;→&lt;/div&gt;
+        &lt;div class=&quot;node consumer-node&quot;&gt;&lt;strong&gt;Signed app binding&lt;/strong&gt;&lt;span&gt;Domain points to a canonical app key and approved gateway set&lt;/span&gt;&lt;/div&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;stack-row&quot;&gt;
+        &lt;div class=&quot;lane-label&quot;&gt;&lt;strong&gt;Delivery&lt;/strong&gt;&lt;span&gt;Public app bytes&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;node delivery-node&quot;&gt;&lt;strong&gt;Gateway A&lt;/strong&gt;&lt;span&gt;Independent operator and TLS key&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;arrow&quot; aria-hidden=&quot;true&quot;&gt;↔&lt;/div&gt;
+        &lt;div class=&quot;node delivery-node&quot;&gt;&lt;strong&gt;Exact-byte T1 replicas&lt;/strong&gt;&lt;span&gt;Storage-proof-pinned Hyperdrive versions; optional proof bundles&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;arrow&quot; aria-hidden=&quot;true&quot;&gt;↔&lt;/div&gt;
+        &lt;div class=&quot;node delivery-node&quot;&gt;&lt;strong&gt;Gateway B + C&lt;/strong&gt;&lt;span&gt;Failover without changing the application identity&lt;/span&gt;&lt;/div&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;stack-row&quot;&gt;
+        &lt;div class=&quot;lane-label&quot;&gt;&lt;strong&gt;Data&lt;/strong&gt;&lt;span&gt;Writes and recovery&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;node data-node&quot;&gt;&lt;strong&gt;Browser-local keys&lt;/strong&gt;&lt;span&gt;Sign and encrypt before transport&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;arrow&quot; aria-hidden=&quot;true&quot;&gt;→&lt;/div&gt;
+        &lt;div class=&quot;node data-node&quot;&gt;&lt;strong&gt;Blind direct HTTPS&lt;/strong&gt;&lt;span&gt;Fixed generic CELL / INBOX / CORE operations&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;arrow&quot; aria-hidden=&quot;true&quot;&gt;→&lt;/div&gt;
+        &lt;div class=&quot;node data-node&quot;&gt;&lt;strong&gt;Independent relays&lt;/strong&gt;&lt;span&gt;Untrusted pipes; client verifies and compares results&lt;/span&gt;&lt;/div&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;stack-row&quot;&gt;
+        &lt;div class=&quot;lane-label&quot;&gt;&lt;strong&gt;Network&lt;/strong&gt;&lt;span&gt;Progressive upgrade&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;node network-node&quot;&gt;&lt;strong&gt;WSS bridge&lt;/strong&gt;&lt;span&gt;DHT control and Hypercore replication for ordinary browsers&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;arrow&quot; aria-hidden=&quot;true&quot;&gt;→&lt;/div&gt;
+        &lt;div class=&quot;node network-node&quot;&gt;&lt;strong&gt;Hyperswarm peers&lt;/strong&gt;&lt;span&gt;Noise-protected P2P data; relay sees transport metadata&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;arrow&quot; aria-hidden=&quot;true&quot;&gt;→&lt;/div&gt;
+        &lt;div class=&quot;node network-node&quot;&gt;&lt;strong&gt;PearBrowser&lt;/strong&gt;&lt;span&gt;Direct P2P, verified apps, and scoped native capabilities&lt;/span&gt;&lt;/div&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;stack-row&quot;&gt;
+        &lt;div class=&quot;lane-label&quot;&gt;&lt;strong&gt;Preview&lt;/strong&gt;&lt;span&gt;Live local service&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;node preview-node&quot;&gt;&lt;strong&gt;localhost:3000&lt;/strong&gt;&lt;span&gt;Developer machine or home service&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;arrow&quot; aria-hidden=&quot;true&quot;&gt;→&lt;/div&gt;
+        &lt;div class=&quot;node preview-node&quot;&gt;&lt;strong&gt;Holesail tunnel&lt;/strong&gt;&lt;span&gt;Outbound DHT reachability; no inbound port required&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;arrow&quot; aria-hidden=&quot;true&quot;&gt;→&lt;/div&gt;
+        &lt;div class=&quot;node preview-node&quot;&gt;&lt;strong&gt;Temporary HTTPS edge&lt;/strong&gt;&lt;span&gt;ngrok-style browser URL backed by signed, expiring policy&lt;/span&gt;&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;legend&quot; aria-label=&quot;Capability lane legend&quot;&gt;
+      &lt;span class=&quot;legend-item&quot;&gt;&lt;span class=&quot;legend-mark&quot; style=&quot;--mark-color:var(--viz-series-1)&quot;&gt;&lt;/span&gt;Consumer origin&lt;/span&gt;
+      &lt;span class=&quot;legend-item&quot;&gt;&lt;span class=&quot;legend-mark&quot; style=&quot;--mark-color:var(--viz-series-3)&quot;&gt;&lt;/span&gt;Public delivery&lt;/span&gt;
+      &lt;span class=&quot;legend-item&quot;&gt;&lt;span class=&quot;legend-mark&quot; style=&quot;--mark-color:var(--viz-series-5)&quot;&gt;&lt;/span&gt;Private application data&lt;/span&gt;
+      &lt;span class=&quot;legend-item&quot;&gt;&lt;span class=&quot;legend-mark&quot; style=&quot;--mark-color:var(--viz-series-6)&quot;&gt;&lt;/span&gt;P2P upgrade&lt;/span&gt;
+      &lt;span class=&quot;legend-item&quot;&gt;&lt;span class=&quot;legend-mark&quot; style=&quot;--mark-color:var(--viz-series-2)&quot;&gt;&lt;/span&gt;Developer tunnel&lt;/span&gt;
+    &lt;/div&gt;
+  &lt;/section&gt;
+
+  &lt;section class=&quot;section&quot; aria-labelledby=&quot;journey-heading&quot;&gt;
+    &lt;div class=&quot;section-head&quot;&gt;
+      &lt;h2 id=&quot;journey-heading&quot;&gt;Follow a journey&lt;/h2&gt;
+      &lt;span class=&quot;section-kicker&quot;&gt;Each journey uses the same app identity through a different compatibility entrance.&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;viz-controls&quot; role=&quot;group&quot; aria-label=&quot;Choose a HiveRelay journey&quot;&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn btn-primary&quot; data-journey=&quot;consumer&quot; aria-pressed=&quot;true&quot;&gt;Open an app&lt;/button&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn&quot; data-journey=&quot;write&quot; aria-pressed=&quot;false&quot;&gt;Write data&lt;/button&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn&quot; data-journey=&quot;upgrade&quot; aria-pressed=&quot;false&quot;&gt;Upgrade to P2P&lt;/button&gt;
+      &lt;button type=&quot;button&quot; class=&quot;btn&quot; data-journey=&quot;preview&quot; aria-pressed=&quot;false&quot;&gt;Expose localhost&lt;/button&gt;
+    &lt;/div&gt;
+
+    &lt;article class=&quot;card journey-detail&quot; data-detail=&quot;consumer&quot;&gt;
+      &lt;h3&gt;Ordinary consumer opens the application&lt;/h3&gt;
+      &lt;div class=&quot;journey-flow&quot;&gt;
+        &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;1&lt;/span&gt;&lt;strong&gt;Open&lt;/strong&gt;&lt;span&gt;A normal publisher URL loads in any browser.&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;2&lt;/span&gt;&lt;strong&gt;Route&lt;/strong&gt;&lt;span&gt;DNS or a capable resolver selects an authorized gateway.&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;3&lt;/span&gt;&lt;strong&gt;Admit&lt;/strong&gt;&lt;span&gt;The edge requires explicit public T1 status and a pinned drive version.&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;4&lt;/span&gt;&lt;strong&gt;Serve&lt;/strong&gt;&lt;span&gt;Exact bytes arrive; capable clients can request and verify Merkle proofs.&lt;/span&gt;&lt;/div&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;trust-line&quot;&gt;Vanilla first-load trust is the publisher HTTPS origin. The canonical app key and proof mode let PearBrowser, SDKs, or trusted loaders verify provenance independently.&lt;/div&gt;
+    &lt;/article&gt;
+
+    &lt;article class=&quot;card journey-detail&quot; data-detail=&quot;write&quot; hidden&gt;
+      &lt;h3&gt;Browser application writes decentralized state&lt;/h3&gt;
+      &lt;div class=&quot;journey-flow&quot;&gt;
+        &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;1&lt;/span&gt;&lt;strong&gt;Compose locally&lt;/strong&gt;&lt;span&gt;The app owns schemas, identities, merge rules, and retry journals.&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;2&lt;/span&gt;&lt;strong&gt;Seal&lt;/strong&gt;&lt;span&gt;Records are signed and encrypted into bounded opaque cells.&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;3&lt;/span&gt;&lt;strong&gt;Replicate&lt;/strong&gt;&lt;span&gt;The browser sends qualified operations to several independent relays.&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;4&lt;/span&gt;&lt;strong&gt;Verify&lt;/strong&gt;&lt;span&gt;Signed responses and readback evidence determine the durability label.&lt;/span&gt;&lt;/div&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;trust-line&quot;&gt;Current Peerit uses OutboxLog HTTP/SSE as the compatibility route. The destination is the app-agnostic blind HTTPS ABI: DESCRIBE, CELL, INBOX, CORE, and FORWARD.&lt;/div&gt;
+    &lt;/article&gt;
+
+    &lt;article class=&quot;card journey-detail&quot; data-detail=&quot;upgrade&quot; hidden&gt;
+      &lt;h3&gt;Capable browser leaves the HTTP-only path&lt;/h3&gt;
+      &lt;div class=&quot;journey-flow&quot;&gt;
+        &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;1&lt;/span&gt;&lt;strong&gt;Discover&lt;/strong&gt;&lt;span&gt;Signed capability documents advertise optional WSS transports.&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;2&lt;/span&gt;&lt;strong&gt;Connect&lt;/strong&gt;&lt;span&gt;DHT-over-WS bridges browser control traffic through a selected relay.&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;3&lt;/span&gt;&lt;strong&gt;Match peers&lt;/strong&gt;&lt;span&gt;The browser looks up or announces and establishes Noise-protected streams.&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;4&lt;/span&gt;&lt;strong&gt;Go native&lt;/strong&gt;&lt;span&gt;PearBrowser can resolve the canonical link and use direct Hyperdrive/Hyperswarm.&lt;/span&gt;&lt;/div&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;trust-line&quot;&gt;WSS improves participation, not anonymity: the bridge operator sees connection metadata and timing. It should remain an automatic enhancement, never a consumer prerequisite.&lt;/div&gt;
+    &lt;/article&gt;
+
+    &lt;article class=&quot;card journey-detail&quot; data-detail=&quot;preview&quot; hidden&gt;
+      &lt;h3&gt;Developer exposes a live local service&lt;/h3&gt;
+      &lt;div class=&quot;journey-flow&quot;&gt;
+        &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;1&lt;/span&gt;&lt;strong&gt;Expose&lt;/strong&gt;&lt;span&gt;A local agent opens an outbound Holesail endpoint for one port.&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;2&lt;/span&gt;&lt;strong&gt;Lease&lt;/strong&gt;&lt;span&gt;The publisher signs hostname, tunnel, methods, limits, and expiry.&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;3&lt;/span&gt;&lt;strong&gt;Accept&lt;/strong&gt;&lt;span&gt;One or more independent edges validate and advertise the route.&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;4&lt;/span&gt;&lt;strong&gt;Forward&lt;/strong&gt;&lt;span&gt;A browser uses HTTPS while the edge dials the local service over Holesail.&lt;/span&gt;&lt;/div&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;trust-line&quot;&gt;This is decentralized reachability, not durable hosting. When the local service stops, the preview stops. Production should snapshot and replicate the app into T1 gateways.&lt;/div&gt;
+    &lt;/article&gt;
+  &lt;/section&gt;
+
+  &lt;section class=&quot;section&quot; aria-labelledby=&quot;inventory-heading&quot;&gt;
+    &lt;div class=&quot;section-head&quot;&gt;
+      &lt;h2 id=&quot;inventory-heading&quot;&gt;Capability inventory and honest status&lt;/h2&gt;
+      &lt;span class=&quot;section-kicker&quot;&gt;Checked against the local v0.24.3 and v1 integration lines on 22 July 2026.&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;matrix-wrap&quot;&gt;
+      &lt;table&gt;
+        &lt;thead&gt;
+          &lt;tr&gt;
+            &lt;th&gt;Surface&lt;/th&gt;
+            &lt;th&gt;Vanilla browser&lt;/th&gt;
+            &lt;th&gt;Decentralization&lt;/th&gt;
+            &lt;th&gt;Current posture&lt;/th&gt;
+            &lt;th&gt;Best use&lt;/th&gt;
+          &lt;/tr&gt;
+        &lt;/thead&gt;
+        &lt;tbody&gt;
+          &lt;tr&gt;
+            &lt;td&gt;&lt;strong&gt;Path gateway&lt;/strong&gt;&lt;span&gt;&lt;code&gt;/v1/hyper/&amp;lt;key&amp;gt;/...&lt;/code&gt;&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Yes&lt;span&gt;Shared origin; HTML rewritten&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Replaceable operator&lt;span&gt;Unsafe origin for stateful apps&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;&lt;span class=&quot;status status-current&quot;&gt;Shipped compatibility&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Files, APIs, previews, boot fallback&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;td&gt;&lt;strong&gt;Keyed app origin&lt;/strong&gt;&lt;span&gt;&lt;code&gt;&amp;lt;z32-key&amp;gt;.hive.gateway&lt;/code&gt;&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Yes&lt;span&gt;Distinct app origin; exact bytes&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Strong for public delivery&lt;span&gt;Same key can use unrelated gateways&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;&lt;span class=&quot;status status-staging&quot;&gt;Hardened staging&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Gateway fallback and operator-hosted apps&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;td&gt;&lt;strong&gt;Publisher domain&lt;/strong&gt;&lt;span&gt;&lt;code&gt;https://app.example&lt;/code&gt;&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Best&lt;span&gt;Stable browser origin&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Strong hybrid&lt;span&gt;Domain is entrance; app key remains identity&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;&lt;span class=&quot;status status-target&quot;&gt;Specified target&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Mainstream consumer front door&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;td&gt;&lt;strong&gt;OutboxLog HTTPS/SSE&lt;/strong&gt;&lt;span&gt;App-aware compatibility service&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Yes&lt;span&gt;Normal fetch and live events&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Moderate&lt;span&gt;Client signatures; relay sees app structure&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;&lt;span class=&quot;status status-current&quot;&gt;Current writable path&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Peerit migration compatibility&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;td&gt;&lt;strong&gt;Blind direct HTTPS&lt;/strong&gt;&lt;span&gt;Five fixed generic families&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Yes&lt;span&gt;Credential-free bounded binary fetch&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Strong&lt;span&gt;Opaque data and multi-operator selection&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;&lt;span class=&quot;status status-staging&quot;&gt;Release gated&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Final browser write/read substrate&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;td&gt;&lt;strong&gt;DHT / Hypercore WSS&lt;/strong&gt;&lt;span&gt;&lt;code&gt;/ws/dht&lt;/code&gt; + &lt;code&gt;/ws/replicate&lt;/code&gt;&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Capable apps&lt;span&gt;Requires P2P client code&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Strong transport upgrade&lt;span&gt;One bridge can censor, not forge P2P content&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;&lt;span class=&quot;status status-optional&quot;&gt;Optional transport&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Presence, direct replication, live rooms&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;td&gt;&lt;strong&gt;Tor read ingress&lt;/strong&gt;&lt;span&gt;Onion to the same gateway plane&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Tor Browser&lt;span&gt;Strict no-script read posture&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Privacy-focused&lt;span&gt;Protects reader IP, not public content&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;&lt;span class=&quot;status status-staging&quot;&gt;Feature / v1 line&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Private public-content reading&lt;/td&gt;
+          &lt;/tr&gt;
+          &lt;tr&gt;
+            &lt;td&gt;&lt;strong&gt;Holesail tunnel&lt;/strong&gt;&lt;span&gt;HyperDHT TCP/UDP reachability&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Needs HTTPS edge&lt;span&gt;Raw &lt;code&gt;hs://&lt;/code&gt; is not browser-native&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Strong reachability&lt;span&gt;Publisher remains an availability dependency&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;&lt;span class=&quot;status status-current&quot;&gt;Native API tunnel exists&lt;/span&gt;&lt;/td&gt;
+            &lt;td&gt;Home relays and proposed live previews&lt;/td&gt;
+          &lt;/tr&gt;
+        &lt;/tbody&gt;
+      &lt;/table&gt;
+    &lt;/div&gt;
+  &lt;/section&gt;
+
+  &lt;section class=&quot;section&quot; aria-labelledby=&quot;tunnel-heading&quot;&gt;
+    &lt;div class=&quot;section-head&quot;&gt;
+      &lt;h2 id=&quot;tunnel-heading&quot;&gt;ngrok-style capability: expose, then publish&lt;/h2&gt;
+      &lt;span class=&quot;section-kicker&quot;&gt;Keep the familiar developer motion; remove the mandatory central gateway account.&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;tunnel-flow&quot; role=&quot;img&quot; aria-label=&quot;Proposed HiveRelay HTTPS over Holesail tunnel lifecycle&quot;&gt;
+      &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;1&lt;/span&gt;&lt;strong&gt;&lt;code&gt;hive expose 3000&lt;/code&gt;&lt;/strong&gt;&lt;span&gt;Agent creates outbound reachability and a signed, expiring route lease.&lt;/span&gt;&lt;/div&gt;
+      &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;2&lt;/span&gt;&lt;strong&gt;Independent edges&lt;/strong&gt;&lt;span&gt;Several operators may accept the same publisher-authorized route.&lt;/span&gt;&lt;/div&gt;
+      &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;3&lt;/span&gt;&lt;strong&gt;Normal HTTPS URL&lt;/strong&gt;&lt;span&gt;Temporary operator URL or publisher-owned domain works in any browser.&lt;/span&gt;&lt;/div&gt;
+      &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;4&lt;/span&gt;&lt;strong&gt;Holesail to localhost&lt;/strong&gt;&lt;span&gt;The browser request crosses the edge and reaches the live local service.&lt;/span&gt;&lt;/div&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;mode-grid&quot;&gt;
+      &lt;div class=&quot;mode&quot;&gt;
+        &lt;strong&gt;Edge-terminated HTTPS&lt;/strong&gt;
+        &lt;span&gt;Best developer UX. The edge can apply authentication, rate limits, redirects, webhook checks, and security headers, but it sees plaintext HTTP.&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;mode&quot;&gt;
+        &lt;strong&gt;TLS passthrough&lt;/strong&gt;
+        &lt;span&gt;The publisher keeps the certificate key and the edge sees only SNI plus transport metadata. Privacy is stronger; programmable HTTP policy is narrower.&lt;/span&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;publish-flow&quot; aria-label=&quot;Recommended developer lifecycle from preview to durable publication&quot;&gt;
+      &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;1&lt;/span&gt;&lt;strong&gt;Expose&lt;/strong&gt;&lt;span&gt;Temporary live preview; stops with localhost.&lt;/span&gt;&lt;/div&gt;
+      &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;2&lt;/span&gt;&lt;strong&gt;Publish&lt;/strong&gt;&lt;span&gt;Snapshot &lt;code&gt;./dist&lt;/code&gt; into a canonical Hyperdrive release.&lt;/span&gt;&lt;/div&gt;
+      &lt;div class=&quot;step&quot;&gt;&lt;span class=&quot;step-number&quot;&gt;3&lt;/span&gt;&lt;strong&gt;Bind&lt;/strong&gt;&lt;span&gt;Attach the publisher domain to several exact-byte T1 gateways.&lt;/span&gt;&lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/section&gt;
+
+  &lt;section class=&quot;card recommendation&quot; aria-labelledby=&quot;recommendation-heading&quot;&gt;
+    &lt;div class=&quot;section-head&quot;&gt;
+      &lt;h2 id=&quot;recommendation-heading&quot;&gt;Recommended consumer architecture&lt;/h2&gt;
+      &lt;span class=&quot;viz-badge&quot;&gt;Familiar outside · decentralized inside&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;recommendation-grid&quot;&gt;
+      &lt;div class=&quot;recommended-stack&quot;&gt;
+        &lt;div class=&quot;stack-layer&quot;&gt;&lt;strong&gt;Origin&lt;/strong&gt;&lt;span&gt;Publisher-owned HTTPS domain and installable PWA.&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;stack-layer&quot;&gt;&lt;strong&gt;App bytes&lt;/strong&gt;&lt;span&gt;Two or more independent exact-byte public T1 gateways.&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;stack-layer&quot;&gt;&lt;strong&gt;App state&lt;/strong&gt;&lt;span&gt;Local signing/encryption plus two or more independent blind relays.&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;stack-layer&quot;&gt;&lt;strong&gt;Upgrade&lt;/strong&gt;&lt;span&gt;Automatic DHT/Hypercore WSS, then direct P2P in PearBrowser.&lt;/span&gt;&lt;/div&gt;
+        &lt;div class=&quot;stack-layer&quot;&gt;&lt;strong&gt;Preview&lt;/strong&gt;&lt;span&gt;HTTPS-over-Holesail for temporary local development and dynamic legacy services.&lt;/span&gt;&lt;/div&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;rank-list&quot; aria-label=&quot;Priority ranking&quot;&gt;
+        &lt;div class=&quot;rank-item&quot;&gt;&lt;span class=&quot;rank-number&quot;&gt;1&lt;/span&gt;&lt;div&gt;&lt;strong&gt;Best consumer surface&lt;/strong&gt;&lt;span&gt;Publisher-owned HTTPS backed by multiple operators.&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;
+        &lt;div class=&quot;rank-item&quot;&gt;&lt;span class=&quot;rank-number&quot;&gt;2&lt;/span&gt;&lt;div&gt;&lt;strong&gt;Most decentralized&lt;/strong&gt;&lt;span&gt;PearBrowser or native P2P using the canonical app key.&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;
+        &lt;div class=&quot;rank-item&quot;&gt;&lt;span class=&quot;rank-number&quot;&gt;3&lt;/span&gt;&lt;div&gt;&lt;strong&gt;Best developer motion&lt;/strong&gt;&lt;span&gt;Expose locally, then publish and replicate.&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/section&gt;
+
+  &lt;section class=&quot;section&quot; aria-labelledby=&quot;guardrail-heading&quot;&gt;
+    &lt;div class=&quot;section-head&quot;&gt;
+      &lt;h2 id=&quot;guardrail-heading&quot;&gt;Non-negotiable boundaries&lt;/h2&gt;
+      &lt;span class=&quot;section-kicker&quot;&gt;These keep convenience from quietly becoming centralization or a privacy overclaim.&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;guardrails&quot;&gt;
+      &lt;div class=&quot;guardrail&quot;&gt;&lt;strong&gt;Path mode is stateless compatibility&lt;/strong&gt;&lt;span&gt;Do not host credentialed or stateful applications on a shared gateway origin.&lt;/span&gt;&lt;/div&gt;
+      &lt;div class=&quot;guardrail&quot;&gt;&lt;strong&gt;Public gateway is not a blind store&lt;/strong&gt;&lt;span&gt;T1 serves declared-public app bytes only; custody and blind material stay structurally unreachable.&lt;/span&gt;&lt;/div&gt;
+      &lt;div class=&quot;guardrail&quot;&gt;&lt;strong&gt;Tunnel keys are not application auth&lt;/strong&gt;&lt;span&gt;Public Holesail keys are addresses. Private keys are sensitive capabilities. Protect the upstream either way.&lt;/span&gt;&lt;/div&gt;
+      &lt;div class=&quot;guardrail&quot;&gt;&lt;strong&gt;HTTPS and content verification differ&lt;/strong&gt;&lt;span&gt;Web PKI authenticates the hostname; proof-aware clients independently validate Hyperdrive provenance.&lt;/span&gt;&lt;/div&gt;
+      &lt;div class=&quot;guardrail&quot;&gt;&lt;strong&gt;No single gateway becomes the app identity&lt;/strong&gt;&lt;span&gt;Every response advertises the canonical app key and capable clients retain alternate operators.&lt;/span&gt;&lt;/div&gt;
+      &lt;div class=&quot;guardrail&quot;&gt;&lt;strong&gt;Consumer choice stays invisible by default&lt;/strong&gt;&lt;span&gt;Clients fail over automatically; advanced provenance and relay controls remain inspectable, not mandatory.&lt;/span&gt;&lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/section&gt;
+
+  &lt;section class=&quot;section&quot; aria-labelledby=&quot;sources-heading&quot;&gt;
+    &lt;div class=&quot;section-head&quot;&gt;
+      &lt;h2 id=&quot;sources-heading&quot;&gt;Implementation anchors&lt;/h2&gt;
+      &lt;span class=&quot;section-kicker&quot;&gt;Primary local sources used for this map.&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;source-list&quot;&gt;
+      &lt;span&gt;&lt;code&gt;docs/HTTPS-GATEWAY.md&lt;/code&gt; — path and app-origin read planes&lt;/span&gt;
+      &lt;span&gt;&lt;code&gt;docs/PUBLIC-HTTPS-HIVE-GATEWAY-SPEC.md&lt;/code&gt; — domains, leases, ngrok policy&lt;/span&gt;
+      &lt;span&gt;&lt;code&gt;packages/core/gateway/*&lt;/code&gt; — exact bytes, proofs, admission, edge headers&lt;/span&gt;
+      &lt;span&gt;&lt;code&gt;packages/core/transports/holesail&lt;/code&gt; — NAT-safe API reachability&lt;/span&gt;
+      &lt;span&gt;&lt;code&gt;packages/core/transports/dht-relay-ws&lt;/code&gt; — browser DHT bridge&lt;/span&gt;
+      &lt;span&gt;&lt;code&gt;packages/blind-client&lt;/code&gt; + &lt;code&gt;packages/blind-edge&lt;/code&gt; — generic HTTPS ABI&lt;/span&gt;
+      &lt;span&gt;&lt;code&gt;docs/SERVICE-CONTRACT.md&lt;/code&gt; — OutboxLog migration boundary&lt;/span&gt;
+      &lt;span&gt;&lt;code&gt;docs/HTTPS-GATEWAY-PRODUCTION-HANDOFF-2026-07-19.md&lt;/code&gt; — status and gates&lt;/span&gt;
+    &lt;/div&gt;
+  &lt;/section&gt;
+
+  &lt;script&gt;
+    (() =&gt; {
+      const root = document.getElementById(&#x27;hiverelay-capability-map&#x27;)
+      if (!root) return
+      const buttons = Array.from(root.querySelectorAll(&#x27;[data-journey]&#x27;))
+      const details = Array.from(root.querySelectorAll(&#x27;[data-detail]&#x27;))
+
+      const selectJourney = (name) =&gt; {
+        buttons.forEach((button) =&gt; {
+          const selected = button.dataset.journey === name
+          button.setAttribute(&#x27;aria-pressed&#x27;, String(selected))
+          button.classList.toggle(&#x27;btn-primary&#x27;, selected)
+        })
+        details.forEach((detail) =&gt; {
+          detail.hidden = detail.dataset.detail !== name
+        })
+      }
+
+      buttons.forEach((button) =&gt; {
+        button.addEventListener(&#x27;click&#x27;, () =&gt; selectJourney(button.dataset.journey))
+      })
+    })()
+  &lt;/script&gt;
+&lt;/div&gt;
+
+&lt;script src=&quot;https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script src=&quot;https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  if (window.FloatingUIDOM == null) {
+    return;
+  }
+  const { autoUpdate, computePosition, flip, offset, shift, size } =
+    window.FloatingUIDOM;
+  const tooltipPlacements = new Set([&quot;top&quot;, &quot;right&quot;, &quot;bottom&quot;, &quot;left&quot;]);
+  const tooltipId = `codex-visualization-tooltip-${
+    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
+  }`;
+  const tooltipGap = 5;
+  const hoverDelay = 700;
+  const skipDelay = 300;
+  let activeTrigger = null;
+  let pendingTrigger = null;
+  let tooltip = null;
+  let openTimeout = null;
+  let autoUpdateCleanup = null;
+  let positionRequest = 0;
+  let skipDelayUntil = 0;
+
+  const getTrigger = (target) =&gt;
+    target?.nodeType === Node.ELEMENT_NODE
+      ? target.closest(&quot;[data-tooltip]&quot;)
+      : null;
+  const containsTarget = (trigger, target) =&gt;
+    target?.nodeType != null &amp;&amp; trigger.contains(target);
+  const getContent = (trigger) =&gt;
+    trigger.getAttribute(&quot;data-tooltip&quot;)?.trim() ?? &quot;&quot;;
+  const getPlacement = (trigger) =&gt; {
+    const placement = trigger.getAttribute(&quot;data-tooltip-placement&quot;);
+    return tooltipPlacements.has(placement) ? placement : &quot;top&quot;;
+  };
+  const getTooltip = () =&gt; {
+    if (tooltip == null) {
+      tooltip = document.createElement(&quot;div&quot;);
+      tooltip.id = tooltipId;
+      tooltip.className = &quot;tooltip&quot;;
+      tooltip.setAttribute(&quot;role&quot;, &quot;tooltip&quot;);
+    }
+    return tooltip;
+  };
+  const setDescribedBy = (trigger, described) =&gt; {
+    const ids = new Set(
+      (trigger.getAttribute(&quot;aria-describedby&quot;) ?? &quot;&quot;)
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+    if (described) {
+      ids.add(tooltipId);
+    } else {
+      ids.delete(tooltipId);
+    }
+    if (ids.size === 0) {
+      trigger.removeAttribute(&quot;aria-describedby&quot;);
+    } else {
+      trigger.setAttribute(&quot;aria-describedby&quot;, [...ids].join(&quot; &quot;));
+    }
+  };
+  const clearOpenTimeout = () =&gt; {
+    if (openTimeout != null) {
+      window.clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+    pendingTrigger = null;
+  };
+  const closeTooltip = (activateSkipDelay = true) =&gt; {
+    clearOpenTimeout();
+    positionRequest += 1;
+    autoUpdateCleanup?.();
+    autoUpdateCleanup = null;
+    if (activeTrigger == null) {
+      return;
+    }
+    setDescribedBy(activeTrigger, false);
+    activeTrigger = null;
+    tooltip?.remove();
+    if (activateSkipDelay) {
+      skipDelayUntil = Date.now() + skipDelay;
+    }
+  };
+  const updatePosition = (trigger, floating) =&gt; {
+    const request = ++positionRequest;
+    void computePosition(trigger, floating, {
+      middleware: [
+        offset(tooltipGap),
+        flip({ padding: tooltipGap }),
+        shift({ padding: tooltipGap }),
+        size({
+          padding: tooltipGap,
+          apply({ availableHeight, availableWidth, elements }) {
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-width&quot;,
+              `${Math.max(0, availableWidth)}px`,
+            );
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-height&quot;,
+              `${Math.max(0, availableHeight)}px`,
+            );
+          },
+        }),
+      ],
+      placement: getPlacement(trigger),
+      strategy: &quot;fixed&quot;,
+    })
+      .then(({ x, y }) =&gt; {
+        if (activeTrigger !== trigger || request !== positionRequest) {
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
+        floating.style.visibility = &quot;visible&quot;;
+      })
+      .catch(() =&gt; {
+        if (activeTrigger === trigger &amp;&amp; request === positionRequest) {
+          closeTooltip(false);
+        }
+      });
+  };
+  const openTooltip = (trigger) =&gt; {
+    const content = getContent(trigger);
+    if (!trigger.isConnected || content.length === 0) {
+      return;
+    }
+    clearOpenTimeout();
+    if (activeTrigger === trigger) {
+      return;
+    }
+    closeTooltip();
+    const floating = getTooltip();
+    floating.textContent = content;
+    floating.style.visibility = &quot;hidden&quot;;
+    floating.style.transform = &quot;translate(0, 0)&quot;;
+    document.body.appendChild(floating);
+    activeTrigger = trigger;
+    setDescribedBy(trigger, true);
+    autoUpdateCleanup = autoUpdate(trigger, floating, () =&gt; {
+      updatePosition(trigger, floating);
+    });
+  };
+  const requestOpen = (trigger, immediate = false) =&gt; {
+    if (
+      getContent(trigger).length === 0 ||
+      activeTrigger === trigger ||
+      pendingTrigger === trigger
+    ) {
+      return;
+    }
+    clearOpenTimeout();
+    pendingTrigger = trigger;
+    const delay =
+      immediate || activeTrigger != null || Date.now() &lt; skipDelayUntil
+        ? 0
+        : hoverDelay;
+    if (delay === 0) {
+      openTooltip(trigger);
+      return;
+    }
+    openTimeout = window.setTimeout(() =&gt; {
+      openTimeout = null;
+      pendingTrigger = null;
+      openTooltip(trigger);
+    }, delay);
+  };
+  const handlePointerOpen = (event) =&gt; {
+    if (event.pointerType === &quot;touch&quot;) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    requestOpen(trigger);
+  };
+  const handleLeave = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handleFocusIn = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger?.matches(&quot;:focus-visible&quot;)) {
+      requestOpen(trigger, true);
+    }
+  };
+  const handleKeyDown = (event) =&gt; {
+    if (event.key === &quot;Escape&quot;) {
+      closeTooltip();
+    }
+  };
+  const handleContextMenu = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const destroy = () =&gt; {
+    closeTooltip(false);
+    document.removeEventListener(&quot;pointerover&quot;, handlePointerOpen);
+    document.removeEventListener(&quot;pointerout&quot;, handleLeave);
+    document.removeEventListener(&quot;focusin&quot;, handleFocusIn);
+    document.removeEventListener(&quot;focusout&quot;, handleLeave);
+    document.removeEventListener(&quot;keydown&quot;, handleKeyDown);
+    document.removeEventListener(&quot;contextmenu&quot;, handleContextMenu);
+    tooltip = null;
+  };
+
+  document.addEventListener(&quot;pointerover&quot;, handlePointerOpen);
+  document.addEventListener(&quot;pointerout&quot;, handleLeave);
+  document.addEventListener(&quot;focusin&quot;, handleFocusIn);
+  document.addEventListener(&quot;focusout&quot;, handleLeave);
+  document.addEventListener(&quot;keydown&quot;, handleKeyDown);
+  document.addEventListener(&quot;contextmenu&quot;, handleContextMenu);
+  window.addEventListener(&quot;pagehide&quot;, destroy, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-lucide&quot; async src=&quot;https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  const initialize = () =&gt; {
+    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+  };
+  if (globalThis.lucide != null) {
+    initialize();
+    return;
+  }
+  document
+    .getElementById(&quot;codex-visualization-lucide&quot;)
+    ?.addEventListener(&quot;load&quot;, initialize, { once: true });
+})();
+&lt;/script&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+</body>
+</html>

@@ -1,0 +1,1003 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BlindShard & The Pure Pipe — Explained for Humans</title>
+<style>
+  :root{
+    --bg:#0a0e14; --bg-2:#0f1620; --panel:#111821; --panel-2:#0d141d;
+    --ink:#e8eef6; --dim:#8b9bb0; --faint:#5b6b80;
+    --line:#1f2a3a; --line-2:#152028;
+    --accent:#4fd1c5; --accent-2:#5b9fd4; --gold:#e0a54b; --rose:#e0533d; --violet:#9b7ed9; --green:#3ecf8e;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--accent-2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{background:#0a0f16;border:1px solid var(--line);padding:.05em .4em;border-radius:4px;
+    font:.88em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cfe3ff}
+  pre{background:#0a0f16;border:1px solid var(--line);border-radius:10px;padding:1em 1.2em;overflow:auto}
+  pre code{background:none;border:0;padding:0;color:#cfe3ff}
+
+  .wrap{max-width:940px;margin:0 auto;padding:0 1.4em}
+  main{padding-bottom:6em}
+
+  header.hero{padding:4.5em 0 3em;border-bottom:1px solid var(--line);
+    background:radial-gradient(ellipse at top,rgba(155,126,215,.08),transparent 60%)}
+  .eyebrow{color:var(--violet);font-size:.8em;font-weight:700;letter-spacing:.18em;text-transform:uppercase;margin:0 0 .8em}
+  h1{font-size:2.6em;line-height:1.1;margin:.1em 0 .3em;letter-spacing:-.025em;font-weight:800}
+  h1 .grad{background:linear-gradient(120deg,var(--violet),var(--accent));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:1.2em;color:var(--dim);max-width:64ch;margin:1em 0 0}
+  .meta{margin-top:2em;display:flex;flex-wrap:wrap;gap:.6em;font-size:.82em;color:var(--faint)}
+  .meta span{padding:.3em .7em;border:1px solid var(--line);border-radius:999px;background:var(--panel)}
+
+  section{padding:3em 0;border-bottom:1px solid var(--line-2)}
+  section:last-of-type{border-bottom:0}
+  h2{font-size:1.7em;letter-spacing:-.015em;margin:0 0 .6em;font-weight:700}
+  h2 .num{color:var(--violet);font-variant-numeric:tabular-nums;margin-right:.5em;font-weight:800}
+  h3{font-size:1.2em;margin:1.6em 0 .5em;font-weight:700;letter-spacing:-.01em}
+  h4{font-size:1.02em;margin:1.4em 0 .4em;color:var(--accent-2);font-weight:700}
+  p{margin:.7em 0}
+  ul,ol{margin:.7em 0;padding-left:1.5em}
+  li{margin:.35em 0}
+  .lead{font-size:1.08em;color:#cdd6e3}
+
+  .callout{border-left:3px solid var(--accent);background:rgba(79,209,197,.05);
+    padding:1em 1.3em;border-radius:0 10px 10px 0;margin:1.4em 0}
+  .callout.warn{border-color:var(--gold);background:rgba(224,165,75,.06)}
+  .callout.danger{border-color:var(--rose);background:rgba(224,83,61,.06)}
+  .callout.violet{border-color:var(--violet);background:rgba(155,126,215,.06)}
+  .callout h4{margin:.2em 0 .4em;color:inherit;font-size:.78em;text-transform:uppercase;letter-spacing:.1em}
+  .callout.warn h4{color:var(--gold)}
+  .callout.danger h4{color:var(--rose)}
+  .callout.violet h4{color:var(--violet)}
+  .callout p:last-child{margin-bottom:0}
+
+  figure{margin:2em 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:1.6em 1.4em 1.2em}
+  figure svg{width:100%;height:auto;display:block}
+  figcaption{color:var(--dim);font-size:.86em;margin-top:1em;text-align:center;font-style:italic}
+
+  table{border-collapse:collapse;width:100%;margin:1.2em 0;font-size:.94em}
+  th,td{border:1px solid var(--line);padding:.6em .8em;text-align:left;vertical-align:top}
+  th{background:#0a0f16;color:var(--dim);font-weight:600;font-size:.86em;text-transform:uppercase;letter-spacing:.04em}
+
+  .pill{display:inline-block;padding:.15em .55em;border-radius:999px;font-size:.78em;font-weight:700;border:1px solid var(--line)}
+  .pill-good{color:var(--green);border-color:#1d3a2c;background:rgba(62,207,142,.08)}
+  .pill-bad{color:var(--rose);border-color:#3a1d18;background:rgba(224,83,61,.08)}
+  .pill-mid{color:var(--gold);border-color:#3a2a14;background:rgba(224,165,75,.08)}
+  .pill-violet{color:var(--violet);border-color:#2a1840;background:rgba(155,126,215,.1)}
+
+  .steps{counter-reset:step;margin:1.5em 0}
+  .step{position:relative;padding:0 0 1.4em 3em;border-left:2px solid var(--line);margin-left:1.2em}
+  .step:before{counter-increment:step;content:counter(step);position:absolute;left:-1.05em;top:-.1em;
+    width:2em;height:2em;border-radius:50%;background:var(--violet);color:#0a0e14;
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.9em}
+  .step h4{margin:0 0 .3em;color:var(--ink)}
+  .step p{margin:.3em 0;color:var(--dim)}
+
+  nav.toc{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.2em 1.4em;margin:2em 0}
+  nav.toc h3{margin:0 0 .6em;font-size:.82em;text-transform:uppercase;letter-spacing:.1em;color:var(--dim)}
+  nav.toc ol{margin:0;padding-left:1.3em;columns:2;column-gap:2em}
+  nav.toc li{margin:.2em 0;break-inside:avoid}
+  nav.toc a{color:var(--ink);font-size:.94em}
+  nav.toc a:hover{color:var(--violet)}
+
+  .ladder-row{display:grid;grid-template-columns:auto 1fr;gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:1em 0}
+  .ladder-row > div{padding:.9em 1.1em;border-bottom:1px solid var(--line)}
+  .ladder-row .stage{font-weight:800;color:var(--violet);background:#0a0f16;display:flex;align-items:center;font-family:ui-monospace,monospace;min-width:120px}
+  .ladder-row .desc{color:var(--dim)}
+  .ladder-row .desc strong{color:var(--ink);display:block;margin-bottom:.15em}
+  .ladder-row:last-child > div{border-bottom:0}
+
+  footer{padding:2.5em 0 0;border-top:1px solid var(--line);margin-top:3em;color:var(--faint);font-size:.86em}
+  footer p{margin:.4em 0}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Companion to the Blind Substrate · plain-English explainer</p>
+    <h1><span class="grad">BlindShard</span> &amp; the<br>Pure Pipe</h1>
+    <p class="lede">How post bodies get split into unreadable fragments no single relay can
+       reassemble — and the end state where no operator, including the founder, hosts readable
+       or complete content at all.</p>
+    <div class="meta">
+      <span>Layer 2 of the blind stack</span>
+      <span>Sits on the blind substrate</span>
+      <span>For: curious users, not engineers</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <nav class="toc">
+    <h3>What's inside</h3>
+    <ol>
+      <li><a href="#problem">Why bodies need their own layer</a></li>
+      <li><a href="#blindshard">BlindShard in one picture</a></li>
+      <li><a href="#keysplit">Split the key, not the data</a></li>
+      <li><a href="#journey">A body's journey, step by step</a></li>
+      <li><a href="#reader">How a reader reassembles</a></li>
+      <li><a href="#purepipe">The pure pipe end state</a></li>
+      <li><a href="#reader-agg">Reader-side aggregation</a></li>
+      <li><a href="#takedown">Why this resists takedown</a></li>
+      <li><a href="#hosting">Who's hosting it? (nobody knows)</a></li>
+      <li><a href="#ceilings">Honest ceilings</a></li>
+      <li><a href="#glossary">Glossary</a></li>
+    </ol>
+  </nav>
+
+  <div class="callout danger" style="border-color:var(--rose);background:rgba(224,83,61,.08)">
+    <h4 style="color:var(--rose)">⚠ Known overstatements in this document — read the authoritative correction first</h4>
+    <p>This explainer contains lines that overstate what's shipped today — most dangerously, the
+       claim that <em>"the reader's browser runs a real HyperDHT node."</em> A normal browser
+       physically cannot do this. The pure-pipe end state is described in present tense in several
+       places where it should be conditional (<em>"when it ships"</em>).</p>
+    <p><strong>Read <a href="HONEST-STACK-AUTHORITATIVE.html"><code>HONEST-STACK-AUTHORITATIVE.html</code></a>
+       alongside this doc.</strong> It catalogs every overstatement, presents the strongest defensible
+       version of each claim, and shows the full stack color-coded by what ships today vs what's
+       target vs what's fantasy. Where the two docs conflict on shipped-vs-target status, the
+       authoritative one is correct.</p>
+  </div>
+
+  <div class="callout violet">
+    <h4>Read the first explainer first</h4>
+    <p>This document assumes you've read <em>The Blind Substrate, explained for humans</em>.
+       The substrate (Layer 1) makes the <strong>storage keys</strong> blind — so the relay can't
+       enumerate the social graph. BlindShard (Layer 2, this doc) makes the <strong>post bodies</strong>
+       blind — so no single operator holds a readable, complete, or linkable copy of what you wrote.
+       The pure pipe (the end state) takes it further: the founder's own box stops serving content
+       entirely.</p>
+  </div>
+
+<!-- ============================================================== -->
+<section id="problem">
+  <h2><span class="num">01</span>Why bodies need their own layer</h2>
+
+  <p class="lead">The substrate blinded the <em>graph</em>. The bodies — the actual words people
+     wrote — were still readable on a single box.</p>
+
+  <p>After the blind substrate ships, a relay can no longer tell <em>who posted where</em> by reading
+     storage keys. But the <strong>post bodies themselves</strong> — the markdown, the rants, the
+     links — are a separate problem. Even with opaque keys, three things can still go wrong:</p>
+
+  <ol>
+    <li>The relay that holds an encrypted cell <em>also</em> holds the key to decrypt it (shipped in the manifest).</li>
+    <li>One seizure of one box gets a complete, readable copy of every body that box stores.</li>
+    <li>One subpoena of one operator gets the same.</li>
+  </ol>
+
+  <figure>
+    <svg viewBox="0 0 780 220" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <text x="20" y="24" fill="#e0533d" font-size="13" font-weight="700">After the substrate (graph is blind) — but bodies still leak</text>
+
+      <rect x="20" y="40" width="380" height="160" rx="10" fill="#0a0f16" stroke="#3a1d18"/>
+      <text x="35" y="62" fill="#e0533d" font-size="11" font-weight="700">ONE RELAY'S DISK</text>
+      <g font-family="ui-monospace,monospace" font-size="10.5">
+        <text x="35" y="88" fill="#3ecf8e">key: v2!7f3a…</text><text x="200" y="88" fill="#8b9bb0">(opaque — good)</text>
+        <text x="35" y="108" fill="#e0a54b">val.sealed: 🔒</text><text x="200" y="108" fill="#8b9bb0">(encrypted — good)</text>
+        <text x="35" y="128" fill="#e0533d">val.dispersal: { contentKey }</text><text x="35" y="146" fill="#e0533d">  ↑ KEY IS RIGHT THERE</text>
+        <text x="35" y="168" fill="#e0533d">ciphertext blob: 🔒🔒🔒</text><text x="35" y="186" fill="#e0533d">  ↑ AND SO IS THE LOCKED BOX</text>
+      </g>
+
+      <path d="M 410 120 L 440 120" stroke="#5b9fd4" stroke-width="2" marker-end="url(#p1)"/>
+
+      <rect x="450" y="40" width="310" height="160" rx="10" fill="#1a0e0a" stroke="#e0533d" stroke-width="2"/>
+      <text x="605" y="62" text-anchor="middle" fill="#e0533d" font-size="12" font-weight="700">WHAT THE OPERATOR GETS</text>
+      <text x="605" y="80" text-anchor="middle" fill="#8b9bb0" font-size="10">from one box, no collusion needed</text>
+      <g font-size="11" fill="#cdd6e3">
+        <text x="465" y="108">✓ Use the key → decrypt the box</text>
+        <text x="465" y="128">✓ Read the full post body</text>
+        <text x="465" y="148">✓ Link it to its author</text>
+        <text x="465" y="168">✓ Identify every reader who fetched it</text>
+        <text x="465" y="188" fill="#e0533d" font-weight="700">= full content, one subpoena</text>
+      </g>
+
+      <defs>
+        <marker id="p1" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L9,3 z" fill="#5b9fd4"/>
+        </marker>
+      </defs>
+    </svg>
+    <figcaption>Even with the graph blinded, the relay co-holds the locked box AND its key. One box, one subpoena, full content.</figcaption>
+  </figure>
+
+  <p>BlindShard exists to break that co-location. The goal is brutally specific: <strong>arrange
+     things so that no single operator, holding only their own disk, can read, complete, or even
+     attribute a post body.</strong> Plausible deniability becomes a real legal posture, not a slogan.</p>
+</section>
+
+<!-- ============================================================== -->
+<section id="blindshard">
+  <h2><span class="num">02</span>BlindShard in one picture</h2>
+
+  <p class="lead">Encrypt the body once. Split the <em>key</em> across many operators. Spread the
+     ciphertext so no one box holds enough to matter.</p>
+
+  <p>The construction that shipped (and it's <em>different</em> from the original whitepaper — see
+     §03) does three things to each post body over a size threshold:</p>
+
+  <figure>
+    <svg viewBox="0 0 880 380" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <!-- body -->
+      <rect x="20" y="40" width="120" height="60" rx="8" fill="#0f2018" stroke="#3ecf8e"/>
+      <text x="80" y="68" text-anchor="middle" fill="#3ecf8e" font-size="11" font-weight="700">POST BODY</text>
+      <text x="80" y="86" text-anchor="middle" fill="#8b9bb0" font-size="10">"hello world"</text>
+
+      <path d="M 140 70 L 175 70" stroke="#5b9fd4" stroke-width="2" marker-end="url(#b1)"/>
+
+      <!-- encrypt -->
+      <rect x="185" y="30" width="140" height="80" rx="8" fill="#1a1830" stroke="#9b7ed9"/>
+      <text x="255" y="54" text-anchor="middle" fill="#9b7ed9" font-size="11" font-weight="700">ENCRYPT ONCE</text>
+      <text x="255" y="74" text-anchor="middle" fill="#cdd6e3" font-size="10" font-family="ui-monospace,monospace">AES-256-GCM</text>
+      <text x="255" y="90" text-anchor="middle" fill="#8b9bb0" font-size="9">fresh random key K</text>
+      <text x="255" y="104" text-anchor="middle" fill="#8b9bb0" font-size="9">→ ciphertext C</text>
+
+      <path d="M 325 70 L 360 70" stroke="#5b9fd4" stroke-width="2" marker-end="url(#b1)"/>
+
+      <!-- split key -->
+      <rect x="370" y="20" width="170" height="100" rx="8" fill="#2a2110" stroke="#e0a54b"/>
+      <text x="455" y="44" text-anchor="middle" fill="#e0a54b" font-size="11" font-weight="700">SPLIT THE KEY (PVSS)</text>
+      <text x="455" y="64" text-anchor="middle" fill="#cdd6e3" font-size="10">K → shares [s1, s2, …, sN]</text>
+      <text x="455" y="80" text-anchor="middle" fill="#8b9bb0" font-size="9">any K of N reconstructs K</text>
+      <text x="455" y="96" text-anchor="middle" fill="#8b9bb0" font-size="9">below threshold: hidden</text>
+      <text x="455" y="112" text-anchor="middle" fill="#5b6b80" font-size="9" font-style="italic">e.g. K=3, N=5</text>
+
+      <!-- the two outputs fan out -->
+      <path d="M 540 50 Q 600 30 660 30" stroke="#9b7ed9" stroke-width="2" fill="none" marker-end="url(#b1)"/>
+      <path d="M 540 90 Q 600 130 660 160" stroke="#e0a54b" stroke-width="2" fill="none" marker-end="url(#b1)"/>
+
+      <!-- ciphertext to one relay -->
+      <rect x="670" y="10" width="190" height="70" rx="8" fill="#1a0e0a" stroke="#e0533d" stroke-dasharray="4 3"/>
+      <text x="765" y="32" text-anchor="middle" fill="#e0533d" font-size="11" font-weight="700">RELAY A — ciphertext</text>
+      <text x="765" y="50" text-anchor="middle" fill="#cdd6e3" font-size="10" font-family="ui-monospace,monospace">shard:0 = 🔒🔒🔒</text>
+      <text x="765" y="66" text-anchor="middle" fill="#5b6b80" font-size="9">no key, no manifest</text>
+
+      <!-- key shares to cohort -->
+      <rect x="670" y="130" width="190" height="200" rx="8" fill="#1a0e0a" stroke="#e0533d" stroke-dasharray="4 3"/>
+      <text x="765" y="152" text-anchor="middle" fill="#e0533d" font-size="11" font-weight="700">KEY-SHARE COHORT</text>
+      <g font-size="10" font-family="ui-monospace,monospace">
+        <text x="685" y="176" fill="#cdd6e3">Relay B: share 1 🔑</text>
+        <text x="685" y="196" fill="#cdd6e3">Relay C: share 2 🔑</text>
+        <text x="685" y="216" fill="#cdd6e3">Relay D: share 3 🔑</text>
+        <text x="685" y="236" fill="#cdd6e3">Relay E: share 4 🔑</text>
+        <text x="685" y="256" fill="#cdd6e3">Relay F: share 5 🔑</text>
+      </g>
+      <text x="765" y="290" text-anchor="middle" fill="#e0533d" font-size="9" font-weight="700">each holds ONE share</text>
+      <text x="765" y="306" text-anchor="middle" fill="#e0533d" font-size="9" font-weight="700">none can reconstruct K alone</text>
+      <text x="765" y="324" text-anchor="middle" fill="#5b6b80" font-size="9" font-style="italic">need ≥3 to recover the key</text>
+
+      <!-- bottom annotation -->
+      <text x="440" y="360" text-anchor="middle" fill="#5b6b80" font-size="10" font-style="italic">
+        Seizure of any single relay yields either unreadable ciphertext OR an incomplete key fragment — never both.
+      </text>
+
+      <defs>
+        <marker id="b1" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L9,3 z" fill="#5b9fd4"/>
+        </marker>
+      </defs>
+    </svg>
+    <figcaption>The shipped construction: encrypt once, PVSS-split the key across a cohort, store the ciphertext separately. No single relay holds both.</figcaption>
+  </figure>
+
+  <p>Three properties fall out of this shape, and they're the whole point:</p>
+
+  <ul>
+    <li><strong>No single operator has a readable body.</strong> The ciphertext relay has no key; the key-share relays have no ciphertext.</li>
+    <li><strong>No single operator has a complete body.</strong> Reassembling requires gathering K key-shares <em>from different operators</em>, then fetching the ciphertext, then decrypting. That's an affirmative act against the whole network — not something any one disk does at rest.</li>
+    <li><strong>No single operator can attribute a body.</strong> The ciphertext is content-addressed by a hash of itself (<code>shard:&lt;blake2b&gt;</code>), with no link to author, community, or post. The share fragments are equally opaque.</li>
+  </ul>
+</section>
+
+<!-- ============================================================== -->
+<section id="keysplit">
+  <h2><span class="num">03</span>Split the key, not the data</h2>
+
+  <p class="lead">A small but important detail — and a place where the shipped code differs from
+     the original design doc.</p>
+
+  <p>The original BlindShard design (now superseded) used <strong>Reed-Solomon erasure coding</strong>
+     on the ciphertext itself — split the locked box into N fragments, any K of which could
+     reconstruct the box. That's the Tahoe-LAFS / Storj pattern, and it works.</p>
+
+  <p>What actually shipped is different and better for this use case: <strong>PVSS-split the AES
+     key</strong>, and store the <em>whole</em> ciphertext as a single shard. The key, not the data,
+     gets distributed across the cohort.</p>
+
+  <table>
+    <thead><tr><th></th><th>Original design (superseded)</th><th>What shipped</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>What gets split</strong></td>
+        <td>The ciphertext (Reed-Solomon k-of-N fragments)</td>
+        <td>The AES key (PVSS k-of-N shares)</td>
+      </tr>
+      <tr>
+        <td><strong>Ciphertext location</strong></td>
+        <td>Distributed as N fragments, &lt;K per relay</td>
+        <td>One whole copy, stored as <code>shard:0</code></td>
+      </tr>
+      <tr>
+        <td><strong>Key location</strong></td>
+        <td>Published in the manifest (public)</td>
+        <td><strong>Never published</strong> — split across cohort, hidden below threshold</td>
+      </tr>
+      <tr>
+        <td><strong>Below K shares</strong></td>
+        <td>Cannot reconstruct the ciphertext</td>
+        <td>Cannot reconstruct the key <span class="pill pill-good">stronger</span></td>
+      </tr>
+      <tr>
+        <td><strong>Storage overhead</strong></td>
+        <td>~1.5× (N/K blowup on ciphertext)</td>
+        <td>~1× ciphertext + N tiny key shares</td>
+      </tr>
+      <tr>
+        <td><strong>Crypto dep</strong></td>
+        <td>WASM Reed-Solomon</td>
+        <td><code>sodium-universal</code> + vendored <code>@noble/*</code> PVSS-secp256k1</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout violet">
+    <h4>Why the key-split is stronger</h4>
+    <p>In the erasure-code scheme, gathering K ciphertext fragments reassembles the locked box —
+       and the key was already public in the manifest, so any reader could decrypt. In the PVSS
+       scheme, gathering fewer than K key-shares yields <strong>computationally nothing</strong>
+       about the key. The ciphertext is sitting right there, but it's mathematically opaque until
+       you cross the threshold. For a public forum where the read key must reach every reader, this
+       is a meaningful upgrade in passive-at-rest blindness.</p>
+  </div>
+
+  <p>The honest framing: this is still not <em>secrecy</em> for public content. A determined party
+     (including the operator) who obtains the public read capability can still gather K shares and
+     reconstruct. But the bar moves from "I can grep my own disk" to "I must coordinate an attack
+     against K independent operators." That bar is the difference between liability and deniability.</p>
+</section>
+
+<!-- ============================================================== -->
+<section id="journey">
+  <h2><span class="num">04</span>A body's journey, step by step</h2>
+
+  <p class="lead">Alice writes a long post. Here's what happens to the body specifically.</p>
+
+  <div class="steps">
+    <div class="step">
+      <h4>Alice writes and signs the post metadata</h4>
+      <p>Her client creates the post record — community, title, timestamp, author signature — and
+         signs it with her Ed25519 key. This metadata is small and stays inline in the outbox record
+         (sealed under the v2 read-key, as in the substrate explainer).</p>
+    </div>
+    <div class="step">
+      <h4>Size gate decides: inline or shard?</h4>
+      <p>Short bodies (votes, short comments, small posts) stay inline as sealed values — no
+         sharding overhead. Only bodies above a threshold (roughly multi-KB) enter the BlindShard
+         pipeline. This keeps the hot path cheap.</p>
+    </div>
+    <div class="step">
+      <h4>Generate a fresh AES key and encrypt the body</h4>
+      <p>The client picks a brand-new random 256-bit AES key <code>K</code> and encrypts the body
+         to ciphertext <code>C</code> using AES-256-GCM. <code>K</code> is never reused; the same
+         body written twice produces different ciphertext.</p>
+    </div>
+    <div class="step">
+      <h4>PVSS-split the key into N shares</h4>
+      <p>Using Publicly Verifiable Secret Sharing, <code>K</code> is split into N shares such that
+         any K of them can reconstruct <code>K</code>, but fewer than K reveals computationally
+         nothing. Each share is small (a few hundred bytes).</p>
+    </div>
+    <div class="step">
+      <h4>Store the ciphertext as a shard</h4>
+      <p>The whole ciphertext <code>C</code> is written as <code>shard:0</code> — addressed by
+         <code>blake2b-256(C)</code>, a content hash that has no link to author or post. The relay
+         that holds it sees opaque bytes at a random-looking address.</p>
+    </div>
+    <div class="step">
+      <h4>Distribute the key shares across the cohort</h4>
+      <p>Each of the N key shares is written to a different cohort relay, by index, under a signed
+         custody intent. No single cohort relay holds more than one share; the ciphertext relay
+         holds zero shares.</p>
+    </div>
+    <div class="step">
+      <h4>Write a keyless manifest into the signed outbox record</h4>
+      <p>The post's outbox record carries a small manifest: <code>{ ciphertextShard, k, n,
+         shareIndices }</code> — but <strong>not the key</strong>. The manifest is signed by Alice
+         and sealed under the read-key like the rest of the record. It tells a reader <em>where to
+         look</em>, not how to decrypt.</p>
+    </div>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 880 320" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <!-- author -->
+      <circle cx="60" cy="60" r="26" fill="#0f2018" stroke="#3ecf8e" stroke-width="2"/>
+      <text x="60" y="64" text-anchor="middle" fill="#3ecf8e" font-size="11" font-weight="700">ALICE</text>
+      <text x="60" y="105" text-anchor="middle" fill="#8b9bb0" font-size="10">signs post</text>
+
+      <!-- box + split -->
+      <rect x="130" y="30" width="180" height="120" rx="8" fill="#1a1830" stroke="#9b7ed9"/>
+      <text x="220" y="52" text-anchor="middle" fill="#9b7ed9" font-size="11" font-weight="700">DEALER (client)</text>
+      <g font-size="10" fill="#cdd6e3">
+        <text x="145" y="74">1. encrypt body → C</text>
+        <text x="145" y="92">2. PVSS split K → s1..s5</text>
+        <text x="145" y="110">3. manifest (no key)</text>
+        <text x="145" y="128">4. sign manifest</text>
+      </g>
+
+      <!-- three outputs -->
+      <path d="M 310 60 L 410 40" stroke="#5b9fd4" stroke-width="2" marker-end="url(#j1)"/>
+      <path d="M 310 90 L 410 110" stroke="#5b9fd4" stroke-width="2" marker-end="url(#j1)"/>
+      <path d="M 310 120 L 410 200" stroke="#5b9fd4" stroke-width="2" marker-end="url(#j1)"/>
+
+      <!-- ciphertext relay -->
+      <rect x="420" y="20" width="170" height="60" rx="8" fill="#1a0e0a" stroke="#e0533d" stroke-dasharray="4 3"/>
+      <text x="505" y="42" text-anchor="middle" fill="#e0533d" font-size="10" font-weight="700">CIPHERTEXT RELAY</text>
+      <text x="505" y="58" text-anchor="middle" fill="#cdd6e3" font-size="9" font-family="ui-monospace,monospace">shard:0 = 🔒🔒🔒</text>
+      <text x="505" y="72" text-anchor="middle" fill="#5b6b80" font-size="9">no key</text>
+
+      <!-- cohort -->
+      <rect x="420" y="90" width="170" height="120" rx="8" fill="#1a0e0a" stroke="#e0533d" stroke-dasharray="4 3"/>
+      <text x="505" y="110" text-anchor="middle" fill="#e0533d" font-size="10" font-weight="700">KEY-SHARE COHORT (5 relays)</text>
+      <g font-size="9" font-family="ui-monospace,monospace" fill="#cdd6e3">
+        <text x="435" y="130">B: 🔑 s1</text>
+        <text x="435" y="146">C: 🔑 s2</text>
+        <text x="435" y="162">D: 🔑 s3</text>
+        <text x="435" y="178">E: 🔑 s4</text>
+        <text x="435" y="194">F: 🔑 s5</text>
+      </g>
+
+      <!-- outbox -->
+      <rect x="420" y="220" width="170" height="80" rx="8" fill="#0f2018" stroke="#3ecf8e"/>
+      <text x="505" y="242" text-anchor="middle" fill="#3ecf8e" font-size="10" font-weight="700">OUTBOX RECORD</text>
+      <text x="505" y="258" text-anchor="middle" fill="#cdd6e3" font-size="9" font-family="ui-monospace,monospace">post!peerit!a3f…</text>
+      <text x="505" y="272" text-anchor="middle" fill="#8b9bb0" font-size="9">+ sealed manifest</text>
+      <text x="505" y="288" text-anchor="middle" fill="#5b6b80" font-size="9">(points to shard + cohort)</text>
+
+      <!-- legend -->
+      <rect x="640" y="20" width="220" height="280" rx="8" fill="#0a0f16" stroke="#1f2a3a"/>
+      <text x="750" y="42" text-anchor="middle" fill="#8b9bb0" font-size="10" font-weight="700">SEIZURE OUTCOMES</text>
+      <g font-size="10" fill="#cdd6e3">
+        <text x="655" y="68" fill="#e0533d">Seize ciphertext relay:</text>
+        <text x="655" y="84" fill="#8b9bb0">  → unreadable box, no key</text>
+        <text x="655" y="112" fill="#e0533d">Seize ONE cohort relay:</text>
+        <text x="655" y="128" fill="#8b9bb0">  → one share, useless alone</text>
+        <text x="655" y="156" fill="#e0533d">Seize outbox relay:</text>
+        <text x="655" y="172" fill="#8b9bb0">  → manifest, no key, no body</text>
+        <text x="655" y="200" fill="#3ecf8e" font-weight="700">Reconstruct requires:</text>
+        <text x="655" y="216" fill="#8b9bb0">  ≥3 cohort relays (collusion)</text>
+        <text x="655" y="232" fill="#8b9bb0">  + the ciphertext relay</text>
+        <text x="655" y="248" fill="#8b9bb0">  + the signed manifest</text>
+        <text x="655" y="278" fill="#e0a54b" font-style="italic">= an affirmative attack on</text>
+        <text x="655" y="292" fill="#e0a54b" font-style="italic">  the whole network.</text>
+      </g>
+
+      <defs>
+        <marker id="j1" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L9,3 z" fill="#5b9fd4"/>
+        </marker>
+      </defs>
+    </svg>
+    <figcaption>One body, three destinations. Any single seizure is useless; reconstruction requires attacking the cohort.</figcaption>
+  </figure>
+</section>
+
+<!-- ============================================================== -->
+<section id="reader">
+  <h2><span class="num">05</span>How a reader reassembles</h2>
+
+  <p class="lead">Bob opens Alice's post. His client reverses the journey — locally, in his browser.</p>
+
+  <div class="steps">
+    <div class="step">
+      <h4>Fetch the signed outbox record</h4>
+      <p>Bob's client gets Alice's post record from the outbox relay — same as any post. It verifies
+         Alice's signature and unseals the record under the read-key.</p>
+    </div>
+    <div class="step">
+      <h4>Read the keyless manifest</h4>
+      <p>The manifest tells Bob's client where the ciphertext shard lives and where the K key-shares
+         are distributed across the cohort. No key yet — just pointers.</p>
+    </div>
+    <div class="step">
+      <h4>Gather K key-shares from the cohort</h4>
+      <p>Bob's client fetches any K of the N shares from the cohort relays. Because PVSS is
+         threshold-based, <em>any</em> K of the N will do — if relay D is down, fetch from E instead.</p>
+    </div>
+    <div class="step">
+      <h4>Reconstruct the AES key locally</h4>
+      <p>Bob's client combines the K shares to reconstruct the original AES key <code>K</code>. This
+         happens entirely in Bob's browser — no relay ever sees the reconstructed key.</p>
+    </div>
+    <div class="step">
+      <h4>Fetch the ciphertext shard</h4>
+      <p>Bob's client fetches <code>shard:0</code> — the locked box — from the ciphertext relay.
+         It's just opaque bytes; harmless on its own.</p>
+    </div>
+    <div class="step">
+      <h4>Decrypt and verify</h4>
+      <p>With the key and the ciphertext, Bob's client decrypts the body and verifies it against the
+         manifest's hash. If anything was tampered with — wrong share, substituted ciphertext,
+         forged manifest — the check fails and Bob's client routes around the bad relay.</p>
+    </div>
+  </div>
+
+  <p>The key insight: at no point did any <em>relay</em> hold both the key and the ciphertext.
+     Only Bob's browser, after gathering from multiple independent operators, reconstructs the key.
+     The reconstruction is a reader-side act, not a server-side state.</p>
+
+  <div class="callout">
+    <h4>The lazy hydration trick</h4>
+    <p>None of this happens for posts you scroll past. The feed renders titles, authors, and vote
+       counts from the small sealed records — no shard fetches needed. Body reassembly happens
+       <em>only</em> when you open a post. So the dispersal layer adds zero cost to feed browsing;
+       it only kicks in for the post you're actually reading.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="purepipe">
+  <h2><span class="num">06</span>The pure pipe end state</h2>
+
+  <p class="lead">The north star. The founder's own box stops serving content entirely.</p>
+
+  <p>BlindShard blinds the bodies. The substrate blinds the graph. But there's still a relay
+     somewhere <em>aggregating outboxes and answering feed queries</em> — an <code>/api</code>
+     server that, even if it can't read what it serves, is still a content-serving index. The pure
+     pipe is the move that dissolves even that role.</p>
+
+  <figure>
+    <svg viewBox="0 0 880 360" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <text x="440" y="24" text-anchor="middle" fill="#8b9bb0" font-size="11" font-weight="700">BEFORE: the VPS is an /api relay that aggregates and serves</text>
+
+      <!-- before -->
+      <rect x="30" y="40" width="820" height="120" rx="10" fill="#0a0f16" stroke="#3a1d18"/>
+      <circle cx="90" cy="100" r="22" fill="#1a0e0a" stroke="#e0533d"/>
+      <text x="90" y="104" text-anchor="middle" fill="#e0533d" font-size="10" font-weight="700">VPS</text>
+      <text x="90" y="140" text-anchor="middle" fill="#8b9bb0" font-size="9">aggregates</text>
+      <text x="90" y="152" text-anchor="middle" fill="#8b9bb0" font-size="9">+ serves</text>
+
+      <g font-size="10" font-family="ui-monospace,monospace" fill="#cdd6e3">
+        <text x="140" y="68">/api/sync/list    → answers feed queries</text>
+        <text x="140" y="86">/api/sync/get     → serves records</text>
+        <text x="140" y="104">/api/sync/range   → paginates threads</text>
+        <text x="140" y="122">/api/sync/directory → author roster</text>
+        <text x="140" y="140" fill="#e0533d">↑ still a content-serving index, even if blind</text>
+      </g>
+
+      <text x="540" y="68" fill="#8b9bb0" font-size="10">Readers hit the VPS for everything.</text>
+      <text x="540" y="86" fill="#8b9bb0" font-size="10">If the VPS is seized or blocked,</text>
+      <text x="540" y="104" fill="#8b9bb0" font-size="10">the site is gone — even if the data</text>
+      <text x="540" y="122" fill="#8b9bb0" font-size="10">survives on the cohort.</text>
+      <text x="540" y="140" fill="#e0533d" font-size="10" font-weight="700">Single point of failure.</text>
+
+      <text x="440" y="194" text-anchor="middle" fill="#8b9bb0" font-size="11" font-weight="700">AFTER: the VPS is a pure byte-pipe. Readers aggregate for themselves.</text>
+
+      <!-- after -->
+      <rect x="30" y="210" width="820" height="140" rx="10" fill="#0a0f16" stroke="#1d3a2c"/>
+      <circle cx="90" cy="280" r="22" fill="#0f2018" stroke="#3ecf8e"/>
+      <text x="90" y="276" text-anchor="middle" fill="#3ecf8e" font-size="9" font-weight="700">VPS</text>
+      <text x="90" y="288" text-anchor="middle" fill="#3ecf8e" font-size="9" font-weight="700">(pipe)</text>
+      <text x="90" y="318" text-anchor="middle" fill="#8b9bb0" font-size="9">carries frames</text>
+      <text x="90" y="330" text-anchor="middle" fill="#8b9bb0" font-size="9">stores nothing</text>
+
+      <g font-size="10" font-family="ui-monospace,monospace" fill="#cdd6e3">
+        <text x="140" y="238">Noise-encrypted frames only</text>
+        <text x="140" y="256">no /api, no aggregation</text>
+        <text x="140" y="274">no directory, no feed queries</text>
+        <text x="140" y="292">no storage at rest</text>
+        <text x="140" y="318" fill="#3ecf8e">= just a dumb pipe</text>
+      </g>
+
+      <!-- reader -->
+      <rect x="540" y="230" width="280" height="110" rx="8" fill="#0f2018" stroke="#3ecf8e"/>
+      <text x="680" y="252" text-anchor="middle" fill="#3ecf8e" font-size="11" font-weight="700">READER'S BROWSER</text>
+      <g font-size="10" fill="#cdd6e3">
+        <text x="555" y="274">runs a real HyperDHT node</text>
+        <text x="555" y="292">discovers authors itself</text>
+        <text x="555" y="310">pulls K shards from the cohort</text>
+        <text x="555" y="328">reassembles + verifies locally</text>
+      </g>
+    </svg>
+    <figcaption>The pure pipe: the founder's VPS becomes a dumb byte-pipe; aggregation moves into each reader's browser.</figcaption>
+  </figure>
+
+  <p>Under the pure pipe:</p>
+  <ul>
+    <li>The founder's box is <strong>one optional pure pipe among many</strong> — or it can be turned off entirely, leaning on the fleet's <code>dht-relay-ws</code> endpoints.</li>
+    <li>The reader's browser runs a <strong>real HyperDHT node</strong> and does its own discovery, its own shard gathering, its own reassembly.</li>
+    <li>Durable storage lives on the <strong>opt-in blind-seeder fleet + user devices</strong>, holding blind erasure shards.</li>
+    <li>No operator — including the founder — aggregates or serves readable or complete content. The only thing anyone holds at rest is blind, incomplete, content-hashed fragments.</li>
+  </ul>
+
+  <div class="callout violet">
+    <h4>The liability ladder, completed</h4>
+    <p>Each rung strictly shrinks what the founder's box holds and can be blamed for:</p>
+    <div class="ladder-row">
+      <div class="stage">v1 baseline</div>
+      <div class="desc"><strong>"I host every readable post on one box."</strong>
+        Plaintext JSON, full social graph. Maximum liability.</div>
+    </div>
+    <div class="ladder-row">
+      <div class="stage">substrate</div>
+      <div class="desc"><strong>"I host opaque-keyed cells I can't enumerate by graph."</strong>
+        Graph blinded; bodies still readable if the relay has the key.</div>
+    </div>
+    <div class="ladder-row">
+      <div class="stage">BlindShard</div>
+      <div class="desc"><strong>"I host meaningless fragments I can't read, link, or reassemble alone."</strong>
+        Bodies dispersed; no single relay has a complete readable item.</div>
+    </div>
+    <div class="ladder-row">
+      <div class="stage">pure pipe</div>
+      <div class="desc"><strong>"I transport ciphertext frames between online peers. I store and serve nothing."</strong>
+        The founder's box is a dumb pipe; the network's blind seeders hold the fragments.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="reader-agg">
+  <h2><span class="num">07</span>Reader-side aggregation</h2>
+
+  <p class="lead">The job of "build the feed" moves out of any server and into each reader's device.</p>
+
+  <p>This is the part that sounds impossible until you see it. In the pure-pipe end state, there is
+     no server that holds a list of posts or answers queries like "give me the front page." Instead,
+     <strong>each reader's browser does the work itself</strong>, in real time:</p>
+
+  <figure>
+    <svg viewBox="0 0 880 340" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <!-- reader browser -->
+      <rect x="20" y="40" width="200" height="280" rx="10" fill="#0f2018" stroke="#3ecf8e" stroke-width="2"/>
+      <text x="120" y="64" text-anchor="middle" fill="#3ecf8e" font-size="12" font-weight="700">BOB'S BROWSER</text>
+      <text x="120" y="80" text-anchor="middle" fill="#8b9bb0" font-size="10">runs HyperDHT node</text>
+      <g font-size="10" fill="#cdd6e3">
+        <text x="35" y="110">1. discover authors</text>
+        <text x="35" y="128">2. pull their outboxes</text>
+        <text x="35" y="146">3. verify signatures</text>
+        <text x="35" y="164">4. merge into feed</text>
+        <text x="35" y="182">5. for each post opened:</text>
+        <text x="35" y="198">   gather K key-shares</text>
+        <text x="35" y="214">   fetch ciphertext shard</text>
+        <text x="35" y="230">   reconstruct key</text>
+        <text x="35" y="246">   decrypt + verify</text>
+        <text x="35" y="276" fill="#3ecf8e" font-weight="700">all locally</text>
+        <text x="35" y="294" fill="#3ecf8e" font-weight="700">no server involved</text>
+      </g>
+
+      <!-- pipe -->
+      <rect x="280" y="120" width="120" height="100" rx="8" fill="#1a0e0a" stroke="#e0533d" stroke-dasharray="4 3"/>
+      <text x="340" y="144" text-anchor="middle" fill="#e0533d" font-size="10" font-weight="700">PURE PIPE</text>
+      <text x="340" y="162" text-anchor="middle" fill="#8b9bb0" font-size="9">(dht-relay-ws)</text>
+      <text x="340" y="182" text-anchor="middle" fill="#cdd6e3" font-size="9" font-family="ui-monospace,monospace">🔒🔒🔒 frames</text>
+      <text x="340" y="200" text-anchor="middle" fill="#5b6b80" font-size="9">stores nothing</text>
+
+      <!-- fleet -->
+      <rect x="460" y="40" width="400" height="280" rx="10" fill="#0a0f16" stroke="#1f2a3a"/>
+      <text x="660" y="64" text-anchor="middle" fill="#8b9bb0" font-size="11" font-weight="700">THE BLIND-SEEDER FLEET (many operators)</text>
+
+      <rect x="480" y="80" width="170" height="100" rx="8" fill="#1a0e0a" stroke="#e0533d" stroke-dasharray="3 2"/>
+      <text x="565" y="100" text-anchor="middle" fill="#e0533d" font-size="10" font-weight="700">CIPHERTEXT RELAY</text>
+      <text x="565" y="120" text-anchor="middle" fill="#cdd6e3" font-size="9" font-family="ui-monospace,monospace">shard:0 = 🔒🔒🔒</text>
+      <text x="565" y="140" text-anchor="middle" fill="#5b6b80" font-size="9">no key</text>
+      <text x="565" y="158" text-anchor="middle" fill="#5b6b80" font-size="9">no manifest</text>
+
+      <rect x="670" y="80" width="170" height="220" rx="8" fill="#1a0e0a" stroke="#e0533d" stroke-dasharray="3 2"/>
+      <text x="755" y="100" text-anchor="middle" fill="#e0533d" font-size="10" font-weight="700">KEY-SHARE COHORT</text>
+      <g font-size="9" font-family="ui-monospace,monospace" fill="#cdd6e3">
+        <text x="685" y="124">op B: 🔑 s1</text>
+        <text x="685" y="142">op C: 🔑 s2</text>
+        <text x="685" y="160">op D: 🔑 s3</text>
+        <text x="685" y="178">op E: 🔑 s4</text>
+        <text x="685" y="196">op F: 🔑 s5</text>
+      </g>
+      <text x="755" y="230" text-anchor="middle" fill="#5b6b80" font-size="9">each a different</text>
+      <text x="755" y="246" text-anchor="middle" fill="#5b6b80" font-size="9">independent operator</text>
+      <text x="755" y="276" text-anchor="middle" fill="#e0a54b" font-size="9" font-style="italic">no one knows who</text>
+      <text x="755" y="290" text-anchor="middle" fill="#e0a54b" font-size="9" font-style="italic">hosts what</text>
+
+      <!-- arrows -->
+      <path d="M 220 130 Q 250 130 275 145" stroke="#5b9fd4" stroke-width="2" fill="none" marker-end="url(#r1)"/>
+      <path d="M 400 145 Q 430 130 475 120" stroke="#5b9fd4" stroke-width="2" fill="none" marker-end="url(#r1)"/>
+      <path d="M 400 175 Q 430 200 475 200" stroke="#5b9fd4" stroke-width="2" fill="none" marker-end="url(#r1)"/>
+      <path d="M 220 200 Q 250 200 275 185" stroke="#5b9fd4" stroke-width="2" fill="none" marker-end="url(#r1)"/>
+
+      <defs>
+        <marker id="r1" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L9,3 z" fill="#5b9fd4"/>
+        </marker>
+      </defs>
+    </svg>
+    <figcaption>Reader-side aggregation. Bob's browser reaches through the pipe directly to the fleet, gathering what it needs and assembling locally.</figcaption>
+  </figure>
+
+  <p>The pipe's only job is to <strong>carry encrypted frames between peers who chose to be online</strong>.
+     It doesn't know what those frames contain. It doesn't index them. It doesn't answer queries. It's
+     a telephone wire, not a switchboard operator.</p>
+
+  <div class="callout">
+    <h4>Why this is a real shift, not a relabeling</h4>
+    <p>Moving aggregation into the reader means there is no longer a server to subpoena for "the feed."
+       There is no operator who can be compelled to produce "all posts in r/peerit" because no
+       operator holds that view. Each reader holds the view they personally assembled, after gathering
+       from many independent sources. The network's intelligence is distributed across readers, not
+       concentrated in any relay.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="takedown">
+  <h2><span class="num">08</span>Why this resists takedown</h2>
+
+  <p class="lead">To kill a post, you have to kill K independent operators simultaneously. To kill
+     the site, you have to kill the readers.</p>
+
+  <p>Takedown resistance comes from the combination of dispersal and reader-side aggregation.
+     Here's what an attacker actually faces at each layer:</p>
+
+  <h3>Killing a single post</h3>
+  <table>
+    <thead><tr><th>Attacker action</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td>Seize the ciphertext relay</td><td>The locked box is gone — but readers route around it. Any other seeder holding a copy serves it. And without the key, the box was unreadable anyway.</td></tr>
+      <tr><td>Seize one cohort relay</td><td>One key-share is gone. Readers fetch a different share from another cohort member. K-of-N tolerates up to N−K failures.</td></tr>
+      <tr><td>Block the manifest outbox</td><td>Readers can't find pointers. Mitigated by inline-signed-roster distribution across many mirrors (still a work in progress).</td></tr>
+      <tr><td>Subpoena one operator</td><td>They hand over opaque bytes they can't read or attribute. Plausible deniability is a real legal posture.</td></tr>
+      <tr><td>Compel K operators to collude</td><td><span class="pill pill-bad">This works.</span> Gathering K shares + the ciphertext + the manifest reconstructs the body. The defense is operator independence — K operators in K jurisdictions.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Killing the whole site</h3>
+  <p>The pure-pipe architecture makes this remarkably hard:</p>
+  <ul>
+    <li><strong>There's no "the site" to seize.</strong> The founder's VPS is one optional pipe among many. Turn it off and readers reach the fleet's other <code>dht-relay-ws</code> endpoints.</li>
+    <li><strong>There's no central index to subpoena.</strong> The feed is assembled in each reader's browser. There's no server that holds "the front page."</li>
+    <li><strong>There's no DNS to revoke.</strong> Sites are addressed by Hyperdrive keys, not domains. The <code>peerit.site</code> URL is a convenience on-ramp, not the network's address.</li>
+    <li><strong>There's no single operator to pressure.</strong> The fleet is permissionless — anyone can run a blind seeder, and adding seeders strengthens the network without asking anyone's permission.</li>
+  </ul>
+
+  <div class="callout warn">
+    <h4>The honest ceiling on takedown resistance</h4>
+    <p>This is not impunity. Three real attacks still work:</p>
+    <ol>
+      <li><strong>Block the entry point.</strong> A censor that blocks the single origin serving the web bundle still wins — until the signed roster is inlined into the page and the bundle is mirrored across IPFS / extensions / other origins. This work is ongoing.</li>
+      <li><strong>Collude across K operators.</strong> If K cohort members are compelled (or paid) to cooperate, reconstruction is possible. Defense is jurisdictional diversity, not cryptography.</li>
+      <li><strong>Go after the readers.</strong> A censor that blocks all <code>dht-relay-ws</code> endpoints in their network blocks all readers. The pure pipe doesn't help here — the readers are the network.</li>
+    </ol>
+    <p>What the architecture <em>does</em> promise: <strong>no single legal action, against any single
+       operator, can take down a post or the site.</strong> That's a real and meaningful bar — but
+       it's not "unstoppable." Don't market it as such.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="hosting">
+  <h2><span class="num">09</span>Who's hosting it? <span style="color:var(--dim);font-weight:400">(nobody knows)</span></h2>
+
+  <p class="lead">The plausible-deniability story, told honestly.</p>
+
+  <p>Here's the question every relay operator should be able to answer with a straight face: <em>"what
+     am I hosting?"</em> Under BlindShard + the pure pipe, the honest answer is striking:</p>
+
+  <blockquote style="border-left:3px solid var(--violet);margin:1.5em 0;padding:1em 1.4em;background:rgba(155,126,215,.06);border-radius:0 10px 10px 0;color:#cdd6e3;font-style:italic">
+    "I run an opt-in availability relay. Under <code>shard:*</code> I hold content-hash-addressed
+    opaque bytes I cannot decrypt (no keys), cannot attribute to any post or user (the address is a
+    hash of the bytes), and cannot reassemble alone (I never hold enough fragments of any one item).
+    Reconstructing anything requires deliberately fetching the public manifest AND collecting K
+    fragments from OTHER operators — an affirmative act against the whole network, not something my
+    disk does at rest."
+  </blockquote>
+
+  <p>That's the Freenet-CHK grade posture. Liability shrinks from <em>"I host this user's readable
+     post"</em> to <em>"I host meaningless, incomplete, encrypted fragments."</em> Selective
+     censorship-by-meaning becomes impossible because the relay has no content index.</p>
+
+  <h3>Why "nobody knows who's hosting what"</h3>
+  <p>Three properties combine to make attribution genuinely hard:</p>
+
+  <ul>
+    <li><strong>Content-addressed storage.</strong> A shard is stored at <code>blake2b-256(ciphertext)</code> — a hash of its own bytes. That address has no link to author, community, or post. An operator looking at their disk sees a sea of random hashes.</li>
+    <li><strong>Author-decoupled surface.</strong> The shard store is not gated by <code>data._k === appId</code> the way the old outbox was. Shards are anonymous blobs, not part of any author's enumerable outbox. There's no "show me everything alice stored" query.</li>
+    <li><strong>No app awareness.</strong> The strict substrate (Layer 1) has no concept of "peerit" or any other app. A relay operator can't tell whether they're hosting fragments of a forum, a chat app, or a recipe collection — the bytes look identical.</li>
+  </ul>
+
+  <figure>
+    <svg viewBox="0 0 880 240" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <text x="440" y="24" text-anchor="middle" fill="#8b9bb0" font-size="11" font-weight="700">WHAT THREE DIFFERENT OPERATORS SEE ON THEIR DISK</text>
+
+      <!-- op 1 -->
+      <rect x="20" y="40" width="270" height="180" rx="10" fill="#0a0f16" stroke="#1f2a3a"/>
+      <text x="155" y="62" text-anchor="middle" fill="#5b9fd4" font-size="11" font-weight="700">OPERATOR A</text>
+      <text x="155" y="78" text-anchor="middle" fill="#8b9bb0" font-size="9">ciphertext relay</text>
+      <g font-size="10" font-family="ui-monospace,monospace" fill="#cdd6e3">
+        <text x="35" y="104">shard:7f3a…b29c</text>
+        <text x="35" y="120">  bytes: 🔒🔒🔒🔒🔒</text>
+        <text x="35" y="148" fill="#5b6b80">cannot read (no key)</text>
+        <text x="35" y="164" fill="#5b6b80">cannot attribute</text>
+        <text x="35" y="180" fill="#5b6b80">cannot tell which app</text>
+        <text x="35" y="200" fill="#3ecf8e" font-weight="700">"I host encrypted</text>
+        <text x="35" y="214" fill="#3ecf8e" font-weight="700"> blobs, no idea what."</text>
+      </g>
+
+      <!-- op 2 -->
+      <rect x="305" y="40" width="270" height="180" rx="10" fill="#0a0f16" stroke="#1f2a3a"/>
+      <text x="440" y="62" text-anchor="middle" fill="#e0a54b" font-size="11" font-weight="700">OPERATOR B</text>
+      <text x="440" y="78" text-anchor="middle" fill="#8b9bb0" font-size="9">cohort member</text>
+      <g font-size="10" font-family="ui-monospace,monospace" fill="#cdd6e3">
+        <text x="320" y="104">share:c1d2…e4f5</text>
+        <text x="320" y="120">  bytes: 🔑 (tiny)</text>
+        <text x="320" y="148" fill="#5b6b80">one fragment of a key</text>
+        <text x="320" y="164" fill="#5b6b80">useless alone</text>
+        <text x="320" y="180" fill="#5b6b80">no link to ciphertext</text>
+        <text x="320" y="200" fill="#3ecf8e" font-weight="700">"I hold a key fragment,</text>
+        <text x="320" y="214" fill="#3ecf8e" font-weight="700"> no idea whose."</text>
+      </g>
+
+      <!-- op 3 -->
+      <rect x="590" y="40" width="270" height="180" rx="10" fill="#0a0f16" stroke="#1f2a3a"/>
+      <text x="725" y="62" text-anchor="middle" fill="#9b7ed9" font-size="11" font-weight="700">OPERATOR C</text>
+      <text x="725" y="78" text-anchor="middle" fill="#8b9bb0" font-size="9">runs a different app's shards</text>
+      <g font-size="10" font-family="ui-monospace,monospace" fill="#cdd6e3">
+        <text x="605" y="104">shard:9a8b…7c6d</text>
+        <text x="605" y="120">  bytes: 🔒🔒🔒🔒🔒</text>
+        <text x="605" y="148" fill="#5b6b80">looks identical to A's</text>
+        <text x="605" y="164" fill="#5b6b80">could be peerit, recipes,</text>
+        <text x="605" y="180" fill="#5b6b80">anything — indistinguishable</text>
+        <text x="605" y="200" fill="#3ecf8e" font-weight="700">"I host encrypted blobs,</text>
+        <text x="605" y="214" fill="#3ecf8e" font-weight="700"> no idea what."</text>
+      </g>
+    </svg>
+    <figcaption>Three operators. Same kind of bytes. None can read, attribute, or even identify the app. Indistinguishable storage is the deniability foundation.</figcaption>
+  </figure>
+
+  <div class="callout danger">
+    <h4>What deniability is — and is not</h4>
+    <p><strong>It is:</strong> a real legal posture. "I hold opaque bytes I cannot read or attribute"
+        is a defensible position in a way that "I host alice's readable post about X" is not. The
+        operator must affirmatively act (gather K shares from other operators, fetch the manifest,
+        run the reader) to learn anything — and that act leaves evidence.</p>
+    <p><strong>It is not:</strong> cryptographic secrecy. A determined party who obtains the public
+        read capability can reconstruct. A court that compels K operators can reconstruct. The win is
+        that <em>ordinary operation</em> exposes nothing — not that <em>no attack</em> ever could.</p>
+    <p><strong>Forbidden marketing:</strong> "the operator can't read your posts." That's a lie. The
+        honest claim is "the operator must affirmatively reconstruct, in coordination with other
+        operators, to read anything — and ordinary disk-grep yields nothing."</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="ceilings">
+  <h2><span class="num">10</span>Honest ceilings</h2>
+
+  <p class="lead">What BlindShard and the pure pipe do <em>not</em> achieve. Read these before
+     believing any claim.</p>
+
+  <ol>
+    <li><strong>Not secrecy for public content.</strong> The read key reaches every reader, including
+        an operator acting as a reader. A determined party can always reconstruct by gathering K shares.
+        The win is deniability and non-readability-in-isolation, not confidentiality.</li>
+
+    <li><strong>Not metadata blindness.</strong> Shard sizes, request timing, IP addresses (without a
+        split transport), total volume, and per-author record counts all still leak. Sharding hides
+        <em>bodies</em>, not <em>associations</em>.</li>
+
+    <li><strong>Not immunity to collusion.</strong> If K cohort operators cooperate (willingly or
+        under compulsion), they can reconstruct any body. Defense is jurisdictional and operator
+        diversity — not cryptography.</li>
+
+    <li><strong>Not impunity from blocking.</strong> A censor that blocks the single origin serving
+        the web bundle still wins, until the signed roster is inlined and the bundle is mirrored.
+        Sharding resists <em>seizure</em>, not <em>blocking</em>.</li>
+
+    <li><strong>Not durability until custody receipts ship.</strong> Today, shard placement is
+        fire-and-forget — there's no quorum receipt confirming that K independent operators actually
+        persisted their shares. Until that lands, the user's device cache is the real backstop.</li>
+
+    <li><strong>Not deployed at scale yet.</strong> The shipped code is wired but dispersal is
+        <em>disabled in production</em> (empty shard roster). Real dispersal requires ≥3 (ideally ≥6)
+        independent operators — a deployment property, not a code property. Until then, peerit runs
+        with single-relay v2 opaque logs, which blind the graph but not the bodies.</li>
+
+    <li><strong>Not a substitute for the signed-release chain.</strong> Even with perfect dispersal,
+        a compromised origin can serve malicious JavaScript that exfiltrates keys. The signed-release
+        chain (verifying the bundle against an offline key) is the complementary defense on the code
+        side. Both layers are needed.</li>
+
+    <li><strong>Not anonymous.</strong> Operators see IPs (without Tor), request patterns, and
+        connection metadata. Privacy against a global passive observer is explicitly out of scope
+        and requires mixnets or cover traffic that v1 does not provide.</li>
+  </ol>
+
+  <div class="callout danger">
+    <h4>If you read one thing, read this</h4>
+    <p>The blind substrate + BlindShard + pure pipe stack is a <strong>liability-reduction and
+       takedown-resistance architecture</strong>, not a secrecy or anonymity architecture. It shrinks
+       what any single operator holds, raises the bar for reconstruction from "grep my own disk" to
+       "coordinate an attack across K independent operators," and moves the feed-building job out of
+       any seizable server. It does not make public posts secret. It does not hide metadata. It does
+       not defeat a determined global adversary.</p>
+    <p>Claim past these ceilings and you've become the kind of project this architecture was built
+       to be different from.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="glossary">
+  <h2><span class="num">11</span>Glossary</h2>
+
+  <dl style="margin:1.5em 0">
+    <dt style="font-weight:700;color:var(--accent-2);margin-top:1em;font-family:ui-monospace,monospace;font-size:.95em">BlindShard</dt>
+    <dd style="margin:.2em 0 0 1.2em;color:var(--dim)">The body-dispersal layer. Encrypts post bodies, splits the AES key across a cohort of relays, and stores the ciphertext separately so no single operator holds a readable, complete, or linkable copy.</dd>
+
+    <dt style="font-weight:700;color:var(--accent-2);margin-top:1em;font-family:ui-monospace,monospace;font-size:.95em">PVSS (Publicly Verifiable Secret Sharing)</dt>
+    <dd style="margin:.2em 0 0 1.2em;color:var(--dim)">The cryptographic technique used to split the AES key. Any K of N shares can reconstruct the key; fewer than K reveals computationally nothing. "Publicly verifiable" means anyone can check that a share is well-formed without learning the secret.</dd>
+
+    <dt style="font-weight:700;color:var(--accent-2);margin-top:1em;font-family:ui-monospace,monospace;font-size:.95em">Cohort</dt>
+    <dd style="margin:.2em 0 0 1.2em;color:var(--dim)">The group of independent relay operators who each hold one key-share. The cohort is the unit of reconstruction — you need K of them to recover a key.</dd>
+
+    <dt style="font-weight:700;color:var(--accent-2);margin-top:1em;font-family:ui-monospace,monospace;font-size:.95em">Threshold (K of N)</dt>
+    <dd style="margin:.2em 0 0 1.2em;color:var(--dim)">The reconstruction parameters. N shares are distributed; any K reconstruct the key. Typical: K=3, N=5 — tolerates 2 missing operators.</dd>
+
+    <dt style="font-weight:700;color:var(--accent-2);margin-top:1em;font-family:ui-monospace,monospace;font-size:.95em">Pure pipe</dt>
+    <dd style="margin:.2em 0 0 1.2em;color:var(--dim)">The end state where the founder's VPS is a dumb byte-pipe (dht-relay-ws) that carries encrypted frames but stores and serves nothing. Readers aggregate for themselves.</dd>
+
+    <dt style="font-weight:700;color:var(--accent-2);margin-top:1em;font-family:ui-monospace,monospace;font-size:.95em">Reader-side aggregation</dt>
+    <dd style="margin:.2em 0 0 1.2em;color:var(--dim)">When each reader's browser runs a real HyperDHT node and builds the feed itself — discovering authors, pulling shards, reassembling bodies — instead of querying a central server.</dd>
+
+    <dt style="font-weight:700;color:var(--accent-2);margin-top:1em;font-family:ui-monospace,monospace;font-size:.95em">Blind seeder fleet</dt>
+    <dd style="margin:.2em 0 0 1.2em;color:var(--dim)">The permissionless network of opt-in operators who hold blind erasure shards. The fleet is what makes the pure pipe durable — without enough independent seeders, there's nothing to read.</dd>
+
+    <dt style="font-weight:700;color:var(--accent-2);margin-top:1em;font-family:ui-monospace,monospace;font-size:.95em">Content-addressed storage</dt>
+    <dd style="margin:.2em 0 0 1.2em;color:var(--dim)">Storing bytes at an address derived from a hash of the bytes themselves (here, blake2b-256). The address has no link to author or content meaning — it's just a fingerprint of the data.</dd>
+
+    <dt style="font-weight:700;color:var(--accent-2);margin-top:1em;font-family:ui-monospace,monospace;font-size:.95em">Author-decoupled</dt>
+    <dd style="margin:.2em 0 0 1.2em;color:var(--dim)">A storage surface that does not gate writes by <code>data._k === appId</code>. Shards are anonymous blobs, not part of any author's enumerable outbox. There's no "show me everything alice stored" query.</dd>
+
+    <dt style="font-weight:700;color:var(--accent-2);margin-top:1em;font-family:ui-monospace,monospace;font-size:.95em">Custody intent / receipt</dt>
+    <dd style="margin:.2em 0 0 1.2em;color:var(--dim)">A signed statement from a relay that it holds a specific share. Turns fire-and-forget placement into acknowledged, auditable storage. Phase 4 work.</dd>
+
+    <dt style="font-weight:700;color:var(--accent-2);margin-top:1em;font-family:ui-monospace,monospace;font-size:.95em">Lazy hydration</dt>
+    <dd style="margin:.2em 0 0 1.2em;color:var(--dim)">The optimization where body reassembly happens only when a post is opened, not when the feed renders. Keeps the dispersal layer's cost off the hot path.</dd>
+
+    <dt style="font-weight:700;color:var(--accent-2);margin-top:1em;font-family:ui-monospace,monospace;font-size:.95em">Plausible deniability</dt>
+    <dd style="margin:.2em 0 0 1.2em;color:var(--dim)">The legal posture: "I hold opaque bytes I cannot read or attribute." Defensible because the operator must affirmatively act (coordinate with other operators) to learn anything.</dd>
+
+    <dt style="font-weight:700;color:var(--accent-2);margin-top:1em;font-family:ui-monospace,monospace;font-size:.95em">Liability ladder</dt>
+    <dd style="margin:.2em 0 0 1.2em;color:var(--dim)">The four-rung progression: v1 (readable host) → substrate (blind graph) → BlindShard (blind bodies) → pure pipe (serve nothing). Each rung strictly shrinks what the founder's box holds and can be blamed for.</dd>
+
+    <dt style="font-weight:700;color:var(--accent-2);margin-top:1em;font-family:ui-monospace,monospace;font-size:.95em">Manifest</dt>
+    <dd style="margin:.2em 0 0 1.2em;color:var(--dim)">The small signed record that tells a reader where to find the ciphertext shard and the K key-shares. Crucially, the shipped manifest carries <strong>no key</strong> — only pointers.</dd>
+  </dl>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><strong>Sources.</strong> Grounded in
+       <code>02-apps/peerit/docs/BLINDSHARD-DESIGN.md</code> (original design record, superseded),
+       <code>BLINDSHARD-RECORD-WIRING-SPEC.md</code> (shipped construction),
+       <code>PURE-PIPE-SCOPE.md</code> (the pure-pipe end state and composition gaps),
+       <code>OPERATOR-LIABILITY.md</code> (the deniability posture),
+       and <code>js/blind-dealer.mjs</code> + <code>js/blob-disperse.js</code> (the shipped client).</p>
+    <p><strong>Important.</strong> The shipped code differs from the original BlindShard design doc.
+       This explainer describes the <em>shipped</em> PVSS key-split construction, not the superseded
+       Reed-Solomon ciphertext-split scheme. See §03 for the distinction.</p>
+    <p><strong>Status.</strong> Mechanism is wired and tested against a fake fleet. Dispersal is
+       <strong>disabled in production</strong> until ≥3 independent operators are recruited. The
+       pure pipe is the north star, not the current deployment. Honest ceilings in §10 reflect this.</p>
+    <p><strong>Honesty.</strong> This document does not claim anything the architecture does not
+       actually prove. G5 secrecy for public content is impossible. Metadata leaks. Collusion across
+       K operators reconstructs. If you find a claim here that overreaches, report it.</p>
+  </div>
+</footer>
+
+</body>
+</html>

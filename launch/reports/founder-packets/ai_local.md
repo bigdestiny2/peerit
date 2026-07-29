@@ -1,69 +1,58 @@
 # Founder Packet: r/ai_local
 
-Sources: `launch/communities.json` (4bbb63e36ad5), `docs/GROWTH_AUTOMATION_SPEC.md` (129f5da753f7)
+Sources: `launch/communities.json`, `launch/seed-posts/ai_local.md`, `launch/seed-identities.json`
 
 ## Board Brief
 
-- Title: Local AI
-- Audience: Ollama, llama.cpp, MLX, homelab GPU, and local model users.
-- Launch role: Bridge to future HiveCompute and GPU marketplace demand.
-- Founder brief: Seed practical benchmarks, model notes, and local inference workflows. Avoid hype-only posts.
-- Moderation risk: medium
+- **Title:** Local AI  
+- **Audience:** Ollama, llama.cpp, MLX, vLLM, homelab GPU users.  
+- **Launch role:** Bookmarkable performance/ergonomics board; funnel into r/llmjailbreaks for red-team benches and the **uncensored model bounty**.  
+- **Founder brief:** Seed VRAM tables, quant deathmatches, stack comparisons, honest local-vs-hosted L’s. Cross-link the $400 model write-up bounty. Avoid hype-only posts.  
+- **Multi-identity:** Six cast identities — ops, researchers, enthusiast, newcomer, mod. Casting table in `seed-posts/ai_local.md`.  
+- **Risk:** medium · **Phase:** initial  
+
+## Multi-identity cast (required)
+
+| Roster id | Role on this board |
+| --- | --- |
+| **mod-ai** | Pin norms; bounty cross-post; scope (“performance here, refusal on jailbreaks”) |
+| **ops-homelab** | VRAM tables, dual GPU, power draw, Windows/CUDA pain |
+| **research-ablate** | Quant deathmatch, embeddings, model picks |
+| **research-bench** | Stack matrix, agents, harness bridge |
+| **enthusiast-try** | Re-runs, Apple Silicon honesty, alive-thread replies |
+| **newcomer-q** | “8GB survival?”, install stuck points, honest local L’s |
+
+**Rules:** ≥4 distinct authors · every OP gets a different-identity reply · no monologue board.
 
 ## Deliverables
 
-- Create one owner/moderator identity for r/ai_local.
-- Publish 12 quality starter posts before paid traffic.
-- Publish at least 3 open-ended discussion prompts.
-- Pin one norms post and exercise the moderation overlay before launch.
-- Reply daily during the first launch week so the board does not feel empty.
+- **Six** seed identities (not one owner).  
+- **12** starter posts from `launch/seed-posts/ai_local.md` casting schedule.  
+- Pin norms (**mod-ai**); post VRAM table early (**ops-homelab**).  
+- Cross-post model bounty within 48h (**mod-ai** OP + research/enthusiast replies).  
+- Daily multi-identity replies launch week.
 
-## Pinned Norms Post Template
+## Pinned norms
 
 ```markdown
-# Welcome to r/ai_local
+# r/ai_local — numbers over vibes
 
-This board is for Ollama, llama.cpp, MLX, homelab GPU, and local model users.
+Local models, real hardware, copy-paste configs.
+No waitlist screenshots. No AGI sermons.
 
-Bring concrete links, demos, build notes, questions, and careful comparisons.
-Keep claims precise: Peerit has no central account, uses signed identities, and gates posting with small proof-of-work.
-Do not position this board around illegal content, harassment, doxxing, ban evasion, or "anything goes" moderation.
+For refusal/injection measurement and the open-weight uncensored model bounty → r/llmjailbreaks.
 
-Read on the gateway. Post through PearBrowser.
+Peerit: no account · signed · PoW. Gateway read → PearBrowser write.
 ```
 
-## Starter Prompt Checklist
+## Prompts
 
-- "What is one Local AI workflow that would benefit from no central account or server?"
-- "Show a concrete Local AI build, benchmark, migration, or failure report."
-- "What should r/ai_local moderate quickly during launch week?"
-- "Where does Peerit's P2P model fit this audience, and where is it still rough?"
+- “Drop GPU + model + quant + tok/s for your daily driver.”  
+- “Same model, three quants — who wins on your box?”  
+- “When is local strictly worse than hosted?”  
+- “Run the llmjailbreaks synthetic harness and post the JSON.”  
 
-## Preferred Launch Channels
+## Safety
 
-| Rank | Channel | Fit | Source / Medium |
-| ---: | --- | --- | --- |
-| 8 | Hacker News, Lobsters, Tildes, and /g/ as technical proof channels | strong | `technical_forums` / `organic_community` |
-| 9 | 4chan /biz/ only as a small crypto-native experiment | strong | `4chan_biz_paid_banner` / `paid_banner` |
-
-## Board Links
-
-| Channel | Fit | Tagged Gateway Link |
-| --- | --- | --- |
-| Hacker News, Lobsters, Tildes, and /g/ as technical proof channels | strong | https://peerit.site/?utm_source=technical_forums&utm_medium=organic_community&utm_campaign=peerit_launch_2026_06&utm_content=p2p-reddit.ai_local&utm_term=ai_local&peerit_campaign_tag=peerit_launch_2026_06%3Ahacker-news-lobsters-tildes-and-g-as-technical-proof-channels%3Ap2p-reddit%3Aai_local&peerit_channel=hacker-news-lobsters-tildes-and-g-as-technical-proof-channels&peerit_board=ai_local#/r/ai_local |
-| 4chan /biz/ only as a small crypto-native experiment | strong | https://peerit.site/?utm_source=4chan_biz_paid_banner&utm_medium=paid_banner&utm_campaign=peerit_launch_2026_06&utm_content=p2p-reddit.ai_local&utm_term=ai_local&peerit_campaign_tag=peerit_launch_2026_06%3A4chan-biz-only-as-a-small-crypto-native-experiment%3Ap2p-reddit%3Aai_local&peerit_channel=4chan-biz-only-as-a-small-crypto-native-experiment&peerit_board=ai_local#/r/ai_local |
-| Nostr | general | https://peerit.site/?utm_source=nostr&utm_medium=organic_social&utm_campaign=peerit_launch_2026_06&utm_content=p2p-reddit.ai_local&utm_term=ai_local&peerit_campaign_tag=peerit_launch_2026_06%3Anostr%3Ap2p-reddit%3Aai_local&peerit_channel=nostr&peerit_board=ai_local#/r/ai_local |
-| Lemmy/Fediverse/Mbin | general | https://peerit.site/?utm_source=fediverse&utm_medium=organic_community&utm_campaign=peerit_launch_2026_06&utm_content=p2p-reddit.ai_local&utm_term=ai_local&peerit_campaign_tag=peerit_launch_2026_06%3Alemmy-fediverse-mbin%3Ap2p-reddit%3Aai_local&peerit_channel=lemmy-fediverse-mbin&peerit_board=ai_local#/r/ai_local |
-| Privacy and degoogle communities | general | https://peerit.site/?utm_source=privacy_communities&utm_medium=community_post&utm_campaign=peerit_launch_2026_06&utm_content=p2p-reddit.ai_local&utm_term=ai_local&peerit_campaign_tag=peerit_launch_2026_06%3Aprivacy-and-degoogle-communities%3Ap2p-reddit%3Aai_local&peerit_channel=privacy-and-degoogle-communities&peerit_board=ai_local#/r/ai_local |
-| Self-hosting, homelab, Linux, FOSS | general | https://peerit.site/?utm_source=selfhosted_foss&utm_medium=community_post&utm_campaign=peerit_launch_2026_06&utm_content=p2p-reddit.ai_local&utm_term=ai_local&peerit_campaign_tag=peerit_launch_2026_06%3Aself-hosting-homelab-linux-foss%3Ap2p-reddit%3Aai_local&peerit_channel=self-hosting-homelab-linux-foss&peerit_board=ai_local#/r/ai_local |
-
-## Safety Boundaries
-
-- Do not say: Anything goes.
-- Do not say: Darknet Reddit.
-- Do not say: No moderation.
-- Do not say: Untraceable.
-- Do not say: Use this to evade bans.
-- Do not advertise into darknet-market communities.
-- Do not position Peerit as a place for illegal content.
-- Do not target hate, harassment, doxxing, exploitation, or violent-extremism communities.
+- Standard Peerit exclusions (illegal content, harassment, etc.).  
+- Model shares: license-clean open weights only when linking downloads.

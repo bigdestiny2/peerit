@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HiveRelay Status — July 19 vs July 26</title>
+<style>
+  :root{
+    --bg:#0a0e14; --panel:#111821; --panel-2:#0d141d;
+    --ink:#e8eef6; --dim:#8b9bb0; --faint:#5b6b80;
+    --line:#1f2a3a; --line-2:#152028;
+    --accent:#4fd1c5; --accent-2:#5b9fd4; --gold:#e0a54b; --rose:#e0533d; --violet:#9b7ed9; --green:#3ecf8e;
+    --cutover:#22d3ee;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--accent-2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{background:#0a0f16;border:1px solid var(--line);padding:.05em .4em;border-radius:4px;
+    font:.86em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cfe3ff}
+
+  .wrap{max-width:1000px;margin:0 auto;padding:0 1.4em}
+  main{padding-bottom:5em}
+
+  header.hero{padding:4em 0 2.5em;border-bottom:1px solid var(--line);
+    background:radial-gradient(ellipse at top,rgba(62,207,142,.07),transparent 60%)}
+  .eyebrow{color:var(--green);font-size:.78em;font-weight:700;letter-spacing:.18em;text-transform:uppercase;margin:0 0 .8em}
+  h1{font-size:2.3em;line-height:1.1;margin:.1em 0 .3em;letter-spacing:-.025em;font-weight:800}
+  h1 .grad{background:linear-gradient(120deg,var(--green),var(--accent));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:1.2em;color:var(--dim);max-width:64ch;margin:1em 0 0}
+  .meta{margin-top:1.5em;display:flex;flex-wrap:wrap;gap:.5em;font-size:.8em;color:var(--faint)}
+  .meta span{padding:.3em .7em;border:1px solid var(--line);border-radius:999px;background:var(--panel)}
+
+  section{padding:2.5em 0;border-bottom:1px solid var(--line-2)}
+  section:last-of-type{border-bottom:0}
+  h2{font-size:1.55em;letter-spacing:-.015em;margin:0 0 .5em;font-weight:700}
+  h2 .num{color:var(--green);font-variant-numeric:tabular-nums;margin-right:.5em;font-weight:800}
+  h3{font-size:1.15em;margin:1.4em 0 .4em;font-weight:700;letter-spacing:-.01em}
+  p{margin:.6em 0}
+  ul,ol{margin:.6em 0;padding-left:1.5em}
+  li{margin:.3em 0}
+
+  .callout{border-left:3px solid var(--accent);background:rgba(79,209,197,.05);
+    padding:.9em 1.2em;border-radius:0 10px 10px 0;margin:1.2em 0}
+  .callout.warn{border-color:var(--gold);background:rgba(224,165,75,.06)}
+  .callout.danger{border-color:var(--rose);background:rgba(224,83,61,.06)}
+  .callout.blue{border-color:var(--accent-2);background:rgba(91,159,212,.06)}
+  .callout.green{border-color:var(--green);background:rgba(62,207,142,.06)}
+  .callout.cutover{border-color:var(--cutover);background:rgba(34,211,238,.07)}
+  .callout h4{margin:.1em 0 .3em;color:inherit;font-size:.76em;text-transform:uppercase;letter-spacing:.1em}
+  .callout.warn h4{color:var(--gold)}
+  .callout.danger h4{color:var(--rose)}
+  .callout.blue h4{color:var(--accent-2)}
+  .callout.green h4{color:var(--green)}
+  .callout.cutover h4{color:var(--cutover)}
+  .callout p:last-child{margin-bottom:0}
+
+  table{border-collapse:collapse;width:100%;margin:1em 0;font-size:.92em}
+  th,td{border:1px solid var(--line);padding:.55em .75em;text-align:left;vertical-align:top}
+  th{background:#0a0f16;color:var(--dim);font-weight:600;font-size:.82em;text-transform:uppercase;letter-spacing:.04em}
+
+  .status{display:inline-block;padding:.12em .5em;border-radius:4px;font-size:.72em;font-weight:700;text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--line);white-space:nowrap}
+  .s-done{color:var(--green);border-color:#1d3a2c;background:rgba(62,207,142,.08)}
+  .s-progress{color:var(--cutover);border-color:#0f3a44;background:rgba(34,211,238,.1)}
+  .s-gated{color:var(--gold);border-color:#3a2a14;background:rgba(224,165,75,.08)}
+  .s-stale{color:var(--rose);border-color:#3a1d18;background:rgba(224,83,61,.08)}
+  .s-spec{color:var(--accent-2);border-color:#1a2a3a;background:rgba(91,159,212,.08)}
+
+  .delta{display:grid;grid-template-columns:1fr auto 1fr;gap:0;margin:.6em 0;align-items:stretch}
+  .delta .before, .delta .after{padding:.7em 1em;border:1px solid var(--line);border-radius:8px}
+  .delta .before{background:rgba(224,83,61,.04);border-color:#3a1d18}
+  .delta .after{background:rgba(62,207,142,.04);border-color:#1d3a2c}
+  .delta .before strong{color:var(--rose);font-size:.76em;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:.2em}
+  .delta .after strong{color:var(--green);font-size:.76em;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:.2em}
+  .delta .before p, .delta .after p{font-size:.92em;margin:.2em 0;color:#cdd6e3}
+  .delta .arrow{display:flex;align-items:center;justify-content:center;padding:0 .8em;color:var(--accent);font-size:1.3em}
+
+  .live-banner{background:linear-gradient(135deg,rgba(34,211,238,.1),rgba(155,126,215,.06));
+    border:1px solid var(--cutover);border-radius:14px;padding:1.2em 1.4em;margin:1.5em 0}
+  .live-banner h3{margin:0 0 .4em;color:var(--cutover);font-size:1.1em;display:flex;align-items:center;gap:.5em}
+  .live-dot{width:10px;height:10px;border-radius:50%;background:var(--cutover);display:inline-block;
+    box-shadow:0 0 8px var(--cutover);animation:pulse 2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .live-banner p{margin:.4em 0;color:#cdd6e3}
+
+  footer{padding:2em 0 0;border-top:1px solid var(--line);margin-top:2.5em;color:var(--faint);font-size:.84em}
+  footer p{margin:.4em 0}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Status delta · one week of work</p>
+    <h1>HiveRelay: <span class="grad">July 19 → July 26</span></h1>
+    <p class="lede">What the v0.24 release explainer described, what's changed since, and exactly where
+       every piece stands right now. Cross-referenced against the July 19 document so nothing drifts
+       unnoticed.</p>
+    <div class="meta">
+      <span>Baseline: HIVERELAY-RELEASE-EXPLAINED-WEBDEV-2026-07-19.html</span>
+      <span>Delta: 101 commits merged in one session</span>
+      <span>Date: 2026-07-26</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="live-banner">
+    <h3><span class="live-dot"></span> Live: boot-restore fix in active development</h3>
+    <p>Another agent is on <code>codex/hiverelay-vnext-boot-restore-fix-20260726</code> (~40 min in,
+       inside budget). Working on:</p>
+    <ul>
+      <li><code>descriptor-state.js</code> and <code>production-runtime.js</code> — the restore wiring</li>
+      <li>Dedicated test suite (<code>production-vnext-boot-restore.test.js</code>) covering the
+          FLEET-DURABILITY-P1-1 scenario + full fail-closed matrix (expired head / fork / rollback /
+          floor mismatch / store tamper / fresh-store first boot / refresh→restart cycle)</li>
+    </ul>
+    <p><strong>Fleet state:</strong> Dallas stays healthy (serving; not restarted until patched).
+       syd-1's store is intact on disk waiting for the fix. Once the fix lands: review → rebuild →
+       syd-1 boots back with its data → Dallas patched → durability's recovery half completed →
+       Dallas acceptance → Peerit binding.</p>
+  </div>
+
+<!-- ============================================================== -->
+<section>
+  <h2><span class="num">01</span>The honest limitations list — then vs now</h2>
+
+  <p class="lead">The July 19 explainer's §11.5 named five limitations. Here's where each one stands
+     exactly one week later, after 101 commits.</p>
+
+  <h3>1. Multi-relay production</h3>
+  <div class="delta">
+    <div class="before">
+      <strong>July 19</strong>
+      <p>"Multi-relay writes work in the client, but production runs single-ingress until the second
+         independent operator lands (tracked as the program's GA gate)."</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="after">
+      <strong>July 26</strong>
+      <p>Federation quorum receipts merged (7 commits). Multi-relay cross-verification is now on main.
+         The 2-relay substrate cutover is deploying. The "GA gate" is no longer code — it's operator
+         recruitment and the boot-restore fix (in progress now).</p>
+      <p><span class="status s-progress">Cutover in progress</span></p>
+    </div>
+  </div>
+
+  <h3>2. Tor transport</h3>
+  <div class="delta">
+    <div class="before">
+      <strong>July 19</strong>
+      <p>"Tor transport is experimental (a documented fail-open gap is being closed before any
+         'location anonymity' claim)."</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="after">
+      <strong>July 26</strong>
+      <p>Tor RA-01 through RA-07 fully implemented, tested (5/5 test suites pass), and merged to main.
+         RA-06 (Docker + Umbrel packaging with pinned tor 0.4.9.x sidecar) shipped today. Plus 4
+         cherry-picked gateway convergence fixes (roster rollback, lifecycle serialization, secure
+         convergence, storage proof fixture).</p>
+      <p><span class="status s-done">Code complete</span> · needs live integration test against real Docker deploy</p>
+    </div>
+  </div>
+
+  <h3>3. PVSS custody (BlindShard)</h3>
+  <div class="delta">
+    <div class="before">
+      <strong>July 19</strong>
+      <p>"PVSS custody is computational (not post-quantum), proven as a mechanism; the
+         independent-operator fleet run is the remaining gate."</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="after">
+      <strong>July 26</strong>
+      <p>Local shard cohort merged (3 commits) — BlindShard dispersal can now be tested end-to-end
+         with a fake cohort locally. The code path is proven; the independent-operator fleet run
+         remains the deployment gate.</p>
+      <p><span class="status s-gated">Code done · gated on operators</span></p>
+    </div>
+  </div>
+
+  <h3>4. Writer pubkeys enumerable</h3>
+  <div class="delta">
+    <div class="before">
+      <strong>July 19</strong>
+      <p>"Writer pubkeys are enumerable (needed for sync)."</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="after">
+      <strong>July 26</strong>
+      <p>Still true for today's OutboxLog. The blind substrate cutover (in progress) addresses this
+         at G2-S (storage-schema opacity — no app/author/community in stored state). Once converged,
+         writer enumeration is defeated.</p>
+      <p><span class="status s-progress">Being fixed by substrate cutover</span></p>
+    </div>
+  </div>
+
+  <h3>5. IP + timing not hidden</h3>
+  <div class="delta">
+    <div class="before">
+      <strong>July 19</strong>
+      <p>"IP + timing at the relay/gateway are not hidden by the architecture — Tor is the mitigation
+         path, not the default."</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="after">
+      <strong>July 26</strong>
+      <p>Tor is now packaged and deployable (<code>docker compose --profile tor up -d</code>), but still
+         opt-in, not default. Split transport (OHTTP for browsers, Protomux for native) is fully
+         spec'd with dev-profile approval — targets G2-W + G4-T. Not yet built.</p>
+      <p><span class="status s-spec">Tor: deployable · Split transport: spec'd</span></p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section>
+  <h2><span class="num">02</span>What shipped in the session (101 commits)</h2>
+
+  <p class="lead">Everything that landed on <code>main</code> between July 19 and July 26.</p>
+
+  <table>
+    <thead><tr><th>Capability</th><th>What it delivers</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Tor v3 onion transport</strong></td>
+        <td>RA-01–RA-07 (persistent keys, client auth, peer vport, health gating, redaction, PoW defense, packaging). Docker + Umbrel sidecar with pinned tor 0.4.9.x.</td>
+        <td><span class="status s-done">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>Federation quorum receipts</strong></td>
+        <td>Multi-relay cross-verification of write receipts. The piece the 2-relay cutover depends on.</td>
+        <td><span class="status s-done">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>Publisher-signed submit protocol</strong></td>
+        <td><code>hiverelay-publish v1</code> — Protomux channel for publisher-signed submits. Write-path prerequisite for the substrate.</td>
+        <td><span class="status s-done">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>Local shard cohort</strong></td>
+        <td>BlindShard dispersal testable end-to-end with a local fake cohort.</td>
+        <td><span class="status s-done">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>Push notifications</strong></td>
+        <td>APNS, FCM, WebPush providers + JWT + token codec. Full notify-push package.</td>
+        <td><span class="status s-done">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>Pear v3 release catalog</strong></td>
+        <td>v3 release indexing, v2 legacy containment, absolute storage path enforcement.</td>
+        <td><span class="status s-done">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>19 bug fixes</strong></td>
+        <td>Replication (7), custody (2), storage (3), fleet (2), API (2), client (1), Bare relay (1), test (1). Including: 503+Retry-After, partial-quorum receipts, anchor honesty, persistent download ranges, hyperdrive 11.x compat, reseed timeout, transient error classification.</td>
+        <td><span class="status s-done">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>Notify hardening</strong></td>
+        <td>Credential mode constants, receive-cap quotas, push provider resolution from config.</td>
+        <td><span class="status s-done">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>Drive-boot core</strong></td>
+        <td>Boot the real Node CLI off the drive (node_modules linking + E2E test).</td>
+        <td><span class="status s-done">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>Tor gateway convergence</strong></td>
+        <td>4 cherry-picked fixes: roster rollback fail-closed, lifecycle serialization, secure convergence, storage proof fixture.</td>
+        <td><span class="status s-done">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>Release signing</strong></td>
+        <td>Keyvault newline fix + SSH signing improvements.</td>
+        <td><span class="status s-done">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>StartOS + disk cap</strong></td>
+        <td>StartOS 0.4 release artifact buildable. Disk-relative storage cap + faster eviction to stop disk-full wedge.</td>
+        <td><span class="status s-done">Shipped</span></td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================== -->
+<section>
+  <h2><span class="num">03</span>The honesty ladder — where we sit now</h2>
+
+  <p class="lead">After today's merges, here's peerit's position on the G0–G5 guarantee ladder.</p>
+
+  <table>
+    <thead><tr><th>Rung</th><th>What it means</th><th>July 19</th><th>July 26</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>G0</strong> Integrity</td>
+        <td>Relay can't forge content</td>
+        <td><span class="status s-done">Shipped</span></td>
+        <td><span class="status s-done">Shipped</span></td>
+      </tr>
+      <tr>
+        <td><strong>G1</strong> Payload opacity</td>
+        <td>Relay receives ciphertext, has no key</td>
+        <td><span class="status s-gated">Partial</span></td>
+        <td><span class="status s-progress">Cutover</span></td>
+      </tr>
+      <tr>
+        <td><strong>G2-S</strong> Storage-schema opacity</td>
+        <td>No app/author/community in stored state</td>
+        <td><span class="status s-spec">Spec'd</span></td>
+        <td><span class="status s-progress">Cutover</span></td>
+      </tr>
+      <tr>
+        <td><strong>G2-W</strong> Wire opacity</td>
+        <td>No app-identifying metadata on the wire</td>
+        <td><span class="status s-spec">Not started</span></td>
+        <td><span class="status s-spec">Spec'd</span></td>
+      </tr>
+      <tr>
+        <td><strong>G3</strong> At-rest unlinkability</td>
+        <td>Rotating slots, no deterministic grouping</td>
+        <td><span class="status s-spec">Spec'd</span></td>
+        <td><span class="status s-progress">Partial (cutover + BlindShard coded)</span></td>
+      </tr>
+      <tr>
+        <td><strong>G4-T</strong> Route separation</td>
+        <td>Storage can't bind request to your IP</td>
+        <td><span class="status s-spec">Not started</span></td>
+        <td><span class="status s-spec">Spec'd + Tor deployable</span></td>
+      </tr>
+      <tr>
+        <td><strong>G4-I</strong> Read-interest privacy</td>
+        <td>Storage can't tell which post you read</td>
+        <td><span class="status s-spec">Out of scope</span></td>
+        <td><span class="status s-spec">Out of scope</span></td>
+      </tr>
+      <tr>
+        <td><strong>G5</strong> Active-reader resistance</td>
+        <td>Operator can't read even by joining as reader</td>
+        <td><span class="status s-stale">Impossible (public)</span></td>
+        <td><span class="status s-stale">Impossible (public)</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout green">
+    <h4>The honest delta</h4>
+    <p>One week ago: G0 + partial v2 graph-blinding. Today: G0 + G1 + G2-S going live (substrate
+       cutover), G3 partially achievable (BlindShard coded for local testing), G4-T has a deployable
+       Tor path and a full split-transport spec. G2-W and G4-I remain unbuilt. G5 remains impossible.</p>
+    <p><strong>The cutover moves peerit from "G0 plus partial graph-blinding" to "G0 + G1 + G2-S plus
+       partial G3."</strong> That's the honest delta.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section>
+  <h2><span class="num">04</span>What's still ahead (the remaining gates)</h2>
+
+  <table>
+    <thead><tr><th>Item</th><th>Type</th><th>What's needed</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Boot-restore fix</strong></td>
+        <td>Code</td>
+        <td>Fix sealed-manifest pre-flight check before pristine-root mutation. Test suite in flight.</td>
+        <td><span class="status s-progress">In active development (another agent)</span></td>
+      </tr>
+      <tr>
+        <td><strong>2-relay cutover convergence</strong></td>
+        <td>Deploy</td>
+        <td>Boot-restore fix lands → syd-1 boots with data → Dallas patched → Peerit binding.</td>
+        <td><span class="status s-progress">Blocked on boot-restore fix</span></td>
+      </tr>
+      <tr>
+        <td><strong>Independent operators (≥3 for BlindShard)</strong></td>
+        <td>Social / ops</td>
+        <td>Recruit arms-length operators in different jurisdictions. Code is done.</td>
+        <td><span class="status s-gated">Recruitment</span></td>
+      </tr>
+      <tr>
+        <td><strong>BlindShard production activation</strong></td>
+        <td>Deploy</td>
+        <td>≥3 operators → configure shard roster → activate dispersal in peerit.</td>
+        <td><span class="status s-gated">Gated on operators</span></td>
+      </tr>
+      <tr>
+        <td><strong>Tor live integration test</strong></td>
+        <td>Testing</td>
+        <td>Run <code>docker compose --profile tor up</code> on a real box, verify onion service comes up, prove a peer connects through it.</td>
+        <td><span class="status s-gated">Needs hardware</span></td>
+      </tr>
+      <tr>
+        <td><strong>Split transport (G2-W + G4-T)</strong></td>
+        <td>Code</td>
+        <td>Phase 1 (Protomux, weeks 2–4) + Phase 2 (OHTTP, weeks 4–8). Spec + dev-profile approvals done.</td>
+        <td><span class="status s-spec">Spec'd, not built</span></td>
+      </tr>
+      <tr>
+        <td><strong>Public HTTPS gateway</strong></td>
+        <td>Code (large branch)</td>
+        <td><code>feat/public-https-hive-gateway</code> — 534 commits. The peerit.site serving layer. Needs dedicated review.</td>
+        <td><span class="status s-spec">Large branch, not reviewed</span></td>
+      </tr>
+      <tr>
+        <td><strong>Canonical contracts</strong></td>
+        <td>Code (large branch)</td>
+        <td><code>codex/canonical-contracts-20260719</code> — 540 commits. Protocol-level WAL + blind v1 canonical authorities. Needs dedicated review.</td>
+        <td><span class="status s-spec">Large branch, not reviewed</span></td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================== -->
+<section>
+  <h2><span class="num">05</span>Repo health</h2>
+
+  <table>
+    <thead><tr><th>Metric</th><th>July 19 (estimated)</th><th>July 26</th></tr></thead>
+    <tbody>
+      <tr><td>Worktrees</td><td>~21 (most stale)</td><td><strong>1</strong> (main checkout only)</td></tr>
+      <tr><td>Stale branches</td><td>~16 from dead agent runs</td><td><strong>Pruned</strong></td></tr>
+      <tr><td>Uncommitted work</td><td>6 files across 3 areas</td><td><strong>0</strong> — all committed</td></tr>
+      <tr><td>Core test suites passing</td><td>Tor + capability (partial)</td><td><strong>5/5</strong> (Tor transport, redaction, auth-keys, peer-listener, capability-doc)</td></tr>
+      <tr><td>Commits ahead of July 19 baseline</td><td>—</td><td><strong>101</strong></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================== -->
+<section>
+  <h2><span class="num">06</span>The July 19 explainer — what's stale</h2>
+
+  <p class="lead">Three lines in the original document now need updating. Everything else is still
+     accurate.</p>
+
+  <div class="callout warn">
+    <h4>Line 1: "Tor transport is experimental"</h4>
+    <p><strong>Update to:</strong> "Tor v3 onion transport is implemented, tested (RA-01–RA-07), and
+       Docker-packaged (RA-06). Deploy with <code>docker compose --profile tor up -d</code>. Awaiting
+       live integration test against a real deployment."</p>
+  </div>
+
+  <div class="callout warn">
+    <h4>Line 2: "Production runs single-ingress"</h4>
+    <p><strong>Update to:</strong> "Federation quorum receipts shipped. The 2-relay cutover is deploying
+       — multi-relay cross-verification is now on main, gated only on the boot-restore fix and operator
+       onboarding."</p>
+  </div>
+
+  <div class="callout warn">
+    <h4>Line 3: "The independent-operator fleet run is the remaining gate" (BlindShard)</h4>
+    <p><strong>Update to:</strong> "Local shard cohort testing is available — BlindShard can be tested
+       end-to-end with a fake fleet. The independent-operator fleet run remains the production gate."</p>
+  </div>
+
+  <div class="callout green">
+    <h4>What's NOT stale (still accurate)</h4>
+    <ul>
+      <li>The two-layer stack architecture (§3) — still the right mental model</li>
+      <li>The "life of a post" diagram (§4) — still accurate, now with federation quorum added</li>
+      <li>The blind tiers table (§5) — still accurate</li>
+      <li>The k-of-n custody explanation (§6) — still accurate</li>
+      <li>The namespace config (§7) — still accurate</li>
+      <li>The two delivery paths (§8) — still accurate</li>
+      <li>The build recipe (§9) — still accurate</li>
+      <li>The operator deal (§10) — still accurate</li>
+      <li>The signed record format (§11.1) — still accurate</li>
+      <li>The DO-NOT-SERVE surface (§11.4) — still accurate</li>
+      <li>The glossary (§12) and FAQ (§13) — still accurate</li>
+    </ul>
+    <p>The document was honest on July 19, and it's still honest on July 26 — we just moved several
+       "gated" items closer to "shipped." The limitations it named are the ones we worked on, and
+       they moved in the direction the document predicted.</p>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><strong>Purpose.</strong> A status delta between the July 19 release explainer and the current
+       state of <code>main</code> after a 101-commit merge session on July 26. Every claim is
+       cross-referenced against the original document and the actual git history.</p>
+    <p><strong>Method.</strong> The July 19 document's §11.5 limitations list was treated as the
+       baseline. Each item was checked against: (a) what's on main now, (b) what's in active
+       development, (c) what remains gated. No claim was promoted past its evidence.</p>
+    <p><strong>Live update.</strong> The boot-restore fix (<code>codex/hiverelay-vnext-boot-restore-fix-20260726</code>)
+       is being developed by another agent. When it lands: syd-1 boots → Dallas patched → durability
+       recovery → Peerit binding. This doc will need a "cutover converged" update at that point.</p>
+    <p><strong>Baseline document.</strong>
+       <code>HIVERELAY-RELEASE-EXPLAINED-WEBDEV-2026-07-19.html</code> — still mostly accurate; three
+       lines flagged as stale in §06 above.</p>
+  </div>
+</footer>
+
+</body>
+</html>

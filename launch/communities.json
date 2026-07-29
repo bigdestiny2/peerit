@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-06-27",
+  "generatedAt": "2026-07-21",
   "launchTarget": {
     "activatedPosters": 500,
     "livingBoards": 20,
@@ -13,20 +13,33 @@
       "title": "P2P Builders",
       "audience": "Pear, Holepunch, local-first, and decentralized app builders.",
       "launchRole": "Technical flagship and proof community.",
-      "founderBrief": "Seed practical build logs, protocol questions, and demos. Keep posts concrete and source-linked.",
+      "founderBrief": "Flagship for people shipping real P2P apps. Seed 'I shipped X this week' logs, Hypercore gotchas, PearBrowser bridge notes, and dual Pear+browser interop. Prefer links to repos and pear:// or hyper:// demos over abstract essays.",
       "starterPostCount": 18,
       "discussionPromptCount": 4,
-      "risk": "low"
+      "risk": "low",
+      "seedThemes": [
+        "Show HN-style: ship log with repo + what broke",
+        "Pear runtime vs PearBrowser bridge: when you need both",
+        "HiveRelay OutboxLog namespace footgun and how to register yours",
+        "PoW-gated posting UX: is minting annoying or reassuring?",
+        "Open bounty: best open-source Peerit client improvement PR"
+      ]
     },
     {
       "slug": "nostr",
       "title": "Nostr",
       "audience": "Nostr users, relays, client builders, and censorship-resistant social users.",
       "launchRole": "Best ideological fit for the no-server social pitch.",
-      "founderBrief": "Compare relay-based social networks with P2P outboxes without turning the board into token promotion.",
+      "founderBrief": "Compare Nostr relays to Peerit outboxes without tribal war. Seed dual-client experiments, NIP contrasts, and 'what Peerit gets wrong that Nostr got right'. No token shilling.",
       "starterPostCount": 15,
       "discussionPromptCount": 4,
-      "risk": "medium"
+      "risk": "medium",
+      "seedThemes": [
+        "Outbox vs relay: who stores your social graph metadata",
+        "Would you run a Peerit seeder the way you run a Nostr relay?",
+        "Client UX: keys, recovery, and mobile write paths",
+        "Bridge ideas (and why bridges are dangerous)"
+      ]
     },
     {
       "slug": "selfhosted",
@@ -43,10 +56,16 @@
       "title": "Privacy",
       "audience": "PrivacyGuides, degoogle, Tor, Brave, and no-account software users.",
       "launchRole": "Core message fit for no-account posting and local identity.",
-      "founderBrief": "Keep claims precise: no central account, signed identities, public boards, and no magic anonymity promises.",
+      "founderBrief": "Precise privacy claims only. Seed posts that distinguish no-account identity from anonymity, and opaque keys from secrecy. Invite PrivacyGuides-style checklists for using Peerit safely.",
       "starterPostCount": 15,
       "discussionPromptCount": 4,
-      "risk": "medium"
+      "risk": "medium",
+      "seedThemes": [
+        "Threat model card for Peerit: what a relay can still see",
+        "No-account UX vs anonymous UX \u2014 stop conflating them",
+        "Metadata hardening you can do as a user today",
+        "When to prefer Tor for private Peerit use"
+      ]
     },
     {
       "slug": "linux",
@@ -73,10 +92,17 @@
       "title": "Local AI",
       "audience": "Ollama, llama.cpp, MLX, homelab GPU, and local model users.",
       "launchRole": "Bridge to future HiveCompute and GPU marketplace demand.",
-      "founderBrief": "Seed practical benchmarks, model notes, and local inference workflows. Avoid hype-only posts.",
+      "founderBrief": "Seed the posts people actually bookmark: cold-start VRAM tables, quant tradeoffs, ollama vs llama.cpp vs MLX, single-GPU vs dual, and 'what model runs well on my box'. Cross-link r/llmjailbreaks for red-team benches. Avoid hype; reward numbers and configs.",
       "starterPostCount": 12,
       "discussionPromptCount": 3,
-      "risk": "medium"
+      "risk": "medium",
+      "seedThemes": [
+        "VRAM cheat sheet: 8GB / 12GB / 24GB / 48GB realistic stacks for 2026",
+        "Quant deathmatch: Q4_K_M vs Q5 vs Q8 on the same hardware",
+        "One-command local agent stacks that don't require a SaaS account",
+        "When local AI is worse than hosted \u2014 honest failure modes",
+        "Cross-post path: once you have a local model, run the r/llmjailbreaks synthetic harness"
+      ]
     },
     {
       "slug": "fediverse",
@@ -93,10 +119,16 @@
       "title": "Cypherpunk",
       "audience": "Bitcoin, Lightning, privacy engineering, and censorship-resistance builders.",
       "launchRole": "Narrative engine for signed records and PoW-gated posting.",
-      "founderBrief": "Keep discussion technical and lawful. No darknet-market positioning.",
+      "founderBrief": "Technical cypherpunk board: signed records, PoW as anti-spam not money, relays as untrusted availability. Seed critiques of Peerit's honest ceilings (public boards are not secret). No darknet market positioning.",
       "starterPostCount": 12,
       "discussionPromptCount": 4,
-      "risk": "medium"
+      "risk": "medium",
+      "seedThemes": [
+        "PoW as postage, not proof of stake",
+        "Why public boards fail G5 operator-as-reader",
+        "Signed moderation overlays vs admin panels",
+        "Threat model review of Peerit v2 opaque keys"
+      ]
     },
     {
       "slug": "redditalternatives",
@@ -123,20 +155,254 @@
       "title": "HiveRelay",
       "audience": "Relay operators, node-curious users, seeders, and people who want to make P2P apps reliably available.",
       "launchRole": "Infrastructure-as-growth channel for Peerit and PearBrowser.",
-      "founderBrief": "Seed posts about running nodes, proof receipts, app/outbox seeding, referral links, regional coverage, and operator rewards.",
+      "founderBrief": "Make operators heroes. Seed runbooks, proof pages, referral kits, regional coverage, and 'I kept peerit.site readable from X region' reports. Pay for verifiable work not vanity uptime screenshots.",
       "starterPostCount": 12,
       "discussionPromptCount": 4,
-      "risk": "low"
+      "risk": "low",
+      "seedThemes": [
+        "First-run node log: storage, ports, outboxlog namespaces",
+        "Proof page template and what counts as useful work",
+        "Registering peerit + p2pbuilders namespaces without 400s",
+        "Operator bounty: best public proof page"
+      ]
     },
     {
       "slug": "showcase",
       "title": "Showcase",
       "audience": "People launching demos, tools, boards, bots, and importers.",
       "launchRole": "Front-page freshness and builder momentum.",
-      "founderBrief": "Keep this useful: demos, screenshots, source links, and feedback requests.",
+      "founderBrief": "Front page freshness engine. Only demos with a clickable link, screenshot, or video. Weekly 'shipped this week' thread. Host the uncensored-model bounty announcement cross-post from r/llmjailbreaks.",
       "starterPostCount": 10,
       "discussionPromptCount": 3,
-      "risk": "low"
+      "risk": "low",
+      "seedThemes": [
+        "Shipped this week megathread",
+        "Cross-post: open-weight model bounty from r/llmjailbreaks",
+        "Peerit itself demo: first post without an account",
+        "HiveRelay node proof page showcase"
+      ]
+    },
+    {
+      "slug": "geopolitics",
+      "title": "Geopolitics",
+      "audience": "People following diplomacy, conflict, trade, sanctions, elections, and shifting alliances.",
+      "launchRole": "Post-stand-up current-affairs board with a reason to return every day.",
+      "founderBrief": "Seed source-led news threads, competing interpretations, maps, and forecasts. Clearly separate reporting from opinion; remove doxxing, dehumanization, unverified atrocity claims, and operational targeting information.",
+      "starterPostCount": 16,
+      "discussionPromptCount": 5,
+      "risk": "high",
+      "launchPhase": "post-stand-up",
+      "seedThemes": [
+        "A daily sourced briefing with links from more than one region",
+        "A steelman-both-sides analysis of a current diplomatic dispute",
+        "A prediction thread with dated claims that can be scored later",
+        "A map or primary-source explainer with its limitations stated"
+      ],
+      "moderationBoundaries": [
+        "Label analysis, allegation, and confirmed reporting distinctly.",
+        "No doxxing, dehumanization, terror propaganda, or real-time targeting information.",
+        "Require a source for factual claims about breaking events."
+      ]
+    },
+    {
+      "slug": "p2pnetworking",
+      "title": "P2P Networking",
+      "audience": "Protocol engineers and operators working on discovery, NAT traversal, replication, relays, and peer-to-peer performance.",
+      "launchRole": "Deep technical companion to P2P Builders and a home for protocol-level discussion.",
+      "founderBrief": "Seed packet traces, architecture comparisons, benchmarks, failure reports, and small reproducible experiments across Hypercore, libp2p, WebRTC, BitTorrent, IPFS, and related systems.",
+      "starterPostCount": 16,
+      "discussionPromptCount": 4,
+      "risk": "low",
+      "launchPhase": "post-stand-up",
+      "seedThemes": [
+        "NAT traversal techniques that still fail in ordinary home networks",
+        "Relay versus direct-connect latency and availability measurements",
+        "Discovery, replication, and identity trade-offs across P2P stacks",
+        "Postmortems from real peer-to-peer network failures"
+      ]
+    },
+    {
+      "slug": "p2papps",
+      "title": "P2P Apps",
+      "audience": "People building, testing, reviewing, and using peer-to-peer applications.",
+      "launchRole": "Accessible product board that turns protocol interest into apps people can try.",
+      "founderBrief": "Seed hands-on app reviews, demos, UX critiques, interoperability ideas, and requests for testers. Require a working link or concrete build detail for launch posts.",
+      "starterPostCount": 14,
+      "discussionPromptCount": 4,
+      "risk": "low",
+      "launchPhase": "post-stand-up",
+      "seedThemes": [
+        "A weekly roundup of P2P apps people can actually try",
+        "Honest onboarding reviews from first-time users",
+        "Build logs showing offline, sync, or recovery behavior",
+        "Interoperability wishes between independent P2P apps"
+      ]
+    },
+    {
+      "slug": "cryptolaunches",
+      "title": "Crypto Launches",
+      "audience": "Crypto-native users who want sharp launch banter, launch tracking, due diligence, and post-launch accountability.",
+      "launchRole": "Fast-moving culture board with strong reply potential and a natural anti-scam angle.",
+      "founderBrief": "Seed candid launch reviews, disclosed founder AMAs, token-mechanics breakdowns, prediction threads, and postmortems. Ban undisclosed paid promotion, impersonation, coordinated pumping, fake urgency, and guaranteed-return claims.",
+      "starterPostCount": 16,
+      "discussionPromptCount": 5,
+      "risk": "high",
+      "launchPhase": "post-stand-up",
+      "seedThemes": [
+        "A launch-calendar thread with sponsorship and holdings disclosed",
+        "A red-flags teardown of token mechanics and insider allocation",
+        "A founder AMA focused on shipping evidence rather than price",
+        "A thirty-day post-launch scorecard revisiting earlier claims"
+      ],
+      "moderationBoundaries": [
+        "Require disclosure of paid relationships, allocations, and material holdings.",
+        "No coordinated pumping, impersonation, fake scarcity, or guaranteed-return language.",
+        "Keep criticism evidence-led while allowing jokes and sharp banter."
+      ]
+    },
+    {
+      "slug": "gambling",
+      "title": "Gambling & Betting",
+      "audience": "Adults discussing betting culture, odds, launches, promotions, regulation, and harm reduction.",
+      "launchRole": "High-engagement post-stand-up board with explicit age, disclosure, and jurisdiction controls.",
+      "founderBrief": "Seed odds analysis, product reviews, disclosed and jurisdiction-labelled promotions, industry news, and harm-reduction discussion. No minors, unlicensed offers, misleading bonuses, guaranteed wins, deposit pressure, or attempts to bypass self-exclusion.",
+      "starterPostCount": 12,
+      "discussionPromptCount": 4,
+      "risk": "high",
+      "launchPhase": "post-stand-up",
+      "seedThemes": [
+        "An odds-movement explainer that makes uncertainty visible",
+        "A transparent review of bonus terms and withdrawal conditions",
+        "A regulation comparison labelled by jurisdiction",
+        "A discussion of limits, self-exclusion, and safer-play tooling"
+      ],
+      "moderationBoundaries": [
+        "Adults only; label every promotion by jurisdiction and commercial relationship.",
+        "No unlicensed offers, misleading bonuses, guaranteed wins, or deposit pressure.",
+        "Never encourage bypassing limits, self-exclusion, identity checks, or local law."
+      ]
+    },
+    {
+      "slug": "llmjailbreaks",
+      "title": "LLM Jailbreaks",
+      "audience": "AI red-teamers, prompt-injection researchers, model builders, and curious users testing where guardrails fail.",
+      "launchRole": "Major post-stand-up research community and a bridge between local AI, security, and open model culture.",
+      "founderBrief": "Make this the best place on the open web for reproducible LLM red-team notes on local and open-weight models. Seed real write-ups: model+version+settings, refusal deltas, defense comparisons, and abliterated/uncensored open-weight model cards. Run a launch bounty for the best shared open-weight uncensored/abliterated model pack + synthetic-bench results. Stay lawful: synthetic/harmless targets only; no credential theft, doxxing, malware, or targeted abuse.",
+      "starterPostCount": 18,
+      "discussionPromptCount": 6,
+      "risk": "high",
+      "launchPhase": "post-stand-up",
+      "seedThemes": [
+        "Pinned: reproducibility template (model, quant, backend, temp, seed, date, outcome)",
+        "Launch bounty: best open-weight uncensored/abliterated model write-up for local red-team benches (synthetic eval only)",
+        "Side-by-side: base Llama vs abliterated sibling on the same refusal suite",
+        "Prompt-injection playground rules: synthetic data, no real credentials",
+        "Defense cookbooks: system prompts, classifiers, and tool-use sandboxes that still fail",
+        "What 'jailbreak' means for local open weights vs hosted APIs (different threat models)",
+        "Weekly 'reproduce this' thread with a fixed eval harness repo",
+        "Debate: model refusal vs app policy vs user agency \u2014 who should own the brake?"
+      ],
+      "moderationBoundaries": [
+        "Use synthetic data and harmless test targets for reproducible demonstrations.",
+        "No credential theft, personal-data extraction, malware deployment, or targeted abuse.",
+        "Label model name, version/quant, date, settings, backend (ollama/llama.cpp/vLLM), and disclosure status.",
+        "No redistribution of stolen/leaked proprietary weights; open-weight and license-compliant links only.",
+        "Bounties pay for write-ups + eval artifacts, not for harmful capabilities against real systems."
+      ],
+      "bounties": [
+        {
+          "id": "uncensored-model-pack-2026",
+          "title": "Open-weight uncensored / abliterated model pack bounty",
+          "prizeUsd": 400,
+          "status": "planned-launch-week",
+          "summary": "Best reproducible write-up of an open-weight uncensored or abliterated model for local red-team benches, with synthetic-only eval results and clear license/source links."
+        },
+        {
+          "id": "refusal-harness-2026",
+          "title": "Shared synthetic refusal / injection harness",
+          "prizeUsd": 200,
+          "status": "planned-launch-week",
+          "summary": "Best MIT/Apache eval harness + prompt set (synthetic only) that any peer can re-run offline."
+        }
+      ]
     }
-  ]
+  ],
+  "launchBounties": {
+    "budgetUsd": 1000,
+    "note": "From GROWTH_AUTOMATION_SPEC prizes/bounties bucket. Pay for artifacts and activation, not vibes.",
+    "items": [
+      {
+        "id": "uncensored-model-pack-2026",
+        "board": "llmjailbreaks",
+        "title": "Best open-weight uncensored / abliterated model write-up",
+        "prizeUsd": 400,
+        "eligibility": [
+          "Open-weight model with clear license and public download link",
+          "No stolen/leaked proprietary weights",
+          "Local-run instructions (ollama / llama.cpp / MLX / vLLM)",
+          "Synthetic-only eval suite results with reproducible commands",
+          "Model card: quant, VRAM, tokens/s on a named GPU, refusal notes"
+        ],
+        "disallowed": [
+          "Credential theft, malware, personal-data extraction demos against real systems",
+          "Guides whose primary purpose is real-world crime",
+          "Undisclosed paid shilling of a closed product"
+        ],
+        "judging": "Reproducibility 40%, usefulness for local red-team benches 30%, writing clarity 20%, community engagement 10%"
+      },
+      {
+        "id": "refusal-harness-2026",
+        "board": "llmjailbreaks",
+        "title": "Shared synthetic refusal / injection harness",
+        "prizeUsd": 200,
+        "eligibility": [
+          "MIT/Apache-2.0",
+          "runs offline",
+          "stamps model+version in output JSON"
+        ]
+      },
+      {
+        "id": "best-board-launch-2026",
+        "board": "showcase",
+        "title": "Best living board in first 14 days",
+        "prizeUsd": 200,
+        "eligibility": [
+          "10+ distinct posters",
+          "moderation quality",
+          "no spam capture"
+        ]
+      },
+      {
+        "id": "operator-proof-page-2026",
+        "board": "hiverelay",
+        "title": "Best HiveRelay operator proof/referral page",
+        "prizeUsd": 200,
+        "eligibility": [
+          "public proof age",
+          "apps/outboxes seeded",
+          "honest region/uptime"
+        ]
+      }
+    ]
+  },
+  "seedIdentityPolicy": {
+    "spec": "launch/seed-identities.json",
+    "pubkeyMapTemplate": "launch/seed-identities.pubkey-map.example.json",
+    "seedPostsWithCasting": "launch/seed-posts/",
+    "minDistinctAuthorsPerBoard": 4,
+    "minDistinctAuthorsOnFrontPageDay": 6,
+    "maxStarterPostSharePerIdentity": 0.35,
+    "requireCrossAuthorReplyWithinHours": 24,
+    "idealVoicesPerThread": 3,
+    "modIdentitiesDoNotWinCashBounties": true,
+    "privatePubkeyMapRequired": true,
+    "discussionPatterns": [
+      "disagree-productively",
+      "explain-to-newcomer",
+      "alive-thread",
+      "mod-hygiene",
+      "cross-board-bridge"
+    ],
+    "summary": "Seed boards AND discussions using many Peerit keypairs cast as mod/builder/operator/researcher/skeptic/enthusiast/newcomer. Every seeded OP gets cross-author replies; casting tables live in seed-posts/."
+  }
 }

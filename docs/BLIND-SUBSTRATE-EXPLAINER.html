@@ -1,0 +1,929 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Blind Substrate — Explained for Humans</title>
+<style>
+  :root{
+    --bg:#0a0e14; --bg-2:#0f1620; --panel:#111821; --panel-2:#0d141d;
+    --ink:#e8eef6; --dim:#8b9bb0; --faint:#5b6b80;
+    --line:#1f2a3a; --line-2:#152028;
+    --accent:#4fd1c5; --accent-2:#5b9fd4; --gold:#e0a54b; --rose:#e0533d; --violet:#9b7ed9; --green:#3ecf8e;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--accent-2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{background:#0a0f16;border:1px solid var(--line);padding:.05em .4em;border-radius:4px;
+    font:.88em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cfe3ff}
+  pre{background:#0a0f16;border:1px solid var(--line);border-radius:10px;padding:1em 1.2em;overflow:auto}
+  pre code{background:none;border:0;padding:0;color:#cfe3ff}
+
+  .wrap{max-width:920px;margin:0 auto;padding:0 1.4em}
+  main{padding-bottom:6em}
+
+  /* hero */
+  header.hero{padding:4.5em 0 3em;border-bottom:1px solid var(--line);
+    background:radial-gradient(ellipse at top,rgba(79,209,197,.07),transparent 60%)}
+  .eyebrow{color:var(--accent);font-size:.8em;font-weight:700;letter-spacing:.18em;text-transform:uppercase;margin:0 0 .8em}
+  h1{font-size:2.6em;line-height:1.1;margin:.1em 0 .3em;letter-spacing:-.025em;font-weight:800}
+  h1 .grad{background:linear-gradient(120deg,var(--accent),var(--accent-2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:1.2em;color:var(--dim);max-width:62ch;margin:1em 0 0}
+  .meta{margin-top:2em;display:flex;flex-wrap:wrap;gap:.6em;font-size:.82em;color:var(--faint)}
+  .meta span{padding:.3em .7em;border:1px solid var(--line);border-radius:999px;background:var(--panel)}
+
+  /* sections */
+  section{padding:3em 0;border-bottom:1px solid var(--line-2)}
+  section:last-of-type{border-bottom:0}
+  h2{font-size:1.7em;letter-spacing:-.015em;margin:0 0 .6em;font-weight:700}
+  h2 .num{color:var(--accent);font-variant-numeric:tabular-nums;margin-right:.5em;font-weight:800}
+  h3{font-size:1.2em;margin:1.6em 0 .5em;font-weight:700;letter-spacing:-.01em}
+  h4{font-size:1.02em;margin:1.4em 0 .4em;color:var(--accent-2);font-weight:700}
+  p{margin:.7em 0}
+  ul,ol{margin:.7em 0;padding-left:1.5em}
+  li{margin:.35em 0}
+
+  .lead{font-size:1.08em;color:#cdd6e3}
+
+  /* callouts */
+  .callout{border-left:3px solid var(--accent);background:rgba(79,209,197,.05);
+    padding:1em 1.3em;border-radius:0 10px 10px 0;margin:1.4em 0}
+  .callout.warn{border-color:var(--gold);background:rgba(224,165,75,.06)}
+  .callout.danger{border-color:var(--rose);background:rgba(224,83,61,.06)}
+  .callout h4{margin:.2em 0 .4em;color:inherit;font-size:.78em;text-transform:uppercase;letter-spacing:.1em}
+  .callout.warn h4{color:var(--gold)}
+  .callout.danger h4{color:var(--rose)}
+  .callout p:last-child{margin-bottom:0}
+
+  /* diagrams */
+  figure{margin:2em 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:1.6em 1.4em 1.2em}
+  figure svg{width:100%;height:auto;display:block}
+  figcaption{color:var(--dim);font-size:.86em;margin-top:1em;text-align:center;font-style:italic}
+
+  /* tables */
+  table{border-collapse:collapse;width:100%;margin:1.2em 0;font-size:.94em}
+  th,td{border:1px solid var(--line);padding:.6em .8em;text-align:left;vertical-align:top}
+  th{background:#0a0f16;color:var(--dim);font-weight:600;font-size:.86em;text-transform:uppercase;letter-spacing:.04em}
+  td code{font-size:.84em}
+
+  /* guarantee ladder */
+  .ladder{display:grid;grid-template-columns:auto 1fr;gap:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:1.5em 0}
+  .rung{display:contents}
+  .rung > div{padding:1em 1.2em;border-bottom:1px solid var(--line);border-right:1px solid var(--line)}
+  .rung:last-child > div{border-bottom:0}
+  .rung .lvl{font-weight:800;font-family:ui-monospace,monospace;color:var(--accent);background:#0a0f16;display:flex;align-items:center;min-width:90px}
+  .rung .body{color:var(--dim)}
+  .rung .body strong{color:var(--ink);display:block;margin-bottom:.2em;font-size:1.02em}
+  .rung.fail .lvl{color:var(--rose)}
+  .rung.fail .body strong{color:var(--rose)}
+
+  /* steps */
+  .steps{counter-reset:step;margin:1.5em 0}
+  .step{position:relative;padding:0 0 1.4em 3em;border-left:2px solid var(--line);margin-left:1.2em}
+  .step:before{counter-increment:step;content:counter(step);position:absolute;left:-1.05em;top:-.1em;
+    width:2em;height:2em;border-radius:50%;background:var(--accent);color:#0a0e14;
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.9em}
+  .step h4{margin:0 0 .3em;color:var(--ink)}
+  .step p{margin:.3em 0;color:var(--dim)}
+
+  /* toc */
+  nav.toc{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.2em 1.4em;margin:2em 0}
+  nav.toc h3{margin:0 0 .6em;font-size:.82em;text-transform:uppercase;letter-spacing:.1em;color:var(--dim)}
+  nav.toc ol{margin:0;padding-left:1.3em;columns:2;column-gap:2em}
+  nav.toc li{margin:.2em 0;break-inside:avoid}
+  nav.toc a{color:var(--ink);font-size:.94em}
+  nav.toc a:hover{color:var(--accent)}
+
+  /* glossary */
+  dl.gloss{margin:1.5em 0}
+  dl.gloss dt{font-weight:700;color:var(--accent-2);margin-top:1em;font-family:ui-monospace,monospace;font-size:.95em}
+  dl.gloss dd{margin:.2em 0 0 1.2em;color:var(--dim)}
+
+  /* footer */
+  footer{padding:2.5em 0 0;border-top:1px solid var(--line);margin-top:3em;color:var(--faint);font-size:.86em}
+  footer p{margin:.4em 0}
+
+  /* utility */
+  .pill{display:inline-block;padding:.15em .55em;border-radius:999px;font-size:.78em;font-weight:700;border:1px solid var(--line)}
+  .pill-good{color:var(--green);border-color:#1d3a2c;background:rgba(62,207,142,.08)}
+  .pill-bad{color:var(--rose);border-color:#3a1d18;background:rgba(224,83,61,.08)}
+  .pill-mid{color:var(--gold);border-color:#3a2a14;background:rgba(224,165,75,.08)}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Pear + HiveRelay · plain-English explainer</p>
+    <h1>The <span class="grad">Blind Substrate</span>,<br>explained for humans</h1>
+    <p class="lede">A storage layer that holds your app's data without being able to read it.
+       No marketing, no magic — just a strict rule about what the relay is allowed to know,
+       and a set of locked boxes that make the rule real.</p>
+    <div class="meta">
+      <span>Protocol: hiverelay-blind/1</span>
+      <span>For: curious users, not engineers</span>
+      <span>Honesty: load-bearing</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="callout" style="border-color:#4fd1c5;background:rgba(79,209,197,.05)">
+    <h4 style="color:#4fd1c5">Terminology: why we say "relay," not "server"</h4>
+    <p>You'll see the word <strong>relay</strong> throughout this document, not <em>server</em>.
+       That's deliberate and load-bearing. The three words mean very different things:</p>
+    <ul style="margin:.5em 0">
+      <li><strong>Server</strong> — owns and interprets your data; you trust it for truth. peerit
+          <em>never</em> has one of these, in any mode.</li>
+      <li><strong>Relay</strong> — carries blind bytes it can't read; a dumb pipe with receipts, no
+          authority. This is what HiveRelay is. A browser user always has one in their path; a
+          PearBrowser user does not.</li>
+      <li><strong>Serverless</strong> — no process in the path at all; pure peer-to-peer. True
+          <em>only</em> for PearBrowser. Reserve this word for the native path, never for browsers.</li>
+    </ul>
+    <p>The distinction matters because calling a relay a "server" implies trust and authority that
+       the architecture explicitly rejects — and calling the browser path "serverless" implies no
+       relay is needed, which is false. The honest framing: <strong>peerit is always serverless in
+       the trust sense; it is serverless in the topology sense only in PearBrowser.</strong></p>
+  </div>
+
+  <div class="callout" style="border-color:#22d3ee;background:rgba(34,211,238,.07)">
+    <h4 style="color:#22d3ee">📡 Cutover status (this week)</h4>
+    <p>The blind substrate is being deployed on <strong>2 relays right now</strong>, with peerit
+       standing up on it with seed content. Several claims in this document that describe the
+       substrate's target behavior are <strong>in active cutover</strong> — going from spec to live.
+       Where a claim describes what the substrate <em>does</em> once deployed, treat it as
+       <em>shipping now</em>, not <em>already shipped</em>. The companion doc
+       <a href="HONEST-STACK-AUTHORITATIVE.html"><code>HONEST-STACK-AUTHORITATIVE.html</code></a>
+       tracks the exact status of each component.</p>
+  </div>
+
+  <div class="callout danger" style="border-color:#e0533d;background:rgba(224,83,61,.08)">
+    <h4 style="color:#e0533d">⚠ Known overstatements in this document — read the authoritative correction first</h4>
+    <p>This explainer describes the blind substrate <em>spec</em> (<code>hiverelay-blind/1</code>).
+       Some lines describe the substrate's target behavior as if it were already achieved — most
+       dangerously when they imply a browser is a standalone P2P peer (it isn't; see
+       <a href="BROWSER-PEAR-APPS-THE-HONEST-CEILING.html"><code>BROWSER-PEAR-APPS-THE-HONEST-CEILING.html</code></a>).</p>
+    <p><strong>Read <a href="HONEST-STACK-AUTHORITATIVE.html"><code>HONEST-STACK-AUTHORITATIVE.html</code></a>
+       alongside this doc.</strong> It catalogs every overstatement, badges each claim with its real
+       status (shipped / cutover / coded-disabled / spec'd / fantasy), and shows the full stack
+       honestly distinguished. Where the two docs conflict on shipped-vs-target status, the
+       authoritative one is correct.</p>
+  </div>
+
+  <nav class="toc">
+    <h3>What's inside</h3>
+    <ol>
+      <li><a href="#problem">The problem this fixes</a></li>
+      <li><a href="#membrane">The big idea: a strict membrane</a></li>
+      <li><a href="#cell">What a "cell" actually is</a></li>
+      <li><a href="#runtimes">Cells have runtimes</a></li>
+      <li><a href="#ladder">The honesty ladder (G0–G5)</a></li>
+      <li><a href="#five">The five things relays can do</a></li>
+      <li><a href="#journey">A post's journey, step by step</a></li>
+      <li><a href="#operator">What your operator can and can't see</a></li>
+      <li><a href="#ceilings">What this does <em>not</em> do</a></li>
+      <li><a href="#glossary">Glossary</a></li>
+    </ol>
+  </nav>
+
+<!-- ============================================================== -->
+<section id="problem">
+  <h2><span class="num">01</span>The problem this fixes</h2>
+
+  <p class="lead">Most "decentralized" apps still have a dirty secret: the relay can read your data.</p>
+
+  <p>Even apps that <em>encrypt the content</em> of your posts usually leave the <strong>shape</strong>
+     of the data in plaintext. The relay can't read <em>what</em> you wrote, but it can read
+     <em>who</em> you are, <em>which community</em> you posted in, <em>who you replied to</em>, and
+     <em>when</em>. From those keys alone — without ever decrypting a single value — an operator can
+     reconstruct the entire social graph:</p>
+
+  <figure>
+    <svg viewBox="0 0 760 230" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <!-- left: readable keys -->
+      <text x="20" y="24" fill="#e0533d" font-size="13" font-weight="700">Readable storage (the leak)</text>
+      <rect x="20" y="36" width="340" height="170" rx="8" fill="#0a0f16" stroke="#3a1d18"/>
+      <g font-family="ui-monospace,monospace" font-size="11">
+        <text x="34" y="62" fill="#e0533d">post!peerit!a3f… </text><text x="180" y="62" fill="#8b9bb0">"Hey everyone…"</text>
+        <text x="34" y="84" fill="#e0533d">post!peerit!b7c… </text><text x="180" y="84" fill="#8b9bb0">"Reply to a3f…"</text>
+        <text x="34" y="106" fill="#e0533d">vote!a3f…!alice  </text><text x="180" y="106" fill="#8b9bb0">+1</text>
+        <text x="34" y="128" fill="#e0533d">vote!a3f…!bob    </text><text x="180" y="128" fill="#8b9bb0">+1</text>
+        <text x="34" y="150" fill="#e0533d">comment!peerit!a3f…!c1</text><text x="180" y="150" fill="#8b9bb0">"nice post"</text>
+        <text x="34" y="172" fill="#e0533d">follow!alice!bob </text><text x="180" y="172" fill="#8b9bb0">—</text>
+        <text x="34" y="194" fill="#e0533d">modaction!peerit!m9</text><text x="180" y="194" fill="#8b9bb0">remove</text>
+      </g>
+
+      <!-- arrow -->
+      <path d="M 380 121 L 410 121" stroke="#4fd1c5" stroke-width="2" marker-end="url(#arrow)"/>
+
+      <!-- right: what operator sees -->
+      <text x="430" y="24" fill="#e0a54b" font-size="13" font-weight="700">What the operator reads off disk</text>
+      <rect x="430" y="36" width="310" height="170" rx="8" fill="#0a0f16" stroke="#3a2a14"/>
+      <g font-size="11.5" fill="#cdd6e3">
+        <text x="444" y="62">✓ "alice posted in r/peerit"</text>
+        <text x="444" y="84">✓ "bob replied to alice"</text>
+        <text x="444" y="106">✓ "carol voted on alice's post"</text>
+        <text x="444" y="128">✓ "dave follows alice"</text>
+        <text x="444" y="150">✓ "mod m9 removed a3f…"</text>
+        <text x="444" y="178" fill="#e0533d" font-weight="700">= the full social graph,</text>
+        <text x="444" y="194" fill="#e0533d" font-weight="700">  without decrypting anything.</text>
+      </g>
+
+      <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L9,3 z" fill="#4fd1c5"/>
+        </marker>
+      </defs>
+    </svg>
+    <figcaption>The storage keys themselves leak the graph. Encrypting the values is only 20% of the work.</figcaption>
+  </figure>
+
+  <p>This isn't a hypothetical. The first version of peerit's relay did exactly this, and the creator
+     almost didn't notice — until an audit pointed out the relay was effectively a <strong>complete
+     social-graph oracle</strong>. Who talks to whom, in which community, how often, all readable from
+     key prefixes alone.</p>
+
+  <div class="callout warn">
+    <h4>The core realization</h4>
+    <p><strong>Blindness is a constraint on the storage shape, not a checkbox on the payload.</strong>
+       Encrypting the post body is the easy part. The hard part — and the part that actually matters —
+       is making sure the storage keys, the request paths, and the metadata don't leak the graph.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="membrane">
+  <h2><span class="num">02</span>The big idea: a strict membrane</h2>
+
+  <p class="lead">Draw a hard line. Inside the line: dumb bytes. Outside the line: anything smart.</p>
+
+  <p>The blind substrate is built around one rule, enforced rigidly: <strong>nothing inside the
+     relay's "blind membrane" is allowed to know anything about your app.</strong> Not your username,
+     not your community name, not what kind of record it is, not who you replied to. Inside the
+     membrane, the relay sees only random-looking bytes at random-looking addresses. <em>(This is the
+     substrate's target behavior — going live on the 2-relay cutover now. See the companion
+     <a href="HONEST-STACK-AUTHORITATIVE.html">Honest Stack</a> doc for the exact status of each
+     claim.)</em></p>
+
+  <figure>
+    <svg viewBox="0 0 780 360" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <!-- app side -->
+      <rect x="20" y="40" width="280" height="290" rx="14" fill="#0f2018" stroke="#3ecf8e" stroke-width="2"/>
+      <text x="160" y="68" text-anchor="middle" fill="#3ecf8e" font-size="14" font-weight="700">OUTSIDE the membrane</text>
+      <text x="160" y="86" text-anchor="middle" fill="#8b9bb0" font-size="11">(app-owned, client-side)</text>
+      <g font-size="12" fill="#cdd6e3">
+        <text x="40" y="118">✓ Your signed records</text>
+        <text x="40" y="140">✓ Your username / identity</text>
+        <text x="40" y="162">✓ Community names (r/peerit)</text>
+        <text x="40" y="184">✓ Post bodies, votes, replies</text>
+        <text x="40" y="206">✓ Moderation decisions</text>
+        <text x="40" y="228">✓ The social graph</text>
+        <text x="40" y="250">✓ Search, ranking, feeds</text>
+        <text x="40" y="272">✓ Encryption keys (held by you)</text>
+        <text x="40" y="306" fill="#3ecf8e" font-weight="700">= All the smart stuff</text>
+      </g>
+
+      <!-- the membrane line -->
+      <line x1="310" y1="20" x2="310" y2="350" stroke="#4fd1c5" stroke-width="2" stroke-dasharray="6 4"/>
+      <text x="320" y="34" fill="#4fd1c5" font-size="11" font-weight="700">THE STRICT MEMBRANE</text>
+      <text x="320" y="48" fill="#5b6b80" font-size="10">app info cannot cross this line</text>
+
+      <!-- relay side -->
+      <rect x="470" y="40" width="290" height="290" rx="14" fill="#1a0e0a" stroke="#e0533d" stroke-width="2"/>
+      <text x="615" y="68" text-anchor="middle" fill="#e0533d" font-size="14" font-weight="700">INSIDE the membrane</text>
+      <text x="615" y="86" text-anchor="middle" fill="#8b9bb0" font-size="11">(relay-operated)</text>
+      <g font-size="12" fill="#cdd6e3">
+        <text x="490" y="118">✗ No app names</text>
+        <text x="490" y="140">✗ No usernames</text>
+        <text x="490" y="162">✗ No record types</text>
+        <text x="490" y="184">✗ No community names</text>
+        <text x="490" y="206">✗ No graph edges</text>
+        <text x="490" y="228">✗ No semantic search</text>
+        <text x="490" y="250">✗ No moderation logic</text>
+        <text x="490" y="272">✗ No app-specific keys</text>
+        <text x="490" y="306" fill="#e0533d" font-weight="700">= Only dumb bytes + receipts</text>
+      </g>
+    </svg>
+    <figcaption>The strict membrane. Everything app-specific stays on your device; the relay only ever holds opaque ciphertext at random addresses.</figcaption>
+  </figure>
+
+  <div class="callout">
+    <h4>The payoff</h4>
+    <p>If the relay can't tell peerit apart from a recipe app or a chat app, then <strong>adding a new
+       app is becoming zero-config</strong> — no namespace to register, no schema to deploy, no
+       operator approval. Anyone can build an app on the substrate without asking anyone's
+       permission, because the relay genuinely doesn't know what's running on top of it.</p>
+    <p style="font-size:.85em;color:var(--dim);margin-top:.6em"><em>Status:</em> this is the substrate's
+       defining property, and it's what the 2-relay cutover activates. Becomes fully true (Shipped)
+       once the cutover converges and a second conforming app is stood up without relay-side config.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="cell">
+  <h2><span class="num">03</span>What a "cell" actually is</h2>
+
+  <p class="lead">Think of a cell as a single locked box, dropped off at a random locker.</p>
+
+  <p>When peerit (or any app) wants to store a record — say, your post — it doesn't send the post to
+     the relay. It does something more careful:</p>
+
+  <ol>
+    <li>Takes your signed record (the post, already signed by your key)</li>
+    <li>Wraps it in a layer of encryption with a brand-new random key, just for this one storage event</li>
+    <li>Pads it to a fixed size, so every cell looks the same shape</li>
+    <li>Generates a <strong>random storage address</strong> (called a "slot") that has nothing to do with the content</li>
+    <li>Hands the relay an opaque locked box at a random locker number</li>
+  </ol>
+
+  <figure>
+    <svg viewBox="0 0 780 280" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <!-- step 1: signed record -->
+      <rect x="20" y="60" width="130" height="80" rx="8" fill="#0f2018" stroke="#3ecf8e"/>
+      <text x="85" y="88" text-anchor="middle" fill="#3ecf8e" font-size="11" font-weight="700">SIGNED RECORD</text>
+      <text x="85" y="108" text-anchor="middle" fill="#cdd6e3" font-size="10">post!peerit!a3f…</text>
+      <text x="85" y="124" text-anchor="middle" fill="#8b9bb0" font-size="10">"Hey everyone…"</text>
+      <text x="85" y="138" text-anchor="middle" fill="#8b9bb0" font-size="9">✓ signed by alice</text>
+
+      <path d="M 150 100 L 180 100" stroke="#5b9fd4" stroke-width="2" marker-end="url(#arr2)"/>
+
+      <!-- step 2: encrypt + pad -->
+      <rect x="190" y="40" width="150" height="120" rx="8" fill="#1a1830" stroke="#9b7ed9"/>
+      <text x="265" y="64" text-anchor="middle" fill="#9b7ed9" font-size="11" font-weight="700">ENCRYPT + PAD</text>
+      <text x="265" y="88" text-anchor="middle" fill="#cdd6e3" font-size="10" font-family="ui-monospace,monospace">🔒 AES-256-GCM</text>
+      <text x="265" y="106" text-anchor="middle" fill="#8b9bb0" font-size="10">fresh random key</text>
+      <text x="265" y="124" text-anchor="middle" fill="#8b9bb0" font-size="10">+ padding to fixed size</text>
+      <text x="265" y="146" text-anchor="middle" fill="#5b6b80" font-size="9">every cell looks identical</text>
+
+      <path d="M 340 100 L 370 100" stroke="#5b9fd4" stroke-width="2" marker-end="url(#arr2)"/>
+
+      <!-- step 3: random slot -->
+      <rect x="380" y="40" width="150" height="120" rx="8" fill="#2a2110" stroke="#e0a54b"/>
+      <text x="455" y="64" text-anchor="middle" fill="#e0a54b" font-size="11" font-weight="700">RANDOM SLOT</text>
+      <text x="455" y="88" text-anchor="middle" fill="#cdd6e3" font-size="10" font-family="ui-monospace,monospace">slot: 7f3a…b29c</text>
+      <text x="455" y="106" text-anchor="middle" fill="#8b9bb0" font-size="10">random address</text>
+      <text x="455" y="124" text-anchor="middle" fill="#8b9bb0" font-size="10">derived from epoch</text>
+      <text x="455" y="146" text-anchor="middle" fill="#5b6b80" font-size="9">+ create key (self-certifying)</text>
+
+      <path d="M 530 100 L 560 100" stroke="#5b9fd4" stroke-width="2" marker-end="url(#arr2)"/>
+
+      <!-- step 4: relay -->
+      <rect x="570" y="40" width="190" height="200" rx="10" fill="#1a0e0a" stroke="#e0533d" stroke-dasharray="4 3"/>
+      <text x="665" y="64" text-anchor="middle" fill="#e0533d" font-size="11" font-weight="700">RELAY (blind)</text>
+      <text x="665" y="80" text-anchor="middle" fill="#8b9bb0" font-size="9">sees only:</text>
+      <g font-size="10" font-family="ui-monospace,monospace" fill="#cdd6e3">
+        <text x="585" y="104">slot: 7f3a…b29c</text>
+        <text x="585" y="122">size: 4 KiB class</text>
+        <text x="585" y="140">bytes: 🔒🔒🔒🔒🔒</text>
+        <text x="585" y="158">lease: 6h epoch</text>
+        <text x="585" y="176">receipt: signed</text>
+      </g>
+      <text x="665" y="210" text-anchor="middle" fill="#e0533d" font-size="9" font-weight="700">no app, no author,</text>
+      <text x="665" y="224" text-anchor="middle" fill="#e0533d" font-size="9" font-weight="700">no content, no graph</text>
+
+      <defs>
+        <marker id="arr2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L9,3 z" fill="#5b9fd4"/>
+        </marker>
+      </defs>
+    </svg>
+    <figcaption>The journey of one record: signed → encrypted with a fresh key → dropped at a random slot → stored as opaque bytes.</figcaption>
+  </figure>
+
+  <h3>Why fresh keys every time?</h3>
+  <p>Each cell is encrypted with a brand-new random key, never reused. The same record, stored twice,
+     produces completely different ciphertext. This is deliberate: it defeats <em>convergent
+     encryption</em> attacks where an operator could guess a post's content and confirm the guess by
+     comparing hashes. Random keys cost you deduplication — but deduplication is exactly the leak you
+     don't want.</p>
+
+  <h3>Why random slots?</h3>
+  <p>The storage address ("slot") is derived from a coarse time bucket and a freshly generated
+     "create" key. It has <strong>nothing to do with the content</strong>. Not the author, not the
+     community, not the post ID. An operator looking at the filesystem sees a sea of random-looking
+     addresses, with no way to group them by app or author without the client's read capability.</p>
+
+  <div class="callout warn">
+    <h4>The capability you keep</h4>
+    <p>To read a cell back, the client needs a <strong>read capability</strong>: the slot address
+       <em>plus</em> the decryption key. This capability is never stored on the relay — it lives only
+       in the client, threaded through encrypted "next pointers" between cells. Without the capability,
+       the bytes are unreadable; with it, the client can follow the chain and reconstruct the app's
+       logical state.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="runtimes">
+  <h2><span class="num">04</span>Cells have runtimes</h2>
+
+  <p class="lead">Same blind substrate, two different ways to ride on it — depending on what your
+     device can actually do.</p>
+
+  <p>The substrate is the same; the <em>shape</em> of the cells depends on the runtime. There are two
+     profiles, because a normal web browser and a native app have very different capabilities:</p>
+
+  <figure>
+    <svg viewBox="0 0 780 340" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <!-- Blind Cells (browser) -->
+      <rect x="20" y="40" width="350" height="270" rx="14" fill="#0f1620" stroke="#5b9fd4" stroke-width="2"/>
+      <text x="195" y="70" text-anchor="middle" fill="#5b9fd4" font-size="14" font-weight="700">BLIND CELLS</text>
+      <text x="195" y="88" text-anchor="middle" fill="#8b9bb0" font-size="11">for ordinary browsers</text>
+
+      <g font-size="11.5" fill="#cdd6e3">
+        <text x="40" y="118">📦 Fixed-size locked boxes</text>
+        <text x="40" y="140">📦 Each one independently stored</text>
+        <text x="40" y="162">📦 Read by following encrypted</text>
+        <text x="200" y="162">"next-box" pointers</text>
+        <text x="40" y="184">📦 No long-lived connection</text>
+      </g>
+      <text x="40" y="214" fill="#5b9fd4" font-size="11" font-weight="700">Why?</text>
+      <text x="40" y="232" fill="#8b9bb0" font-size="11">A browser tab can't hold open a P2P</text>
+      <text x="40" y="248" fill="#8b9bb0" font-size="11">replication session. So each piece of</text>
+      <text x="40" y="264" fill="#8b9bb0" font-size="11">data becomes a self-contained cell that</text>
+      <text x="40" y="280" fill="#8b9bb0" font-size="11">can be fetched once and discarded.</text>
+      <text x="40" y="300" fill="#5b6b80" font-size="10" font-style="italic">peerit.site uses this profile.</text>
+
+      <!-- Blind Core (native) -->
+      <rect x="410" y="40" width="350" height="270" rx="14" fill="#0f2018" stroke="#3ecf8e" stroke-width="2"/>
+      <text x="585" y="70" text-anchor="middle" fill="#3ecf8e" font-size="14" font-weight="700">BLIND CORE</text>
+      <text x="585" y="88" text-anchor="middle" fill="#8b9bb0" font-size="11">for Pear / Bare / Node / native</text>
+
+      <g font-size="11.5" fill="#cdd6e3">
+        <text x="430" y="118">📡 Encrypted Hypercore replication</text>
+        <text x="430" y="140">📡 Live, streaming, multi-block</text>
+        <text x="430" y="162">📡 Blocks encrypted with a read</text>
+        <text x="590" y="162">capability the relay lacks</text>
+        <text x="430" y="184">📡 Built on upstream blind-peer</text>
+      </g>
+      <text x="430" y="214" fill="#3ecf8e" font-size="11" font-weight="700">Why?</text>
+      <text x="430" y="232" fill="#8b9bb0" font-size="11">A native runtime holds open real</text>
+      <text x="430" y="248" fill="#8b9bb0" font-size="11">replication sessions over Hyperswarm.</text>
+      <text x="430" y="264" fill="#8b9bb0" font-size="11">So it uses streaming Hypercores</text>
+      <text x="430" y="280" fill="#8b9bb0" font-size="11">instead of one-off cell fetches.</text>
+      <text x="430" y="300" fill="#5b6b80" font-size="10" font-style="italic">PearBrowser uses this profile.</text>
+    </svg>
+    <figcaption>The substrate exposes both profiles. Same five service verbs; different cell shape for different device capabilities.</figcaption>
+  </figure>
+
+  <p>Both profiles speak the <em>same protocol</em> to the relay — the same five service families, the
+     same dispatch frames, the same receipts. What differs is how the client <em>packages</em> its
+     data before calling those services:</p>
+
+  <table>
+    <thead><tr><th></th><th>Blind Cells (browser)</th><th>Blind Core (native)</th></tr></thead>
+    <tbody>
+      <tr><td>Unit stored</td><td>One fixed-size ciphertext box</td><td>Encrypted blocks of a Hypercore</td></tr>
+      <tr><td>Connection</td><td>One-off HTTP requests</td><td>Live replication session</td></tr>
+      <tr><td>Address</td><td>Random per-cell slot</td><td>Opaque core/discovery key</td></tr>
+      <tr><td>Best for</td><td>Reading posts, posting a comment</td><td>Always-on sync, large feeds</td></tr>
+      <tr><td>Same inner data?</td><td colspan="2" style="text-align:center"><span class="pill pill-good">YES — same signed records, same app logic</span></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <h4>The unifying trick</h4>
+    <p>Your app writes the <em>same</em> signed records either way. The substrate adapter decides
+       whether to chop them into cells (browser) or stream them as encrypted core blocks (native).
+       The app doesn't know or care which runtime a given reader is using — it just sees its own
+       signed data flowing back, verified signature by signature.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="ladder">
+  <h2><span class="num">05</span>The honesty ladder <span style="color:var(--dim);font-weight:400">(G0–G5)</span></h2>
+
+  <p class="lead">"Blind" is not one property. It's a ladder, and you have to say which rung you're on.</p>
+
+  <p>The single most important rule in the whole spec: <strong>the word "blind" without a guarantee
+     level is forbidden.</strong> Every claim has to name the highest level it actually proves. Here's
+     the ladder, in plain terms:</p>
+
+  <div class="ladder">
+    <div class="rung">
+      <div class="lvl">G0</div>
+      <div class="body"><strong>Integrity — "you can't fake me"</strong>
+        A relay cannot make your client accept forged or altered bytes. Signatures catch it. This is
+        the floor; everything above it is bonus.</div>
+    </div>
+    <div class="rung">
+      <div class="lvl">G1</div>
+      <div class="body"><strong>Payload opacity — "you can't read my post"</strong>
+        The bytes the relay receives are randomized ciphertext, and it has no key to decrypt them.
+        (Caveat: it can't stop someone <em>intentionally</em> uploading plaintext — but a conforming
+        app never will.)</div>
+    </div>
+    <div class="rung">
+      <div class="lvl">G2-S</div>
+      <div class="body"><strong>Storage-schema opacity — "you can't see my graph"</strong>
+        The relay's stored state contains no app name, no author key, no community, no record type,
+        no graph edge. This is the rung that kills the social-graph leak from §01.</div>
+    </div>
+    <div class="rung">
+      <div class="lvl">G2-W</div>
+      <div class="body"><strong>Wire opacity — "you can't even tell it's my app"</strong>
+        The storage relay also receives no app-identifying request metadata (Origin header, app
+        path, etc.) during operation. Requires a split transport (see §06).</div>
+    </div>
+    <div class="rung">
+      <div class="lvl">G3</div>
+      <div class="body"><strong>At-rest unlinkability — "you can't link my cells"</strong>
+        Cells use rotating pseudorandom slots and randomized encryption, so there's no deterministic
+        key the relay can use to group them by author or app. Statistical correlation (timing, size,
+        volume) may still leak.</div>
+    </div>
+    <div class="rung">
+      <div class="lvl">G4-T</div>
+      <div class="body"><strong>Route separation — "you can't trace the request to me"</strong>
+        The storage role can't bind the operation to your network address, because an independently
+        operated transport (OHTTP, Protomux split, Tor) sits between you and it.</div>
+    </div>
+    <div class="rung">
+      <div class="lvl">G4-I</div>
+      <div class="body"><strong>Read-interest privacy — "you can't tell which post I read"</strong>
+        The relay can't distinguish which logical item you requested within an anonymity set.
+        Requires bucket downloads, PIR, or ORAM. <em>Hard.</em></div>
+    </div>
+    <div class="rung fail">
+      <div class="lvl">G5</div>
+      <div class="body"><strong>Active-reader resistance — "you can't read me even by joining as a reader"</strong>
+        <span class="pill pill-bad">NOT ACHIEVABLE FOR PUBLIC CONTENT</span>
+        For a public forum, the read key reaches everyone — including an operator who joins as a
+        reader. They can decrypt anything any public reader can. peerit explicitly fails this rung
+        and says so.</div>
+    </div>
+  </div>
+
+  <div class="callout danger">
+    <h4>The G5 honesty test — and why it matters</h4>
+    <p>For public content, G5 is mathematically impossible. The read key has to reach every reader;
+       an operator who wants to snoop can simply obtain it and run the client. <strong>Any product
+       that claims "the operator can't read your public posts" is lying or confused.</strong> The
+       spec requires the negative test: prove that an operator acting as a reader <em>can</em>
+       identify slots, follow the capability chain, group authors, and decrypt the public content.
+       Then say so plainly.</p>
+    <p>What the blind substrate <em>does</em> give you, honestly: <strong>no passive reading, no
+       semantic enumeration, content-neutral storage, and deniability.</strong> Not secrecy. The win
+       is that the operator has to <em>affirmatively work</em> to read anything, and can't build a
+       passive index of the graph at rest.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="five">
+  <h2><span class="num">06</span>The five things relays can do</h2>
+
+  <p class="lead">The strict daemon speaks exactly five "families" of operations. That's it.</p>
+
+  <p>Inside the membrane, the relay is deliberately dumb. It can't do search, can't rank posts, can't
+     moderate, can't tell apps apart. It can do exactly five things — and they're all generic
+     infrastructure, not app logic:</p>
+
+  <table>
+    <thead><tr><th>Family</th><th>What it does (in human terms)</th><th>App-relevant?</th></tr></thead>
+    <tbody>
+      <tr><td><code>DESCRIBE</code></td><td>"Hi, I'm relay X. Here's what I can do, signed by me." — capability advertisement.</td><td><span class="pill pill-bad">no app info</span></td></tr>
+      <tr><td><code>CELL</code></td><td>Store / fetch / prove / delete a fixed locked box at a random address.</td><td><span class="pill pill-bad">no app info</span></td></tr>
+      <tr><td><code>INBOX</code></td><td>A rotating, fixed-frame mailbox for opaque discovery announcements.</td><td><span class="pill pill-bad">no app info</span></td></tr>
+      <tr><td><code>CORE</code></td><td>Sponsor / mirror an encrypted Hypercore for native runtimes.</td><td><span class="pill pill-bad">no app info</span></td></tr>
+      <tr><td><code>FORWARD</code></td><td>A bounded opaque pipe to a next hop — used by split transports.</td><td><span class="pill pill-bad">no app info</span></td></tr>
+    </tbody>
+  </table>
+
+  <p>That's the entire surface. Notably <strong>absent</strong> from the strict daemon:</p>
+  <ul>
+    <li>No <code>SEARCH</code> — search is a client-side operation over your locally decrypted index</li>
+    <li>No <code>MODERATE</code> — moderation is signed client-honored overlays, not relay-side deletion</li>
+    <li>No <code>DIRECTORY</code> — no per-app namespace, no author directory, no heads endpoint</li>
+    <li>No <code>REPAIR</code> — repair is a client-side composition over <code>CELL</code> ops</li>
+    <li>No <code>NOTIFY</code> — no app-specific push; use generic inbox watches</li>
+  </ul>
+
+  <div class="callout">
+    <h4>The conformance gate</h4>
+    <p>If supporting your app requires the relay to add a plugin, a schema, a namespace, a CORS
+       domain edit, a metric label, a restart, or operator approval — your service is <strong>outside</strong>
+       the membrane. It can coexist on the same machine, but only on a separate process with separate
+       credentials and a separate claim boundary. The strict client path will never reach it.</p>
+  </div>
+
+  <h3>How transports plug in</h3>
+  <p>The five families are <em>transport-neutral</em>. The same canonical message can ride over:</p>
+  <ul>
+    <li><strong>direct-blind</strong> — client → storage over HTTPS or Noise. Lowest latency, but the storage sees your IP/Origin.</li>
+    <li><strong>split-web (OHTTP)</strong> — browser → ingress → gateway/storage. The ingress sees you but not the request; the gateway sees the request but not you. <span class="pill pill-mid">G4-T under non-collusion</span></li>
+    <li><strong>split-native (Protomux/MASQUE)</strong> — native client → entry → exit → storage. Same separation, native-grade.</li>
+    <li><strong>tor-full</strong> — client → v3 onion → blind endpoint. Strictest source-location privacy, fails closed.</li>
+  </ul>
+  <p>Transport changes <em>who can correlate a request</em>. It never changes storage authority,
+     application truth, or what the ciphertext means.</p>
+</section>
+
+<!-- ============================================================== -->
+<section id="journey">
+  <h2><span class="num">07</span>A post's journey, step by step</h2>
+
+  <p class="lead">Alice posts "hello world" to r/peerit. Here's what actually happens.</p>
+
+  <div class="steps">
+    <div class="step">
+      <h4>Alice writes and signs the post</h4>
+      <p>In her client (browser or PearBrowser), she types the post. Her app creates a signed record:
+         <code>post!peerit!a3f…</code>, signed with her Ed25519 key. This record never leaves her
+         device in plaintext.</p>
+    </div>
+    <div class="step">
+      <h4>The blind client wraps it</h4>
+      <p>The <code>@hiverelay/blind-client</code> SDK takes the signed record and packages it: encrypts
+         with a fresh AES-256-GCM key, pads to a fixed size class, generates random create/renew/drop
+         keys, and derives a random slot address.</p>
+    </div>
+    <div class="step">
+      <h4>Cell is created on the relay</h4>
+      <p>The client calls <code>CELL.PUT</code> with the opaque ciphertext. The relay stores it at the
+         random slot, returns a signed receipt, and records generic accounting (size class, lease
+         epoch, byte usage). The relay knows it stored <em>something</em> — not what, not for whom,
+         not for which app.</p>
+      <p style="font-size:.85em;color:var(--dim)"><em>This is the blind-cells protocol going live in
+         the cutover. Until it converges, peerit runs on the legacy OutboxLog path (v2 opaque keys,
+         partial blindness).</em></p>
+    </div>
+    <div class="step">
+      <h4>The read capability is threaded</h4>
+      <p>The client encrypts the read capability (slot + decryption key) into a "next pointer" and
+         stores that in another cell — or publishes it through an encrypted inbox. The capability
+         chain lives entirely in ciphertext on the relay; only readers with the bootstrap capability
+         can follow it.</p>
+    </div>
+    <div class="step">
+      <h4>Bob wants to read Alice's post</h4>
+      <p>Bob's client has the public bootstrap capability for r/peerit. It follows the encrypted chain,
+         fetches the relevant cells via <code>CELL.GET</code>, decrypts each with its read capability,
+         and reconstructs the post locally.</p>
+    </div>
+    <div class="step">
+      <h4>Bob's client verifies the signature</h4>
+      <p>Now Bob's client has Alice's signed record in plaintext. It checks: does the key match the
+         claimed author? Does the signature verify? Does the storage key match what the record's own
+         fields say it should be? Only if all three pass does the post enter Bob's local feed.</p>
+    </div>
+    <div class="step">
+      <h4>The relay is bypassed for trust</h4>
+      <p>At no point did Bob's client trust the relay for <em>authenticity</em>. The relay moved bytes
+         and gave receipts. Authority came from Alice's signature, verified locally. A malicious relay
+         could have withheld the cell or served a stale copy — but it could never have forged Alice's
+         post or edited her words.</p>
+    </div>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 780 240" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <!-- Alice -->
+      <circle cx="80" cy="60" r="28" fill="#0f2018" stroke="#3ecf8e" stroke-width="2"/>
+      <text x="80" y="64" text-anchor="middle" fill="#3ecf8e" font-size="11" font-weight="700">ALICE</text>
+      <text x="80" y="105" text-anchor="middle" fill="#8b9bb0" font-size="10">signs post</text>
+
+      <!-- Client -->
+      <rect x="170" y="35" width="130" height="55" rx="8" fill="#1a1830" stroke="#9b7ed9"/>
+      <text x="235" y="58" text-anchor="middle" fill="#9b7ed9" font-size="11" font-weight="700">BLIND CLIENT</text>
+      <text x="235" y="76" text-anchor="middle" fill="#8b9bb0" font-size="9">encrypt + pad + slot</text>
+
+      <!-- Relay -->
+      <rect x="350" y="35" width="140" height="170" rx="10" fill="#1a0e0a" stroke="#e0533d" stroke-dasharray="4 3"/>
+      <text x="420" y="58" text-anchor="middle" fill="#e0533d" font-size="11" font-weight="700">RELAY</text>
+      <text x="420" y="76" text-anchor="middle" fill="#8b9bb0" font-size="9">(blind)</text>
+      <g font-size="9" font-family="ui-monospace,monospace" fill="#cdd6e3">
+        <text x="365" y="100">CELL.PUT</text>
+        <text x="365" y="116">🔒🔒🔒🔒</text>
+        <text x="365" y="134">slot: random</text>
+        <text x="365" y="152">lease: 6h</text>
+        <text x="365" y="170">receipt: ✓</text>
+        <text x="365" y="192" fill="#e0533d">no app/author</text>
+      </g>
+
+      <!-- Bob -->
+      <circle cx="700" cy="60" r="28" fill="#0f2018" stroke="#5b9fd4" stroke-width="2"/>
+      <text x="700" y="64" text-anchor="middle" fill="#5b9fd4" font-size="11" font-weight="700">BOB</text>
+      <text x="700" y="105" text-anchor="middle" fill="#8b9bb0" font-size="10">verifies sig</text>
+
+      <!-- arrows -->
+      <path d="M 108 60 Q 140 60 165 60" stroke="#5b9fd4" stroke-width="2" fill="none" marker-end="url(#a3)"/>
+      <path d="M 300 60 Q 325 60 345 60" stroke="#5b9fd4" stroke-width="2" fill="none" marker-end="url(#a3)"/>
+      <path d="M 420 110 Q 560 110 695 75" stroke="#5b9fd4" stroke-width="2" fill="none" stroke-dasharray="4 3" marker-end="url(#a3)"/>
+
+      <text x="420" y="230" text-anchor="middle" fill="#5b6b80" font-size="10" font-style="italic">Bob fetches opaque cells, decrypts locally, verifies Alice's signature himself</text>
+
+      <defs>
+        <marker id="a3" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L9,3 z" fill="#5b9fd4"/>
+        </marker>
+      </defs>
+    </svg>
+    <figcaption>End-to-end. The relay is a dumb pipe with receipts; all trust flows from Alice's signature, checked in Bob's client.</figcaption>
+  </figure>
+</section>
+
+<!-- ============================================================== -->
+<section id="operator">
+  <h2><span class="num">08</span>What your operator can and can't see</h2>
+
+  <p class="lead">The honest table. No spin. <em>Describes what the substrate achieves once the cutover
+     converges — badge each row against current status before quoting it publicly.</em></p>
+
+  <table>
+    <thead><tr><th>The operator…</th><th>Can</th><th>Cannot</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Looking at stored bytes at rest</strong></td>
+        <td>See ciphertext blobs at random addresses, size classes, lease epochs, byte counts</td>
+        <td>Read content, identify the app, identify the author, see the community, walk the graph by key prefix</td>
+      </tr>
+      <tr>
+        <td><strong>Watching a direct browser request</strong></td>
+        <td>See your IP, the browser <code>Origin</code> header, request timing/volume, the random slot you asked for</td>
+        <td>Decrypt the payload, tell which app you're using <em>behind a split transport</em></td>
+      </tr>
+      <tr>
+        <td><strong>Joining as a public reader</strong></td>
+        <td>Obtain the public read capability, follow the chain, decrypt <strong>all public content</strong>, group authors by their public keys</td>
+        <td>Forge posts, edit records, impersonate authors, silently delete across the network</td>
+      </tr>
+      <tr>
+        <td><strong>Running their own copy of the relay software</strong></td>
+        <td>See the protocol code, the storage engine, the accounting logic</td>
+        <td>Find any app-specific code path, namespace, or "peerit mode" — there isn't one in the strict daemon</td>
+      </tr>
+      <tr>
+        <td><strong>Colluding with another relay</strong></td>
+        <td>Compare slot timings, sizes, IPs, receipt patterns; statistically correlate activity</td>
+        <td>Recover plaintext without the read capability, or break the encryption itself</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <h4>Metadata still leaks</h4>
+    <p>This is the part every "encrypted and anonymous" product hand-waves. The blind substrate
+       reduces <em>what</em> leaks, but it does not eliminate leakage. Sizes, timing, access patterns,
+       IP addresses (without a split transport), and total volume are all still observable. Stronger
+       privacy (G4-I: "you can't tell which post I read") needs bucket downloads or PIR, which the
+       substrate supports but does not ship by default.</p>
+    <p>If a product claims anonymity from "encrypted bytes + Tor support" alone, that's marketing.
+       The spec forbids unqualified "blind" claims for exactly this reason.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="ceilings">
+  <h2><span class="num">09</span>What this does <em>not</em> do</h2>
+
+  <p class="lead">The hard ceilings. Named plainly, because pretending otherwise is the original sin
+     of this space.</p>
+
+  <ol>
+    <li><strong>It does not hide public content from an operator who joins as a reader.</strong>
+        That's G5, and G5 is mathematically impossible for public data. The read key has to reach
+        every reader; an operator can always obtain it. The win is deniability and no passive index —
+        not secrecy.</li>
+    <li><strong>It does not prove hardware actually erased data.</strong> If an operator keeps a copy
+        despite issuing a <code>DROP</code>, the substrate can't prove the bytes are gone from disk.
+        Cryptographic erasure is a claim, not a physics guarantee.</li>
+    <li><strong>It does not solve Sybil.</strong> Identities are cheap to mint. The substrate doesn't
+        know about "users" at all — it just moves bytes. Vote-weighting, one-human-one-vote, and
+        reputation live at the app layer, not here.</li>
+    <li><strong>It does not provide a global name registry.</strong> "r/peerit" is an app concept.
+        The substrate has no opinion on names; naming is app-level and subject to Zooko's triangle
+        (human-readable, decentralized, squat-proof — pick two).</li>
+    <li><strong>It does not resist a global passive observer.</strong> An adversary watching the whole
+        network can correlate timing and volume. Defeating that needs mixnets or cover traffic, which
+        are research-grade and explicitly out of scope for v1.</li>
+    <li><strong>It does not do semantic search, ranking, or moderation.</strong> Those are app
+        functions. The relay cannot rank posts because it cannot read them. All search is local-first,
+        over your own decrypted index.</li>
+    <li><strong>It does not make the website unblockable.</strong> Multi-relay resists relay seizure
+        and rollback, but a censor blocking the single origin serving the web bundle still wins. The
+        fix (inlining the signed roster into the page) is still ahead.</li>
+    <li><strong>It does not give you password recovery.</strong> No accounts means no "forgot password"
+        button. Your key is your identity; lose both the key and your backup phrase, and it's gone.
+        PearBrowser gives you a 12-word BIP-39 phrase, but that's the floor.</li>
+  </ol>
+
+  <div class="callout danger">
+    <h4>Why this honesty matters</h4>
+    <p>Every ceiling on this list is a place where a less honest product would claim a feature it
+       doesn't have. The blind substrate's whole value proposition is that <strong>the claims it does
+       make are load-bearing and verifiable</strong> — not that it solves every problem. If you read
+       one thing in this document, read this list. The ceilings are the contract.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="glossary">
+  <h2><span class="num">10</span>Glossary</h2>
+
+  <dl class="gloss">
+    <dt>Blind substrate</dt>
+    <dd>The whole system described here. A storage layer that holds app data without being able to
+        interpret it. "Blind" = the relay can't see app meaning; "substrate" = it's a foundation
+        many apps can build on, not a peerit-specific backend.</dd>
+
+    <dt>Strict membrane</dt>
+    <dd>The hard line between "outside" (app-owned, knows everything) and "inside" (relay-operated,
+        knows nothing). App info cannot cross it. Adding a new app requires no relay changes
+        precisely because nothing app-specific ever enters the membrane. <em>(Going live with the
+        2-relay cutover — this is the substrate's defining property, now activating.)</em></dd>
+
+    <dt>Cell</dt>
+    <dd>One fixed-size encrypted storage unit. The relay sees opaque ciphertext at a random address.
+        The client sees a locked box it can open with a read capability.</dd>
+
+    <dt>Slot</dt>
+    <dd>The random storage address of a cell. Derived from a coarse time bucket and a one-time
+        "create" key. Has nothing to do with the content — not the author, not the app, not the
+        record type.</dd>
+
+    <dt>Read capability</dt>
+    <dd>The slot address plus the decryption key. Held only by the client, threaded through encrypted
+        next-pointers. Never stored on the relay. Without it, the bytes are unreadable.</dd>
+
+    <dt>Write capability</dt>
+    <dd>One-time create key plus independent renew/drop keys for a cell. Lets the writer manage the
+        cell's lifecycle without giving them read access to the content.</dd>
+
+    <dt>Capsule</dt>
+    <dd>The encrypted inner record plus encrypted routing/chain data and padding, before it becomes a
+        cell. The unit of app-level encryption.</dd>
+
+    <dt>Inner record</dt>
+    <dd>The application-defined signed bytes. For peerit: a post, vote, comment, identity, or mod
+        action, signed by its author's Ed25519 key. Lives only inside ciphertext.</dd>
+
+    <dt>Blind Cells vs Blind Core</dt>
+    <dd>The two runtime profiles. Blind Cells = fixed boxes for browsers; Blind Core = encrypted
+        Hypercore streaming for native runtimes. Same protocol, same five verbs, different shape.</dd>
+
+    <dt>Conforming producer</dt>
+    <dd>A client that encrypts and pads correctly before calling the substrate. The substrate can't
+        stop a malicious client from uploading plaintext, but no conforming app ever will. (Think:
+        a public byte store can't detect intentional plaintext.)</dd>
+
+    <dt>Guarantee ladder (G0–G5)</dt>
+    <dd>The levels of blindness a claim can prove. Every "blind" claim must name its highest rung.
+        G0 = can't fake. G1 = can't read payload. G2 = can't see schema. G3 = can't link cells.
+        G4 = can't trace or identify reads. G5 = can't read even as a reader (impossible for public).</dd>
+
+    <dt>The five families</dt>
+    <dd><code>DESCRIBE</code>, <code>CELL</code>, <code>INBOX</code>, <code>CORE</code>,
+        <code>FORWARD</code>. The complete protocol surface a strict relay exposes. No search, no
+        moderate, no directory — those are client-side.</dd>
+
+    <dt>Split transport</dt>
+    <dd>A multi-hop path (OHTTP, Protomux split, Tor) that separates "who is asking" from "what is
+        being asked for." Required for G4-T (route separation). The substrate's privacy ceiling rises
+        with the transport you choose.</dd>
+
+    <dt>Bootstrap capability</dt>
+    <dd>The encrypted entry point that lets a reader start following the capability chain. For public
+        peerit it's distributed outside the storage protocol; for private apps only to members.</dd>
+
+    <dt>Operator diversity</dt>
+    <dd>Evidence that different roles (entry, exit, storage) are run by different parties. Different
+        keys, hosts, ASNs, regions are signals — never cryptographic proof of independence.</dd>
+  </dl>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><strong>Terminology.</strong> This document uses "relay" throughout, never "server." The relay
+       is a dumb pipe that carries blind bytes — it owns nothing, interprets nothing, and is trusted
+       for nothing. "Serverless" is reserved for PearBrowser only, where no relay is in the path.</p>
+    <p><strong>Sources.</strong> Grounded in the actual specs at
+       <code>02-apps/peerit/docs/BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md</code> and
+       <code>BLIND-SUBSTRATE-IMPLEMENTATION-SPEC.md</code>. Terminology, the guarantee ladder, the
+       five families, and the honest ceilings are quoted or paraphrased from those documents.</p>
+    <p><strong>Status.</strong> The substrate is in active cutover on 2 relays. Claims that describe
+       its target behavior are badged inline as "going live." Promote each to Shipped only after the
+       corresponding live convergence proof exists.</p>
+    <p><strong>Honesty.</strong> This document does not claim anything the substrate does not
+       actually prove. G5 is listed as unachievable because it is. Metadata leakage is called out
+       because it's real. The relay/server/serverless distinction is enforced because conflating
+       them is how credibility dies.</p>
+    <p><strong>Companion docs.</strong>
+       <a href="BLINDSHARD-AND-PURE-PIPE-EXPLAINER.html">BlindShard &amp; Pure Pipe</a> (Layer 2) ·
+       <a href="HONEST-STACK-AUTHORITATIVE.html">The Honest Stack</a> (authoritative corrections) ·
+       <a href="BROWSER-PEAR-APPS-THE-HONEST-CEILING.html">Browser Pear Apps: The Honest Ceiling</a>
+       (the central question). Where these docs conflict on shipped-vs-target status, the Honest
+       Stack is correct.</p>
+  </div>
+</footer>
+
+</body>
+</html>

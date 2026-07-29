@@ -1,0 +1,979 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Honest Stack — What's Real, What's Target, What's Fantasy</title>
+<style>
+  :root{
+    --bg:#0a0e14; --panel:#111821; --panel-2:#0d141d;
+    --ink:#e8eef6; --dim:#8b9bb0; --faint:#5b6b80;
+    --line:#1f2a3a; --line-2:#152028;
+    --accent:#4fd1c5; --accent-2:#5b9fd4; --gold:#e0a54b; --rose:#e0533d; --violet:#9b7ed9; --green:#3ecf8e;
+    /* status colors */
+    --shipped:#3ecf8e; --coded:#e0a54b; --spec:#5b9fd4; --fantasy:#e0533d;
+    --cutover:#22d3ee;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--accent-2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{background:#0a0f16;border:1px solid var(--line);padding:.05em .4em;border-radius:4px;
+    font:.88em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cfe3ff}
+
+  .wrap{max-width:1000px;margin:0 auto;padding:0 1.4em}
+  main{padding-bottom:6em}
+
+  header.hero{padding:4.5em 0 3em;border-bottom:1px solid var(--line);
+    background:radial-gradient(ellipse at top,rgba(224,83,61,.07),transparent 60%)}
+  .eyebrow{color:var(--rose);font-size:.8em;font-weight:700;letter-spacing:.18em;text-transform:uppercase;margin:0 0 .8em}
+  h1{font-size:2.6em;line-height:1.1;margin:.1em 0 .3em;letter-spacing:-.025em;font-weight:800}
+  h1 .grad{background:linear-gradient(120deg,var(--green),var(--accent));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:1.2em;color:var(--dim);max-width:64ch;margin:1em 0 0}
+  .meta{margin-top:2em;display:flex;flex-wrap:wrap;gap:.6em;font-size:.82em;color:var(--faint)}
+  .meta span{padding:.3em .7em;border:1px solid var(--line);border-radius:999px;background:var(--panel)}
+
+  section{padding:3em 0;border-bottom:1px solid var(--line-2)}
+  section:last-of-type{border-bottom:0}
+  h2{font-size:1.7em;letter-spacing:-.015em;margin:0 0 .6em;font-weight:700}
+  h2 .num{color:var(--rose);font-variant-numeric:tabular-nums;margin-right:.5em;font-weight:800}
+  h3{font-size:1.2em;margin:1.6em 0 .5em;font-weight:700;letter-spacing:-.01em}
+  h4{font-size:1.02em;margin:1.4em 0 .4em;color:var(--accent-2);font-weight:700}
+  p{margin:.7em 0}
+  ul,ol{margin:.7em 0;padding-left:1.5em}
+  li{margin:.35em 0}
+  .lead{font-size:1.08em;color:#cdd6e3}
+
+  .callout{border-left:3px solid var(--accent);background:rgba(79,209,197,.05);
+    padding:1em 1.3em;border-radius:0 10px 10px 0;margin:1.4em 0}
+  .callout.warn{border-color:var(--gold);background:rgba(224,165,75,.06)}
+  .callout.danger{border-color:var(--rose);background:rgba(224,83,61,.06)}
+  .callout.violet{border-color:var(--violet);background:rgba(155,126,215,.06)}
+  .callout h4{margin:.2em 0 .4em;color:inherit;font-size:.78em;text-transform:uppercase;letter-spacing:.1em}
+  .callout.warn h4{color:var(--gold)}
+  .callout.danger h4{color:var(--rose)}
+  .callout.violet h4{color:var(--violet)}
+  .callout p:last-child{margin-bottom:0}
+
+  figure{margin:2em 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:1.6em 1.4em 1.2em}
+  figure svg{width:100%;height:auto;display:block}
+  figcaption{color:var(--dim);font-size:.86em;margin-top:1em;text-align:center;font-style:italic}
+
+  table{border-collapse:collapse;width:100%;margin:1.2em 0;font-size:.94em}
+  th,td{border:1px solid var(--line);padding:.6em .8em;text-align:left;vertical-align:top}
+  th{background:#0a0f16;color:var(--dim);font-weight:600;font-size:.84em;text-transform:uppercase;letter-spacing:.04em}
+
+  /* status badges */
+  .status{display:inline-block;padding:.15em .55em;border-radius:4px;font-size:.74em;font-weight:700;text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--line)}
+  .s-shipped{color:var(--shipped);border-color:#1d3a2c;background:rgba(62,207,142,.08)}
+  .s-coded{color:var(--coded);border-color:#3a2a14;background:rgba(224,165,75,.08)}
+  .s-spec{color:var(--spec);border-color:#1a2a3a;background:rgba(91,159,212,.08)}
+  .s-fantasy{color:var(--fantasy);border-color:#3a1d18;background:rgba(224,83,61,.1)}
+  .s-cutover{color:var(--cutover);border-color:#0f3a44;background:rgba(34,211,238,.1)}
+
+  /* corrections table row highlights */
+  tr.was-bad td:first-child{border-left:3px solid var(--rose)}
+  tr.now-good td:first-child{border-left:3px solid var(--green)}
+
+  nav.toc{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.2em 1.4em;margin:2em 0}
+  nav.toc h3{margin:0 0 .6em;font-size:.82em;text-transform:uppercase;letter-spacing:.1em;color:var(--dim)}
+  nav.toc ol{margin:0;padding-left:1.3em;columns:2;column-gap:2em}
+  nav.toc li{margin:.2em 0;break-inside:avoid}
+  nav.toc a{color:var(--ink);font-size:.94em}
+
+  .legend{display:flex;flex-wrap:wrap;gap:.8em;margin:1.2em 0;padding:1em 1.2em;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+  .legend > div{display:flex;align-items:center;gap:.4em;font-size:.85em;color:var(--dim)}
+  .legend .swatch{width:14px;height:14px;border-radius:3px;border:1px solid}
+
+  footer{padding:2.5em 0 0;border-top:1px solid var(--line);margin-top:3em;color:var(--faint);font-size:.86em}
+  footer p{margin:.4em 0}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Authoritative correction · supersedes overstatements in companion explainers</p>
+    <h1>The <span class="grad">Honest Stack</span></h1>
+    <p class="lede">What's actually shipped today, what's wired but disabled, what's spec'd but
+       unbuilt, and what's a fantasy the founder was already talked out of. No claim past the
+       evidence. No diagram showing a target state as if it were the current state.</p>
+    <div class="meta">
+      <span>Status: load-bearing honesty</span>
+      <span>Replaces: overstated lines in BLIND-SUBSTRATE-EXPLAINER &amp; BLINDSHARD-AND-PURE-PIPE-EXPLAINER</span>
+      <span>Audience: anyone who'd repeat these claims in public</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="callout" style="border-color:var(--cutover);background:rgba(34,211,238,.08)">
+    <h4 style="color:var(--cutover)">📡 Live update — blind substrate cutover in progress (this week)</h4>
+    <p>The blind substrate (<code>hiverelay-blind/1</code>) is no longer just spec'd — it is being
+       deployed now. <strong>Two relays are coming up running the substrate</strong>, and peerit is
+       being stood up on it with the launch seed content. This shifts several components below from
+       <span class="status s-spec">Spec'd</span> to <span class="status s-cutover">Cutover</span> (a
+       real state between built and shipped-end-to-end).</p>
+    <p><strong>What the cutover does <em>not</em> change:</strong> BlindShard body dispersal still
+       needs ≥3 independent cohort operators (2 relays isn't enough for K=3-of-5). dht-relay-ws is
+       still experimental upstream. The pure pipe is still spec'd. The browser-as-DHT-peer claim is
+       still fantasy. Those gates are unchanged.</p>
+    <p>Claims that move from conditional to near-present-tense as the cutover lands are flagged
+       inline with the <span class="status s-cutover">Cutover</span> badge. Don't promote them to
+       <span class="status s-shipped">Shipped</span> until end-to-end convergence is proven on the
+       live deployment.</p>
+  </div>
+
+  <div class="callout danger">
+    <h4>Why this document exists</h4>
+    <p>The two companion explainers (<em>Blind Substrate</em> and <em>BlindShard &amp; Pure Pipe</em>)
+       each contain lines that overstate what's real today — most dangerously, the claim that
+       <em>"the reader's browser runs a real HyperDHT node."</em> A normal browser physically cannot
+       do this. That's not a gap to close with more code; it's a hard limit of the web platform.
+       Repeating it in public would cost the project credibility it can't recover.</p>
+    <p>This document is the authoritative correction. It catalogs every overstatement found in the
+       companion docs, presents the <strong>strongest defensible version</strong> of each claim, and
+       shows the full architecture honestly distinguished by <em>what ships today</em> vs
+       <em>what's target</em> vs <em>what's fantasy</em>.</p>
+  </div>
+
+  <nav class="toc">
+    <h3>What's inside</h3>
+    <ol>
+      <li><a href="#status">The four statuses (read this first)</a></li>
+      <li><a href="#corrections">Corrections table — every overstatement, fixed</a></li>
+      <li><a href="#matrix">Status matrix — every component, honestly</a></li>
+      <li><a href="#strongest">The strongest honest claims</a></li>
+      <li><a href="#bigdiagram">The full stack — one honest diagram</a></li>
+      <li><a href="#zoom-cell">Zoom: cell &amp; capability anatomy</a></li>
+      <li><a href="#zoom-shard">Zoom: BlindShard key-split</a></li>
+      <li><a href="#zoom-reader">Zoom: the two reader paths (the critical honest distinction)</a></li>
+      <li><a href="#zoom-today">Zoom: what's actually running right now</a></li>
+      <li><a href="#ceilings">The permanent ceilings</a></li>
+    </ol>
+  </nav>
+
+  <div class="legend">
+    <div><span class="swatch" style="background:rgba(62,207,142,.15);border-color:var(--shipped)"></span><span class="status s-shipped">Shipped</span> — running in production today</div>
+    <div><span class="swatch" style="background:rgba(34,211,238,.18);border-color:var(--cutover)"></span><span class="status s-cutover">Cutover</span> — actively deploying now, not yet converged end-to-end</div>
+    <div><span class="swatch" style="background:rgba(224,165,75,.15);border-color:var(--coded)"></span><span class="status s-coded">Coded, disabled</span> — built &amp; tested, not active in prod</div>
+    <div><span class="swatch" style="background:rgba(91,159,212,.15);border-color:var(--spec)"></span><span class="status s-spec">Spec'd</span> — designed, not yet built</div>
+    <div><span class="swatch" style="background:rgba(224,83,61,.15);border-color:var(--fantasy)"></span><span class="status s-fantasy">Fantasy</span> — architecturally impossible (browser platform limit)</div>
+  </div>
+
+<!-- ============================================================== -->
+<section id="status">
+  <h2><span class="num">01</span>The four statuses (read this first)</h2>
+
+  <p class="lead">Every claim below carries one of four badges. The badge is the contract.</p>
+
+  <table>
+    <thead><tr><th>Status</th><th>Meaning</th><th>What you can say</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="status s-shipped">Shipped</span></td>
+        <td>Running in production on the live peerit.site deployment, today.</td>
+        <td>"peerit does X." Present tense. Defensible.</td>
+      </tr>
+      <tr>
+        <td><span class="status s-cutover">Cutover</span></td>
+        <td>Actively deploying right now — code shipping to the live fleet, peerit being stood up on it, but not yet converged end-to-end at the moment of writing.</td>
+        <td>"peerit is cutting over to X." Present-progressive. Promote to Shipped only after live convergence is proven.</td>
+      </tr>
+      <tr>
+        <td><span class="status s-coded">Coded, disabled</span></td>
+        <td>Code exists, is tested (often against a fake fleet), but is turned off in production pending a deployment gate (independent operators, upstream lib maturity, etc.).</td>
+        <td>"peerit has built X; it activates when Y." Never present tense.</td>
+      </tr>
+      <tr>
+        <td><span class="status s-spec">Spec'd</span></td>
+        <td>Designed in a reviewed document, not yet implemented. The master spec is explicit that it "does not describe the current production deployment."</td>
+        <td>"the design calls for X." Never "peerit does X."</td>
+      </tr>
+      <tr>
+        <td><span class="status s-fantasy">Fantasy</span></td>
+        <td>Architecturally impossible on the target platform. No amount of code fixes it. The founder was explicitly talked out of pursuing it.</td>
+        <td>Never say this. If tempted, re-read the founder's note in §03.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <h4>The original sin this prevents</h4>
+    <p>Every "decentralized" product that lost credibility did it the same way: described the target
+       state as the current state, in present tense, in public, until someone checked. The four-status
+       system exists to make that drift impossible. If you can't badge a claim, you can't make it.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="corrections">
+  <h2><span class="num">02</span>Corrections table — every overstatement, fixed</h2>
+
+  <p class="lead">A line-by-line audit of both companion explainers. The bad claim on the left; the
+     strongest honest version on the right.</p>
+
+  <h3>From <em>BlindShard &amp; the Pure Pipe</em></h3>
+
+  <table>
+    <thead><tr><th>The overstatement (as written)</th><th>Status</th><th>The honest version</th></tr></thead>
+    <tbody>
+      <tr class="was-bad">
+        <td>"the reader's browser runs a real HyperDHT node and does its own discovery, its own shard gathering, its own reassembly"</td>
+        <td><span class="status s-fantasy">Fantasy</span></td>
+        <td>A normal browser <strong>cannot</strong> run a HyperDHT node — no UDP sockets, no DHT routing slot. It reaches the DHT <em>through</em> a WSS bridge (<code>dht-relay-ws</code>) that is itself experimental and explicitly "do-not-use-in-production." Only <strong>PearBrowser</strong> (native runtime) is a real DHT peer.</td>
+      </tr>
+      <tr class="was-bad">
+        <td>"no operator — including the founder — aggregates or serves readable or complete content"</td>
+        <td><span class="status s-spec">Spec'd</span></td>
+        <td>This is the <em>target</em> end state, not the current reality. Today the founder's VPS is a single OutboxLog relay that <em>does</em> aggregate and serve (though under v2 opaque keys for the graph). The pure-pipe end state requires the blind substrate spec to ship AND a populated blind-seeder fleet.</td>
+      </tr>
+      <tr class="was-bad">
+        <td>"There's no 'the site' to seize"</td>
+        <td><span class="status s-fantasy">Overstated</span></td>
+        <td><code>peerit.site</code> is a single origin today — absolutely seizable. The signed-release chain lets mirrors/verifiers confirm a bundle is authentic, but the single origin is a real chokepoint until the bundle is distributed across IPFS/mirrors/extensions (still ahead).</td>
+      </tr>
+      <tr class="was-bad">
+        <td>"There's no DNS to revoke"</td>
+        <td><span class="status s-fantasy">Overstated</span></td>
+        <td><code>peerit.site</code> IS DNS. Hyperdrive keys (the <code>hyper://</code> addresses) are not DNS — those are content-addressed and can't be revoked. But the web on-ramp is a domain, and it can be taken.</td>
+      </tr>
+      <tr class="was-bad">
+        <td>"There's no central index to subpoena"</td>
+        <td><span class="status s-fantasy">Overstated</span></td>
+        <td>Today there is exactly one: the single OutboxLog relay. The pure-pipe target removes it, but that target is spec'd, not shipped.</td>
+      </tr>
+      <tr class="was-bad">
+        <td>The four-rung "liability ladder" (v1 → substrate → BlindShard → pure pipe) presented as rungs you climb</td>
+        <td><span class="status s-spec">Mixed</span></td>
+        <td>Today peerit sits between v1 and substrate — v2 opaque keys are live, but the full substrate spec isn't. BlindShard is coded but disabled. Pure pipe is spec'd only. The ladder is real as a <em>roadmap</em>; presenting it as achieved states is the overstatement.</td>
+      </tr>
+      <tr class="was-bad">
+        <td>"The network's intelligence is distributed across readers, not concentrated in any relay"</td>
+        <td><span class="status s-spec">Spec'd</span></td>
+        <td>This describes reader-side aggregation in the pure-pipe end state. Today aggregation is done by the single OutboxLog relay. Reader-side aggregation requires the experimental <code>dht-relay-ws</code> path to reach production — explicitly gated and not there yet.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>From <em>The Blind Substrate</em></h3>
+
+  <table>
+    <thead><tr><th>The overstatement (as written)</th><th>Status</th><th>The honest version</th></tr></thead>
+    <tbody>
+      <tr class="was-bad">
+        <td>"Adding a new app requires zero relay configuration"</td>
+        <td><span class="status s-cutover">Becoming true</span></td>
+        <td>Was spec'd; now actively shipping on the 2-relay substrate cutover. Becomes fully true (Shipped) when the cutover converges and a second conforming app is stood up without relay-side config changes.</td>
+      </tr>
+      <tr class="was-bad">
+        <td>"Inside the membrane, the relay sees only random-looking bytes at random-looking addresses"</td>
+        <td><span class="status s-cutover">Becoming true</span></td>
+        <td>Was spec'd; the blind cells are going live on the 2-relay fleet now. Becomes Shipped when live convergence proofs confirm cells are opaque at rest on both relays.</td>
+      </tr>
+      <tr class="was-bad">
+        <td>The cell/slot/capability model presented as current architecture</td>
+        <td><span class="status s-cutover">Becoming true</span></td>
+        <td>Was spec'd; now the active cutover target. OutboxLog is being replaced by Blind Cells on the live fleet this week.</td>
+      </tr>
+      <tr class="was-bad">
+        <td>"no passive reading, no semantic enumeration, content-neutral storage"</td>
+        <td><span class="status s-cutover">Becoming true at G2-S/G3</span></td>
+        <td>At G2-S/G3 in the substrate spec, which is the one going live now. Becomes Shipped when the live negative-test evidence confirms no app semantics at rest.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <h4>The pattern</h4>
+    <p>Every one of these overstatements has the same shape: <em>describing the target spec or end
+       state as if it were the current deployment.</em> The fix is always the same: badge the claim
+       with its real status, use the conditional mood, and never let a diagram show a target state
+       without color-coding it as unbuilt.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="matrix">
+  <h2><span class="num">03</span>Status matrix — every component, honestly</h2>
+
+  <p class="lead">The full component inventory. No claim without a badge.</p>
+
+  <table>
+    <thead><tr><th>Component</th><th>Status</th><th>Evidence / gate</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Ed25519 signatures on every record</strong></td><td><span class="status s-shipped">Shipped</span></td><td>Live. Relays cannot forge content. <code>js/crypto.js</code>, <code>js/verify.js</code>.</td></tr>
+      <tr><td><strong>Multi-relay reconciliation machinery</strong></td><td><span class="status s-cutover">Cutover</span></td><td>Code shipped and works. Production roster moving from 1 → <strong>2 relays this week</strong> — reconciliation machinery goes inert→active. <code>js/relay-pool.js</code>.</td></tr>
+      <tr><td><strong>PearBrowser native P2P path</strong></td><td><span class="status s-shipped">Shipped</span></td><td>Real Hyperswarm, real UDP, no relay in the path. The strongest trust tier, today.</td></tr>
+      <tr><td><strong>Signed-release chain (offline key verifies web bundle)</strong></td><td><span class="status s-shipped">Shipped</span></td><td><code>js/release-verify.js</code>, <code>pinnedReleaseKey</code>. Lets mirrors confirm authenticity.</td></tr>
+      <tr><td><strong>v2 opaque keys (graph keys HMAC'd)</strong></td><td><span class="status s-shipped">Shipped</span></td><td>Live. Prefix enumeration of the social graph is defeated. <code>js/seal.js</code>.</td></tr>
+      <tr><td><strong>peerit on the blind substrate (with seed content)</strong></td><td><span class="status s-cutover">Cutover</span></td><td>peerit being stood up on <code>hiverelay-blind/1</code> with the launch seed content this week. Migrating off app-aware OutboxLog onto the strict membrane.</td></tr>
+      <tr><td><strong>PoW-gated posting</strong></td><td><span class="status s-shipped">Shipped</span></td><td>Bits 16/14/18/12/12. Spam costs compute, not accounts. <code>js/pow.js</code>.</td></tr>
+      <tr><td><strong>Signed moderation overlays</strong></td><td><span class="status s-shipped">Shipped</span></td><td>No admin key; mods sign actions, clients honor them. <code>js/moderation.js</code>.</td></tr>
+
+      <tr><td><strong>BlindShard client logic (PVSS key-split)</strong></td><td><span class="status s-coded">Coded, disabled</span></td><td>Wired + tested against a fake fleet. <strong>Disabled in production</strong> — <code>shardRoster</code> is empty. Activates when a cohort is configured. <code>js/blind-dealer.mjs</code>, <code>js/blob-disperse.js</code>.</td></tr>
+      <tr><td><strong>Blind blob store on HiveRelay (<code>shard:&lt;hash&gt;</code>)</code></strong></td><td><span class="status s-coded">Coded, disabled</span></td><td>HiveRelay PR #149 landed the surface; peerit client glue is built. Needs the concrete adapter + ≥3 independent operators.</td></tr>
+      <tr><td><strong>dht-relay-ws (browser-to-DHT bridge)</strong></td><td><span class="status s-coded">Coded, disabled</span></td><td>Wire-validated on local testnet. Upstream <code>@hyperswarm/dht-relay</code> is pinned old and marked <strong>"do-not-use-in-production."</strong> <code>deploy/dht-relay/</code>.</td></tr>
+
+      <tr><td><strong>The blind substrate (<code>hiverelay-blind/1</code>)</strong></td><td><span class="status s-cutover">Cutover</span></td><td>Master spec exists <strong>and is being deployed now</strong> on 2 relays. The spec line "does not describe the current production deployment" is in the process of becoming false. <code>BLIND-APP-AGNOSTIC-MASTER-SPEC.md</code>.</td></tr>
+      <tr><td><strong>Blind Cells (fixed-size ciphertext storage)</strong></td><td><span class="status s-cutover">Cutover</span></td><td>Target replacement for OutboxLog — now actively replacing it. Live on the 2-relay fleet as the cutover converges.</td></tr>
+      <tr><td><strong>Blind Core (encrypted Hypercore replication)</strong></td><td><span class="status s-cutover">Cutover</span></td><td>Target profile for native runtimes, composing upstream <code>blind-peer</code>. Standing up alongside Blind Cells.</td></tr>
+      <tr><td><strong>Pure pipe end state</strong></td><td><span class="status s-spec">Spec'd</span></td><td>Founder's VPS becomes a dumb byte-pipe. Requires blind substrate + populated fleet + production-ready dht-relay-ws.</td></tr>
+      <tr><td><strong>Custody receipts (acknowledged shard placement)</strong></td><td><span class="status s-spec">Spec'd</span></td><td>Turns fire-and-forget into auditable storage. Phase 4 work.</td></tr>
+
+      <tr><td><strong>"Browser runs a real HyperDHT node"</strong></td><td><span class="status s-fantasy">Fantasy</span></td><td>Browsers cannot open UDP sockets or hold DHT routing slots. Hard platform limit. The founder was explicitly talked out of this path.</td></tr>
+      <tr><td><strong>"Browser-to-browser with no relay at all"</strong></td><td><span class="status s-fantasy">Fantasy</span></td><td>Two browsers behind NAT cannot introduce themselves. Something reachable must make the first hop. The founder calls this "coherent, detailed, and useless."</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <h4>What "in cutover" actually means right now</h4>
+    <p>The blind substrate is being deployed on <strong>2 relays this week</strong>, and peerit is
+       being stood up on it with the launch seed content. This is real progress — the strict membrane,
+       opaque cells, and the multi-relay reconciliation machinery are going from inert to active.
+       Until the cutover converges end-to-end (verified by live convergence proofs, not just code
+       shipping), treat the substrate claims as <em>shipping now</em>, not <em>already shipped</em>.
+       Promote each one to <span class="status s-shipped">Shipped</span> only after the corresponding
+       live proof exists.</p>
+    <p><strong>Still gated, not changed by the cutover:</strong> BlindShard body dispersal (needs ≥3
+       independent cohort operators — 2 relays isn't enough), dht-relay-ws (experimental upstream),
+       pure pipe (spec'd), browser-as-DHT-peer (fantasy).</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="strongest">
+  <h2><span class="num">04</span>The strongest honest claims</h2>
+
+  <p class="lead">What we can actually defend, in public, today. Each claim is followed by the
+     evidence and the honest ceiling.</p>
+
+  <h3>The defensible present-tense claims <span class="status s-shipped">Shipped</span></h3>
+
+  <ol>
+    <li><strong>"Every record is Ed25519-signed and re-verified in your browser. No relay can forge content."</strong>
+        <br><em>Evidence:</em> live in production. <em>Ceiling:</em> a relay can still withhold or serve stale data — signatures protect integrity, not availability.</li>
+
+    <li><strong>"In PearBrowser, you're a real peer — direct Hyperswarm, no relay in your path, no origin that can be seized."</strong>
+        <br><em>Evidence:</em> PearBrowser runs on the Pear/Bare runtime with real UDP sockets. <em>Ceiling:</em> only PearBrowser users get this; normal browser users do not.</li>
+
+    <li><strong>"Storage keys are opaque — an operator cannot enumerate the social graph by reading disk."</strong>
+        <br><em>Evidence:</em> v2 opaque keys (HMAC'd) are live. <em>Ceiling:</em> the outer record metadata (app, namespace, type, author-signing) is still visible in today's OutboxLog — the full substrate spec blinds those too, but isn't shipped.</li>
+
+    <li><strong>"Posting costs compute (proof-of-work), not accounts. There's no signup, no email, no captcha."</strong>
+        <br><em>Evidence:</em> live. <em>Ceiling:</em> PoW raises cost; it doesn't prove personhood. A funded Sybil is still possible.</li>
+
+    <li><strong>"Moderation is a signed overlay — mods can't edit your posts, only clients choose to honor mod actions."</strong>
+        <br><em>Evidence:</em> live. <em>Ceiling:</em> clients can choose not to honor; there's no global enforcement.</li>
+
+    <li><strong>"The web bundle is verifiable against an offline signing key — mirrors and auditors can confirm a bundle is authentic without trusting the origin."</strong>
+        <br><em>Evidence:</em> signed-release chain. <em>Ceiling:</em> a first-time visitor still downloads the verifier from the origin; full protection requires external verification or PearBrowser.</li>
+  </ol>
+
+  <h3>The defensible cutover claims <span class="status s-cutover">In cutover</span></h3>
+
+  <p>Each is true <em>as the cutover converges</em>. Use present-progressive tense, not present.</p>
+
+  <ol>
+    <li><strong>"The blind substrate is going live — peerit is moving from app-aware OutboxLog onto the strict membrane, on 2 relays."</strong>
+        <span class="status s-cutover">Cutover</span>
+        <br><em>Promote to Shipped when:</em> live convergence proofs confirm peerit reads/writes through Blind Cells on both relays.</li>
+
+    <li><strong>"Adding a new app is becoming zero-config — the substrate is app-agnostic by construction, not by namespace registration."</strong>
+        <span class="status s-cutover">Cutover</span>
+        <br><em>Promote to Shipped when:</em> a second conforming app (e.g. p2pbuilders) is stood up on the same 2 relays without relay-side config changes.</li>
+
+    <li><strong>"Multi-relay reconciliation is going live — two independent relays, cross-head verification, no single ingress."</strong>
+        <span class="status s-cutover">Cutover</span>
+        <br><em>Promote to Shipped when:</em> the <code>singleIngressWriter: true</code> flag is cleared and write-path failover is demonstrated across both relays.</li>
+  </ol>
+
+  <h3>The defensible future-tense claims</h3>
+
+  <p>Each requires naming the gate.</p>
+
+  <ol>
+    <li><strong>"When ≥3 independent operators join the shard cohort, no single operator will hold a readable, complete, or linkable post body."</strong>
+        <span class="status s-coded">Coded, disabled</span>
+        <br><em>Gate:</em> recruiting independent operators (a social/deployment problem, not code).</li>
+
+    <li><strong>"When the blind substrate ships, adding a new app will require zero relay configuration."</strong>
+        <span class="status s-spec">Spec'd</span>
+        <br><em>Gate:</em> implementing <code>hiverelay-blind/1</code> and migrating peerit off OutboxLog.</li>
+
+    <li><strong>"When dht-relay-ws reaches production, normal browsers will reach the DHT through a blind byte-pipe that carries opaque frames and stores nothing readable."</strong>
+        <span class="status s-coded">Coded, disabled</span>
+        <br><em>Gate:</em> upstream <code>@hyperswarm/dht-relay</code> reaching production; not a peerit problem alone.
+        <br><em>Honest framing:</em> "blind byte-pipe," not "browser is a peer." There's still a relay in the path; it's just blind.</li>
+  </ol>
+
+  <h3>The claims you must never make</h3>
+
+  <div class="callout danger">
+    <h4>Forbidden</h4>
+    <ul>
+      <li>"The browser runs a real HyperDHT node." <span class="status s-fantasy">Fantasy</span></li>
+      <li>"No relay in the path." <span class="status s-fantasy">False for browsers</span></li>
+      <li>"The operator can't read your posts." <span class="status s-fantasy">False — they can join as a reader</span></li>
+      <li>"It's anonymous." <span class="status s-fantasy">False — metadata leaks</span></li>
+      <li>"It can't be taken down." <span class="status s-fantasy">False — single origin today</span></li>
+      <li>"Blind" without naming a guarantee level. <span class="status s-fantasy">Forbidden by spec</span></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="bigdiagram">
+  <h2><span class="num">05</span>The full stack — one honest diagram</h2>
+
+  <p class="lead">Every piece, color-coded by status. Green ships; yellow is coded but disabled; blue
+     is spec'd; red is fantasy. If a line is red, it's not a roadmap item — it's a cliff to avoid.</p>
+
+  <figure>
+    <svg viewBox="0 0 980 760" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <!-- title -->
+      <text x="490" y="24" text-anchor="middle" fill="#e8eef6" font-size="14" font-weight="700">PEERIT + HIVERELAY — THE HONEST FULL STACK</text>
+      <text x="490" y="40" text-anchor="middle" fill="#5b6b80" font-size="10">color = status · green=shipped · yellow=coded/disabled · blue=spec'd · red=fantasy</text>
+
+      <!-- TWO READER PATHS on the left -->
+      <!-- PearBrowser (native) -->
+      <rect x="20" y="70" width="180" height="120" rx="10" fill="#0f2018" stroke="#3ecf8e" stroke-width="2"/>
+      <text x="110" y="92" text-anchor="middle" fill="#3ecf8e" font-size="12" font-weight="700">PearBrowser</text>
+      <text x="110" y="108" text-anchor="middle" fill="#8b9bb0" font-size="10">(native runtime)</text>
+      <text x="35" y="130" fill="#3ecf8e" font-size="9">✓ real UDP sockets</text>
+      <text x="35" y="144" fill="#3ecf8e" font-size="9">✓ real Hyperswarm</text>
+      <text x="35" y="158" fill="#3ecf8e" font-size="9">✓ real DHT node</text>
+      <text x="35" y="178" fill="#3ecf8e" font-size="9" font-weight="700">= TRUE PEER</text>
+
+      <!-- Normal browser -->
+      <rect x="20" y="230" width="180" height="140" rx="10" fill="#1a0e0a" stroke="#e0533d" stroke-width="2"/>
+      <text x="110" y="252" text-anchor="middle" fill="#e0533d" font-size="12" font-weight="700">Normal browser</text>
+      <text x="110" y="268" text-anchor="middle" fill="#8b9bb0" font-size="10">(Chrome / Firefox / Safari)</text>
+      <text x="35" y="290" fill="#e0533d" font-size="9">✗ no UDP sockets</text>
+      <text x="35" y="304" fill="#e0533d" font-size="9">✗ no DHT routing slot</text>
+      <text x="35" y="318" fill="#e0533d" font-size="9">✗ can't listen on ports</text>
+      <text x="35" y="342" fill="#e0533d" font-size="9" font-weight="700">= NOT A PEER</text>
+      <text x="35" y="358" fill="#8b9bb0" font-size="8">needs a relay in the path</text>
+
+      <!-- the relay bridge (yellow) -->
+      <rect x="220" y="280" width="140" height="80" rx="8" fill="#2a2110" stroke="#e0a54b" stroke-width="2"/>
+      <text x="290" y="302" text-anchor="middle" fill="#e0a54b" font-size="10" font-weight="700">dht-relay-ws</text>
+      <text x="290" y="318" text-anchor="middle" fill="#8b9bb0" font-size="9">WSS bridge</text>
+      <text x="290" y="334" text-anchor="middle" fill="#8b9bb0" font-size="8">carries opaque frames</text>
+      <text x="290" y="350" text-anchor="middle" fill="#e0a54b" font-size="8" font-weight="700">CODED/DISABLED</text>
+
+      <!-- arrows: native direct, browser through bridge -->
+      <path d="M 200 130 Q 380 130 460 200" stroke="#3ecf8e" stroke-width="2.5" fill="none" marker-end="url(#g1)"/>
+      <text x="320" y="120" fill="#3ecf8e" font-size="9" font-weight="700">direct P2P</text>
+      <text x="320" y="132" fill="#3ecf8e" font-size="8">no relay</text>
+
+      <path d="M 200 300 L 220 300" stroke="#e0a54b" stroke-width="2" fill="none" marker-end="url(#y1)"/>
+      <path d="M 360 320 Q 410 320 460 280" stroke="#e0a54b" stroke-width="2" fill="none" marker-end="url(#y1)" stroke-dasharray="4 3"/>
+      <text x="380" y="305" fill="#e0a54b" font-size="9" font-weight="700">tunneled</text>
+
+      <!-- THE MEMBRANE (big vertical line) -->
+      <line x1="450" y1="60" x2="450" y2="700" stroke="#4fd1c5" stroke-width="2" stroke-dasharray="6 4"/>
+      <text x="460" y="76" fill="#4fd1c5" font-size="10" font-weight="700">THE STRICT MEMBRANE</text>
+      <text x="460" y="88" fill="#22d3ee" font-size="8">(going live — cutover in progress)</text>
+
+      <!-- APP LAYER (outside, green) -->
+      <rect x="470" y="100" width="490" height="90" rx="10" fill="#0f2018" stroke="#3ecf8e" stroke-width="2"/>
+      <text x="715" y="122" text-anchor="middle" fill="#3ecf8e" font-size="12" font-weight="700">APP LAYER (outside the membrane) — SHIPPED</text>
+      <text x="485" y="144" fill="#cdd6e3" font-size="10">peerit: signed records, communities, posts, votes, mod overlays</text>
+      <text x="485" y="160" fill="#cdd6e3" font-size="10">Ed25519 identity · PoW gates · v2 opaque keys (graph blinded)</text>
+      <text x="485" y="178" fill="#3ecf8e" font-size="9">all client-side; the relay never sees authorship decisions</text>
+
+      <!-- BLIND CLIENT SDK (spec'd) -->
+      <rect x="470" y="210" width="490" height="70" rx="10" fill="#0a1428" stroke="#5b9fd4" stroke-width="2"/>
+      <text x="715" y="232" text-anchor="middle" fill="#5b9fd4" font-size="12" font-weight="700">BLIND CLIENT SDK — SPEC'D</text>
+      <text x="485" y="254" fill="#cdd6e3" font-size="10">@hiverelay/blind-client: encrypt + pad + capability chain + relay selection</text>
+      <text x="485" y="270" fill="#5b9fd4" font-size="9">not built; today peerit uses its own client against OutboxLog</text>
+
+      <!-- SUBSTRATE (mixed) -->
+      <rect x="470" y="300" width="490" height="160" rx="10" fill="#0a0f16" stroke="#1f2a3a" stroke-width="2"/>
+      <text x="715" y="322" text-anchor="middle" fill="#8b9bb0" font-size="12" font-weight="700">SUBSTRATE LAYER (inside the membrane)</text>
+
+      <!-- OutboxLog (shipped, being replaced) -->
+      <rect x="485" y="335" width="225" height="55" rx="6" fill="#0f2018" stroke="#3ecf8e" stroke-dasharray="4 3"/>
+      <text x="597" y="354" text-anchor="middle" fill="#3ecf8e" font-size="10" font-weight="700">OutboxLog (legacy)</text>
+      <text x="597" y="370" text-anchor="middle" fill="#8b9bb0" font-size="9">v2 opaque keys, sealed vals</text>
+      <text x="597" y="382" text-anchor="middle" fill="#3ecf8e" font-size="8">SHIPPED · being replaced ↓</text>
+
+      <!-- Blind Cells (cutover) -->
+      <rect x="720" y="335" width="225" height="55" rx="6" fill="#0f3a44" stroke="#22d3ee" stroke-width="2"/>
+      <text x="832" y="354" text-anchor="middle" fill="#22d3ee" font-size="10" font-weight="700">Blind Cells / Core</text>
+      <text x="832" y="370" text-anchor="middle" fill="#8b9bb0" font-size="9">fixed ciphertext cells</text>
+      <text x="832" y="382" text-anchor="middle" fill="#22d3ee" font-size="8">CUTOVER · going live on 2 relays</text>
+
+      <!-- BlindShard (coded/disabled) -->
+      <rect x="485" y="400" width="460" height="50" rx="6" fill="#2a2110" stroke="#e0a54b"/>
+      <text x="715" y="420" text-anchor="middle" fill="#e0a54b" font-size="10" font-weight="700">BlindShard body dispersal (PVSS key-split)</text>
+      <text x="715" y="436" text-anchor="middle" fill="#8b9bb0" font-size="9">coded + tested against fake fleet · DISABLED in prod (empty shardRoster)</text>
+      <text x="715" y="448" text-anchor="middle" fill="#e0a54b" font-size="8">activates when ≥3 independent operators join</text>
+
+      <!-- TRANSPORT (mixed) -->
+      <rect x="470" y="480" width="490" height="100" rx="10" fill="#0a0f16" stroke="#1f2a3a"/>
+      <text x="715" y="500" text-anchor="middle" fill="#8b9bb0" font-size="11" font-weight="700">TRANSPORT LAYER</text>
+      <rect x="485" y="510" width="110" height="55" rx="6" fill="#0f2018" stroke="#3ecf8e"/>
+      <text x="540" y="530" text-anchor="middle" fill="#3ecf8e" font-size="9" font-weight="700">direct HTTPS</text>
+      <text x="540" y="544" text-anchor="middle" fill="#8b9bb0" font-size="8">+ Noise</text>
+      <text x="540" y="558" text-anchor="middle" fill="#3ecf8e" font-size="8">SHIPPED</text>
+
+      <rect x="605" y="510" width="110" height="55" rx="6" fill="#0a1428" stroke="#5b9fd4"/>
+      <text x="660" y="530" text-anchor="middle" fill="#5b9fd4" font-size="9" font-weight="700">OHTTP split</text>
+      <text x="660" y="544" text-anchor="middle" fill="#8b9bb0" font-size="8">ingress→gw</text>
+      <text x="660" y="558" text-anchor="middle" fill="#5b9fd4" font-size="8">SPEC'D</text>
+
+      <rect x="725" y="510" width="110" height="55" rx="6" fill="#0a1428" stroke="#5b9fd4"/>
+      <text x="780" y="530" text-anchor="middle" fill="#5b9fd4" font-size="9" font-weight="700">Protomux/MASQUE</text>
+      <text x="780" y="544" text-anchor="middle" fill="#8b9bb0" font-size="8">native split</text>
+      <text x="780" y="558" text-anchor="middle" fill="#5b9fd4" font-size="8">SPEC'D</text>
+
+      <rect x="845" y="510" width="100" height="55" rx="6" fill="#0a1428" stroke="#5b9fd4"/>
+      <text x="895" y="530" text-anchor="middle" fill="#5b9fd4" font-size="9" font-weight="700">Tor onion</text>
+      <text x="895" y="544" text-anchor="middle" fill="#8b9bb0" font-size="8">v3 service</text>
+      <text x="895" y="558" text-anchor="middle" fill="#5b9fd4" font-size="8">SPEC'D</text>
+
+      <!-- OPERATORS (bottom) -->
+      <rect x="470" y="600" width="490" height="130" rx="10" fill="#0a0f16" stroke="#1f2a3a"/>
+      <text x="715" y="620" text-anchor="middle" fill="#8b9bb0" font-size="11" font-weight="700">OPERATORS (the fleet)</text>
+      <rect x="485" y="635" width="140" height="80" rx="6" fill="#0f3a44" stroke="#22d3ee" stroke-width="2"/>
+      <text x="555" y="655" text-anchor="middle" fill="#22d3ee" font-size="9" font-weight="700">Relay A + B</text>
+      <text x="555" y="671" text-anchor="middle" fill="#8b9bb0" font-size="8">substrate cutover</text>
+      <text x="555" y="687" text-anchor="middle" fill="#8b9bb0" font-size="8">2 relays live this week</text>
+      <text x="555" y="705" text-anchor="middle" fill="#22d3ee" font-size="8">CUTOVER</text>
+
+      <rect x="635" y="635" width="100" height="80" rx="6" fill="#2a2110" stroke="#e0a54b" stroke-dasharray="3 2"/>
+      <text x="685" y="655" text-anchor="middle" fill="#e0a54b" font-size="9" font-weight="700">Cohort</text>
+      <text x="685" y="671" text-anchor="middle" fill="#8b9bb0" font-size="8">key-share</text>
+      <text x="685" y="685" text-anchor="middle" fill="#8b9bb0" font-size="8">operators</text>
+      <text x="685" y="705" text-anchor="middle" fill="#e0a54b" font-size="8">EMPTY</text>
+
+      <rect x="745" y="635" width="100" height="80" rx="6" fill="#2a2110" stroke="#e0a54b" stroke-dasharray="3 2"/>
+      <text x="795" y="655" text-anchor="middle" fill="#e0a54b" font-size="9" font-weight="700">Blind</text>
+      <text x="795" y="671" text-anchor="middle" fill="#8b9bb0" font-size="8">seeders</text>
+      <text x="795" y="687" text-anchor="middle" fill="#8b9bb0" font-size="8">(future)</text>
+      <text x="795" y="705" text-anchor="middle" fill="#e0a54b" font-size="8">NOT YET</text>
+
+      <rect x="855" y="635" width="90" height="80" rx="6" fill="#1a0e0a" stroke="#e0533d" stroke-dasharray="3 2"/>
+      <text x="900" y="655" text-anchor="middle" fill="#e0533d" font-size="9" font-weight="700">Pure</text>
+      <text x="900" y="671" text-anchor="middle" fill="#8b9bb0" font-size="8">pipe fleet</text>
+      <text x="900" y="687" text-anchor="middle" fill="#8b9bb0" font-size="8">(end state)</text>
+      <text x="900" y="705" text-anchor="middle" fill="#e0533d" font-size="8">SPEC'D</text>
+
+      <!-- fantasy zone marker -->
+      <rect x="15" y="390" width="190" height="60" rx="8" fill="#1a0e0a" stroke="#e0533d" stroke-dasharray="3 2" opacity="0.4"/>
+      <text x="110" y="415" text-anchor="middle" fill="#e0533d" font-size="9" font-weight="700">FANTASY ZONE</text>
+      <text x="110" y="432" text-anchor="middle" fill="#8b9bb0" font-size="8">"browser is a real peer"</text>
+      <text x="110" y="444" text-anchor="middle" fill="#8b9bb0" font-size="8">"no relay at all"</text>
+
+      <defs>
+        <marker id="g1" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#3ecf8e"/></marker>
+        <marker id="y1" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#e0a54b"/></marker>
+      </defs>
+    </svg>
+    <figcaption>The full architecture, honestly color-coded. Most of the bottom half is yellow (coded/disabled) or blue (spec'd). The fantasy zone is fenced off at the left.</figcaption>
+  </figure>
+
+  <p>Three things this diagram makes obvious:</p>
+  <ul>
+    <li><strong>The membrane is a target, not current reality.</strong> Today's OutboxLog (green, shipped) sits roughly where the substrate should be — but it doesn't enforce the strict membrane. The blind-cells/core boxes to its right (blue) are what would replace it.</li>
+    <li><strong>Only one operator exists today.</strong> The cohort and blind-seeder boxes are empty. Dispersal machinery is built but inert.</li>
+    <li><strong>The browser path goes through a yellow (coded/disabled) bridge.</strong> It does not go direct. PearBrowser does.</li>
+  </ul>
+</section>
+
+<!-- ============================================================== -->
+<section id="zoom-cell">
+  <h2><span class="num">06</span>Zoom: cell &amp; capability anatomy</h2>
+
+  <p class="lead">The target storage unit — what a "cell" actually is <em>in the spec</em>, and how it
+     differs from what's shipped today.</p>
+
+  <figure>
+    <svg viewBox="0 0 940 380" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <text x="470" y="24" text-anchor="middle" fill="#8b9bb0" font-size="11" font-weight="700">SHIPPED TODAY vs TARGET SPEC</text>
+
+      <!-- shipped: OutboxLog record -->
+      <rect x="20" y="50" width="430" height="310" rx="10" fill="#0f2018" stroke="#3ecf8e" stroke-width="2"/>
+      <text x="235" y="74" text-anchor="middle" fill="#3ecf8e" font-size="12" font-weight="700">SHIPPED: OutboxLog record</text>
+      <text x="235" y="90" text-anchor="middle" fill="#3ecf8e" font-size="9">v2 opaque keys, sealed values</text>
+      <g font-family="ui-monospace,monospace" font-size="10">
+        <text x="35" y="118" fill="#cdd6e3">key:   v2!&lt;okey&gt;</text>
+        <text x="35" y="134" fill="#3ecf8e">       (opaque — graph blinded)</text>
+        <text x="35" y="162" fill="#cdd6e3">val:</text>
+        <text x="35" y="178" fill="#cdd6e3">  _t: 'post'</text>
+        <text x="35" y="194" fill="#cdd6e3">  _k: &lt;author pubkey&gt;</text>
+        <text x="35" y="210" fill="#cdd6e3">  createdAt, ts, editedAt</text>
+        <text x="35" y="226" fill="#e0a54b">  ↑ OUTER METADATA VISIBLE</text>
+        <text x="35" y="254" fill="#cdd6e3">  sealed: {</text>
+        <text x="35" y="270" fill="#cdd6e3">    community, title, body,</text>
+        <text x="35" y="286" fill="#cdd6e3">    dispersal manifest...</text>
+        <text x="35" y="302" fill="#cdd6e3">  }  ← AES-GCM under read-key</text>
+        <text x="35" y="318" fill="#3ecf8e">     (encrypted, but RK is public)</text>
+        <text x="35" y="346" fill="#8b9bb0" font-style="italic">operator can: read outer</text>
+        <text x="235" y="346" fill="#8b9bb0" font-style="italic">fields, decrypt on effort</text>
+      </g>
+
+      <!-- target: blind cell -->
+      <rect x="490" y="50" width="430" height="310" rx="10" fill="#0a1428" stroke="#5b9fd4" stroke-width="2"/>
+      <text x="705" y="74" text-anchor="middle" fill="#5b9fd4" font-size="12" font-weight="700">TARGET: Blind Cell (spec'd)</text>
+      <text x="705" y="90" text-anchor="middle" fill="#5b9fd4" font-size="9">hiverelay-blind/1 · NOT shipped</text>
+      <g font-family="ui-monospace,monospace" font-size="10">
+        <text x="505" y="118" fill="#cdd6e3">storageSlot:  7f3a…b29c</text>
+        <text x="505" y="134" fill="#5b9fd4">  (random, content-independent)</text>
+        <text x="505" y="162" fill="#cdd6e3">sizeClass:    4 KiB</text>
+        <text x="505" y="178" fill="#cdd6e3">leaseEpoch:   6h bucket</text>
+        <text x="505" y="194" fill="#cdd6e3">admissionSpend: anon token</text>
+        <text x="505" y="222" fill="#cdd6e3">ciphertext:   🔒🔒🔒🔒🔒</text>
+        <text x="505" y="238" fill="#5b9fd4">  (AES-GCM, fresh key per cell)</text>
+        <text x="505" y="266" fill="#cdd6e3">receipt:      signed by relay</text>
+        <text x="505" y="296" fill="#5b9fd4" font-weight="700">NO app, author, type,</text>
+        <text x="505" y="312" fill="#5b9fd4" font-weight="700">community, graph edge,</text>
+        <text x="505" y="328" fill="#5b9fd4" font-weight="700">or read key.</text>
+        <text x="505" y="346" fill="#8b9bb0" font-style="italic">operator sees: random bytes</text>
+        <text x="705" y="346" fill="#8b9bb0" font-style="italic">at random address</text>
+      </g>
+    </svg>
+    <figcaption>What's shipped (left) vs the target cell (right). The gap is real: today's record leaks outer metadata; the target cell leaks nothing app-specific.</figcaption>
+  </figure>
+
+  <p>The <strong>read capability</strong> is the key abstraction in both. It's the slot address plus
+     the decryption key, held only by the client, never on the relay. Without it, the bytes are
+     unreadable. The capability threads through encrypted "next pointers" between cells, so a reader
+     with the bootstrap capability can follow the chain — but the relay sees only disjoint opaque
+     blobs.</p>
+
+  <div class="callout violet">
+    <h4>Why the spec'd cell is stronger</h4>
+    <p>Today's OutboxLog record blinds the <em>graph keys</em> (good) but leaves app/namespace/type
+       visible in the outer fields. The target cell moves <em>everything</em> app-specific inside the
+       ciphertext and addresses the cell by a random slot derived from a time bucket and a one-time
+       create key. An operator looking at the filesystem sees a sea of identical-looking boxes at
+       random addresses — no prefix enumeration, no type discrimination, no app fingerprint.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="zoom-shard">
+  <h2><span class="num">07</span>Zoom: BlindShard key-split</h2>
+
+  <p class="lead">How a body becomes unreadable-in-isolation. <span class="status s-coded">Coded, disabled</span></p>
+
+  <figure>
+    <svg viewBox="0 0 940 340" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <!-- body -->
+      <rect x="20" y="120" width="100" height="60" rx="8" fill="#0f2018" stroke="#3ecf8e"/>
+      <text x="70" y="148" text-anchor="middle" fill="#3ecf8e" font-size="10" font-weight="700">BODY</text>
+      <text x="70" y="166" text-anchor="middle" fill="#8b9bb0" font-size="9">"hello world"</text>
+
+      <path d="M 120 150 L 150 150" stroke="#5b9fd4" stroke-width="2" marker-end="url(#z1)"/>
+
+      <!-- encrypt -->
+      <rect x="160" y="100" width="130" height="100" rx="8" fill="#1a1830" stroke="#9b7ed9"/>
+      <text x="225" y="124" text-anchor="middle" fill="#9b7ed9" font-size="10" font-weight="700">ENCRYPT</text>
+      <text x="225" y="142" text-anchor="middle" fill="#cdd6e3" font-size="9" font-family="ui-monospace,monospace">AES-256-GCM</text>
+      <text x="225" y="158" text-anchor="middle" fill="#8b9bb0" font-size="9">fresh key K</text>
+      <text x="225" y="174" text-anchor="middle" fill="#8b9bb0" font-size="9">→ ciphertext C</text>
+      <text x="225" y="190" text-anchor="middle" fill="#5b6b80" font-size="8">K never reused</text>
+
+      <path d="M 290 130 L 320 80" stroke="#9b7ed9" stroke-width="2" marker-end="url(#z1)"/>
+      <path d="M 290 170 L 320 220" stroke="#e0a54b" stroke-width="2" marker-end="url(#z1)"/>
+
+      <!-- ciphertext -->
+      <rect x="330" y="50" width="170" height="70" rx="8" fill="#2a2110" stroke="#e0a54b"/>
+      <text x="415" y="72" text-anchor="middle" fill="#e0a54b" font-size="10" font-weight="700">CIPHERTEXT</text>
+      <text x="415" y="90" text-anchor="middle" fill="#cdd6e3" font-size="9" font-family="ui-monospace,monospace">shard:0 = 🔒🔒🔒</text>
+      <text x="415" y="106" text-anchor="middle" fill="#5b6b80" font-size="8">addr = blake2b(C)</text>
+
+      <!-- key split -->
+      <rect x="330" y="180" width="170" height="130" rx="8" fill="#2a2110" stroke="#e0a54b"/>
+      <text x="415" y="202" text-anchor="middle" fill="#e0a54b" font-size="10" font-weight="700">PVSS SPLIT KEY</text>
+      <text x="415" y="218" text-anchor="middle" fill="#8b9bb0" font-size="9">K → shares [s1..sN]</text>
+      <g font-size="9" font-family="ui-monospace,monospace" fill="#cdd6e3">
+        <text x="345" y="240">any 3 of 5 → K</text>
+        <text x="345" y="256">below 3 → nothing</text>
+      </g>
+      <text x="415" y="284" text-anchor="middle" fill="#5b6b80" font-size="8">each share: ~hundreds of bytes</text>
+      <text x="415" y="298" text-anchor="middle" fill="#5b6b80" font-size="8">computationally hidden</text>
+
+      <!-- arrows to cohort -->
+      <path d="M 500 85 Q 600 85 650 100" stroke="#e0a54b" stroke-width="2" marker-end="url(#z1)"/>
+      <path d="M 500 230 Q 600 230 650 220" stroke="#e0a54b" stroke-width="2" marker-end="url(#z1)"/>
+
+      <!-- destinations -->
+      <rect x="660" y="60" width="260" height="70" rx="8" fill="#1a0e0a" stroke="#e0533d" stroke-dasharray="4 3"/>
+      <text x="790" y="82" text-anchor="middle" fill="#e0533d" font-size="10" font-weight="700">ONE CIPHERTEXT RELAY</text>
+      <text x="790" y="100" text-anchor="middle" fill="#cdd6e3" font-size="9">holds 🔒🔒🔒, NO key</text>
+      <text x="790" y="116" text-anchor="middle" fill="#5b6b80" font-size="8">cannot decrypt, cannot attribute</text>
+
+      <rect x="660" y="180" width="260" height="130" rx="8" fill="#1a0e0a" stroke="#e0533d" stroke-dasharray="4 3"/>
+      <text x="790" y="202" text-anchor="middle" fill="#e0533d" font-size="10" font-weight="700">KEY-SHARE COHORT (5 operators)</text>
+      <g font-size="9" font-family="ui-monospace,monospace" fill="#cdd6e3">
+        <text x="675" y="224">op B: 🔑 s1</text>
+        <text x="675" y="240">op C: 🔑 s2</text>
+        <text x="675" y="256">op D: 🔑 s3</text>
+        <text x="675" y="272">op E: 🔑 s4</text>
+        <text x="675" y="288">op F: 🔑 s5</text>
+      </g>
+      <text x="790" y="304" text-anchor="middle" fill="#e0533d" font-size="8" font-weight="700">each holds ONE share</text>
+
+      <defs>
+        <marker id="z1" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#5b9fd4"/></marker>
+      </defs>
+    </svg>
+    <figcaption>One body, two destinations, no single point of readability. The code is built and tested; the cohort is empty in production.</figcaption>
+  </figure>
+
+  <p><strong>Status:</strong> <span class="status s-coded">Coded, disabled</span>. The dealer logic
+     (<code>js/blind-dealer.mjs</code>) and dispersal glue (<code>js/blob-disperse.js</code>) are
+     built and tested against a fake fleet. Production deployment is blocked on <strong>recruiting
+     ≥3 independent operators</strong> — a social problem, not a code problem.</p>
+
+  <p>The honest claim when it ships: <em>"No single operator holds a readable, complete, or linkable
+     copy of a post body. Reconstructing one requires gathering K key-shares from independent
+     operators — an affirmative act against the cohort."</em> Never: <em>"the operator can't read your
+     posts."</em> A determined operator who joins as a reader can still reconstruct public content.</p>
+</section>
+
+<!-- ============================================================== -->
+<section id="zoom-reader">
+  <h2><span class="num">08</span>Zoom: the two reader paths <span style="color:var(--dim);font-weight:400">(the critical honest distinction)</span></h2>
+
+  <p class="lead">This is the diagram that should have been in the original explainer. The two paths
+     are not the same. Conflating them is the overstatement that started this whole revision.</p>
+
+  <figure>
+    <svg viewBox="0 0 940 440" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+
+      <!-- PEARBROWSER PATH -->
+      <rect x="20" y="40" width="900" height="170" rx="10" fill="#0f2018" stroke="#3ecf8e" stroke-width="2"/>
+      <text x="470" y="64" text-anchor="middle" fill="#3ecf8e" font-size="13" font-weight="700">PATH 1: PearBrowser (native) — TRUE PEER</text>
+      <text x="470" y="80" text-anchor="middle" fill="#3ecf8e" font-size="9" font-weight="700">SHIPPED TODAY · strongest trust tier</text>
+
+      <circle cx="80" cy="140" r="28" fill="#0a0f16" stroke="#3ecf8e" stroke-width="2"/>
+      <text x="80" y="136" text-anchor="middle" fill="#3ecf8e" font-size="9" font-weight="700">Pear</text>
+      <text x="80" y="150" text-anchor="middle" fill="#3ecf8e" font-size="9" font-weight="700">Browser</text>
+      <text x="80" y="190" text-anchor="middle" fill="#3ecf8e" font-size="9">real UDP</text>
+      <text x="80" y="204" text-anchor="middle" fill="#3ecf8e" font-size="9">real DHT</text>
+
+      <path d="M 115 140 L 230 140" stroke="#3ecf8e" stroke-width="3" marker-end="url(#r-g)"/>
+      <text x="172" y="128" text-anchor="middle" fill="#3ecf8e" font-size="9" font-weight="700">direct</text>
+      <text x="172" y="158" text-anchor="middle" fill="#3ecf8e" font-size="8">no relay</text>
+
+      <rect x="240" y="100" width="200" height="80" rx="8" fill="#0a0f16" stroke="#3ecf8e"/>
+      <text x="340" y="124" text-anchor="middle" fill="#3ecf8e" font-size="10" font-weight="700">Hyperswarm DHT</text>
+      <text x="340" y="142" text-anchor="middle" fill="#8b9bb0" font-size="9">real routing node</text>
+      <text x="340" y="158" text-anchor="middle" fill="#8b9bb0" font-size="9">discovers authors</text>
+      <text x="340" y="174" text-anchor="middle" fill="#8b9bb0" font-size="9">pulls outboxes</text>
+
+      <path d="M 440 140 L 540 140" stroke="#3ecf8e" stroke-width="2.5" marker-end="url(#r-g)"/>
+
+      <rect x="550" y="100" width="160" height="80" rx="8" fill="#0a0f16" stroke="#3ecf8e"/>
+      <text x="630" y="124" text-anchor="middle" fill="#3ecf8e" font-size="10" font-weight="700">peer seeders</text>
+      <text x="630" y="142" text-anchor="middle" fill="#8b9bb0" font-size="9">other PearBrowsers</text>
+      <text x="630" y="158" text-anchor="middle" fill="#8b9bb0" font-size="9">+ always-on seeders</text>
+      <text x="630" y="174" text-anchor="middle" fill="#8b9bb0" font-size="9">(opt-in)</text>
+
+      <path d="M 710 140 L 770 140" stroke="#3ecf8e" stroke-width="2" marker-end="url(#r-g)"/>
+
+      <rect x="780" y="100" width="130" height="80" rx="8" fill="#0f2018" stroke="#3ecf8e"/>
+      <text x="845" y="124" text-anchor="middle" fill="#3ecf8e" font-size="10" font-weight="700">verify + merge</text>
+      <text x="845" y="142" text-anchor="middle" fill="#8b9bb0" font-size="9">in PearBrowser</text>
+      <text x="845" y="158" text-anchor="middle" fill="#8b9bb0" font-size="9">signature checks</text>
+      <text x="845" y="174" text-anchor="middle" fill="#8b9bb0" font-size="9">local feed</text>
+
+      <!-- NORMAL BROWSER PATH -->
+      <rect x="20" y="240" width="900" height="180" rx="10" fill="#1a0e0a" stroke="#e0533d" stroke-width="2"/>
+      <text x="470" y="264" text-anchor="middle" fill="#e0533d" font-size="13" font-weight="700">PATH 2: Normal browser — TUNNELED (not a peer)</text>
+      <text x="470" y="280" text-anchor="middle" fill="#e0533d" font-size="9" font-weight="700">current: through OutboxLog relay · target: through blind byte-pipe (dht-relay-ws, CODED/DISABLED)</text>
+
+      <circle cx="80" cy="340" r="28" fill="#0a0f16" stroke="#e0533d" stroke-width="2"/>
+      <text x="80" y="336" text-anchor="middle" fill="#e0533d" font-size="9" font-weight="700">Chrome</text>
+      <text x="80" y="350" text-anchor="middle" fill="#e0533d" font-size="9" font-weight="700">/FF/Safari</text>
+      <text x="80" y="388" text-anchor="middle" fill="#e0533d" font-size="9">no UDP</text>
+      <text x="80" y="402" text-anchor="middle" fill="#e0533d" font-size="9">not a peer</text>
+
+      <path d="M 115 340 L 230 340" stroke="#e0533d" stroke-width="2.5" marker-end="url(#r-r)"/>
+      <text x="172" y="328" text-anchor="middle" fill="#e0533d" font-size="9" font-weight="700">HTTPS</text>
+
+      <!-- current relay -->
+      <rect x="240" y="300" width="220" height="80" rx="8" fill="#0f2018" stroke="#3ecf8e"/>
+      <text x="350" y="322" text-anchor="middle" fill="#3ecf8e" font-size="10" font-weight="700">OutboxLog relay</text>
+      <text x="350" y="340" text-anchor="middle" fill="#8b9bb0" font-size="9">CURRENT: single ingress</text>
+      <text x="350" y="356" text-anchor="middle" fill="#8b9bb0" font-size="9">aggregates + serves</text>
+      <text x="350" y="372" text-anchor="middle" fill="#3ecf8e" font-size="9">SHIPPED (seizable)</text>
+
+      <!-- target byte pipe -->
+      <rect x="480" y="300" width="200" height="80" rx="8" fill="#2a2110" stroke="#e0a54b" stroke-dasharray="4 3"/>
+      <text x="580" y="322" text-anchor="middle" fill="#e0a54b" font-size="10" font-weight="700">dht-relay-ws bridge</text>
+      <text x="580" y="340" text-anchor="middle" fill="#8b9bb0" font-size="9">TARGET: blind byte-pipe</text>
+      <text x="580" y="356" text-anchor="middle" fill="#8b9bb0" font-size="9">carries opaque frames</text>
+      <text x="580" y="372" text-anchor="middle" fill="#e0a54b" font-size="9">CODED/DISABLED</text>
+
+      <path d="M 680 340 L 770 340" stroke="#e0a54b" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#r-y)"/>
+
+      <rect x="780" y="300" width="130" height="80" rx="8" fill="#2a2110" stroke="#e0a54b"/>
+      <text x="845" y="322" text-anchor="middle" fill="#e0a54b" font-size="10" font-weight="700">DHT (via bridge)</text>
+      <text x="845" y="340" text-anchor="middle" fill="#8b9bb0" font-size="9">reader still needs</text>
+      <text x="845" y="356" text-anchor="middle" fill="#8b9bb0" font-size="9">the bridge online</text>
+      <text x="845" y="372" text-anchor="middle" fill="#e0a54b" font-size="9">NOT standalone</text>
+
+      <!-- key callout -->
+      <rect x="240" y="395" width="670" height="20" rx="4" fill="#1a0e0a" stroke="#e0533d" opacity="0.5"/>
+      <text x="575" y="409" text-anchor="middle" fill="#e0533d" font-size="9" font-weight="700">A normal browser is NEVER a standalone DHT node. There is always a relay in the path. The honest target is a BLIND relay, not NO relay.</text>
+
+      <defs>
+        <marker id="r-g" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#3ecf8e"/></marker>
+        <marker id="r-r" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#e0533d"/></marker>
+        <marker id="r-y" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#e0a54b"/></marker>
+      </defs>
+    </svg>
+    <figcaption>The two reader paths, honestly distinguished. PearBrowser = true peer. Normal browser = always through a relay. The relay can become blind, but it cannot be eliminated.</figcaption>
+  </figure>
+
+  <div class="callout danger">
+    <h4>The single most important sentence in this document</h4>
+    <p><strong>A normal browser is never a standalone DHT node. There is always a relay in the path.
+       The honest target is a blind relay, not no relay.</strong></p>
+    <p>If you remember nothing else from this revision, remember that. Every "browser runs a real DHT
+       node" or "no relay in the path" claim — for normal browsers — is false and must be removed.</p>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section id="zoom-today">
+  <h2><span class="num">09</span>Zoom: what's actually running right now</h2>
+
+  <p class="lead">Strip away everything target and spec'd. Here's the live deployment, today.</p>
+
+  <figure>
+    <svg viewBox="0 0 940 360" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,sans-serif">
+      <text x="470" y="24" text-anchor="middle" fill="#22d3ee" font-size="13" font-weight="700">LIVE PRODUCTION — CUTOVER STATE (this week)</text>
+      <text x="470" y="40" text-anchor="middle" fill="#5b6b80" font-size="10">substrate going live on 2 relays · peerit seeding on it · BlindShard/dht-relay-ws still gated</text>
+
+      <!-- browser -->
+      <rect x="20" y="80" width="160" height="100" rx="10" fill="#0a0f16" stroke="#3ecf8e" stroke-width="2"/>
+      <text x="100" y="104" text-anchor="middle" fill="#3ecf8e" font-size="11" font-weight="700">Your browser</text>
+      <text x="35" y="126" fill="#cdd6e3" font-size="9">✓ holds your Ed25519 key</text>
+      <text x="35" y="142" fill="#cdd6e3" font-size="9">✓ verifies every signature</text>
+      <text x="35" y="158" fill="#cdd6e3" font-size="9">✓ v2 opaque keys locally</text>
+      <text x="35" y="174" fill="#cdd6e3" font-size="9">✓ PoW before posting</text>
+
+      <path d="M 180 130 L 250 130" stroke="#22d3ee" stroke-width="2.5" marker-end="url(#t1)"/>
+      <text x="215" y="120" text-anchor="middle" fill="#22d3ee" font-size="9" font-weight="700">HTTPS</text>
+
+      <!-- TWO relays in cutover -->
+      <rect x="260" y="60" width="380" height="240" rx="12" fill="#0a0f16" stroke="#22d3ee" stroke-width="2"/>
+      <text x="450" y="84" text-anchor="middle" fill="#22d3ee" font-size="13" font-weight="700">TWO RELAYS — BLIND SUBSTRATE CUTOVER</text>
+      <text x="450" y="100" text-anchor="middle" fill="#22d3ee" font-size="9">peerit standing up on hiverelay-blind/1 with seed content</text>
+
+      <rect x="280" y="115" width="340" height="170" rx="8" fill="#0f3a44" stroke="#22d3ee" opacity="0.5"/>
+      <text x="450" y="135" text-anchor="middle" fill="#8b9bb0" font-size="10" font-weight="700">WHAT THE 2-RELAY FLEET HOLDS</text>
+      <g font-size="10" fill="#cdd6e3">
+        <text x="295" y="158">✓ opaque cells at random slots (substrate)</text>
+        <text x="295" y="176">✓ cross-relay head reconciliation (active)</text>
+        <text x="295" y="194">✓ peerit seed content (boards, posts)</text>
+        <text x="295" y="212" fill="#22d3ee">→ no singleIngressWriter (clearing)</text>
+        <text x="295" y="230" fill="#e0a54b">✗ BlindShard cohort still empty (bodies)</text>
+        <text x="295" y="248" fill="#e0a54b">✗ dht-relay-ws still experimental</text>
+        <text x="295" y="266" fill="#5b6b80" font-style="italic">promote each ✓ to Shipped as</text>
+        <text x="295" y="278" fill="#5b6b80" font-style="italic">live convergence proofs land</text>
+      </g>
+
+      <!-- arrows down to readers -->
+      <path d="M 450 300 Q 600 320 750 200" stroke="#3ecf8e" stroke-width="2" fill="none" marker-end="url(#t1)"/>
+      <path d="M 450 300 Q 300 320 200 280" stroke="#3ecf8e" stroke-width="2" fill="none" marker-end="url(#t1)"/>
+
+      <!-- other readers -->
+      <circle cx="800" cy="180" r="20" fill="#0a0f16" stroke="#3ecf8e"/>
+      <text x="800" y="184" text-anchor="middle" fill="#3ecf8e" font-size="9">reader</text>
+
+      <!-- founder note -->
+      <rect x="680" y="220" width="240" height="100" rx="8" fill="#0f3a44" stroke="#22d3ee"/>
+      <text x="800" y="242" text-anchor="middle" fill="#22d3ee" font-size="10" font-weight="700">HONEST READ (cutover)</text>
+      <text x="695" y="262" fill="#cdd6e3" font-size="9">Integrity: strong (signatures)</text>
+      <text x="695" y="278" fill="#cdd6e3" font-size="9">Graph blindness: going live (substrate)</text>
+      <text x="695" y="294" fill="#e0a54b" font-size="9">Body blindness: still gated (BlindShard)</text>
+      <text x="695" y="310" fill="#22d3ee" font-size="9">Takedown resist: improving (2 relays)</text>
+
+      <defs>
+        <marker id="t1" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#3ecf8e"/></marker>
+      </defs>
+    </svg>
+    <figcaption>Today's cutover state: 2 relays running the blind substrate, peerit seeding on it. BlindShard/dht-relay-ws/pure-pipe still gated. Promote each item to Shipped as live proofs land.</figcaption>
+  </figure>
+
+  <p>This is the honest picture <em>right now</em>: substrate cutover in flight on 2 relays, peerit
+     standing up with seed content, BlindShard cohort still empty, dht-relay-ws still experimental.
+     Every claim about the architecture should be framed against <em>this</em> baseline — neither
+     the old single-relay picture (now stale) nor the full target (still ahead).</p>
+</section>
+
+<!-- ============================================================== -->
+<section id="ceilings">
+  <h2><span class="num">10</span>The permanent ceilings</h2>
+
+  <p class="lead">What no amount of code or deployment will ever change. Read these before any claim.</p>
+
+  <ol>
+    <li><strong>A normal browser cannot become a real DHT node.</strong> Hard platform limit: no UDP, no listen sockets, no routing slot. The honest target is a <em>blind relay</em>, not <em>no relay</em>.</li>
+
+    <li><strong>Public content is never secret from a determined reader.</strong> The read key reaches everyone; an operator who joins as a reader can reconstruct. Blindness is deniability + no passive index, never confidentiality.</li>
+
+    <li><strong>Metadata always leaks.</strong> Sizes, timing, IPs (without Tor), access patterns, per-author record counts. No layer of this stack hides them fully.</li>
+
+    <li><strong>Collusion across K operators reconstructs anything.</strong> BlindShard's threshold is a coordination bar, not a cryptographic wall. Defense is jurisdictional diversity.</li>
+
+    <li><strong>The entry point is a chokepoint.</strong> <code>peerit.site</code> is a single origin today. Dispersal resists seizure of storage, not blocking of the bundle origin. The signed-roster-inline fix is still ahead.</li>
+
+    <li><strong>No password recovery.</strong> Your key is your identity. Lose the key and the backup phrase, and it's gone. PearBrowser gives you a BIP-39 phrase; that's the floor.</li>
+
+    <li><strong>PoW raises cost; it doesn't prove personhood.</strong> Identities are free to mint. Votes are advisory, not one-human-one-vote.</li>
+
+    <li><strong>Name squatting at genesis.</strong> First claimant of a new community name wins it. You can't hijack an established one, but you can squat a new one. Zooko's triangle, unsolved.</li>
+  </ol>
+
+  <div class="callout danger">
+    <h4>The contract</h4>
+    <p>Every claim made about this stack — in docs, in marketing, in casual conversation — must clear
+       three bars:</p>
+    <ol>
+      <li><strong>Badged</strong> with its real status (shipped / coded-disabled / spec'd / fantasy).</li>
+      <li><strong>Conditional</strong> if not shipped ("when X ships, Y"), never present-tense for targets.</li>
+      <li><strong>Ceilinged</strong> — the honest limit is named alongside the claim, not buried in a footnote.</li>
+    </ol>
+    <p>The original sin of decentralized projects is describing the target as the present. This stack
+       exists to be different. Don't be the one who drifts.</p>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><strong>Purpose.</strong> This document supersedes overstated claims in
+       <code>BLIND-SUBSTRATE-EXPLAINER.html</code> and
+       <code>BLINDSHARD-AND-PURE-PIPE-EXPLAINER.html</code>. Where those docs conflict with this one
+       on what's shipped vs target, <strong>this one is authoritative</strong>.</p>
+    <p><strong>Sources.</strong> Every status badge is grounded in the actual specs and the live
+       deployment evidence: <code>BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md</code> (explicit: "does
+       not describe the current production deployment"), <code>BLINDSHARD-DESIGN.md</code> §5.0
+       (shardRoster empty; dht-relay-ws do-not-use-in-prod), <code>PURE-PIPE-SCOPE.md</code> (the
+       honest ceiling), the peerit <code>README.md</code>, and the founder's "Learnings" section in
+       <code>PEER-TO-PEARS-PEERIT-CREATOR-STORY.md</code>.</p>
+    <p><strong>Founder's own words on the fantasy.</strong> "My deepest rabbithole was trying to
+       remove the pipe entirely… the AI went there with me happily… DMC pointed at the core
+       assumption and showed me it was a fantasy: a browser can't make the first hop to another
+       browser on its own." — this doc exists to keep that lesson load-bearing.</p>
+    <p><strong>Updates.</strong> When a component moves from coded-disabled to shipped, update its
+       badge here first, then patch the companion explainers. Never let the target drift ahead of
+       the badge.</p>
+  </div>
+</footer>
+
+</body>
+</html>

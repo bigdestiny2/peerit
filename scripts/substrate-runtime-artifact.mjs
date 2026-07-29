@@ -4,6 +4,7 @@ import {
   decodePeeritWebAssetManifestV1,
   encodePeeritWebAssetManifestV1,
   hashPeeritAppArtifactV1,
+  hashPeeritBootstrapV1,
   hashPeeritWebAssetManifestV1,
   verifyPeeritWebAssetBytesV1
 } from '../js/substrate/web-asset-manifest.mjs'
@@ -13,10 +14,13 @@ import {
 } from '../js/substrate/release-control-primitives.mjs'
 import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from '../js/substrate/production-release-authority.mjs'
 import { normalizePeeritReleaseRelayHintsV1 } from '../js/substrate/release-relay-hints.mjs'
+import { encodePeeritSeedBootstrapV1 } from '../js/substrate/seed-bootstrap-v1.mjs'
 
 export const PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE = 7
+export const PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE = 13
 export const PEERIT_APP_ARTIFACT_PATH = 'peerit-app-artifact-v1.json'
 export const PEERIT_WEB_ASSET_MANIFEST_PATH = 'peerit-web-assets-v1.cenc'
+export const PEERIT_SEED_BOOTSTRAP_PATH = 'peerit-seed-bootstrap-v1.json'
 
 const HEX_32 = /^[0-9a-f]{64}$/
 
@@ -41,6 +45,68 @@ function exactBuffer (value, field) {
 function sortedObject (entries) {
   return Object.fromEntries([...entries].sort(([left], [right]) =>
     left < right ? -1 : left > right ? 1 : 0))
+}
+
+function seedReleaseBinding (value) {
+  const fields = [
+    'peeritSeedBootstrap',
+    'peeritSeedBootstrapSha256',
+    'peeritSeedDiscoveryAuthorityPublicKey',
+    'peeritSeedBootstrapReleaseSequence'
+  ]
+  const present = fields.filter(field => Object.hasOwn(value, field))
+  if (value.releaseSequence < PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE) {
+    if (present.length !== 0) throw new Error('pre-sequence-13 app artifact cannot carry a Peerit seed bootstrap binding')
+    return null
+  }
+  if (present.length !== fields.length ||
+      value.peeritSeedBootstrap !== `/${PEERIT_SEED_BOOTSTRAP_PATH}` ||
+      !HEX_32.test(String(value.peeritSeedBootstrapSha256 || '')) ||
+      !HEX_32.test(String(value.peeritSeedDiscoveryAuthorityPublicKey || '')) ||
+      value.peeritSeedBootstrapReleaseSequence !== value.releaseSequence) {
+    throw new Error('sequence-13+ app artifact must bind one exact Peerit seed bootstrap')
+  }
+  return Object.freeze({
+    path: value.peeritSeedBootstrap,
+    sha256: value.peeritSeedBootstrapSha256,
+    authorityPublicKey: value.peeritSeedDiscoveryAuthorityPublicKey,
+    releaseSequence: value.peeritSeedBootstrapReleaseSequence
+  })
+}
+
+function seedBuildInput (options, releaseSequence) {
+  const supplied = options.seedBootstrapBytes != null ||
+    String(options.seedDiscoveryAuthorityPublicKey || '').length > 0
+  if (releaseSequence < PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE) {
+    if (supplied) throw new Error('Peerit seed bootstrap composition requires releaseSequence 13 or later')
+    return null
+  }
+  const bytes = exactBuffer(options.seedBootstrapBytes, 'Peerit seed bootstrap')
+  if (bytes.byteLength < 1 || bytes.byteLength > 16 * 1024 * 1024) {
+    throw new Error('Peerit seed bootstrap exceeds its fixed byte bound')
+  }
+  let canonical
+  try { canonical = Buffer.from(encodePeeritSeedBootstrapV1(bytes)) } catch (cause) {
+    throw new Error(`Peerit seed bootstrap is not canonical: ${cause.message}`)
+  }
+  if (!canonical.equals(bytes)) throw new Error('Peerit seed bootstrap bytes are not canonical')
+  const authorityPublicKey = String(options.seedDiscoveryAuthorityPublicKey || '').toLowerCase()
+  if (!HEX_32.test(authorityPublicKey)) {
+    throw new Error('sequence-13+ replacement requires one 32-byte lowercase seed discovery authority key')
+  }
+  const artifact = JSON.parse(bytes.toString('utf8'))
+  if (artifact.payload.releaseSequence !== releaseSequence ||
+      artifact.payload.authorityPublicKey !== authorityPublicKey) {
+    throw new Error('Peerit seed bootstrap release sequence or discovery authority does not match its build input')
+  }
+  return Object.freeze({
+    bytes,
+    path: `/${PEERIT_SEED_BOOTSTRAP_PATH}`,
+    sha256: sha256(bytes),
+    authorityPublicKey,
+    releaseSequence,
+    domainHash: hashPeeritBootstrapV1(bytes)
+  })
 }
 
 function normalizedFiles (sourceFiles) {
@@ -84,6 +150,7 @@ function decodeAppArtifactV1 (bytes) {
   }
   value.relayHints = normalizePeeritReleaseRelayHintsV1(
     value.relayHints, 'app artifact')
+  value.seedBootstrap = seedReleaseBinding(value)
   return value
 }
 
@@ -122,6 +189,29 @@ export function verifyPeeritSubstrateRuntimeArtifactV1 (options = {}) {
   const appArtifactHash = hashPeeritAppArtifactV1(appArtifactBytes)
   if (!Buffer.from(webAssetManifest.appArtifactHash).equals(Buffer.from(appArtifactHash))) {
     throw new Error('canonical WebAssetManifestV1 does not bind the exact app artifact')
+  }
+
+  const seedBinding = appArtifact.seedBootstrap
+  if (seedBinding) {
+    const seedPath = seedBinding.path.slice(1)
+    if (!source.has(seedPath)) throw new Error('replacement runtime is missing its bound Peerit seed bootstrap')
+    const seedBytes = exactBuffer(source.get(seedPath), seedPath)
+    let canonicalSeed
+    try { canonicalSeed = Buffer.from(encodePeeritSeedBootstrapV1(seedBytes)) } catch (cause) {
+      throw new Error(`bound Peerit seed bootstrap is not canonical: ${cause.message}`)
+    }
+    const seedArtifact = JSON.parse(seedBytes.toString('utf8'))
+    if (!canonicalSeed.equals(seedBytes) || sha256(seedBytes) !== seedBinding.sha256 ||
+        seedArtifact.payload.releaseSequence !== seedBinding.releaseSequence ||
+        seedArtifact.payload.authorityPublicKey !== seedBinding.authorityPublicKey ||
+        webAssetManifest.recommendedBootstrapHashes.length !== 1 ||
+        !Buffer.from(webAssetManifest.recommendedBootstrapHashes[0]).equals(
+          Buffer.from(hashPeeritBootstrapV1(seedBytes)))) {
+      throw new Error('Peerit seed bootstrap bytes do not match the app/canonical release bindings')
+    }
+  } else if (webAssetManifest.recommendedBootstrapHashes.length !== 0 ||
+      source.has(PEERIT_SEED_BOOTSTRAP_PATH)) {
+    throw new Error('pre-sequence-13 replacement runtime cannot carry recommended seed bootstrap bytes')
   }
 
   const indexHtml = exactBuffer(source.get('index.html'), 'index.html').toString('utf8')
@@ -252,6 +342,11 @@ export function buildPeeritSubstrateRuntimeArtifactV1 (options = {}) {
       (productionPinHistoryBytes.byteLength < 1 || productionPinHistoryBytes.byteLength > 4 * 1024 * 1024)) {
     throw new Error('production pin-history bundle exceeds its fixed byte bound')
   }
+  const seedBootstrap = seedBuildInput(options, releaseSequence)
+  if (files.has(PEERIT_SEED_BOOTSTRAP_PATH)) {
+    throw new Error(`${PEERIT_SEED_BOOTSTRAP_PATH} is generated only from the explicit release seed input`)
+  }
+  if (seedBootstrap) files.set(PEERIT_SEED_BOOTSTRAP_PATH, seedBootstrap.bytes)
   const styleIntegrity = sri(files.get('styles.css'))
   const entryIntegrity = sri(files.get('js/substrate/app-entry.js'))
   let html = files.get('index.html').toString('utf8')
@@ -297,6 +392,14 @@ export function buildPeeritSubstrateRuntimeArtifactV1 (options = {}) {
     productionPinHistory: productionPinHistoryBytes
       ? PEERIT_PRODUCTION_PIN_HISTORY_PATH
       : null,
+    ...(seedBootstrap
+      ? {
+          peeritSeedBootstrap: seedBootstrap.path,
+          peeritSeedBootstrapSha256: seedBootstrap.sha256,
+          peeritSeedDiscoveryAuthorityPublicKey: seedBootstrap.authorityPublicKey,
+          peeritSeedBootstrapReleaseSequence: seedBootstrap.releaseSequence
+        }
+      : {}),
     files: closureHashes
   })
   const appArtifactBytes = Buffer.from(JSON.stringify(appArtifact, null, 2) + '\n')
@@ -314,7 +417,7 @@ export function buildPeeritSubstrateRuntimeArtifactV1 (options = {}) {
     version: 1,
     releaseSequence: BigInt(releaseSequence),
     appArtifactHash,
-    recommendedBootstrapHashes: [],
+    recommendedBootstrapHashes: seedBootstrap ? [seedBootstrap.domainHash] : [],
     assets
   }))
   files.set(PEERIT_WEB_ASSET_MANIFEST_PATH, webAssetManifestBytes)
@@ -343,6 +446,7 @@ export function buildPeeritSubstrateRuntimeArtifactV1 (options = {}) {
     webAssetManifestBytes,
     webAssetManifestHash,
     webAssetManifestHashHex: bytesToHex(webAssetManifestHash),
+    seedBootstrap,
     sha256Files: sortedObject([...files].map(([path, bytes]) => [path, sha256(bytes)]))
   })
 }

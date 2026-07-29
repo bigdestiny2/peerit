@@ -25,12 +25,28 @@ function fail (code, message, details = null) {
   throw error
 }
 
-async function runBounded (values, concurrency, worker) {
+function validSignal (value) {
+  if (value == null) return null
+  if (typeof value !== 'object' || typeof value.aborted !== 'boolean' ||
+      typeof value.addEventListener !== 'function' || typeof value.removeEventListener !== 'function') {
+    throw new TypeError('Peerit cold reader signal must be an AbortSignal')
+  }
+  return value
+}
+
+function throwIfAborted (signal) {
+  if (!signal || !signal.aborted) return
+  if (typeof signal.throwIfAborted === 'function') signal.throwIfAborted()
+  throw signal.reason || Object.assign(new Error('Peerit cold reader was aborted'), { name: 'AbortError' })
+}
+
+async function runBounded (values, concurrency, worker, signal) {
   const output = new Array(values.length)
   let cursor = 0
   const count = Math.min(values.length, Math.max(1, concurrency))
   await Promise.all(Array.from({ length: count }, async () => {
     while (cursor < values.length) {
+      throwIfAborted(signal)
       const index = cursor++
       output[index] = await worker(values[index], index)
     }
@@ -38,26 +54,36 @@ async function runBounded (values, concurrency, worker) {
   return output
 }
 
-async function bounded (milliseconds, operation) {
+async function bounded (milliseconds, operation, parentSignal) {
   const controller = typeof AbortController === 'function' ? new AbortController() : null
-  let cancelTimeout = () => {}
-  const timeout = new Promise((resolve, reject) => {
-    const error = new Error('Peerit cold Cell GET deadline expired')
-    error.code = 'PEERIT_COLD_READER_DEADLINE'
-    const timer = setTimeout(() => {
-      if (controller) controller.abort(error)
-      reject(error)
-    }, milliseconds)
-    cancelTimeout = () => clearTimeout(timer)
-  })
+  if (!controller) throw new TypeError('Peerit cold reader requires AbortController')
+  const forwardAbort = () => controller.abort(parentSignal.reason ||
+    Object.assign(new Error('Peerit cold reader was aborted'), { name: 'AbortError' }))
+  let rejectAbort
+  const aborted = new Promise((_, reject) => { rejectAbort = reject })
+  const onAbort = () => rejectAbort(controller.signal.reason ||
+    Object.assign(new Error('Peerit cold reader was aborted'), { name: 'AbortError' }))
+  controller.signal.addEventListener('abort', onAbort, { once: true })
+  if (parentSignal && parentSignal.aborted) forwardAbort()
+  else if (parentSignal) parentSignal.addEventListener('abort', forwardAbort, { once: true })
+  const deadlineError = new Error('Peerit cold Cell GET deadline expired')
+  deadlineError.code = 'PEERIT_COLD_READER_DEADLINE'
+  const timer = setTimeout(() => controller.abort(deadlineError), milliseconds)
   const pending = Promise.resolve().then(() => operation({
-    signal: controller ? controller.signal : undefined
+    signal: controller.signal
   }))
   // Promise.race installs a rejection observer on pending. This additional
   // observer documents and preserves that guarantee if a non-cooperative
   // adapter rejects only after the deadline/fallback has completed.
   pending.catch(() => {})
-  try { return await Promise.race([pending, timeout]) } finally { cancelTimeout() }
+  try {
+    throwIfAborted(controller.signal)
+    return await Promise.race([pending, aborted])
+  } finally {
+    clearTimeout(timer)
+    controller.signal.removeEventListener('abort', onAbort)
+    if (parentSignal) parentSignal.removeEventListener('abort', forwardAbort)
+  }
 }
 
 function relayContextMatches (context, signed) {
@@ -110,13 +136,17 @@ export function createPeeritSeedColdReaderV1 (options = {}) {
     ? Math.max(10, Math.min(MAX_TIMEOUT_MS, options.timeoutMillis))
     : 10_000
   const now = typeof options.now === 'function' ? options.now : Date.now
+  const signal = validSignal(options.signal)
 
   async function read (artifact, verification = {}) {
+    throwIfAborted(signal)
     const bootstrap = await verifyPeeritSeedBootstrapV1(artifact, {
       ...verification,
       now: now()
     })
+    throwIfAborted(signal)
     const floor = await sync.discoveryFloor(bootstrap.sourceId)
+    throwIfAborted(signal)
     if (floor) {
       if (bootstrap.payload.bootstrapSequence < floor.checkpointSequence) {
         fail('PEERIT_COLD_READER_ROLLBACK', 'signed bootstrap is below the persisted source floor')
@@ -158,6 +188,7 @@ export function createPeeritSeedColdReaderV1 (options = {}) {
           continue
         }
         try {
+          throwIfAborted(signal)
           if (capabilityVault && typeof capabilityVault.persistReaderCapability === 'function') {
             await capabilityVault.persistReaderCapability({
               sourceId: bootstrap.sourceId,
@@ -173,6 +204,7 @@ export function createPeeritSeedColdReaderV1 (options = {}) {
               readCapability: decodePeeritSeedReadCapabilityV1(replica.readCapability)
             })
           }
+          throwIfAborted(signal)
           const request = Object.freeze({
             recordId: record.recordId,
             logicalId: record.logicalHash,
@@ -188,7 +220,8 @@ export function createPeeritSeedColdReaderV1 (options = {}) {
           networkGets++
           const result = assertVerifiedPeeritRelayCellGetResult(await bounded(
             timeoutMillis,
-            context => relay.readCellCapability(request, context)
+            context => relay.readCellCapability(request, context),
+            signal
           ))
           if (result.targetId !== replica.targetId || result.relayId !== replica.relayId) {
             fail('PEERIT_COLD_READER_UNVERIFIED_RESULT',
@@ -204,6 +237,7 @@ export function createPeeritSeedColdReaderV1 (options = {}) {
             verified: true
           })
         } catch (error) {
+          if (signal && signal.aborted) throw signal.reason || error
           failures.push({
             relayId: replica.relayId,
             code: String((error && (error.code || error.name)) || 'PEERIT_COLD_READER_GET_FAILED')
@@ -211,9 +245,12 @@ export function createPeeritSeedColdReaderV1 (options = {}) {
         }
       }
       fail('PEERIT_COLD_READER_RECORD_UNAVAILABLE', `no declared replica returned record ${record.recordId}`, failures)
-    })
+    }, signal)
+    throwIfAborted(signal)
     const verifiedBatch = await verifyPeeritRemoteSeedBatchV1(bootstrap, results)
+    throwIfAborted(signal)
     const ingest = await ingestVerifiedPeeritRemoteBatchV1(sync, verifiedBatch, { observedAt: now() })
+    throwIfAborted(signal)
     return Object.freeze({
       ok: true,
       cached: false,

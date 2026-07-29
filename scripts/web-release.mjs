@@ -26,6 +26,7 @@ import { normalizePeeritReleaseRelayHintsV1 } from '../js/substrate/release-rela
 import {
   PEERIT_APP_ARTIFACT_PATH,
   PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE,
+  PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE,
   PEERIT_WEB_ASSET_MANIFEST_PATH,
   verifyPeeritSubstrateRuntimeArtifactV1
 } from './substrate-runtime-artifact.mjs'
@@ -312,6 +313,9 @@ function normalizeConfig (raw) {
         raw.relayHints == null ? [] : raw.relayHints,
         'deploy/web-release.json'),
       productionPinHistoryBundle: String(raw.productionPinHistoryBundle || '').trim(),
+      peeritSeedBootstrapBundle: String(raw.peeritSeedBootstrapBundle || '').trim(),
+      peeritSeedDiscoveryAuthorityPublicKey: String(
+        raw.peeritSeedDiscoveryAuthorityPublicKey || '').trim().toLowerCase(),
       releaseSequence: Number(raw.releaseSequence),
       pinnedReleaseKey: String(raw.pinnedReleaseKey || raw.releaseKey || '').trim().toLowerCase()
     }
@@ -436,6 +440,11 @@ function validateReleaseConfig (release) {
     if (release.productionPinHistoryBundle &&
         release.productionPinHistoryBundle !== PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)) {
       throw new Error(`productionPinHistoryBundle must equal ${PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)}`)
+    }
+    if (release.releaseSequence >= PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE &&
+        (!release.peeritSeedBootstrapBundle ||
+         !HEX64.test(release.peeritSeedDiscoveryAuthorityPublicKey))) {
+      throw new Error('sequence-13+ release requires a seed bootstrap bundle and discovery authority key')
     }
     if (!HEX64.test(release.pinnedReleaseKey)) throw new Error('deploy/web-release.json has an invalid pinnedReleaseKey')
     addCheck('config:substrate', 'pass', `Release selects ${release.substrateProfile} with ${release.relayHints.length} untrusted relay hint(s).`, {
@@ -576,6 +585,14 @@ async function verifySubstrateWebBundle (release, driveKey, { requireSignature =
     appArtifactHash: runtime.appArtifactHashHex,
     canonicalWebAssetManifest: `/${PEERIT_WEB_ASSET_MANIFEST_PATH}`,
     canonicalWebAssetManifestHash: runtime.webAssetManifestHashHex,
+    ...(runtime.seedBootstrap
+      ? {
+          peeritSeedBootstrap: runtime.seedBootstrap.path,
+          peeritSeedBootstrapSha256: runtime.seedBootstrap.sha256,
+          peeritSeedDiscoveryAuthorityPublicKey: runtime.seedBootstrap.authorityPublicKey,
+          peeritSeedBootstrapReleaseSequence: runtime.seedBootstrap.releaseSequence
+        }
+      : {}),
     releaseKey: release.pinnedReleaseKey
   }
   if (!manifest.webRelease || JSON.stringify(manifest.webRelease) !== JSON.stringify(expected)) {

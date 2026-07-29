@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -8,6 +9,7 @@ import {
   assemblePeeritBrowserRuntimeAuthorityV1,
   assemblePeeritBrowserRuntimeAuthorityNodeTestV1,
   fetchBoundedPeeritBrowserRuntimeAssetV1,
+  getVerifiedPeeritBrowserSeedBootstrapV1,
   getVerifiedPeeritBrowserRuntimeAssembly,
   isVerifiedPeeritBrowserRuntimeAuthority,
   PEERIT_BROWSER_RUNTIME_ASSEMBLY_STATUS,
@@ -39,9 +41,16 @@ import {
   decodePeeritWebAssetManifestV1,
   encodePeeritWebAssetManifestV1,
   hashPeeritAppArtifactV1,
+  hashPeeritBootstrapV1,
   hashPeeritWebAssetManifestV1,
   verifyPeeritWebAssetBytesV1
 } from '../js/substrate/web-asset-manifest.mjs'
+import {
+  PEERIT_SEED_BOOTSTRAP_OPERATOR_BOUNDARY_V1,
+  PEERIT_SEED_BOOTSTRAP_PROFILE_V1,
+  PEERIT_SEED_BOOTSTRAP_SCHEMA_V1,
+  encodePeeritSeedBootstrapV1
+} from '../js/substrate/seed-bootstrap-v1.mjs'
 import {
   buildReleaseControlFixture,
   createNodeReleaseControlCrypto
@@ -66,12 +75,13 @@ function originalAssets () {
     .map(assetPath => [assetPath, fileBytes(assetPath)]))
 }
 
-function manifestFor (assets) {
+function manifestFor (assets, options = {}) {
+  const currentAppArtifactBytes = assets.get(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.appArtifact)
   return encodePeeritWebAssetManifestV1({
     version: 1,
-    releaseSequence: 0n,
-    appArtifactHash: hashPeeritAppArtifactV1(appArtifactBytes),
-    recommendedBootstrapHashes: [],
+    releaseSequence: options.releaseSequence == null ? 0n : options.releaseSequence,
+    appArtifactHash: hashPeeritAppArtifactV1(currentAppArtifactBytes),
+    recommendedBootstrapHashes: options.recommendedBootstrapHashes || [],
     assets: [...assets].map(([assetPath, bytes]) => ({
       path: new TextEncoder().encode(assetPath),
       byteLength: BigInt(bytes.byteLength),
@@ -80,8 +90,11 @@ function manifestFor (assets) {
   })
 }
 
-function signedInputs (assets = originalAssets()) {
-  const webAssetManifestBytes = manifestFor(assets)
+function signedInputs (assets = originalAssets(), options = {}) {
+  const currentAppArtifactBytes = assets.get(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.appArtifact)
+  const releaseSequence = options.releaseSequence == null ? 0n : options.releaseSequence
+  const recommendedBootstrapHashes = options.recommendedBootstrapHashes || []
+  const webAssetManifestBytes = manifestFor(assets, { releaseSequence, recommendedBootstrapHashes })
   const hiveManifest = decodeBlindClientBrowserManifestV1(
     assets.get(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveManifest))
   const profileSource = assets.get(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.profileSource)
@@ -105,20 +118,21 @@ function signedInputs (assets = originalAssets()) {
     validatorVectorSetHash: hashPeeritValidatorVectorSetV1(validatorVectors),
     availabilityPolicyHash: availabilityPolicyHash(
       assets.get(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.availabilityPolicy)),
-    recommendedBootstrapHashes: [],
-    appArtifactHash: hashPeeritAppArtifactV1(appArtifactBytes),
+    releaseSequence,
+    recommendedBootstrapHashes,
+    appArtifactHash: hashPeeritAppArtifactV1(currentAppArtifactBytes),
     webAssetManifestHash: hashPeeritWebAssetManifestV1(webAssetManifestBytes),
     signature: undefined
   })
   const productionPinBytes = encodePeeritHiveRelayProfilePinV1(pin)
   return {
     assets,
-    appDistributionArtifactBytes: appArtifactBytes,
+    appDistributionArtifactBytes: currentAppArtifactBytes,
     webAssetManifestBytes,
     productionPinBytes,
     expectedPinHash: profilePinHash(productionPinBytes),
     expectedReleaseAuthorityPublicKey: fixture.releasePublicKey,
-    expectedReleaseSequence: 0n,
+    expectedReleaseSequence: releaseSequence,
     crypto,
     clock: { unixMillis: 0, monotonicMillis: 100 },
     requireCompleteAssetSet: true
@@ -144,6 +158,93 @@ assert.equal(assembled.validatorInstantiationAuthorized, false,
   'caller-selected external codec callbacks never become a profile validator authority')
 assert.equal(typeof assembled.createRelayAdapter, 'function')
 assert.equal(authority.epochDeadlineMonotonicMillis(1n), 21600100)
+
+const seedAuthorityPublicKey = '43'.repeat(32)
+const seedBytes = new Uint8Array(encodePeeritSeedBootstrapV1({
+  payload: {
+    schema: PEERIT_SEED_BOOTSTRAP_SCHEMA_V1,
+    version: 1,
+    profile: PEERIT_SEED_BOOTSTRAP_PROFILE_V1,
+    operatorBoundary: PEERIT_SEED_BOOTSTRAP_OPERATOR_BOUNDARY_V1,
+    bootstrapSequence: 0,
+    previousBootstrapHash: null,
+    releaseSequence: 13,
+    authorityPublicKey: seedAuthorityPublicKey,
+    issuedAt: 1,
+    expiresAt: 10_000,
+    relays: ['dal', 'syd'].map((relayId, index) => ({
+      relayId,
+      canonicalDescribeUrl: `https://${relayId}.example/api/blind/v1/describe`,
+      continuityRootRelayPublicKey: (index ? '21' : '11').repeat(32),
+      storeId: (index ? '22' : '12').repeat(32),
+      descriptorGenesisHash: (index ? '23' : '13').repeat(32),
+      minimumDescriptorSequence: 1,
+      familyId: 2,
+      operationId: 2,
+      endpointId: 1,
+      transportId: 1,
+      transportSupportBit: 1,
+      privacyProfileBit: 1
+    })),
+    records: [{
+      recordId: '31'.repeat(32),
+      wireKeys: ['v2!seed'],
+      authorPublicKey: '32'.repeat(32),
+      innerCodec: 334,
+      innerLength: 8,
+      sizeClass: 1,
+      logicalHash: '33'.repeat(32),
+      encodingCommitment: '34'.repeat(32),
+      replicas: [
+        ['dal', '11', '41', '51', '61'],
+        ['syd', '21', '42', '52', '62']
+      ].map(([relayId, relayKey, slot, cell, blob]) => ({
+        relayId,
+        targetId: `cell-v1:${relayId}:seed`,
+        readCapability: {
+          version: 1,
+          relayPublicKey: relayKey.repeat(32),
+          storageSlot: slot.repeat(32),
+          cellKey: cell.repeat(32),
+          sizeClass: 1,
+          expectedCellBlobHash: blob.repeat(32)
+        }
+      }))
+    }]
+  },
+  signature: '00'.repeat(64)
+}))
+const seedSha256 = createHash('sha256').update(seedBytes).digest('hex')
+const seedAppArtifactBytes = new TextEncoder().encode(JSON.stringify({
+  schema: 'peerit-app-artifact-v1',
+  releaseSequence: 13,
+  peeritSeedBootstrap: '/peerit-seed-bootstrap-v1.json',
+  peeritSeedBootstrapSha256: seedSha256,
+  peeritSeedDiscoveryAuthorityPublicKey: seedAuthorityPublicKey,
+  peeritSeedBootstrapReleaseSequence: 13
+}) + '\n')
+const seedAssets = originalAssets()
+seedAssets.set(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.appArtifact, seedAppArtifactBytes)
+seedAssets.set('/peerit-seed-bootstrap-v1.json', seedBytes)
+const seedDomainHash = hashPeeritBootstrapV1(seedBytes)
+const seededAuthority = await assemblePeeritBrowserRuntimeAuthorityNodeTestV1(
+  signedInputs(seedAssets, { releaseSequence: 13n, recommendedBootstrapHashes: [seedDomainHash] }))
+const authenticatedSeed = getVerifiedPeeritBrowserSeedBootstrapV1(seededAuthority)
+assert.deepEqual(authenticatedSeed.artifactBytes, seedBytes)
+assert.deepEqual(authenticatedSeed.verification, {
+  authorityPublicKey: seedAuthorityPublicKey,
+  releaseSequence: 13,
+  expectedArtifactHash: seedSha256,
+  previousBootstrapHash: null
+})
+const reboundTamperAssets = new Map(seedAssets)
+const reboundTamper = seedBytes.slice()
+reboundTamper[reboundTamper.length - 2] = reboundTamper[reboundTamper.length - 2] === 0x30 ? 0x31 : 0x30
+reboundTamperAssets.set('/peerit-seed-bootstrap-v1.json', reboundTamper)
+await assert.rejects(assemblePeeritBrowserRuntimeAuthorityNodeTestV1(signedInputs(
+  reboundTamperAssets,
+  { releaseSequence: 13n, recommendedBootstrapHashes: [hashPeeritBootstrapV1(reboundTamper)] }
+)), error => error.code === 'PRODUCTION_SEED_BOOTSTRAP_BINDING_MISMATCH')
 
 const productionExternalAuthorities = await assemblePeeritProfileExternalCodecAuthoritiesV1(authority)
 assert.deepEqual(Object.keys(productionExternalAuthorities).sort(), [

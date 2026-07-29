@@ -345,6 +345,31 @@ assert.equal(deadlineRecovered.networkPuts, 0)
 assert.ok(Date.now() - startedAt < 500, 'non-cooperative adapter is bounded by a real deadline')
 deadline.sync.destroy()
 
+// Page/installation cancellation interrupts a non-cooperative GET before the
+// verified batch can advance the discovery floor or create any publication work.
+const aborted = substrate('peerit-seed-cold-reader-aborted')
+await aborted.sync.ready()
+readMode = 'never-settles-first'
+reads.length = 0
+const abortController = new AbortController()
+const abortedReader = createPeeritSeedColdReaderV1({
+  sync: aborted.sync,
+  relays: adapters,
+  now: () => 2_000,
+  timeoutMillis: 10_000,
+  signal: abortController.signal
+})
+const abortedRead = abortedReader.read(artifactBytes, verification)
+while (reads.length === 0) await new Promise(resolve => setTimeout(resolve, 0))
+const pagehide = Object.assign(new Error('pagehide'), { code: 'PEERIT_ENTRY_LIFECYCLE_ENDED' })
+abortController.abort(pagehide)
+await assert.rejects(abortedRead, error => error === pagehide)
+assert.equal(await aborted.sync.discoveryFloor(verified.sourceId), null)
+assert.equal(aborted.shared.stores.get(JOURNAL_STORES.INTENTS).size, 0)
+assert.equal(aborted.shared.stores.get(JOURNAL_STORES.TARGETS).size, 0)
+assert.equal((await aborted.journal.summary()).pendingIntentCount, 0)
+aborted.sync.destroy()
+
 const failure = substrate('peerit-seed-cold-reader-failure')
 await failure.sync.ready()
 readMode = 'tampered'

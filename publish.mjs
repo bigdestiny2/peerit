@@ -143,6 +143,7 @@ export const SUBSTRATE_SITE_FILES = Object.freeze([
   'js/substrate/blind-client-relay.js',
   'js/substrate/browser-runtime-authority.mjs',
   'js/substrate/capability-vault.js',
+  'js/substrate/cold-reader.mjs',
   'js/substrate/descriptor-trust-backend.js',
   'js/substrate/local-identity.js',
   'js/substrate/legacy-rk-posture.mjs',
@@ -274,6 +275,7 @@ export function createPublishedSiteFilesV1 (release) {
   if (pinHistoryBundle && pinHistoryBundle !== PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)) {
     throw new Error(`productionPinHistoryBundle must equal ${PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)}`)
   }
+  const seedBootstrapBundle = String(release.peeritSeedBootstrapBundle || '').trim()
   const artifact = buildPeeritSubstrateRuntimeArtifactV1({
     sourceFiles,
     substrateProfile: release.substrateProfile,
@@ -282,7 +284,12 @@ export function createPublishedSiteFilesV1 (release) {
     releaseKey: release.pinnedReleaseKey,
     productionPinHistoryBytes: pinHistoryBundle
       ? readFileSync(join(__dir, pinHistoryBundle))
-      : null
+      : null,
+    seedBootstrapBytes: seedBootstrapBundle
+      ? readFileSync(resolve(__dir, seedBootstrapBundle))
+      : null,
+    seedDiscoveryAuthorityPublicKey: String(
+      release.peeritSeedDiscoveryAuthorityPublicKey || '').trim().toLowerCase()
   })
   return [...artifact.files].map(([path, content]) => ({ path: '/' + path, content }))
 }

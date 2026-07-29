@@ -1,4 +1,5 @@
 import { availabilityPolicyHash } from './availability-policy.mjs'
+import { hashBytes } from '../crypto.js'
 import { verifyBlindClientBrowserReleaseV1 } from './blind-client-browser-verifier.mjs'
 import {
   decodePeeritProfileRegistry,
@@ -29,6 +30,7 @@ import {
   encodePeeritWebAssetManifestV1,
   PEERIT_APP_ARTIFACT_PATH_V1,
   hashPeeritAppArtifactV1,
+  hashPeeritBootstrapV1,
   hashPeeritWebAssetManifestV1,
   verifyPeeritWebAssetContentV1,
   verifyPeeritWebAssetBytesV1
@@ -37,6 +39,10 @@ import { createBlindCellRelay } from './blind-client-relay.js'
 import { PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1 } from './production-release-authority.mjs'
 
 export { PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1 } from './production-release-authority.mjs'
+
+const PEERIT_SEED_BOOTSTRAP_PATH_V1 = '/peerit-seed-bootstrap-v1.json'
+const PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE = 13
+const HEX_32 = /^[0-9a-f]{64}$/
 
 export const PEERIT_BROWSER_RUNTIME_ASSET_PATHS = Object.freeze({
   appArtifact: PEERIT_APP_ARTIFACT_PATH_V1,
@@ -315,6 +321,58 @@ export function getVerifiedPeeritBrowserRuntimeAssembly (value) {
   return record
 }
 
+export function getVerifiedPeeritBrowserSeedBootstrapV1 (value) {
+  const record = VERIFIED_AUTHORITIES.get(value)
+  if (!record) fail('PEERIT_AUTHENTICATED_RELAY_RUNTIME_AUTHORITY_REQUIRED', 'verified browser runtime authority is required')
+  if (!record.seedBootstrap) {
+    fail('PEERIT_AUTHENTICATED_SEED_BOOTSTRAP_REQUIRED', 'verified browser runtime has no release-bound seed bootstrap')
+  }
+  return Object.freeze({
+    artifactBytes: record.seedBootstrap.artifactBytes.slice(),
+    verification: Object.freeze({ ...record.seedBootstrap.verification })
+  })
+}
+
+function authenticatedSeedBootstrap (appArtifactBytes, assets, manifest, releaseSequence) {
+  if (Number(releaseSequence) < PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE) {
+    if (manifest.recommendedBootstrapHashes.length !== 0 || assets.has(PEERIT_SEED_BOOTSTRAP_PATH_V1)) {
+      fail('PRODUCTION_SEED_BOOTSTRAP_UNEXPECTED', 'pre-sequence-13 runtime cannot carry a seed bootstrap')
+    }
+    return null
+  }
+  let appArtifact
+  try { appArtifact = JSON.parse(new TextDecoder().decode(appArtifactBytes)) } catch {
+    fail('PRODUCTION_APP_ARTIFACT_INVALID', 'the exact app-distribution artifact is not valid JSON')
+  }
+  if (!appArtifact || appArtifact.schema !== 'peerit-app-artifact-v1' ||
+      appArtifact.releaseSequence !== Number(releaseSequence)) {
+    fail('PRODUCTION_APP_ARTIFACT_INVALID', 'the app-distribution artifact release identity is invalid')
+  }
+  if (appArtifact.peeritSeedBootstrap !== PEERIT_SEED_BOOTSTRAP_PATH_V1 ||
+      !HEX_32.test(String(appArtifact.peeritSeedBootstrapSha256 || '')) ||
+      !HEX_32.test(String(appArtifact.peeritSeedDiscoveryAuthorityPublicKey || '')) ||
+      appArtifact.peeritSeedBootstrapReleaseSequence !== Number(releaseSequence) ||
+      manifest.recommendedBootstrapHashes.length !== 1) {
+    fail('PRODUCTION_SEED_BOOTSTRAP_BINDING_INVALID', 'sequence-13+ app artifact does not bind one exact seed bootstrap')
+  }
+  const artifactBytes = requireAsset(assets, PEERIT_SEED_BOOTSTRAP_PATH_V1)
+  return Promise.resolve(hashBytes(artifactBytes)).then(rawHash => {
+    if (rawHash !== appArtifact.peeritSeedBootstrapSha256 ||
+        !bytesEqual(hashPeeritBootstrapV1(artifactBytes), manifest.recommendedBootstrapHashes[0])) {
+      fail('PRODUCTION_SEED_BOOTSTRAP_BINDING_MISMATCH', 'seed bootstrap bytes do not match the app/profile release bindings')
+    }
+    return Object.freeze({
+      artifactBytes: artifactBytes.slice(),
+      verification: Object.freeze({
+        authorityPublicKey: appArtifact.peeritSeedDiscoveryAuthorityPublicKey,
+        releaseSequence: appArtifact.peeritSeedBootstrapReleaseSequence,
+        expectedArtifactHash: appArtifact.peeritSeedBootstrapSha256,
+        previousBootstrapHash: null
+      })
+    })
+  })
+}
+
 async function assemblePeeritBrowserRuntimeAuthorityInternal (input, trusted) {
   const assets = snapshotAssets(input.assets)
   const pinBytes = bytes(trusted.productionPinBytes, 'production profile pin')
@@ -352,6 +410,8 @@ async function assemblePeeritBrowserRuntimeAuthorityInternal (input, trusted) {
     fail('PRODUCTION_APP_ARTIFACT_PIN_MISMATCH',
       'the exact app-distribution artifact does not match the production pin')
   }
+  const seedBootstrap = await authenticatedSeedBootstrap(
+    appArtifactBytes, assets, webAssetManifest, pin.releaseSequence)
 
   const hive = verifyBlindClientBrowserReleaseV1({
     artifactBytes: requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveArtifact),
@@ -448,6 +508,7 @@ async function assemblePeeritBrowserRuntimeAuthorityInternal (input, trusted) {
     control,
     registry,
     verifiedPin,
+    seedBootstrap,
     validatorArtifactAuthenticated: true,
     validatorInstantiationAuthorized: false,
     createRelayAdapter (options) {

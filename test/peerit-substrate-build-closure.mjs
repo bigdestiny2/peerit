@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { once } from 'node:events'
+import { genKeyPair, ready as cryptoReady } from '../js/crypto.js'
 import { createPublishedSiteFilesV1, SUBSTRATE_SITE_FILES } from '../publish.mjs'
 import { PEERIT_BROWSER_RUNTIME_ASSET_PATHS } from '../js/substrate/browser-runtime-authority.mjs'
 import {
@@ -15,6 +16,14 @@ import {
   verifyPeeritSubstrateRuntimeArtifactV1
 } from '../scripts/substrate-runtime-artifact.mjs'
 import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from '../js/substrate/production-release-authority.mjs'
+import { hashPeeritBootstrapV1 } from '../js/substrate/web-asset-manifest.mjs'
+import {
+  PEERIT_SEED_BOOTSTRAP_OPERATOR_BOUNDARY_V1,
+  PEERIT_SEED_BOOTSTRAP_PROFILE_V1,
+  PEERIT_SEED_BOOTSTRAP_SCHEMA_V1,
+  createPeeritSeedBootstrapV1,
+  encodePeeritSeedBootstrapV1
+} from '../js/substrate/seed-bootstrap-v1.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const served = new Set(SUBSTRATE_SITE_FILES)
@@ -49,6 +58,7 @@ for (const requiredProductFile of [
   'js/substrate/peerit-product-runtime.js',
   'js/substrate/peerit-product-ui.js',
   'js/substrate/peerit-substrate-sync.js',
+  'js/substrate/cold-reader.mjs',
   'js/substrate/remote-record-ingest.mjs',
   'js/substrate/seed-bootstrap-v1.mjs'
 ]) assert.equal(served.has(requiredProductFile), true, `${requiredProductFile} is in the replacement product closure`)
@@ -168,6 +178,117 @@ const sourceRuntimeFiles = new Map(SUBSTRATE_SITE_FILES.map(file => [
   file,
   readFileSync(join(root, file))
 ]))
+
+await cryptoReady()
+const discoveryAuthority = await genKeyPair()
+const relayRoot = (relayId, fill) => ({
+  relayId,
+  canonicalDescribeUrl: `https://${relayId}.example/api/blind/v1/describe`,
+  continuityRootRelayPublicKey: fill.repeat(32),
+  storeId: (fill === '11' ? '12' : '22').repeat(32),
+  descriptorGenesisHash: (fill === '11' ? '13' : '23').repeat(32),
+  minimumDescriptorSequence: 1,
+  familyId: 2,
+  operationId: 2,
+  endpointId: 1,
+  transportId: 1,
+  transportSupportBit: 1,
+  privacyProfileBit: 1
+})
+const seedRelays = [relayRoot('dal', '11'), relayRoot('syd', '21')]
+const seedRecord = {
+  recordId: '31'.repeat(32),
+  wireKeys: ['v2!seed'],
+  authorPublicKey: '32'.repeat(32),
+  innerCodec: 334,
+  innerLength: 8,
+  sizeClass: 1,
+  logicalHash: '33'.repeat(32),
+  encodingCommitment: '34'.repeat(32),
+  replicas: seedRelays.map((relay, index) => ({
+    relayId: relay.relayId,
+    targetId: `cell-v1:${relay.relayId}:seed`,
+    readCapability: {
+      version: 1,
+      relayPublicKey: relay.continuityRootRelayPublicKey,
+      storageSlot: (index ? '42' : '41').repeat(32),
+      cellKey: (index ? '52' : '51').repeat(32),
+      sizeClass: 1,
+      expectedCellBlobHash: (index ? '62' : '61').repeat(32)
+    }
+  }))
+}
+const seedArtifact = await createPeeritSeedBootstrapV1({
+  schema: PEERIT_SEED_BOOTSTRAP_SCHEMA_V1,
+  version: 1,
+  profile: PEERIT_SEED_BOOTSTRAP_PROFILE_V1,
+  operatorBoundary: PEERIT_SEED_BOOTSTRAP_OPERATOR_BOUNDARY_V1,
+  bootstrapSequence: 0,
+  previousBootstrapHash: null,
+  releaseSequence: 13,
+  authorityPublicKey: discoveryAuthority.pubHex,
+  issuedAt: 1,
+  expiresAt: 10_000,
+  relays: seedRelays,
+  records: [seedRecord]
+}, { seedHex: discoveryAuthority.seedHex })
+const seedBootstrapBytes = Buffer.from(encodePeeritSeedBootstrapV1(seedArtifact))
+const sequence13Artifact = buildPeeritSubstrateRuntimeArtifactV1({
+  sourceFiles: sourceRuntimeFiles,
+  substrateProfile: 'blind-v1',
+  relayHints: [
+    'https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe',
+    'https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe'
+  ],
+  releaseSequence: 13,
+  releaseKey: officialRelease.pinnedReleaseKey,
+  seedBootstrapBytes,
+  seedDiscoveryAuthorityPublicKey: discoveryAuthority.pubHex
+})
+assert.deepEqual(sequence13Artifact.files.get('peerit-seed-bootstrap-v1.json'), seedBootstrapBytes)
+assert.equal(sequence13Artifact.appArtifact.peeritSeedBootstrap, '/peerit-seed-bootstrap-v1.json')
+assert.equal(sequence13Artifact.appArtifact.peeritSeedBootstrapSha256,
+  sequence13Artifact.seedBootstrap.sha256)
+assert.equal(sequence13Artifact.appArtifact.peeritSeedDiscoveryAuthorityPublicKey,
+  discoveryAuthority.pubHex)
+assert.equal(sequence13Artifact.appArtifact.peeritSeedBootstrapReleaseSequence, 13)
+assert.equal(sequence13Artifact.webAssetManifestBytes != null, true)
+const sequence13Verified = verifyPeeritSubstrateRuntimeArtifactV1({
+  files: sequence13Artifact.files,
+  releaseSequence: 13,
+  releaseKey: officialRelease.pinnedReleaseKey
+})
+assert.equal(sequence13Verified.webAssetManifest.recommendedBootstrapHashes.length, 1)
+assert.deepEqual(sequence13Verified.webAssetManifest.recommendedBootstrapHashes[0],
+  hashPeeritBootstrapV1(seedBootstrapBytes),
+  'the canonical manifest/profile input binds the domain-separated seed hash')
+const tamperedSeedFiles = new Map(sequence13Artifact.files)
+const tamperedSeed = Buffer.from(seedBootstrapBytes)
+tamperedSeed[tamperedSeed.length - 2] = tamperedSeed[tamperedSeed.length - 2] === 0x30 ? 0x31 : 0x30
+tamperedSeedFiles.set('peerit-seed-bootstrap-v1.json', tamperedSeed)
+assert.throws(() => verifyPeeritSubstrateRuntimeArtifactV1({
+  files: tamperedSeedFiles,
+  releaseSequence: 13,
+  releaseKey: officialRelease.pinnedReleaseKey
+}), /seed bootstrap|WEB_ASSET_DRIFT/,
+'a seed byte tamper cannot survive the app, canonical, and raw-hash closure')
+assert.throws(() => buildPeeritSubstrateRuntimeArtifactV1({
+  sourceFiles: sourceRuntimeFiles,
+  substrateProfile: 'blind-v1',
+  relayHints: [],
+  releaseSequence: 13,
+  releaseKey: officialRelease.pinnedReleaseKey
+}), /seed bootstrap/i, 'sequence 13 fails closed without exact seed bytes')
+assert.throws(() => buildPeeritSubstrateRuntimeArtifactV1({
+  sourceFiles: sourceRuntimeFiles,
+  substrateProfile: 'blind-v1',
+  relayHints: [],
+  releaseSequence: 13,
+  releaseKey: officialRelease.pinnedReleaseKey,
+  seedBootstrapBytes,
+  seedDiscoveryAuthorityPublicKey: 'ff'.repeat(32)
+}), /discovery authority/, 'a build-time discovery-key mismatch fails before artifact assembly')
+
 const nonProductionPinHistoryFixture = readFileSync(join(
   root, 'protocol', 'vectors', 'release-control', 'pin-history-bundle.bin'))
 const ceremonyArtifact = buildPeeritSubstrateRuntimeArtifactV1({

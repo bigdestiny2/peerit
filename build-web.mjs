@@ -36,6 +36,8 @@ import {
   peeritServiceWorkerRegisterSourceV1,
   PEERIT_APP_ARTIFACT_PATH,
   PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE,
+  PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE,
+  PEERIT_SEED_BOOTSTRAP_PATH,
   PEERIT_WEB_ASSET_MANIFEST_PATH
 } from './scripts/substrate-runtime-artifact.mjs'
 import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from './js/substrate/production-release-authority.mjs'
@@ -110,6 +112,23 @@ if (IS_SUBSTRATE_RELEASE && (!Number.isSafeInteger(RELEASE_SEQUENCE) ||
     RELEASE_SEQUENCE < PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE)) {
   throw new Error(`blind-substrate replacement releaseSequence must be at least ${PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE}; sequence 6 belongs to the retired legacy artifact`)
 }
+const SEED_BOOTSTRAP_BUNDLE = IS_SUBSTRATE_RELEASE
+  ? String(releaseConfig.peeritSeedBootstrapBundle || '').trim()
+  : ''
+const SEED_DISCOVERY_AUTHORITY_PUBLIC_KEY = IS_SUBSTRATE_RELEASE
+  ? String(releaseConfig.peeritSeedDiscoveryAuthorityPublicKey || '').trim().toLowerCase()
+  : ''
+if (IS_SUBSTRATE_RELEASE && RELEASE_SEQUENCE >= PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE &&
+    (!SEED_BOOTSTRAP_BUNDLE || !SEED_DISCOVERY_AUTHORITY_PUBLIC_KEY)) {
+  throw new Error('sequence-13+ blind-substrate release requires peeritSeedBootstrapBundle and peeritSeedDiscoveryAuthorityPublicKey')
+}
+if (IS_SUBSTRATE_RELEASE && RELEASE_SEQUENCE < PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE &&
+    (SEED_BOOTSTRAP_BUNDLE || SEED_DISCOVERY_AUTHORITY_PUBLIC_KEY)) {
+  throw new Error('Peerit seed bootstrap configuration requires releaseSequence 13 or later')
+}
+const SEED_BOOTSTRAP_BYTES = SEED_BOOTSTRAP_BUNDLE
+  ? readFileSync(resolve(__dir, SEED_BOOTSTRAP_BUNDLE))
+  : null
 const NO_RELAY_ROSTER = hasArg('--no-relay-roster') || process.env.PEERIT_NO_RELAY_ROSTER === '1'
 const RELAY_ROSTER = IS_SUBSTRATE_RELEASE || NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER || arg('--relay-roster') || releaseConfig.relayRoster || '')
 let RELAY_ROSTER_KEY = IS_SUBSTRATE_RELEASE || NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER_KEY || arg('--relay-roster-key') || releaseConfig.pinnedRosterKey || '')
@@ -271,7 +290,9 @@ if (IS_SUBSTRATE_RELEASE) {
     relayHints: SUBSTRATE_RELAY_HINT_VALUES,
     releaseSequence: RELEASE_SEQUENCE,
     releaseKey: RELEASE_KEY,
-    productionPinHistoryBytes: PRODUCTION_PIN_HISTORY_BYTES
+    productionPinHistoryBytes: PRODUCTION_PIN_HISTORY_BYTES,
+    seedBootstrapBytes: SEED_BOOTSTRAP_BYTES,
+    seedDiscoveryAuthorityPublicKey: SEED_DISCOVERY_AUTHORITY_PUBLIC_KEY
   })
   if (PRODUCTION_PIN_HISTORY_BYTES) {
     await verifyPeeritProductionPinHistoryReleaseV1({
@@ -360,6 +381,14 @@ writeFileSync(join(OUT, 'asset-manifest.json'), JSON.stringify({
         appArtifactHash: substrateArtifact.appArtifactHashHex,
         canonicalWebAssetManifest: `/${PEERIT_WEB_ASSET_MANIFEST_PATH}`,
         canonicalWebAssetManifestHash: substrateArtifact.webAssetManifestHashHex,
+        ...(substrateArtifact.seedBootstrap
+          ? {
+              peeritSeedBootstrap: `/${PEERIT_SEED_BOOTSTRAP_PATH}`,
+              peeritSeedBootstrapSha256: substrateArtifact.seedBootstrap.sha256,
+              peeritSeedDiscoveryAuthorityPublicKey: substrateArtifact.seedBootstrap.authorityPublicKey,
+              peeritSeedBootstrapReleaseSequence: substrateArtifact.seedBootstrap.releaseSequence
+            }
+          : {}),
         releaseKey: RELEASE_KEY
       }
     : {

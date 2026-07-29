@@ -18,6 +18,12 @@ import {
   PEERIT_APP_ARTIFACT_PATH,
   PEERIT_WEB_ASSET_MANIFEST_PATH
 } from '../scripts/substrate-runtime-artifact.mjs'
+import {
+  PEERIT_SEED_BOOTSTRAP_OPERATOR_BOUNDARY_V1,
+  PEERIT_SEED_BOOTSTRAP_PROFILE_V1,
+  PEERIT_SEED_BOOTSTRAP_SCHEMA_V1,
+  encodePeeritSeedBootstrapV1
+} from '../js/substrate/seed-bootstrap-v1.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const PKCS8_PREFIX = '302e020100300506032b657004220420'
@@ -68,13 +74,73 @@ function pageDocument (releaseSequence, relayHints, baseURI = 'https://peerit.te
   }
 }
 
+const seedAuthorityPublicKey = '43'.repeat(32)
+const seedRelays = ['dal', 'syd'].map((relayId, index) => ({
+  relayId,
+  canonicalDescribeUrl: `https://${relayId}.example/api/blind/v1/describe`,
+  continuityRootRelayPublicKey: (index ? '21' : '11').repeat(32),
+  storeId: (index ? '22' : '12').repeat(32),
+  descriptorGenesisHash: (index ? '23' : '13').repeat(32),
+  minimumDescriptorSequence: 1,
+  familyId: 2,
+  operationId: 2,
+  endpointId: 1,
+  transportId: 1,
+  transportSupportBit: 1,
+  privacyProfileBit: 1
+}))
+const seedBootstrapBytes = Buffer.from(encodePeeritSeedBootstrapV1({
+  payload: {
+    schema: PEERIT_SEED_BOOTSTRAP_SCHEMA_V1,
+    version: 1,
+    profile: PEERIT_SEED_BOOTSTRAP_PROFILE_V1,
+    operatorBoundary: PEERIT_SEED_BOOTSTRAP_OPERATOR_BOUNDARY_V1,
+    bootstrapSequence: 0,
+    previousBootstrapHash: null,
+    releaseSequence: 13,
+    authorityPublicKey: seedAuthorityPublicKey,
+    issuedAt: 1,
+    expiresAt: 10_000,
+    relays: seedRelays,
+    records: [{
+      recordId: '31'.repeat(32),
+      wireKeys: ['v2!seed'],
+      authorPublicKey: '32'.repeat(32),
+      innerCodec: 334,
+      innerLength: 8,
+      sizeClass: 1,
+      logicalHash: '33'.repeat(32),
+      encodingCommitment: '34'.repeat(32),
+      replicas: seedRelays.map((relay, index) => ({
+        relayId: relay.relayId,
+        targetId: `cell-v1:${relay.relayId}:seed`,
+        readCapability: {
+          version: 1,
+          relayPublicKey: relay.continuityRootRelayPublicKey,
+          storageSlot: (index ? '42' : '41').repeat(32),
+          cellKey: (index ? '52' : '51').repeat(32),
+          sizeClass: 1,
+          expectedCellBlobHash: (index ? '62' : '61').repeat(32)
+        }
+      }))
+    }]
+  },
+  signature: '00'.repeat(64)
+}))
+
 function releaseFixture (releaseSequence, relayHints = []) {
   const artifact = buildPeeritSubstrateRuntimeArtifactV1({
     sourceFiles,
     substrateProfile: 'blind-v1',
     relayHints,
     releaseSequence,
-    releaseKey
+    releaseKey,
+    ...(releaseSequence >= 13
+      ? {
+          seedBootstrapBytes,
+          seedDiscoveryAuthorityPublicKey: seedAuthorityPublicKey
+        }
+      : {})
   })
   const files = Object.fromEntries([...artifact.files].map(([path, bytes]) => [path, sha256(bytes)]))
   const manifest = {
@@ -94,6 +160,14 @@ function releaseFixture (releaseSequence, relayHints = []) {
       appArtifactHash: artifact.appArtifactHashHex,
       canonicalWebAssetManifest: `/${PEERIT_WEB_ASSET_MANIFEST_PATH}`,
       canonicalWebAssetManifestHash: artifact.webAssetManifestHashHex,
+      ...(artifact.seedBootstrap
+        ? {
+            peeritSeedBootstrap: artifact.seedBootstrap.path,
+            peeritSeedBootstrapSha256: artifact.seedBootstrap.sha256,
+            peeritSeedDiscoveryAuthorityPublicKey: artifact.seedBootstrap.authorityPublicKey,
+            peeritSeedBootstrapReleaseSequence: artifact.seedBootstrap.releaseSequence
+          }
+        : {}),
       releaseKey
     }
   }
@@ -106,6 +180,9 @@ function releaseFixture (releaseSequence, relayHints = []) {
   const bodies = new Map([
     [`/${PEERIT_WEB_ASSET_MANIFEST_PATH}`, [artifact.webAssetManifestBytes, 'application/octet-stream']],
     [`/${PEERIT_APP_ARTIFACT_PATH}`, [artifact.appArtifactBytes, 'application/json']],
+    ...(artifact.seedBootstrap
+      ? [[artifact.seedBootstrap.path, [artifact.seedBootstrap.bytes, 'application/json']]]
+      : []),
     ['asset-manifest.json', [Buffer.from(JSON.stringify(manifest)), 'application/json']],
     ['asset-manifest.sig', [Buffer.from(JSON.stringify(signature)), 'application/json']]
   ])
@@ -181,5 +258,39 @@ const renderDocument = {
 renderPeeritReleaseCoherenceStatusV1(contentAddressed, { document: renderDocument })
 assert.equal(banner.children.length, 0,
   'content-addressed status does not link to a verify.html surface absent from Hyper publication')
+
+const sequence13 = releaseFixture(13, hints)
+const sequence13StorageValues = new Map()
+const sequence13Storage = {
+  getItem: key => sequence13StorageValues.get(key) || null,
+  setItem: (key, value) => sequence13StorageValues.set(key, String(value))
+}
+const seededCoherent = await verifyPeeritReleaseCoherenceV1({ ...sequence13, storage: sequence13Storage })
+assert.equal(seededCoherent.active, true)
+assert.deepEqual(seededCoherent.seedBootstrap, {
+  path: '/peerit-seed-bootstrap-v1.json',
+  sha256: sequence13.artifact.seedBootstrap.sha256,
+  authorityPublicKey: seedAuthorityPublicKey,
+  releaseSequence: 13
+})
+const outerTamperManifest = structuredClone(sequence13.manifest)
+outerTamperManifest.webRelease.peeritSeedBootstrapSha256 = 'ff'.repeat(32)
+const outerTamperSignature = {
+  alg: RELEASE_ALG,
+  msgVersion: RELEASE_MSG_VERSION,
+  key: releaseKey,
+  sig: nodeSign(null, Buffer.from(releaseSigningMessage(outerTamperManifest)), privateKey).toString('hex')
+}
+const outerTampered = await verifyPeeritReleaseCoherenceV1({
+  ...sequence13,
+  storage: { getItem: () => null, setItem () {} },
+  fetch: async input => {
+    if (String(input) === 'asset-manifest.json') return response(Buffer.from(JSON.stringify(outerTamperManifest)), 'application/json')
+    if (String(input) === 'asset-manifest.sig') return response(Buffer.from(JSON.stringify(outerTamperSignature)), 'application/json')
+    return sequence13.fetch(input)
+  }
+})
+assert.equal(outerTampered.active, false,
+  'a newly signed outer wrapper cannot drift from the seed hash bound by the app/canonical closure')
 
 console.log('peerit-release-coherence: signed bindings, canonical tamper, relay-hint drift, rollback floor, and Hyper status all fail/resolve correctly')

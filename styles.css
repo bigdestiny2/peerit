@@ -39,10 +39,14 @@ button{font-family:inherit}
 .brand-mark{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;color:#0a0e17;font-weight:800;
   background:linear-gradient(135deg,var(--up),var(--accent-2))}
 .brand-name{font-size:18px}
-.search{flex:1;max-width:640px}
-.search input{width:100%;height:38px;padding:0 14px;border-radius:999px;border:1px solid var(--border);
+.search{flex:1;max-width:640px;position:relative}
+.search input{width:100%;height:38px;padding:0 44px 0 14px;border-radius:999px;border:1px solid var(--border);
   background:var(--surface);color:var(--text);font-size:14px;outline:none}
 .search input:focus{border-color:var(--accent);background:var(--surface-2)}
+.search-submit{position:absolute;right:4px;top:4px;width:30px;height:30px;border:0;border-radius:50%;
+  display:grid;place-items:center;background:linear-gradient(135deg,var(--accent),var(--accent-2));
+  color:#fff;font-size:17px;line-height:1;cursor:pointer}
+.search-submit:hover{filter:brightness(1.1)}
 .topbar-right{display:flex;align-items:center;gap:10px;margin-left:auto}
 .topbar-link{color:var(--muted);font-size:13.5px;font-weight:700;padding:7px 4px}
 .topbar-link:hover{color:var(--text)}
@@ -504,6 +508,10 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
   color: #fff; padding: 8px 16px; font-size: 13px; line-height: 1.5; text-align: center;
 }
 .readonly-banner a { color: #fff; text-decoration: underline; font-weight: 500; }
+.release-coherence-banner{position:relative;z-index:42;padding:8px 16px;font-size:13px;line-height:1.5;text-align:center;color:#fff}
+.release-coherence-banner.ok{background:#115e59}
+.release-coherence-banner.bad{background:#7f1d1d}
+.release-coherence-banner a{color:#fff;text-decoration:underline;font-weight:600;margin-left:.25em}
 /* Don't offer write controls that the read-only relay will refuse. */
 .web-readonly [href^="#/submit"],
 .web-readonly [href^="#/create"],
@@ -549,3 +557,21 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
   font-size: 12px; color: var(--muted, #9aa7bd); }
 .rep-chip b { color: var(--accent-2); font-size: 13px; }
 .rep-meta { font-size: 12px; }
+
+/* ---- replacement blind-substrate product status -------------------------- */
+.substrate-status{padding:9px 18px;border-bottom:1px solid var(--border);background:rgba(18,24,41,.96);
+  display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap}
+.substrate-status[data-local-ready="false"]{border-color:rgba(255,92,108,.45);background:rgba(255,92,108,.08)}
+.substrate-copy{font-size:12.5px;color:var(--muted);max-width:760px}
+.substrate-axes{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.substrate-axis{font:600 10.5px/1 var(--mono);color:var(--muted);border:1px solid var(--border-2);
+  background:var(--bg-2);border-radius:999px;padding:5px 8px;white-space:nowrap}
+.substrate-axis.axis-0{color:var(--good);border-color:rgba(45,212,191,.32)}
+body>[data-toast]{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:100;
+  max-width:min(92vw,680px);white-space:normal;text-align:center;border-color:rgba(255,92,108,.45)}
+@media(max-width:560px){
+  .substrate-status{align-items:flex-start;padding:8px 10px}
+  .substrate-copy{flex:1 0 100%}
+  .substrate-axes{width:100%;overflow-x:auto;flex-wrap:nowrap;padding-bottom:2px;scrollbar-width:none}
+  .substrate-axes::-webkit-scrollbar{display:none}
+}

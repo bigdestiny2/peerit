@@ -18,7 +18,7 @@ const MOBILE_DEVICES = new Set(['ios', 'android'])
 
 function usage (code = 0, message = '') {
   if (message) console.error('error:', message)
-  console.error('usage: node scripts/browser-smoke.mjs [--url <http-url>] [--browser chromium|firefox|webkit] [--headed] [--keep-open] [--accessibility] [--mobile-host --mobile-device ios|android]')
+  console.error('usage: node scripts/browser-smoke.mjs [--url <http-url>] [--browser chromium|firefox|webkit] [--headed] [--keep-open] [--accessibility] [--mobile --mobile-device ios|android] [--legacy-mobile-host --mobile-device ios|android]')
   process.exit(code)
 }
 
@@ -28,7 +28,8 @@ function parseArgs (argv) {
     browser: process.env.PEERIT_BROWSER_SMOKE_ENGINE || 'chromium',
     headed: process.env.HEADED === '1',
     keepOpen: false,
-    mobileHost: process.env.PEERIT_BROWSER_SMOKE_MODE === 'mobile-host',
+    mobile: process.env.PEERIT_BROWSER_SMOKE_MODE === 'mobile-web',
+    mobileHost: process.env.PEERIT_BROWSER_SMOKE_MODE === 'legacy-mobile-host' || process.env.PEERIT_BROWSER_SMOKE_MODE === 'mobile-host',
     mobileDevice: process.env.PEERIT_BROWSER_SMOKE_MOBILE_DEVICE || 'ios',
     accessibility: false
   }
@@ -38,15 +39,19 @@ function parseArgs (argv) {
     else if (arg === '--browser') opts.browser = argv[++i] || ''
     else if (arg === '--headed') opts.headed = true
     else if (arg === '--keep-open') opts.keepOpen = true
-    else if (arg === '--mobile-host') opts.mobileHost = true
+    else if (arg === '--mobile') opts.mobile = true
+    else if (arg === '--legacy-mobile-host' || arg === '--mobile-host') opts.mobileHost = true
     else if (arg === '--mobile-device') opts.mobileDevice = argv[++i] || ''
     else if (arg === '--accessibility') opts.accessibility = true
     else if (arg === '-h' || arg === '--help') usage(0)
     else usage(2, `unknown option: ${arg}`)
   }
   if (!BROWSER_ENGINES.has(opts.browser)) usage(2, `unsupported browser engine: ${opts.browser}`)
-  if (opts.mobileHost && opts.browser !== 'chromium') usage(2, 'the mobile-host smoke uses Chromium mobile emulation; use --browser chromium')
   if (!MOBILE_DEVICES.has(opts.mobileDevice)) usage(2, `unsupported mobile device: ${opts.mobileDevice}`)
+  if (opts.mobile && opts.mobileHost) usage(2, 'choose either the shipping mobile substrate or the legacy mobile-host compatibility topology')
+  if (opts.mobile && opts.mobileDevice === 'ios' && opts.browser !== 'webkit') usage(2, 'the primary iOS-like smoke uses WebKit; use --browser webkit')
+  if (opts.mobile && opts.mobileDevice === 'android' && opts.browser !== 'chromium') usage(2, 'the primary Android-like smoke uses Chromium; use --browser chromium')
+  if (opts.mobileHost && opts.browser !== 'chromium') usage(2, 'the legacy mobile-host compatibility smoke uses Chromium mobile emulation; use --browser chromium')
   if (opts.accessibility && opts.mobileHost) usage(2, 'run the accessibility gate separately from the mobile-host smoke')
   return opts
 }
@@ -72,14 +77,20 @@ function response (value, status = 200, headers = {}) {
   }
 }
 
-function injectMobileHostMeta (html, token) {
+function injectLegacyMobileHostMeta (html, token) {
   const metas = [
     `<meta name="pear-api-token" content="${escapeAttr(token)}">`,
     // If the mobile host token path regresses, this default-read-only web config
     // makes the fallback loud: the UI becomes web/read-only instead of writable.
     '<meta name="peerit-relay" content="same-origin">'
   ].join('\n  ')
-  return html.replace(/<head([^>]*)>/i, `<head$1>\n  ${metas}`)
+  // The shipping index deliberately selects peerit-substrate before any old
+  // Pear host surface. This compatibility-only fixture removes that one marker
+  // so the retained token bridge can still be tested without confusing it with
+  // the production topology.
+  return html
+    .replace(/\s*<meta\s+name=["']peerit-substrate["'][^>]*>/i, '')
+    .replace(/<head([^>]*)>/i, `<head$1>\n  ${metas}`)
 }
 
 async function loadPlaywright () {
@@ -165,6 +176,90 @@ async function expectTextWithBodyDebug (page, text, context) {
     const body = await page.locator('body').innerText({ timeout: 5000 }).catch((bodyErr) => `<body unavailable: ${bodyErr.message}>`)
     throw new Error(`${context}: expected ${JSON.stringify(text)}.\nRendered body:\n${body.slice(0, 4000)}\n\n${err.stack || err.message}`)
   }
+}
+
+async function authoringFailureState (page) {
+  return page.evaluate(async () => {
+    const forms = [...document.querySelectorAll('form[data-form]')]
+    const activeForm = forms.find(form => form.dataset.busy) || forms[0] || null
+    const button = activeForm && activeForm.querySelector('button[type="submit"]')
+    let syncStatus = null
+    try {
+      const status = window.__peerit && window.__peerit.sync && window.__peerit.sync.status
+        ? window.__peerit.sync.status()
+        : null
+      syncStatus = status
+        ? await Promise.race([
+          status,
+          new Promise(resolve => setTimeout(() => resolve({ diagnosticTimeout: true }), 1000))
+        ])
+        : null
+    } catch (error) {
+      syncStatus = { diagnosticError: error && error.message ? error.message : String(error) }
+    }
+    return {
+      url: window.location.href,
+      errorToasts: [...document.querySelectorAll('.toast.error')].map(node => node.textContent.trim()),
+      form: activeForm
+        ? {
+            name: activeForm.dataset.form || null,
+            busy: activeForm.dataset.busy || null,
+            writerReady: activeForm.dataset.writerReady || null,
+            submitDisabled: button ? button.disabled : null,
+            submitText: button ? button.textContent.trim() : null
+          }
+        : null,
+      writerPresent: !!(window.__peerit && window.__peerit.data && window.__peerit.data.me().pubkey),
+      // Keep failure output useful without ever printing relay invite/capability
+      // material returned by legacy status() implementations.
+      sync: syncStatus
+        ? {
+            diagnosticTimeout: syncStatus.diagnosticTimeout === true,
+            diagnosticError: syncStatus.diagnosticError || null,
+            mode: syncStatus.mode || null,
+            secure: syncStatus.secure === true,
+            readOnly: syncStatus.readOnly === true,
+            peers: Number.isSafeInteger(syncStatus.peers) ? syncStatus.peers : null,
+            viewLength: Number.isSafeInteger(syncStatus.viewLength) ? syncStatus.viewLength : null,
+            local: syncStatus.publication ? syncStatus.publication.local : null,
+            relay: syncStatus.publication ? syncStatus.publication.relay : null,
+            durability: syncStatus.publication ? syncStatus.publication.durability : null,
+            intentCount: syncStatus.publication ? syncStatus.publication.intentCount : null,
+            atomicCommit: syncStatus.atomicCommit
+              ? {
+                  required: syncStatus.atomicCommit.required === true,
+                  available: syncStatus.atomicCommit.available === true,
+                  pending: syncStatus.atomicCommit.pending === true,
+                  recoveryNeeded: syncStatus.atomicCommit.recoveryNeeded === true
+                }
+              : null
+          }
+        : null
+    }
+  }).catch(error => ({ diagnosticError: error.message }))
+}
+
+async function expectAuthoringSuccess (page, text, context, testTopology = 'shipping-index') {
+  let outcome
+  try {
+    const handle = await page.waitForFunction((expected) => {
+      const error = document.querySelector('.toast.error')
+      if (error) return { kind: 'error', message: error.textContent.trim() }
+      if (((document.body && document.body.innerText) || '').includes(expected)) return { kind: 'success' }
+      return null
+    }, text, { timeout: DEFAULT_TIMEOUT_MS })
+    outcome = await handle.jsonValue()
+  } catch (error) {
+    const state = await authoringFailureState(page)
+    const body = await page.locator('body').innerText({ timeout: 5000 }).catch((bodyError) => `<body unavailable: ${bodyError.message}>`)
+    throw new Error(`${context} timed out waiting for ${JSON.stringify(text)}.\nTest topology: ${testTopology}\nAuthoring state:\n${JSON.stringify(state, null, 2)}\nRendered body:\n${body.slice(0, 4000)}\n\n${error.stack || error.message}`)
+  }
+  if (outcome && outcome.kind === 'error') {
+    const state = await authoringFailureState(page)
+    throw new Error(`${context} failed before ${JSON.stringify(text)} appeared: ${outcome.message}\nTest topology: ${testTopology}\nAuthoring state:\n${JSON.stringify(state, null, 2)}`)
+  }
+  // Preserve the existing locator assertion after the early error detector.
+  await expectText(page, text, 5000)
 }
 
 async function fillFirst (page, selector, value) {
@@ -433,7 +528,7 @@ async function installMobileHost (context, host) {
       const headers = upstream.headers()
       delete headers['content-length']
       headers['content-type'] = 'text/html; charset=utf-8'
-      const html = injectMobileHostMeta(await upstream.text(), host.token)
+      const html = injectLegacyMobileHostMeta(await upstream.text(), host.token)
       await route.fulfill({ status: upstream.status(), headers, body: html })
       return
     }
@@ -504,7 +599,70 @@ function mobileContextOptions (device) {
   }
 }
 
-async function runSmoke ({ browser, url, accessibility }) {
+async function assertMobileSurface (page, mobileDevice, phase, exerciseTouch = false) {
+  const expectedViewport = mobileContextOptions(mobileDevice).viewport
+  const state = await page.evaluate(({ expectedViewport, phase }) => {
+    const root = document.documentElement
+    const body = document.body
+    return {
+      phase,
+      expectedViewport,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      visualViewportWidth: window.visualViewport ? window.visualViewport.width : null,
+      rootClientWidth: root.clientWidth,
+      rootScrollWidth: root.scrollWidth,
+      bodyScrollWidth: body ? body.scrollWidth : null,
+      maxTouchPoints: navigator.maxTouchPoints,
+      touchEvents: 'ontouchstart' in window,
+      coarsePointer: window.matchMedia('(pointer: coarse)').matches
+    }
+  }, { expectedViewport, phase })
+
+  const maxScrollWidth = Math.max(state.rootScrollWidth, state.bodyScrollWidth || 0)
+  if (Math.abs(state.innerWidth - expectedViewport.width) > 1 || Math.abs(state.rootClientWidth - expectedViewport.width) > 1) {
+    throw new Error(`[shipping-web-substrate/mobile-${mobileDevice}] ${phase} did not use the requested viewport:\n${JSON.stringify(state, null, 2)}`)
+  }
+  if (maxScrollWidth > state.rootClientWidth + 1) {
+    throw new Error(`[shipping-web-substrate/mobile-${mobileDevice}] ${phase} has horizontal page overflow:\n${JSON.stringify(state, null, 2)}`)
+  }
+  // Playwright WebKit exposes touch events and a coarse pointer while reporting
+  // maxTouchPoints=0. The dispatched touch probe below is the stronger signal
+  // for that engine; Chromium must also report a positive touch-point count.
+  const missingTouchPointSignal = mobileDevice === 'android' && state.maxTouchPoints < 1
+  if (missingTouchPointSignal || !state.touchEvents || !state.coarsePointer) {
+    throw new Error(`[shipping-web-substrate/mobile-${mobileDevice}] ${phase} did not expose a touch/coarse-pointer context:\n${JSON.stringify(state, null, 2)}`)
+  }
+
+  if (exerciseTouch) {
+    await page.evaluate(() => {
+      const probe = document.createElement('button')
+      probe.type = 'button'
+      probe.id = 'peerit-browser-smoke-touch-probe'
+      probe.setAttribute('aria-label', 'Browser smoke touch probe')
+      probe.style.cssText = 'position:fixed;left:0;top:0;width:24px;height:24px;z-index:2147483647;opacity:0.01'
+      window.__peeritSmokeTouchProbe = { touchstart: false, click: false }
+      probe.addEventListener('touchstart', () => { window.__peeritSmokeTouchProbe.touchstart = true })
+      probe.addEventListener('click', () => { window.__peeritSmokeTouchProbe.click = true })
+      document.body.appendChild(probe)
+    })
+    await page.touchscreen.tap(12, 12)
+    const touchProbe = await page.evaluate(() => {
+      const result = window.__peeritSmokeTouchProbe
+      document.querySelector('#peerit-browser-smoke-touch-probe')?.remove()
+      delete window.__peeritSmokeTouchProbe
+      return result
+    })
+    if (!touchProbe || !touchProbe.touchstart || !touchProbe.click) {
+      throw new Error(`[shipping-web-substrate/mobile-${mobileDevice}] ${phase} did not dispatch touch and synthesized click events: ${JSON.stringify(touchProbe)}`)
+    }
+    state.touchProbe = touchProbe
+  }
+
+  return state
+}
+
+async function runSmoke ({ browser, url, accessibility, mobileDevice = null }) {
   const stamp = Date.now().toString(36)
   const community = `codex${stamp.slice(-6)}`
   const title = `Browser smoke post ${stamp}`
@@ -512,11 +670,16 @@ async function runSmoke ({ browser, url, accessibility }) {
   const editedPostBody = `browser smoke body edited ${stamp}`
   const editedFirstComment = `first browser comment edited ${stamp}`
   const secondComment = `second user comment ${stamp}`
+  const editedSecondComment = `second user comment edited ${stamp}`
   const userName = `smoke-${stamp}`
 
-  const context = await browser.newContext()
+  const testTopology = mobileDevice
+    ? `shipping-web-substrate/mobile-${mobileDevice}`
+    : 'shipping-index/browser'
+  const context = await browser.newContext(mobileDevice ? mobileContextOptions(mobileDevice) : undefined)
   const pageA = await context.newPage()
   const errors = []
+  const mobileSurfaceChecks = []
   recordBrowserErrors(pageA, errors)
 
   await pageA.goto(routeUrl(url, '#/about'), { waitUntil: 'domcontentloaded' })
@@ -526,12 +689,13 @@ async function runSmoke ({ browser, url, accessibility }) {
 
   await pageA.goto(routeUrl(url, '#/create'), { waitUntil: 'domcontentloaded' })
   await pageA.locator('#app').waitFor({ state: 'visible', timeout: DEFAULT_TIMEOUT_MS })
+  if (mobileDevice) mobileSurfaceChecks.push(await assertMobileSurface(pageA, mobileDevice, 'create-community', true))
 
   await fillFirst(pageA, 'form[data-form="create-community"] input[name="slug"]', community)
   await fillFirst(pageA, 'form[data-form="create-community"] input[name="title"]', `Smoke ${stamp}`)
   await fillFirst(pageA, 'form[data-form="create-community"] textarea[name="description"]', 'Automated browser smoke community')
   await submitFirst(pageA, 'form[data-form="create-community"] button[type="submit"]')
-  await expectText(pageA, `r/${community}`)
+  await expectAuthoringSuccess(pageA, `r/${community}`, 'create-community write', testTopology)
 
   await pageA.goto(routeUrl(url, `#/submit?to=${community}`), { waitUntil: 'domcontentloaded' })
   await expectText(pageA, 'Create a post')
@@ -540,11 +704,12 @@ async function runSmoke ({ browser, url, accessibility }) {
   const backupAck = pageA.locator('input[name="identity-backup-ack"]')
   if (await backupAck.count()) await backupAck.first().check()
   await submitFirst(pageA, 'form[data-form="submit-post"] button[type="submit"]')
-  await expectText(pageA, title)
+  await expectAuthoringSuccess(pageA, title, 'submit-post write', testTopology)
 
   await fillFirst(pageA, 'form[data-form="comment"] textarea[name="body"]', firstComment)
   await submitFirst(pageA, 'form[data-form="comment"] button[type="submit"]')
-  await expectText(pageA, firstComment)
+  await expectAuthoringSuccess(pageA, firstComment, 'first-comment write', testTopology)
+  if (mobileDevice) mobileSurfaceChecks.push(await assertMobileSurface(pageA, mobileDevice, 'post-and-comment'))
   if (accessibility) await assertAccessibility(pageA, 'owner post and comment view')
 
   await openPostActions(pageA)
@@ -565,33 +730,92 @@ async function runSmoke ({ browser, url, accessibility }) {
   )
   await expectText(pageA, editedFirstComment)
 
+  const pageAIdentity = await pageA.evaluate(async () => {
+    const status = await window.__peerit.sync.status()
+    return {
+      syncMode: String(status.mode || window.__peerit.sync.mode || 'unknown'),
+      writer: window.__peerit.data.me().pubkey || null
+    }
+  })
+  if (!pageAIdentity.writer) throw new Error('first browser tab completed writes without an active writer identity')
+  const substrateTopology = pageAIdentity.syncMode === 'peerit-substrate' || pageAIdentity.syncMode === 'web-substrate'
+  if (mobileDevice && !substrateTopology) {
+    throw new Error(`[${testTopology}] shipping index selected ${pageAIdentity.syncMode}, not the production web-substrate path`)
+  }
+
   const pageB = await context.newPage()
   recordBrowserErrors(pageB, errors)
   await pageB.goto(pageA.url(), { waitUntil: 'domcontentloaded' })
   await expectText(pageB, editedPostBody)
   await expectText(pageB, editedFirstComment)
+  if (mobileDevice) mobileSurfaceChecks.push(await assertMobileSurface(pageB, mobileDevice, 'cross-tab-restore'))
+
+  const pageBIdentityBefore = await pageB.evaluate(async () => {
+    const status = await window.__peerit.sync.status()
+    return {
+      syncMode: String(status.mode || window.__peerit.sync.mode || 'unknown'),
+      writer: window.__peerit.data.me().pubkey || null
+    }
+  })
+  if (pageBIdentityBefore.syncMode !== pageAIdentity.syncMode) {
+    throw new Error(`cross-tab topology changed from ${pageAIdentity.syncMode} to ${pageBIdentityBefore.syncMode}`)
+  }
 
   const badge = pageB.locator('[data-act="toggle-usermenu"] .uname')
-  const beforeUser = (await badge.textContent()).trim()
   await pageB.locator('[data-act="toggle-usermenu"]').click()
-  await fillFirst(pageB, 'form[data-form="dev-user"] input[name="name"]', userName)
-  await submitFirst(pageB, 'form[data-form="dev-user"] button[type="submit"]')
-  await pageB.waitForFunction(
-    (before) => document.querySelector('[data-act="toggle-usermenu"] .uname')?.textContent.trim() !== before,
-    beforeUser,
-    { timeout: DEFAULT_TIMEOUT_MS }
-  )
+  const devUserForm = pageB.locator('form[data-form="dev-user"]')
+  const devUserControlCount = await devUserForm.count()
+  let identityModel
+  let pageBWriter = pageBIdentityBefore.writer
+  if (substrateTopology) {
+    if (devUserControlCount !== 0) {
+      throw new Error('web-substrate exposed legacy developer user-switch controls')
+    }
+    if (!pageBWriter || pageBWriter !== pageAIdentity.writer) {
+      throw new Error('web-substrate did not restore the first tab\'s durable writer identity in the second tab')
+    }
+    identityModel = 'durable-writer-restored-across-tabs'
+  } else if (devUserControlCount > 0) {
+    const beforeUser = (await badge.textContent()).trim()
+    await fillFirst(pageB, 'form[data-form="dev-user"] input[name="name"]', userName)
+    await submitFirst(pageB, 'form[data-form="dev-user"] button[type="submit"]')
+    await pageB.waitForFunction(
+      (before) => document.querySelector('[data-act="toggle-usermenu"] .uname')?.textContent.trim() !== before,
+      beforeUser,
+      { timeout: DEFAULT_TIMEOUT_MS }
+    )
+    pageBWriter = await pageB.evaluate(() => window.__peerit.data.me().pubkey || null)
+    if (!pageBWriter || pageBWriter === pageAIdentity.writer) {
+      throw new Error('legacy local-dev user control did not switch the second tab to a distinct writer')
+    }
+    identityModel = 'legacy-local-dev-multi-writer'
+  } else {
+    if (!pageBWriter || pageBWriter !== pageAIdentity.writer) {
+      throw new Error('non-dev browser topology did not expose a stable writer across tabs')
+    }
+    identityModel = 'stable-host-writer-across-tabs'
+  }
 
   await fillFirst(pageB, 'form[data-form="comment"] textarea[name="body"]', secondComment)
   await submitFirst(pageB, 'form[data-form="comment"] button[type="submit"]')
-  await expectText(pageB, secondComment)
+  await expectAuthoringSuccess(pageB, secondComment, 'cross-tab second-comment write', testTopology)
   await expectText(pageA, secondComment)
-  if (accessibility) await assertAccessibility(pageB, 'second-user comment view')
+  if (accessibility) await assertAccessibility(pageB, 'cross-tab comment view')
 
   const secondCommentNode = pageB.locator('.comment').filter({ hasText: secondComment }).first()
   await acceptDialogFrom(
     pageB,
-    () => secondCommentNode.locator('button[data-act="delete-comment"]').click(),
+    () => secondCommentNode.locator('button[data-act="edit-comment"]').click(),
+    editedSecondComment,
+    'prompt'
+  )
+  await expectText(pageB, editedSecondComment)
+  await expectText(pageA, editedSecondComment)
+
+  const editedSecondCommentNode = pageB.locator('.comment').filter({ hasText: editedSecondComment }).first()
+  await acceptDialogFrom(
+    pageB,
+    () => editedSecondCommentNode.locator('button[data-act="delete-comment"]').click(),
     undefined,
     'confirm'
   )
@@ -606,11 +830,31 @@ async function runSmoke ({ browser, url, accessibility }) {
     'confirm'
   )
   await expectText(pageA, '[deleted by author]')
+  await expectText(pageB, '[deleted by author]')
 
   if (errors.length) throw new Error(`browser emitted errors:\n${errors.join('\n')}`)
 
   await context.close()
-  return { community, title, editedPostBody, editedFirstComment, secondComment, userName }
+  return {
+    testTopology,
+    shippingIndexUsed: true,
+    evidenceClass: 'local-browser-emulation',
+    authorizesRelease: false,
+    productionMobileProven: false,
+    topology: pageAIdentity.syncMode,
+    mobileDevice,
+    mobileSurfaceChecks,
+    identityModel,
+    sameWriterAcrossTabs: pageBIdentityBefore.writer === pageAIdentity.writer,
+    devUserControls: devUserControlCount,
+    community,
+    title,
+    editedPostBody,
+    editedFirstComment,
+    secondComment,
+    editedSecondComment,
+    userName: identityModel === 'legacy-local-dev-multi-writer' ? userName : null
+  }
 }
 
 async function runMobileHostSmoke ({ browser, url, mobileDevice }) {
@@ -636,7 +880,7 @@ async function runMobileHostSmoke ({ browser, url, mobileDevice }) {
     await fillFirst(page, 'form[data-form="create-community"] input[name="title"]', `Mobile ${stamp}`)
     await fillFirst(page, 'form[data-form="create-community"] textarea[name="description"]', 'Automated PearBrowser mobile host-token smoke community')
     await submitFirst(page, 'form[data-form="create-community"] button[type="submit"]')
-    await expectText(page, `r/${community}`)
+    await expectAuthoringSuccess(page, `r/${community}`, 'mobile create-community write', 'forced-legacy-pear-host-token-bridge')
     await assertMobileHostPath(page, host)
 
     await page.goto(routeUrl(url, `#/submit?to=${community}`), { waitUntil: 'domcontentloaded' })
@@ -647,12 +891,12 @@ async function runMobileHostSmoke ({ browser, url, mobileDevice }) {
     const backupAck = page.locator('input[name="identity-backup-ack"]')
     if (await backupAck.count()) await backupAck.first().check()
     await submitFirst(page, 'form[data-form="submit-post"] button[type="submit"]')
-    await expectText(page, title)
+    await expectAuthoringSuccess(page, title, 'mobile submit-post write', 'forced-legacy-pear-host-token-bridge')
     await assertMobileHostPath(page, host)
 
     await fillFirst(page, 'form[data-form="comment"] textarea[name="body"]', firstComment)
     await submitFirst(page, 'form[data-form="comment"] button[type="submit"]')
-    await expectText(page, firstComment)
+    await expectAuthoringSuccess(page, firstComment, 'mobile comment write', 'forced-legacy-pear-host-token-bridge')
     await assertMobileHostPath(page, host)
 
     assertHostWrites(host)
@@ -675,7 +919,12 @@ async function runMobileHostSmoke ({ browser, url, mobileDevice }) {
   }
 
   return {
-    mode: 'mobile-host',
+    testTopology: 'forced-legacy-pear-host-token-bridge',
+    shippingIndexUsed: false,
+    evidenceClass: 'local-legacy-compatibility-emulation',
+    authorizesRelease: false,
+    productionMobileProven: false,
+    mode: 'legacy-mobile-host-compatibility',
     mobileDevice,
     community,
     title,
@@ -687,17 +936,32 @@ async function runMobileHostSmoke ({ browser, url, mobileDevice }) {
 }
 
 async function main () {
+  const startedAt = Date.now()
   const opts = parseArgs(process.argv.slice(2))
   const playwright = await loadPlaywright()
   let dev = null
   const url = opts.url || (dev = await startDevServer()).url
   let browser = null
   try {
+    const testTopology = opts.mobileHost
+      ? 'forced-legacy-pear-host-token-bridge'
+      : opts.mobile
+        ? `shipping-web-substrate/mobile-${opts.mobileDevice}`
+        : 'shipping-index/browser'
+    console.log('[browser-smoke] START', JSON.stringify({
+      url,
+      browser: opts.browser,
+      testTopology,
+      shippingIndexUsed: !opts.mobileHost,
+      evidenceClass: opts.mobileHost ? 'local-legacy-compatibility-emulation' : 'local-browser-emulation',
+      authorizesRelease: false,
+      productionMobileProven: false
+    }))
     browser = await playwright[opts.browser].launch({ headless: !opts.headed })
     const result = opts.mobileHost
       ? await runMobileHostSmoke({ browser, url, mobileDevice: opts.mobileDevice })
-      : await runSmoke({ browser, url, accessibility: opts.accessibility })
-    console.log('[browser-smoke] PASS', JSON.stringify({ url, browser: opts.browser, ...result }))
+      : await runSmoke({ browser, url, accessibility: opts.accessibility, mobileDevice: opts.mobile ? opts.mobileDevice : null })
+    console.log('[browser-smoke] PASS', JSON.stringify({ url, browser: opts.browser, durationMs: Date.now() - startedAt, ...result }))
     if (opts.keepOpen) {
       console.log('[browser-smoke] keeping browser open; Ctrl-C to stop')
       await new Promise(() => {})

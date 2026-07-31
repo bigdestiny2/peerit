@@ -19,7 +19,7 @@ import {
 import { canonical, expectedKey, expectedKeyV2, ownerOf } from './canon.js'
 import { seal, unseal } from './seal.js'
 import { uid, isValidSlug, normalizeSlug, safeUserUrl } from './util.js'
-import { mint, MIN_BITS } from './pow.js'
+import { mint, MIN_BITS } from './pow-current.js'
 import { assertRecoveryBundleMatches, buildRecoveryBundle, isHex64 } from './recovery.js'
 import { boxBody, unboxToBody, shouldBox, canBox } from './blob-store.js'
 import { MaterializedIndex } from './materialized-index.js'
@@ -27,12 +27,7 @@ import { MaterializedIndex } from './materialized-index.js'
 // Decrypted-body cache is keyed by blobId (a content hash), so it is immutable
 // and never goes stale — a bounded FIFO is all it needs.
 const BODY_CACHE_MAX = 500
-const BLIND_DEALER_MODULE = './blind-dealer.mjs'
-// Node-only (browser takes the reader-bundle branch below); a computed specifier
-// keeps this out of the web publish graph + the ship SITE_FILES import check,
-// exactly like BLIND_DEALER_MODULE. The raw vendor files are never served to browsers.
-const SHARD_TRANSPORT_MODULE = './vendor/blind-shards/shard-transport.js'
-const DISPERSAL_TIMEOUT_MS = 15000 // cap slow/unavailable cohort; fall back to single-blob
+const DISPERSAL_COMPATIBILITY_MODULE = './data-dispersal.js'
 
 // Public methods that can eventually publish an owner-signed mutation. Tracking
 // the whole intent (not just the final network request) lets the app refuse an
@@ -46,22 +41,6 @@ const WRITE_INTENT_METHODS = Object.freeze([
   'setProfile', 'setFollow', 'setMembership', 'migrateLocalGraph',
   'modAction', 'addMod', 'removeMod'
 ])
-
-async function loadBlindDealer () {
-  return import(BLIND_DEALER_MODULE)
-}
-
-// Small base64 helpers for the dispersal path (ciphertext stored as blob!<blindContentId>).
-function b64Encode (u8) {
-  if (typeof btoa === 'function') { let s = ''; for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]); return btoa(s) }
-  if (typeof Buffer !== 'undefined') return Buffer.from(u8).toString('base64')
-  throw new Error('base64 encoder unavailable')
-}
-function b64Decode (s) {
-  if (typeof atob === 'function') { const bin = atob(String(s)); const u = new Uint8Array(bin.length); for (let i = 0; i < u.length; i++) u[i] = bin.charCodeAt(i); return u }
-  if (typeof Buffer !== 'undefined') return new Uint8Array(Buffer.from(String(s), 'base64'))
-  throw new Error('base64 decoder unavailable')
-}
 
 export class Data {
   constructor (sync, identity, opts = {}) {
@@ -88,8 +67,8 @@ export class Data {
     // it a dispersed post would be LESS durable than a plain v2 post.
     this.deviceStore = opts.deviceStore || null
     this._profileCache = new Map() // pub -> { rec, at }
-    this._tallyCache = new Map()   // `${viewer}:${cid}` -> { val, epoch }
-    this._repIndex = null          // reputation index (voter age + upvotes received), gated by _epoch
+    this._tallyCache = new Map() // `${viewer}:${cid}` -> { val, epoch }
+    this._repIndex = null // reputation index (voter age + upvotes received), gated by _epoch
     this._commentCountCache = new Map() // `${community}/${postCid}` -> { val, contentEpoch }
     this._searchIndex = null
     // A device-local secondary index over the verified/decrypted read view. It is
@@ -112,6 +91,7 @@ export class Data {
     this._writeIntents = 0
     this._writeSessionTail = Promise.resolve()
     this._writerSession = null
+    this._dispersalCompatibility = null
     this._localSyncWrites = 0
     this._localSyncKeys = new Set()
     this._trackWriteIntents()
@@ -348,7 +328,7 @@ export class Data {
   async _toV2 (semType, logical) {
     const wk = await expectedKeyV2({ ...logical, _t: semType }) // okey = HMAC(RK, owner‖_t‖semanticId)
     if (!wk) throw new Error('v2: cannot derive key for ' + semType)
-    const clear = {}, graph = {}
+    const clear = {}; const graph = {}
     for (const [k, v] of Object.entries(logical)) {
       // undefined never enters the stored/signed form: JSON (storage + wire)
       // drops undefined keys, so signing over them yields a canonical no verifier
@@ -498,10 +478,22 @@ export class Data {
       let g; try { g = await unseal(s.sealed) } catch { continue }
       if (!g || typeof g !== 'object') continue
       const plain = {
-        ...g, _t: s._t, author: s._k, creator: s._k, by: s._k,
-        createdAt: s.createdAt, ts: s.ts, editedAt: s.editedAt, deleted: s.deleted,
+        ...g,
+        _t: s._t,
+        author: s._k,
+        creator: s._k,
+        by: s._k,
+        createdAt: s.createdAt,
+        ts: s.ts,
+        editedAt: s.editedAt,
+        deleted: s.deleted,
         slug: s.slug != null ? s.slug : g.slug,
-        _sig: s._sig, _k: s._k, _dk: s._dk, _ns: s._ns, _alg: s._alg, pow: s.pow
+        _sig: s._sig,
+        _k: s._k,
+        _dk: s._dk,
+        _ns: s._ns,
+        _alg: s._alg,
+        pow: s.pow
       }
       const k = expectedKey(s._t, plain) // reconstruct the plaintext semantic key
       if (!k) continue
@@ -523,6 +515,7 @@ export class Data {
     const v = await this._v2v()
     return v[k] != null ? v[k] : this.sync.get(k)
   }
+
   async _mergedRows (prefix) { // v1 rows + reconstructed v2 rows; v2 wins a key collision
     const v1 = await this._rawListPrefix(prefix, { limit: 1000 })
     const m = new Map((v1 || []).map(r => [r.key, r.value]))
@@ -530,25 +523,28 @@ export class Data {
     for (const k of Object.keys(v)) if (k.startsWith(prefix)) m.set(k, v[k])
     return [...m.entries()].map(([key, value]) => ({ key, value }))
   }
+
   async _list (prefix, { limit = 1000 } = {}) {
     if (!this.v2) return this.sync.list(prefix, { limit })
     return (await this._mergedRows(prefix)).slice(0, limit)
   }
+
   async _count (prefix) {
     if (!this.v2) return this.sync.count(prefix)
     return (await this._mergedRows(prefix)).length
   }
+
   async _rangeRead (opts = {}) {
     if (!this.v2) return this.sync.range(opts)
     const { gte, gt, lte, lt, limit = 1000, reverse } = opts
     const v = await this._v2v()
-    let ks = Object.keys(v).filter(x => (gte == null || x >= gte) && (gt == null || x > gt) && (lte == null || x <= lte) && (lt == null || x < lt))
+    const ks = Object.keys(v).filter(x => (gte == null || x >= gte) && (gt == null || x > gt) && (lte == null || x <= lte) && (lt == null || x < lt))
     // include legacy v1 rows in the range too
     const pfx = typeof gte === 'string' ? gte : (typeof gt === 'string' ? gt : '')
     const v1 = pfx ? await this.sync.range(opts).catch(() => []) : []
     const m = new Map((v1 || []).map(r => [r.key, r.value]))
     for (const k of ks) m.set(k, v[k])
-    let out = [...m.entries()].map(([key, value]) => ({ key, value }))
+    const out = [...m.entries()].map(([key, value]) => ({ key, value }))
     out.sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
     if (reverse) out.reverse()
     return out.slice(0, limit)
@@ -626,7 +622,8 @@ export class Data {
     if (this.ensureWriter) await this.ensureWriter() // blob appends happen BEFORE the parent record's _emit
     this._assertCurrentOwner(expectedOwner, 'before boxing the body')
     if (this.dispersal) {
-      const dispersal = await this._tryDispersalBox(data.body, { batch, expectedOwner })
+      const compatibility = await this._loadDispersalCompatibility()
+      const dispersal = await compatibility.tryDispersalBox(this, data.body, { batch, expectedOwner })
       this._assertCurrentOwner(expectedOwner, 'after dispersing the body')
       if (dispersal) {
         data.body = ''
@@ -651,69 +648,20 @@ export class Data {
     data.blob = manifest
   }
 
-  // Build a publisher keypair from the current identity, if it exposes a seed.
-  // BridgeIdentity (PearBrowser host) does not, so dispersal authoring falls back
-  // to single-blob in that runtime.
-  async _publisherForDispersal (expectedOwner) {
-    this._assertCurrentOwner(expectedOwner, 'before loading the dispersal signer')
-    if (!this.id || typeof this.id.currentSeedEntry !== 'function') return null
-    const entry = this.id.currentSeedEntry()
-    if (!entry || !entry.seed || !entry.pubkey) return null
-    if (entry.pubkey !== expectedOwner) throw this._identityRace('while loading the dispersal signer')
-    const { makeHiverelayKeypair } = await loadBlindDealer()
-    this._assertCurrentOwner(expectedOwner, 'after loading the dispersal signer')
-    return makeHiverelayKeypair({ seedHex: entry.seed, pubHex: entry.pubkey })
-  }
-
-  _rosterForDispersal () {
-    const relays = this.shardRelays
-    if (!relays || relays.length < 3) return null
-    const normalized = relays.map((r) => {
-      if (typeof r === 'string') return { url: r }
-      return { url: String(r.url || r.baseUrl || ''), pubkey: String(r.pubkey || r.publicKey || '').toLowerCase() }
-    }).filter((r) => r.url)
-    if (normalized.length < 3) return null
-    const uniquePubs = new Set(normalized.map(r => r.pubkey).filter(Boolean))
-    if (uniquePubs.size < normalized.length) {
-      if (typeof console !== 'undefined' && console.warn) console.warn('[peerit] shard roster contains duplicate pubkeys; refusing dispersal')
-      return null
+  async _loadDispersalCompatibility () {
+    if (!this.dispersal) {
+      const error = new Error('Legacy body dispersal is unavailable in this Peerit runtime.')
+      error.code = 'PEERIT_DISPERSAL_COMPATIBILITY_UNAVAILABLE'
+      throw error
     }
-    const threshold = Math.max(2, Math.min(normalized.length - 1, Math.ceil(normalized.length / 2)))
-    return { threshold, relays: normalized, retainMs: 30 * 24 * 60 * 60 * 1000 }
-  }
-
-  _relayBaseUrls () {
-    return (this.shardRelays || []).map((r) => typeof r === 'string' ? r : (r.url || r.baseUrl || '')).filter(Boolean)
-  }
-
-  async _getRecoverBody () {
-    const node = typeof process !== 'undefined' && !!process.versions && !!process.versions.node
-    if (node) {
-      const { recoverBody } = await loadBlindDealer()
-      return recoverBody
+    if (!this._dispersalCompatibility) {
+      this._dispersalCompatibility = import(DISPERSAL_COMPATIBILITY_MODULE)
+        .catch(error => {
+          this._dispersalCompatibility = null
+          throw error
+        })
     }
-    const { recoverBody } = await import('./reader-bundle.js')
-    return recoverBody
-  }
-
-  async _getCreateHttpShardFetch () {
-    const node = typeof process !== 'undefined' && !!process.versions && !!process.versions.node
-    if (node) {
-      const { createHttpShardFetch } = await import(SHARD_TRANSPORT_MODULE)
-      return createHttpShardFetch
-    }
-    const { createHttpShardFetch } = await import('./reader-bundle.js')
-    return createHttpShardFetch
-  }
-
-  async _getDecryptBody () {
-    const node = typeof process !== 'undefined' && !!process.versions && !!process.versions.node
-    if (node) {
-      const { decryptBody } = await loadBlindDealer()
-      return decryptBody
-    }
-    const { decryptBody } = await import('./reader-bundle.js')
-    return decryptBody
+    return this._dispersalCompatibility
   }
 
   // ---- device durability floor (ADR-2026-07-07) -----------------------------
@@ -743,176 +691,27 @@ export class Data {
     try { this.deviceStore.removeItem(this._floorKey(blindContentId)) } catch {}
   }
 
-  async _tryDispersalBox (bodyText, { batch = null, expectedOwner } = {}) {
-    const publisher = await this._publisherForDispersal(expectedOwner)
-    const roster = this._rosterForDispersal()
-    if (!publisher || !roster) return null
-    // Bind the post author to the PVSS publisher so a signed post cannot
-    // smuggle another party's dispersal manifest.
-    if (publisher.pubkeyHex.toLowerCase() !== expectedOwner.toLowerCase()) {
-      if (typeof console !== 'undefined' && console.warn) console.warn('[peerit] dispersal publisher does not match post author; falling back')
-      return null
-    }
-    try {
-      const { disperseBody } = await loadBlindDealer()
-      // Shards and ciphertext are always placed on the remote HiveRelay shard cohort.
-      // Storing PVSS shares inside the peerit sync group would collapse the blind
-      // invariant (one operator/outbox would hold manifest + ciphertext + shares),
-      // so this path never falls back to local shard records.
-      const dispersal = await Promise.race([
-        disperseBody(bodyText, {
-          publisher,
-          threshold: roster.threshold,
-          relays: roster.relays,
-          retainMs: roster.retainMs,
-          fetch: this.fetch
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('dispersal timeout')), DISPERSAL_TIMEOUT_MS))
-      ])
-      this._assertCurrentOwner(expectedOwner, 'after dispersing the body')
-      const { ciphertext, manifest, bodyKeyHex } = dispersal
-      // Keep a local blob replica only for legacy manifests without a ciphertextShard.
-      // Modern manifests put the ciphertext on the shard cohort, so the VPS/outbox
-      // holds only the keyless dispersal manifest.
-      if (!manifest.ciphertextShard) {
-        const ct = b64Encode(ciphertext)
-        const blobData = { id: manifest.blindContentId, blobId: manifest.blindContentId, ct, author: expectedOwner }
-        await this._powSign(TYPE.BLOB, blobData, undefined, expectedOwner)
-        const blobOp = { type: TYPE.BLOB, data: blobData }
-        if (Array.isArray(batch) && typeof this.sync.appendBatch === 'function') batch.push(blobOp)
-        else {
-          if (this.ensureWriter) await this.ensureWriter()
-          this._assertCurrentOwner(expectedOwner, 'immediately before dispersed blob publication')
-          this._assertSignedOpsOwner([blobOp], expectedOwner)
-          await this.sync.append(blobOp, this._writerSession)
-        }
-      }
-      // Device durability floor (ADR-2026-07-07): the author keeps key+iv+ciphertext
-      // DEVICE-LOCAL (never synced). Blindness is unchanged — no relay sees the key —
-      // while the author regains the "1x on my own device" floor: decrypt and
-      // re-disperse (repairDispersal) even after total cohort loss.
-      if (bodyKeyHex) {
-        this._saveFloor(manifest.blindContentId, {
-          v: 1, key: bodyKeyHex, iv: manifest.iv, ct: b64Encode(ciphertext), ph: manifest.plaintextHash || ''
-        })
-      }
-      return manifest
-    } catch (err) {
-      if (err && err.code === 'PEERIT_WRITER_IDENTITY_CHANGED') throw err
-      if (typeof console !== 'undefined' && console.warn) console.warn('[peerit] dispersal box failed, falling back:', err.message)
-      return null
-    }
+  async _tryDispersalBox (bodyText, options = {}) {
+    const compatibility = await this._loadDispersalCompatibility()
+    return compatibility.tryDispersalBox(this, bodyText, options)
   }
 
-  // ---- Phase-4 durability teeth: probe + repair ------------------------------
-  // probeDispersal: ask the cohort which pieces of a dispersal manifest are still
-  // retrievable. Returns { total, available, threshold, ciphertextAvailable,
-  // recoverable, needsRepair }. "recoverable" = a reader could still reconstruct;
-  // "needsRepair" = the body is at/below the cliff (cohort alone can no longer
-  // reconstruct, or the ciphertext shard is gone) and only the device floor can
-  // restore it. (The write-time quorum is already enforced by the dealer: intent +
-  // every share PUT + ciphertext PUT must all ACK or the write falls back.)
   async probeDispersal (manifest) {
-    const m = manifest && manifest.dispersal ? manifest.dispersal : manifest
-    if (!m || !Array.isArray(m.shareManifest)) throw new Error('probeDispersal: dispersal manifest required')
-    const createHttpShardFetch = await this._getCreateHttpShardFetch()
-    const fetchShard = createHttpShardFetch({ baseUrls: this._relayBaseUrls(), fetch: this.fetch })
-    const probe = async (addr) => { try { return !!(addr && await fetchShard(addr)) } catch { return false } }
-    const shares = await Promise.all(m.shareManifest.map((s) => probe(s.shard)))
-    const available = shares.filter(Boolean).length
-    const ciphertextAvailable = m.ciphertextShard ? await probe(m.ciphertextShard) : true
-    const threshold = Number(m.threshold) || 0
-    const recoverable = ciphertextAvailable && available >= threshold
-    return {
-      total: m.shareManifest.length,
-      available,
-      threshold,
-      ciphertextAvailable,
-      recoverable,
-      needsRepair: !recoverable || available < threshold + 1 // no margin left => repair now
-    }
+    const compatibility = await this._loadDispersalCompatibility()
+    return compatibility.probeDispersal(this, manifest)
   }
 
-  // repairDispersal: re-establish full cohort redundancy for the author's own post
-  // from the device floor (or from the cohort itself while it can still serve).
-  // Reuses the normal edit path, so the repaired record gets a FRESH dispersal
-  // (new PVSS split, new custody intent, new floor entry) and replicates through
-  // the ordinary signed-record flow. Author-only by construction (editPost checks).
-  async repairDispersal (community, cid, { force = false } = {}) {
-    const p = await this._rawPost(community, cid)
-    if (!p) throw new Error('Post not found')
-    if (!p.dispersal) throw new Error('Post is not dispersed')
-    const m = p.dispersal
-    const status = await this.probeDispersal(m).catch(() => null)
-    if (!force && status && !status.needsRepair) return { repaired: false, status }
-    // Body source: device floor first (works at zero cohort), else the cohort
-    // while it is still above threshold.
-    let body = null
-    const floor = this._loadFloor(m.blindContentId)
-    if (floor) {
-      try {
-        const decryptBody = await this._getDecryptBody()
-        body = await decryptBody(b64Decode(floor.ct), floor.iv, floor.key, m.plaintextHash || floor.ph || undefined)
-      } catch {}
-    }
-    if (body == null) {
-      const hydrated = await this._hydrate(p)
-      if (hydrated && !hydrated._blobMissing && hydrated.body) body = hydrated.body
-    }
-    if (body == null) throw new Error('repairDispersal: body unrecoverable (no device floor and cohort below threshold)')
-    const data = await this._editPost(community, cid, body) // already inside the outer writer session; do not reacquire it
-    return { repaired: true, status, record: data }
+  async repairDispersal (community, cid, options = {}) {
+    const compatibility = await this._loadDispersalCompatibility()
+    return compatibility.repairDispersal(this, community, cid, options)
   }
 
-  // Return a render-ready copy of a post: if it carries a blob manifest, fetch
-  // blob!<blobId>, verify the two content-address gates, and decrypt the body.
-  // Never mutates the stored record; on a missing/withheld/tampered blob it
-  // degrades gracefully to an empty body flagged `_blobMissing` (a relay can
-  // withhold a blob but can never forge one past the gates in unboxToBody).
   async _hydrate (rec) {
     if (!rec) return rec
     if (rec.dispersal) {
-      const m = rec.dispersal
-      const cached = this._bodyCache.get(m.blindContentId)
-      if (cached != null) return { ...rec, body: cached }
-      // Device floor first (author's own posts): decrypt locally with zero cohort
-      // round-trips. The plaintext-hash gate inside decryptBody keeps a corrupted
-      // floor entry from serving a wrong body — on any failure fall through to the
-      // normal cohort reconstruction below.
-      const floor = this._loadFloor(m.blindContentId)
-      if (floor) {
-        try {
-          const decryptBody = await this._getDecryptBody()
-          const body = await decryptBody(b64Decode(floor.ct), floor.iv, floor.key, m.plaintextHash || floor.ph || undefined)
-          if (this._bodyCache.size >= BODY_CACHE_MAX) this._bodyCache.delete(this._bodyCache.keys().next().value)
-          this._bodyCache.set(m.blindContentId, body)
-          return { ...rec, body }
-        } catch {}
-      }
       try {
-        const recoverBody = await this._getRecoverBody()
-        const opts = {
-          relayBaseUrls: this._relayBaseUrls(),
-          fetchImpl: this.fetch
-        }
-        if (m.ciphertextShard) {
-          const createHttpShardFetch = await this._getCreateHttpShardFetch()
-          const fetchShard = createHttpShardFetch({ baseUrls: this._relayBaseUrls(), fetch: this.fetch })
-          opts.fetchCiphertext = async () => {
-            const bytes = await fetchShard(m.ciphertextShard)
-            if (!bytes) throw new Error('ciphertext shard not found on cohort')
-            return bytes
-          }
-        } else {
-          // Legacy dispersal manifest: ciphertext was kept as a local blob.
-          const blob = await this.sync.get(keys.blob(m.blindContentId))
-          if (!blob || !blob.ct) return { ...rec, body: '', _blobMissing: true }
-          opts.fetchCiphertext = () => b64Decode(blob.ct)
-        }
-        const body = await recoverBody(m, opts)
-        if (this._bodyCache.size >= BODY_CACHE_MAX) this._bodyCache.delete(this._bodyCache.keys().next().value)
-        this._bodyCache.set(m.blindContentId, body)
-        return { ...rec, body }
+        const compatibility = await this._loadDispersalCompatibility()
+        return compatibility.hydrateDispersed(this, rec)
       } catch {
         return { ...rec, body: '', _blobMissing: true }
       }
@@ -946,10 +745,15 @@ export class Data {
     const me = await this._writer() // mint BEFORE stamping creator/author
     const now = Date.now()
     const data = {
-      id: mkid.community(slug), slug, title: (title || slug).slice(0, 100),
+      id: mkid.community(slug),
+      slug,
+      title: (title || slug).slice(0, 100),
       description: (description || '').slice(0, 500),
       rules: Array.isArray(rules) ? rules.slice(0, 20) : [],
-      creator: me.pubkey, createdAt: now, updatedAt: now, author: me.pubkey
+      creator: me.pubkey,
+      createdAt: now,
+      updatedAt: now,
+      author: me.pubkey
     }
     await this._emit(TYPE.COMMUNITY, data, { pow: true, onProgress })
     this.invalidateViewCaches()
@@ -1001,12 +805,19 @@ export class Data {
     const cid = await contentId(TYPE.POST, me.pubkey, contentNonce)
     const now = Date.now()
     const data = {
-      id: mkid.post(community, cid), cid, community, kind,
-      protocol: CONTENT_PROTOCOL, contentNonce,
+      id: mkid.post(community, cid),
+      cid,
+      community,
+      kind,
+      protocol: CONTENT_PROTOCOL,
+      contentNonce,
       title: title.trim().slice(0, 300),
       body: kind === 'text' ? String(body || '').slice(0, 40000) : '',
       url: kind !== 'text' ? postUrl : '',
-      author: me.pubkey, createdAt: now, editedAt: 0, deleted: false
+      author: me.pubkey,
+      createdAt: now,
+      editedAt: 0,
+      deleted: false
     }
     // Box a long text body into an opaque blob/dispersal manifest before signing
     // (design §5 Phase 2). In v2 mode the manifest is sealed inside the graph fields.
@@ -1136,11 +947,20 @@ export class Data {
     const cid = await contentId(TYPE.COMMENT, me.pubkey, contentNonce)
     const now = Date.now()
     const data = {
-      id: mkid.comment(community, postCid, cid), cid, community, postCid,
-      protocol: CONTENT_PROTOCOL, contentNonce,
-      targetRef, parentCid: parentCid || null, parentRef,
+      id: mkid.comment(community, postCid, cid),
+      cid,
+      community,
+      postCid,
+      protocol: CONTENT_PROTOCOL,
+      contentNonce,
+      targetRef,
+      parentCid: parentCid || null,
+      parentRef,
       body: body.trim().slice(0, 10000),
-      author: me.pubkey, createdAt: now, editedAt: 0, deleted: false
+      author: me.pubkey,
+      createdAt: now,
+      editedAt: 0,
+      deleted: false
     }
     // Box a long comment body too (same band as posts) — a long comment is as
     // sensitive as a long post body. Short comments stay inline (below threshold).
@@ -1247,9 +1067,15 @@ export class Data {
     value = value === 1 ? 1 : value === -1 ? -1 : 0
     const now = Date.now()
     const data = {
-      id: mkid.vote(targetCid, me.pubkey), targetCid, targetType, community,
-      protocol: CONTENT_PROTOCOL, targetRef,
-      value, author: me.pubkey, ts: now
+      id: mkid.vote(targetCid, me.pubkey),
+      targetCid,
+      targetType,
+      community,
+      protocol: CONTENT_PROTOCOL,
+      targetRef,
+      value,
+      author: me.pubkey,
+      ts: now
     }
     await this._emit(TYPE.VOTE, data)
     this.invalidateViewCaches('vote')
@@ -1372,11 +1198,13 @@ export class Data {
     const now = Date.now()
     const prev = await this.getProfile(me.pubkey)
     const data = {
-      id: mkid.profile(me.pubkey), author: me.pubkey,
-      name: (name != null ? name : prev && prev.name || '').slice(0, 32),
-      bio: (bio != null ? bio : prev && prev.bio || '').slice(0, 500),
+      id: mkid.profile(me.pubkey),
+      author: me.pubkey,
+      name: (name != null ? name : ((prev && prev.name) || '')).slice(0, 32),
+      bio: (bio != null ? bio : ((prev && prev.bio) || '')).slice(0, 500),
       color: color || (prev && prev.color) || '',
-      createdAt: prev ? prev.createdAt : now, updatedAt: now
+      createdAt: prev ? prev.createdAt : now,
+      updatedAt: now
     }
     await this._emit(TYPE.PROFILE, data)
     this._profileCache.set(me.pubkey, { rec: data, at: Date.now() })
@@ -1405,7 +1233,7 @@ export class Data {
   // communities. Lazy + capped — only called on a profile page.
   async karmaFor (pub) {
     const communities = (await this.listCommunities()).map(c => c.slug)
-    let postKarma = 0, commentKarma = 0, postCount = 0, commentCount = 0, weighted = 0
+    let postKarma = 0; let commentKarma = 0; let postCount = 0; let commentCount = 0; let weighted = 0
     for (const slug of communities) {
       // List each community's posts ONCE and reuse for both the author's own
       // posts (post karma) and the per-post comment scan (comment karma).
@@ -1443,8 +1271,11 @@ export class Data {
     if (!targetPub || targetPub === me.pubkey) throw new Error(on ? 'Cannot follow yourself.' : 'Bad target.')
     const now = Date.now()
     const data = {
-      id: mkid.follow(targetPub, me.pubkey), target: targetPub,
-      author: me.pubkey, ts: now, ...(on ? {} : { deleted: true })
+      id: mkid.follow(targetPub, me.pubkey),
+      target: targetPub,
+      author: me.pubkey,
+      ts: now,
+      ...(on ? {} : { deleted: true })
     }
     await this._emit(TYPE.FOLLOW, data)
     this.invalidateViewCaches('vote') // graph edges don't touch comments/search; bump the view epoch only
@@ -1479,8 +1310,11 @@ export class Data {
     if (!c) throw new Error('No such community: r/' + community)
     const now = Date.now()
     const data = {
-      id: mkid.member(community, me.pubkey), community,
-      author: me.pubkey, ts: now, ...(on ? {} : { deleted: true })
+      id: mkid.member(community, me.pubkey),
+      community,
+      author: me.pubkey,
+      ts: now,
+      ...(on ? {} : { deleted: true })
     }
     await this._emit(TYPE.MEMBER, data)
     this.invalidateViewCaches('vote')
@@ -1798,10 +1632,18 @@ export class Data {
     const actionId = uid()
     const now = Date.now()
     const data = {
-      id: mkid.mod(community, actionId), actionId, community, action,
+      id: mkid.mod(community, actionId),
+      actionId,
+      community,
+      action,
       protocol: CONTENT_PROTOCOL,
-      targetCid: boundCid, targetType: boundType, targetRef, targetUser: boundUser,
-      reason: (reason || '').slice(0, 300), by: me.pubkey, ts: now
+      targetCid: boundCid,
+      targetType: boundType,
+      targetRef,
+      targetUser: boundUser,
+      reason: (reason || '').slice(0, 300),
+      by: me.pubkey,
+      ts: now
     }
     await this._emit(TYPE.MOD, data)
     this.invalidateViewCaches()

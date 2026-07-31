@@ -5,7 +5,7 @@
 // relay <meta> is also baked into the page. Run: node test/runtime.mjs
 
 import assert from 'node:assert'
-import { resolveRuntime, readShardRosterConfig, fetchShardRoster, parseShardRelays } from '../js/runtime.js'
+import { resolveRuntime, readShardRosterConfig, fetchShardRoster, parseShardRelays, peeritProfileNetworkGate } from '../js/runtime.js'
 import { createIdentity } from '../js/identity.js'
 import { createSync } from '../js/sync.js'
 
@@ -46,6 +46,25 @@ async function main () {
     'host-injected same-origin token → mobile host path (host identity), no forceDev')
   const rt2b = resolveRuntime({ rawPear: null, doc: doc({ 'pear-api-token': 'host-tok', 'peerit-relay': 'https://relay.peerit.com' }) })
   ok(rt2b.mode === 'pearbrowser-mobile', 'host token takes precedence over a relay meta')
+
+  const cutover = resolveRuntime({
+    rawPear: fullPear(),
+    doc: doc({
+      'peerit-substrate': 'blind-v1',
+      'peerit-substrate-relays': 'https://blind-a.example/describe',
+      'peerit-relay': 'https://outbox.peerit.site',
+      'peerit-shard-roster': 'config/shard-roster.public.json'
+    })
+  })
+  ok(cutover.mode === 'web-substrate' && cutover.substrateHost === 'pear-or-bare',
+    'a declared replacement profile wins before an injected Pear/Bare legacy bridge')
+  ok(cutover.profileReleaseReady === false && cutover.syncOpts.relays.length === 0 && cutover.shardCohort === null,
+    'an incomplete replacement profile fails closed to zero network relays without selecting legacy shard/outbox transports')
+  ok(cutover.readOnly === false && cutover.syncOpts.mode === 'substrate' &&
+    cutover.syncOpts.requireVerifiedRelayAdapters === true,
+    'the closed network gate preserves local-first substrate authoring and queueing')
+  ok(peeritProfileNetworkGate().releaseReady === false,
+    'the actual runtime profile assertion reports this increment as network-blocked')
 
   // relay meta only (no host bridge) → web: forceDev on IDENTITY only, remote sync, read-only default.
   const rt3 = resolveRuntime({ rawPear: null, doc: doc({ 'peerit-relay': 'https://relay.peerit.com', 'peerit-relay-token': 'pub' }) })

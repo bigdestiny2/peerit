@@ -1,7 +1,7 @@
-# Blind public-test bind scaffold (not live)
+# Blind public-test bind scaffold (SUPERSEDED — now bound)
 
-**Status:** `scaffold_not_live` · **Claim boundary:** `LIVE_PUBLIC_TEST_ONLY`  
-**Config:** [`config/blind-public-test-bind.scaffold.json`](../config/blind-public-test-bind.scaffold.json)
+**Status:** `bound_public_test_canary` (superseded 2026-07-26 — see [`docs/BLIND-PUBLIC-TEST-CANARY-EVIDENCE.md`](BLIND-PUBLIC-TEST-CANARY-EVIDENCE.md)) · **Claim boundary:** `LIVE_PUBLIC_TEST_ONLY`  
+**Config:** [`config/blind-public-test-bind.scaffold.json`](../config/blind-public-test-bind.scaffold.json) (signed, `bound: true` on both relays)
 
 Peerit-side **pin and catalogue scaffold** for HiveRelay Track B public-test. Host Blind stacks may already be qualified in run evidence; **Peerit catalogue bind and seed publish stay off** until the checklist in the JSON is complete.
 

@@ -35,7 +35,7 @@
 // The kv adapter is injectable: Node tests pass a Map-backed adapter (Node has
 // webcrypto but no IndexedDB); the browser uses the IDB adapter below.
 
-import { verifiedIdentityEntry } from './identity.js'
+import { verifiedIdentityEntry } from './identity-primitives.js'
 
 const DB_NAME = 'peerit-identity'
 const DB_STORE = 'device'

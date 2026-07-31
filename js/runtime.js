@@ -1,6 +1,7 @@
-// runtime.js — decides HOW peerit connects, from the environment, with one hard
-// rule: the PearBrowser fully-P2P path is the default and is NEVER altered by
-// web/relay configuration.
+// runtime.js — decides HOW peerit connects. A release that declares the blind
+// substrate is resolved before any legacy host bridge: the replacement profile
+// owns networking in Web, Pear, and Bare alike. Until that profile is release
+// ready, Peerit still opens its local journal but installs no network delivery.
 //
 //   pearbrowser        window.pear injected (desktop)        -> host bridge + host identity (unchanged)
 //   pearbrowser-mobile host-injected same-origin /api token  -> host bridge + host identity (unchanged)
@@ -16,6 +17,11 @@
 
 import { hasAnyPearBridgeSurface } from './pear-api.js'
 import { parseRelayList, readRelayRosterConfig } from './relay-roster.js'
+import { assertPeeritProfileReleaseReady } from './substrate/profile-status.mjs'
+
+export const PEERIT_SUBSTRATE_META = 'peerit-substrate'
+export const PEERIT_SUBSTRATE_RELAYS_META = 'peerit-substrate-relays'
+export const PEERIT_SUBSTRATE_VERSION = 'blind-v1'
 
 function metaContent (doc, name) {
   try {
@@ -23,6 +29,39 @@ function metaContent (doc, name) {
     return el ? (el.getAttribute('content') || '') : null
   } catch {
     return null
+  }
+}
+
+// Explicit replacement-runtime switch. Relay values are discovery hints only:
+// they do not become trusted/compatible delivery targets until a blind-client
+// adapter has authenticated the relay descriptor and substrate tuple. An empty
+// list is valid and means local-first authoring with a queued publication log.
+export function readPeeritSubstrateConfig (doc) {
+  const requested = metaContent(doc, PEERIT_SUBSTRATE_META)
+  if (!requested) return null
+  if (requested !== PEERIT_SUBSTRATE_VERSION) {
+    const error = new Error(`Unsupported Peerit blind substrate profile: ${requested}`)
+    error.code = 'PEERIT_SUBSTRATE_VERSION_UNSUPPORTED'
+    throw error
+  }
+  const rawHints = metaContent(doc, PEERIT_SUBSTRATE_RELAYS_META) || ''
+  const relayHints = [...new Set(String(rawHints).split(',').map(value => value.trim()).filter(Boolean))]
+  return Object.freeze({ version: PEERIT_SUBSTRATE_VERSION, relayHints })
+}
+
+// The assertion is deliberately exercised in the runtime selector, rather than
+// left as documentation or a release-script-only check. An incomplete profile
+// blocks network authority while preserving the local-first journal.
+export function peeritProfileNetworkGate () {
+  try {
+    assertPeeritProfileReleaseReady()
+    return Object.freeze({ releaseReady: true, releaseBlockers: Object.freeze([]) })
+  } catch (error) {
+    if (!error || error.code !== 'PEERIT_PROFILE_INCOMPLETE') throw error
+    return Object.freeze({
+      releaseReady: false,
+      releaseBlockers: Object.freeze([...(error.releaseBlockers || [])])
+    })
   }
 }
 
@@ -161,6 +200,35 @@ export function parseSeedOutboxes (raw) {
 // surface — otherwise a configured relay would look like a host bridge.
 export function resolveRuntime ({ rawPear = null, doc = null } = {}) {
   const v2 = metaContent(doc, 'peerit-v2') === 'true' // Opaque-Log v2 client (sealed graph fields + opaque okey keys)
+  // CUTOVER ORDER IS LOAD-BEARING. A Pear/Bare host may still expose the old
+  // bridge during migration; a substrate release must never select it first.
+  const substrate = readPeeritSubstrateConfig(doc)
+  if (substrate) {
+    const profileGate = peeritProfileNetworkGate()
+    return {
+      mode: 'web-substrate',
+      substrateVersion: substrate.version,
+      substrateHost: hasAnyPearBridgeSurface(rawPear) ? 'pear-or-bare' : 'web',
+      profileReleaseReady: profileGate.releaseReady,
+      profileReleaseBlockers: profileGate.releaseBlockers,
+      // Default lurker behavior is local client state. No signer is created
+      // until an explicit write; signed events remain queued locally with zero
+      // qualified relays while the release gate is closed.
+      identityOpts: { forceDev: true, lazy: true },
+      syncOpts: {
+        mode: 'substrate',
+        relayHints: substrate.relayHints,
+        relays: [],
+        requireVerifiedRelayAdapters: true
+      },
+      relayHints: substrate.relayHints,
+      readOnly: false,
+      v2,
+      // The replacement path never composes with legacy BlindShard/outbox
+      // transports. Historical data is imported by a separately bounded reader.
+      shardCohort: null
+    }
+  }
   const shardCohort = readShardRosterConfig(doc)
   if (hasAnyPearBridgeSurface(rawPear)) {
     return { mode: 'pearbrowser', identityOpts: {}, syncOpts: {}, readOnly: false, v2, shardCohort }

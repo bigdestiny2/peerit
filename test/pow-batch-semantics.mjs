@@ -1,14 +1,17 @@
-// pow-batch-semantics.mjs — the batched mint loop must be observationally
-// identical to the serial one: first valid ascending nonce, same targetHash,
-// same verification, and the same 1024-nonce progress/cancellation boundary.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import {
   leadingZeroBits,
   mint,
   powTargetForVersion,
   verify
-} from '../js/pow.js'
+} from '../js/pow-current.js'
+
+const powSource = await readFile(new URL('../js/pow-current.js', import.meta.url), 'utf8')
+const batchSizeDeclarations = powSource.match(/const HASH_BATCH_SIZE = \d+/g) || []
+assert.deepEqual(batchSizeDeclarations, ['const HASH_BATCH_SIZE = 64'],
+  'the measured browser PoW batch size remains frozen at 64')
 
 function digest (value) {
   return createHash('sha256').update(value, 'utf8').digest()

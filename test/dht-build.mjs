@@ -5,7 +5,7 @@
 
 import assert from 'node:assert'
 import { createHash } from 'node:crypto'
-import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -31,11 +31,12 @@ function treeFingerprint (root) {
   return files
 }
 
-async function runBuildChecks () {
+async function runBuildChecks (compatibilityConfig) {
   console.log('\n— build-web DHT bundle smoke —')
   const relay = 'wss://dht-smoke.invalid/socket'
   const res = spawnSync(process.execPath, [
     'build-web.mjs',
+    '--config', compatibilityConfig,
     '--relay', 'same-origin',
     '--readonly', 'true',
     '--no-relay-roster',
@@ -76,11 +77,13 @@ async function main () {
   // Preserve and restore the complete directory even when an assertion fails.
   const backupRoot = mkdtempSync(join(tmpdir(), 'peerit-dht-build-'))
   const backupWeb = join(backupRoot, 'web')
+  const compatibilityConfig = join(backupRoot, 'legacy-migration-compatibility.json')
+  writeFileSync(compatibilityConfig, JSON.stringify({ transport: 'legacy-migration-compatibility' }) + '\n')
   const hadWeb = existsSync('web')
   const originalWeb = treeFingerprint('web')
   if (hadWeb) cpSync('web', backupWeb, { recursive: true })
   try {
-    await runBuildChecks()
+    await runBuildChecks(compatibilityConfig)
   } finally {
     rmSync('web', { recursive: true, force: true })
     if (hadWeb) cpSync(backupWeb, 'web', { recursive: true })

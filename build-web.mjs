@@ -2,8 +2,8 @@
 //
 // The default build mostly copies the served files into web/ and adds the
 // web-only delivery hardening:
-//   - <meta name="peerit-relay"> so a normal browser enters web mode (ignored by
-//     PearBrowser, which uses window.pear — so this never affects the P2P build).
+//   - <meta name="peerit-substrate"> so Web, Pear, and Bare select the same
+//     replacement profile before considering any legacy host bridge.
 //   - SRI (sha384) on the entry module + stylesheet.
 //   - a Service Worker (sw.js) that PINS the audited bundle by SHA-256 after first
 //     load, so the app survives the origin going down and global JS swaps are
@@ -25,35 +25,81 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node
 import { createHash } from 'node:crypto'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { SITE_FILES } from './publish.mjs'
+import { SITE_FILES, SUBSTRATE_SITE_FILES } from './publish.mjs'
 import { buildDhtBundle } from './scripts/build-dht-bundle.mjs'
 import { buildReaderBundle } from './scripts/build-reader-bundle.mjs'
 import { normalizeRelayRosterPayload, verifyRelayRoster } from './js/relay-roster.js'
 import { patchCspForWeb, cspConnectOrigin } from './scripts/csp.mjs'
 import { serviceWorkerSource } from './scripts/service-worker-source.mjs'
+import {
+  buildPeeritSubstrateRuntimeArtifactV1,
+  peeritServiceWorkerRegisterSourceV1,
+  PEERIT_APP_ARTIFACT_PATH,
+  PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE,
+  PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE,
+  PEERIT_SEED_BOOTSTRAP_PATH,
+  PEERIT_WEB_ASSET_MANIFEST_PATH
+} from './scripts/substrate-runtime-artifact.mjs'
+import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from './js/substrate/production-release-authority.mjs'
+import { normalizePeeritReleaseRelayHintsV1 } from './js/substrate/release-relay-hints.mjs'
+import { verifyPeeritProductionPinHistoryReleaseV1 } from './scripts/production-pin-history-release.mjs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
-const OUT = join(__dir, 'web')
 const arg = (name) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : null }
 const hasArg = (name) => process.argv.includes(name)
+const OUT = resolve(__dir, arg('--out') || 'web')
 
 const CONFIG_PATH = process.env.PEERIT_WEB_RELEASE_CONFIG || arg('--config') || join('deploy', 'web-release.json')
 const releaseConfig = readConfig(CONFIG_PATH)
-const RELAY = process.env.PEERIT_RELAY || arg('--relay') || configRelay(releaseConfig) || ''
+const SUBSTRATE_PROFILE = String(process.env.PEERIT_SUBSTRATE_PROFILE || arg('--substrate-profile') || releaseConfig.substrateProfile || '')
+const SUBSTRATE_RELAY_HINTS = String(process.env.PEERIT_SUBSTRATE_RELAY_HINTS || arg('--substrate-relay-hints') || configSubstrateRelayHints(releaseConfig) || '')
+const IS_SUBSTRATE_RELEASE = !!SUBSTRATE_PROFILE
+const SUBSTRATE_RELAY_HINT_VALUES = IS_SUBSTRATE_RELEASE
+  ? normalizePeeritReleaseRelayHintsV1(
+    SUBSTRATE_RELAY_HINTS.split(',').map(value => value.trim()).filter(Boolean),
+    'blind-substrate build')
+  : []
+const PRODUCTION_PIN_HISTORY_BUNDLE = IS_SUBSTRATE_RELEASE
+  ? String(releaseConfig.productionPinHistoryBundle || '').trim()
+  : ''
+if (PRODUCTION_PIN_HISTORY_BUNDLE &&
+    PRODUCTION_PIN_HISTORY_BUNDLE !== PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)) {
+  throw new Error(`productionPinHistoryBundle must equal ${PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)}`)
+}
+const PRODUCTION_PIN_HISTORY_BYTES = PRODUCTION_PIN_HISTORY_BUNDLE
+  ? readFileSync(join(__dir, PRODUCTION_PIN_HISTORY_BUNDLE))
+  : null
+const RELEASE_SITE_FILES = IS_SUBSTRATE_RELEASE ? SUBSTRATE_SITE_FILES : SITE_FILES
+if (IS_SUBSTRATE_RELEASE) {
+  if (SUBSTRATE_PROFILE !== 'blind-v1') throw new Error(`unsupported Peerit substrate profile: ${SUBSTRATE_PROFILE}`)
+  const forbiddenConfig = ['relay', 'bootstrapRelays', 'relayBackend', 'readonly', 'readOnly', 'relayRoster', 'relayRosterMirrors', 'pinnedRosterKey', 'roster', 'dhtRelay', 'shardRoster', 'seedOutboxes']
+    .filter(key => releaseConfig[key] != null && releaseConfig[key] !== '' && (!Array.isArray(releaseConfig[key]) || releaseConfig[key].length > 0))
+  const forbiddenArgs = ['--relay', '--relay-backend', '--readonly', '--relay-roster', '--relay-roster-key', '--dht-relay', '--shard-roster', '--seed-outboxes']
+    .filter(hasArg)
+  const forbiddenEnv = ['PEERIT_RELAY', 'PEERIT_RELAY_BACKEND', 'PEERIT_RELAY_READONLY', 'PEERIT_RELAY_ROSTER', 'PEERIT_RELAY_ROSTER_KEY', 'PEERIT_DHT_RELAY', 'PEERIT_SHARD_ROSTER', 'PEERIT_SEED_OUTBOXES']
+    .filter(key => process.env[key])
+  if (forbiddenConfig.length || forbiddenArgs.length || forbiddenEnv.length) {
+    throw new Error(`blind-substrate release refuses legacy transport configuration: ${[...forbiddenConfig, ...forbiddenArgs, ...forbiddenEnv].join(', ')}`)
+  }
+}
+// These variables exist only for an explicitly separate compatibility build.
+// The official cutover config rejects them instead of silently composing both
+// transports or treating an OutboxLog endpoint as a blind-substrate relay.
+const RELAY = IS_SUBSTRATE_RELEASE ? '' : (process.env.PEERIT_RELAY || arg('--relay') || configRelay(releaseConfig) || '')
 // Optional, explicit relay backend kind. Purely descriptive/verifiable — it does
 // NOT change --relay or the CSP connect-origins (the operator still passes the
 // HiveRelay URL as --relay, and csp.mjs already pins that origin). Empty = default
 // (behaviour byte-identical to before this flag existed). 'hiverelay-outbox' turns
 // on a one-shot boot probe of /api/bridge/status (see js/app.js).
-const RELAY_BACKEND = String(process.env.PEERIT_RELAY_BACKEND || arg('--relay-backend') || releaseConfig.relayBackend || '')
+const RELAY_BACKEND = IS_SUBSTRATE_RELEASE ? '' : String(process.env.PEERIT_RELAY_BACKEND || arg('--relay-backend') || releaseConfig.relayBackend || '')
 assertRelayBackend(RELAY_BACKEND)
-const READONLY = String(process.env.PEERIT_RELAY_READONLY || arg('--readonly') || configReadonly(releaseConfig))
+const READONLY = IS_SUBSTRATE_RELEASE ? '' : String(process.env.PEERIT_RELAY_READONLY || arg('--readonly') || configReadonly(releaseConfig))
 const DRIVE_KEY = process.env.PEERIT_DRIVE_KEY || arg('--drive-key') || configDriveKey(releaseConfig) || ''
-const DHT_RELAY = process.env.PEERIT_DHT_RELAY || arg('--dht-relay') || releaseConfig.dhtRelay || '' // Phase 3 (optional)
+const DHT_RELAY = IS_SUBSTRATE_RELEASE ? '' : (process.env.PEERIT_DHT_RELAY || arg('--dht-relay') || releaseConfig.dhtRelay || '') // legacy compatibility only
 // Pinned outboxes: curated launch content joined directly at boot so a fresh visitor
 // renders it without waiting on flaky swarm discovery. `appId:inviteKey` pairs, comma
 // separated (public READ caps only). From config seedOutboxes:[{appId,inviteKey}].
-const SEED_OUTBOXES = process.env.PEERIT_SEED_OUTBOXES || arg('--seed-outboxes') || configSeedOutboxes(releaseConfig) || ''
+const SEED_OUTBOXES = IS_SUBSTRATE_RELEASE ? '' : (process.env.PEERIT_SEED_OUTBOXES || arg('--seed-outboxes') || configSeedOutboxes(releaseConfig) || '')
 // Offline Ed25519 release key: pinned into the bundle so verify.html / mirrors / auditors
 // can confirm asset-manifest.sig (produced by scripts/sign-release.mjs) is an authentic
 // release the origin could not self-forge. Empty = unsigned dev build (verify.html says so).
@@ -62,11 +108,32 @@ const RELEASE_SEQUENCE = Number(process.env.PEERIT_RELEASE_SEQUENCE || arg('--re
 if (RELEASE_KEY && (!Number.isSafeInteger(RELEASE_SEQUENCE) || RELEASE_SEQUENCE < 1)) {
   throw new Error('a signed web build requires --release-sequence to be a positive safe integer')
 }
+if (IS_SUBSTRATE_RELEASE && (!Number.isSafeInteger(RELEASE_SEQUENCE) ||
+    RELEASE_SEQUENCE < PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE)) {
+  throw new Error(`blind-substrate replacement releaseSequence must be at least ${PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE}; sequence 6 belongs to the retired legacy artifact`)
+}
+const SEED_BOOTSTRAP_BUNDLE = IS_SUBSTRATE_RELEASE
+  ? String(releaseConfig.peeritSeedBootstrapBundle || '').trim()
+  : ''
+const SEED_DISCOVERY_AUTHORITY_PUBLIC_KEY = IS_SUBSTRATE_RELEASE
+  ? String(releaseConfig.peeritSeedDiscoveryAuthorityPublicKey || '').trim().toLowerCase()
+  : ''
+if (IS_SUBSTRATE_RELEASE && RELEASE_SEQUENCE >= PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE &&
+    (!SEED_BOOTSTRAP_BUNDLE || !SEED_DISCOVERY_AUTHORITY_PUBLIC_KEY)) {
+  throw new Error('sequence-13+ blind-substrate release requires peeritSeedBootstrapBundle and peeritSeedDiscoveryAuthorityPublicKey')
+}
+if (IS_SUBSTRATE_RELEASE && RELEASE_SEQUENCE < PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE &&
+    (SEED_BOOTSTRAP_BUNDLE || SEED_DISCOVERY_AUTHORITY_PUBLIC_KEY)) {
+  throw new Error('Peerit seed bootstrap configuration requires releaseSequence 13 or later')
+}
+const SEED_BOOTSTRAP_BYTES = SEED_BOOTSTRAP_BUNDLE
+  ? readFileSync(resolve(__dir, SEED_BOOTSTRAP_BUNDLE))
+  : null
 const NO_RELAY_ROSTER = hasArg('--no-relay-roster') || process.env.PEERIT_NO_RELAY_ROSTER === '1'
-const RELAY_ROSTER = NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER || arg('--relay-roster') || releaseConfig.relayRoster || '')
-let RELAY_ROSTER_KEY = NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER_KEY || arg('--relay-roster-key') || releaseConfig.pinnedRosterKey || '')
+const RELAY_ROSTER = IS_SUBSTRATE_RELEASE || NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER || arg('--relay-roster') || releaseConfig.relayRoster || '')
+let RELAY_ROSTER_KEY = IS_SUBSTRATE_RELEASE || NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER_KEY || arg('--relay-roster-key') || releaseConfig.pinnedRosterKey || '')
 const NO_SHARD_ROSTER = hasArg('--no-shard-roster') || process.env.PEERIT_NO_SHARD_ROSTER === '1'
-const SHARD_ROSTER = NO_SHARD_ROSTER ? '' : (process.env.PEERIT_SHARD_ROSTER || arg('--shard-roster') || releaseConfig.shardRoster || '')
+const SHARD_ROSTER = IS_SUBSTRATE_RELEASE || NO_SHARD_ROSTER ? '' : (process.env.PEERIT_SHARD_ROSTER || arg('--shard-roster') || releaseConfig.shardRoster || '')
 if (DHT_RELAY) assertDhtRelay(DHT_RELAY)
 if (SHARD_ROSTER) assertShardRoster(SHARD_ROSTER)
 
@@ -80,7 +147,8 @@ if (DHT_RELAY) dhtBundle = await buildDhtBundle()
 // Build the browser reader bundle for dispersed-body recovery whenever we are
 // producing a web deployment (RELAY set) or explicitly asked. The bundle is
 // loaded dynamically, so it does not block initial page load.
-const READER_BUNDLE = hasArg('--reader-bundle') || process.env.PEERIT_READER_BUNDLE === '1' || !!RELAY
+const READER_BUNDLE = !IS_SUBSTRATE_RELEASE &&
+  (hasArg('--reader-bundle') || process.env.PEERIT_READER_BUNDLE === '1' || !!RELAY)
 let readerBundle = null
 if (READER_BUNDLE) readerBundle = await buildReaderBundle({ minify: !hasArg('--no-minify') })
 
@@ -98,6 +166,10 @@ function configRelay (cfg) {
   if (cfg.relay) return String(cfg.relay)
   if (Array.isArray(cfg.bootstrapRelays)) return cfg.bootstrapRelays.map(String).join(',')
   return ''
+}
+
+function configSubstrateRelayHints (cfg) {
+  return Array.isArray(cfg.relayHints) ? cfg.relayHints.map(String).join(',') : ''
 }
 
 function configReadonly (cfg) {
@@ -167,7 +239,7 @@ async function prepareRoster () {
 const files = {}
 const manifest = {}
 const sriMap = {}
-for (const p of SITE_FILES) {
+for (const p of RELEASE_SITE_FILES) {
   let buf
   if (p === 'js/dht-bundle.js' && dhtBundle) buf = dhtBundle
   else if (p === 'js/reader-bundle.js' && readerBundle) buf = readerBundle
@@ -182,7 +254,7 @@ for (const p of SITE_FILES) {
 // before any relay round-trip. Client-side every row still passes admit()
 // (signature/key-binding/PoW), so a stale or tampered snapshot renders nothing
 // it shouldn't — it is a floor, not a trust bypass. Hash-pinned like every asset.
-{
+if (!IS_SUBSTRATE_RELEASE) {
   const snapPath = join(__dir, 'config', 'seed-snapshot.json')
   if (existsSync(snapPath)) {
     const buf = readFileSync(snapPath)
@@ -199,92 +271,83 @@ for (const p of SITE_FILES) {
   }
 }
 
-// 2. transform index.html: relay meta + SW registration (external, CSP-safe) + SRI
-const rosterRelease = await prepareRoster()
+// 2. transform the runtime closure. Blind-substrate Web and Hyper publication
+// call the same deterministic builder; the legacy compatibility path stays
+// deliberately separate.
+const rosterRelease = IS_SUBSTRATE_RELEASE ? { meta: '', sha256: '' } : await prepareRoster()
 // Multi-home the roster: same-origin file first, then independent mirror URLs (e.g.
 // an IPFS gateway) that serve the SAME signed roster. Each is verified client-side
 // against the pinned key, so a mirror can't forge — this only removes the single
 // fetch chokepoint. Comma-list via PEERIT_RELAY_ROSTER_MIRRORS / --relay-roster-mirrors.
 const ROSTER_MIRRORS = (process.env.PEERIT_RELAY_ROSTER_MIRRORS || arg('--relay-roster-mirrors') || (releaseConfig.relayRosterMirrors || []).join(',') || '')
 const relayRosterMeta = [rosterRelease.meta, ...ROSTER_MIRRORS.split(',').map((s) => s.trim())].filter(Boolean).join(',')
-let html = files['index.html'].toString('utf8')
-// The source shell carries the development shard-roster hint so local builds can
-// exercise the reader. A production release with no signed shard cohort must not
-// ship that stale placeholder meta: it causes every visitor to fetch an unsigned
-// roster and report a false dispersal warning.
-html = html.replace(/\s*<meta\s+name="peerit-shard-(?:roster|relays|threshold)"[^>]*>/gi, '')
-const head = [
-  RELAY ? `<meta name="peerit-relay" content="${attr(RELAY)}">` : '',
-  RELAY && RELAY_BACKEND ? `<meta name="peerit-relay-backend" content="${attr(RELAY_BACKEND)}">` : '',
-  RELAY ? `<meta name="peerit-relay-readonly" content="${attr(READONLY)}">` : '',
-  relayRosterMeta ? `<meta name="peerit-relay-roster" content="${attr(relayRosterMeta)}">` : '',
-  RELAY_ROSTER_KEY ? `<meta name="peerit-relay-roster-key" content="${attr(RELAY_ROSTER_KEY)}">` : '',
-  RELEASE_KEY ? `<meta name="peerit-release-key" content="${attr(RELEASE_KEY)}">` : '',
-  RELEASE_KEY ? `<meta name="peerit-release-sequence" content="${attr(RELEASE_SEQUENCE)}">` : '',
-  DHT_RELAY ? `<meta name="peerit-dht-relay" content="${attr(DHT_RELAY)}">` : '',
-  SHARD_ROSTER ? `<meta name="peerit-shard-roster" content="${attr(SHARD_ROSTER)}">` : '',
-  SEED_OUTBOXES ? `<meta name="peerit-seed-outboxes" content="${attr(SEED_OUTBOXES)}">` : '',
-  '<script src="sw-register.js"></script>'
-].filter(Boolean).join('\n  ')
-html = html.replace('</head>', '  ' + head + '\n</head>')
-// Pin connect-src to exactly the origins this build talks to (relays, roster
-// mirrors, shard cohort, DHT relay) — the source CSP carries NO http:/https:
-// wildcard, so a same-origin XSS cannot exfiltrate to an arbitrary host (audit
-// PT-BRW-002). Same-origin ("same-origin"/"/") needs no entry ('self' covers it).
 const connectOrigins = collectConnectOrigins()
-if (connectOrigins.length || DHT_RELAY) {
-  html = patchCspForWeb(html, { dhtRelay: DHT_RELAY, connectOrigins })
+let substrateArtifact = null
+if (IS_SUBSTRATE_RELEASE) {
+  substrateArtifact = buildPeeritSubstrateRuntimeArtifactV1({
+    sourceFiles: files,
+    substrateProfile: SUBSTRATE_PROFILE,
+    relayHints: SUBSTRATE_RELAY_HINT_VALUES,
+    releaseSequence: RELEASE_SEQUENCE,
+    releaseKey: RELEASE_KEY,
+    productionPinHistoryBytes: PRODUCTION_PIN_HISTORY_BYTES,
+    seedBootstrapBytes: SEED_BOOTSTRAP_BYTES,
+    seedDiscoveryAuthorityPublicKey: SEED_DISCOVERY_AUTHORITY_PUBLIC_KEY
+  })
+  if (PRODUCTION_PIN_HISTORY_BYTES) {
+    await verifyPeeritProductionPinHistoryReleaseV1({
+      bundleBytes: PRODUCTION_PIN_HISTORY_BYTES,
+      releaseSequence: RELEASE_SEQUENCE,
+      appArtifactHash: substrateArtifact.appArtifactHash,
+      webAssetManifestHash: substrateArtifact.webAssetManifestHash
+    })
+  }
+  for (const key of Object.keys(files)) delete files[key]
+  for (const key of Object.keys(manifest)) delete manifest[key]
+  for (const key of Object.keys(sriMap)) delete sriMap[key]
+  for (const [path, bytes] of substrateArtifact.files) {
+    files[path] = bytes
+    manifest[path] = sha256(bytes)
+    sriMap[path] = sri(bytes)
+  }
+} else {
+  let html = files['index.html'].toString('utf8')
+  html = html.replace(/\s*<meta\s+name="peerit-shard-(?:roster|relays|threshold)"[^>]*>/gi, '')
+  html = html.replace(/\s*<meta\s+name="peerit-(?:relay(?:-[a-z0-9-]+)?|dht-relay|seed-outboxes|substrate(?:-relays)?)"[^>]*>/gi, '')
+  const head = [
+    RELAY ? `<meta name="peerit-relay" content="${attr(RELAY)}">` : '',
+    RELAY && RELAY_BACKEND ? `<meta name="peerit-relay-backend" content="${attr(RELAY_BACKEND)}">` : '',
+    RELAY ? `<meta name="peerit-relay-readonly" content="${attr(READONLY)}">` : '',
+    relayRosterMeta ? `<meta name="peerit-relay-roster" content="${attr(relayRosterMeta)}">` : '',
+    RELAY_ROSTER_KEY ? `<meta name="peerit-relay-roster-key" content="${attr(RELAY_ROSTER_KEY)}">` : '',
+    RELEASE_KEY ? `<meta name="peerit-release-key" content="${attr(RELEASE_KEY)}">` : '',
+    RELEASE_KEY ? `<meta name="peerit-release-sequence" content="${attr(RELEASE_SEQUENCE)}">` : '',
+    DHT_RELAY ? `<meta name="peerit-dht-relay" content="${attr(DHT_RELAY)}">` : '',
+    SHARD_ROSTER ? `<meta name="peerit-shard-roster" content="${attr(SHARD_ROSTER)}">` : '',
+    SEED_OUTBOXES ? `<meta name="peerit-seed-outboxes" content="${attr(SEED_OUTBOXES)}">` : '',
+    '<script src="sw-register.js"></script>'
+  ].filter(Boolean).join('\n  ')
+  html = html.replace('</head>', '  ' + head + '\n</head>')
+  if (connectOrigins.length || DHT_RELAY) {
+    html = patchCspForWeb(html, { dhtRelay: DHT_RELAY, connectOrigins })
+  }
+  html = html.replace('<link rel="stylesheet" href="styles.css">', `<link rel="stylesheet" href="styles.css" integrity="${sriMap['styles.css']}" crossorigin="anonymous">`)
+  html = html.replace(/<script\s+type="module"\s+src="js\/(?:app\.js|substrate\/app-entry\.js)"(?:\s+[^>]*)?><\/script>/,
+    `<script type="module" src="js/app.js" integrity="${sriMap['js/app.js']}" crossorigin="anonymous"></script>`)
+  files['index.html'] = Buffer.from(html)
+  manifest['index.html'] = sha256(files['index.html'])
+  files['sw-register.js'] = Buffer.from(peeritServiceWorkerRegisterSourceV1())
+  manifest['sw-register.js'] = sha256(files['sw-register.js'])
 }
-html = html.replace('<link rel="stylesheet" href="styles.css">', `<link rel="stylesheet" href="styles.css" integrity="${sriMap['styles.css']}" crossorigin="anonymous">`)
-html = html.replace('<script type="module" src="js/app.js"></script>', `<script type="module" src="js/app.js" integrity="${sriMap['js/app.js']}" crossorigin="anonymous"></script>`)
-files['index.html'] = Buffer.from(html)
-manifest['index.html'] = sha256(files['index.html'])
 
 // 3. write the bundle
 rmSync(OUT, { recursive: true, force: true })
 mkdirSync(join(OUT, 'js'), { recursive: true })
-for (const p of SITE_FILES) {
+for (const p of Object.keys(files)) {
   const outPath = join(OUT, p)
   mkdirSync(dirname(outPath), { recursive: true })
   writeFileSync(outPath, files[p])
 }
-if (files['relay-roster.json']) writeFileSync(join(OUT, 'relay-roster.json'), files['relay-roster.json'])
-if (files['seed-snapshot.json']) writeFileSync(join(OUT, 'seed-snapshot.json'), files['seed-snapshot.json'])
-
-const swRegister = `if ('serviceWorker' in navigator) {
-  // A new deploy changes the bundle hashes -> a new sw.js. The SW skipWaiting()s +
-  // clients.claim()s, so it activates immediately, but the page already loaded with
-  // the OLD cached assets. Reload ONCE when the new SW takes control so returning
-  // visitors actually run the new audited bundle instead of stale code. Guard with
-  // hadController so a brand-new visitor (first install) does not reload.
-  // RATE-LIMITED, not once-per-session: the old boolean latch blocked the reload
-  // for every deploy AFTER a tab's first, so long-lived tabs silently ran stale
-  // builds until a manual refresh. A timestamp latch keeps reload loops harmless
-  // (two fighting SW versions reload at most once per 5 minutes instead of
-  // pinning the CPU) while every real deploy — always minutes+ apart — applies.
-  var hadController = !!navigator.serviceWorker.controller, refreshing = false;
-  var releaseUpdate = { hadController: hadController, controllerChanged: false };
-  window.__peeritServiceWorkerUpdate = releaseUpdate;
-  var LATCH = 'peerit:sw-reloaded-at', WINDOW_MS = 5 * 60 * 1000;
-  navigator.serviceWorker.addEventListener('controllerchange', function () {
-    releaseUpdate.controllerChanged = true;
-    if (refreshing || !hadController) return;
-    try {
-      var last = Number(sessionStorage.getItem(LATCH) || 0);
-      if (Date.now() - last < WINDOW_MS) return;
-      sessionStorage.setItem(LATCH, String(Date.now()));
-    } catch (e) {}
-    refreshing = true; location.reload();
-  });
-  addEventListener('load', function () {
-    navigator.serviceWorker.register('sw.js').then(function (reg) {
-      if (reg && reg.update) { try { reg.update(); } catch (e) {} } // check for a newer bundle each load
-    }).catch(function () {});
-  });
-}
-`
-writeFileSync(join(OUT, 'sw-register.js'), swRegister)
-manifest['sw-register.js'] = sha256(Buffer.from(swRegister))
 
 // Generate control files before the signed manifest. Their source reads the
 // manifest at runtime rather than embedding these hashes, so hashing them here
@@ -303,28 +366,55 @@ writeFileSync(join(OUT, 'asset-manifest.json'), JSON.stringify({
   files: manifest,
   controls,
   driveKey: DRIVE_KEY,
-  webRelease: {
-    releaseSequence: RELEASE_SEQUENCE,
-    relay: RELAY,
-    relayBackend: RELAY_BACKEND,
-    readonly: READONLY,
-    relayRoster: relayRosterMeta,
-    relayRosterKey: RELAY_ROSTER_KEY,
-    relayRosterSha256: rosterRelease.sha256,
-    shardRoster: SHARD_ROSTER,
-    shardRosterSha256: SHARD_ROSTER ? manifest[SHARD_ROSTER] : '',
-    releaseKey: RELEASE_KEY
-  },
+  webRelease: IS_SUBSTRATE_RELEASE
+    ? {
+        releaseSequence: RELEASE_SEQUENCE,
+        transport: 'blind-substrate',
+        substrateProfile: SUBSTRATE_PROFILE,
+        relayHints: SUBSTRATE_RELAY_HINT_VALUES,
+        networkDelivery: 'profile-gated',
+        legacyDestination: null,
+        productionPinHistory: PRODUCTION_PIN_HISTORY_BYTES
+          ? PEERIT_PRODUCTION_PIN_HISTORY_PATH
+          : null,
+        appArtifact: `/${PEERIT_APP_ARTIFACT_PATH}`,
+        appArtifactHash: substrateArtifact.appArtifactHashHex,
+        canonicalWebAssetManifest: `/${PEERIT_WEB_ASSET_MANIFEST_PATH}`,
+        canonicalWebAssetManifestHash: substrateArtifact.webAssetManifestHashHex,
+        ...(substrateArtifact.seedBootstrap
+          ? {
+              peeritSeedBootstrap: `/${PEERIT_SEED_BOOTSTRAP_PATH}`,
+              peeritSeedBootstrapSha256: substrateArtifact.seedBootstrap.sha256,
+              peeritSeedDiscoveryAuthorityPublicKey: substrateArtifact.seedBootstrap.authorityPublicKey,
+              peeritSeedBootstrapReleaseSequence: substrateArtifact.seedBootstrap.releaseSequence
+            }
+          : {}),
+        releaseKey: RELEASE_KEY
+      }
+    : {
+        releaseSequence: RELEASE_SEQUENCE,
+        transport: 'legacy-migration-compatibility',
+        relay: RELAY,
+        relayBackend: RELAY_BACKEND,
+        readonly: READONLY,
+        relayRoster: relayRosterMeta,
+        relayRosterKey: RELAY_ROSTER_KEY,
+        relayRosterSha256: rosterRelease.sha256,
+        shardRoster: SHARD_ROSTER,
+        shardRosterSha256: SHARD_ROSTER ? manifest[SHARD_ROSTER] : '',
+        releaseKey: RELEASE_KEY
+      },
   note: 'SHA-256 of every served file. Cross-check driveKey against the published hyper:// drive in PearBrowser. If asset-manifest.sig is present, verify it against releaseKey (see verify.html / js/release-verify.js).'
 }, null, 2))
 
-console.log(`[build-web] wrote ${SITE_FILES.length + 4 + (files['relay-roster.json'] ? 1 : 0)} files to web/`)
-console.log(`           relay=${RELAY || '(none — local-only)'} readonly=${READONLY} releaseSequence=${RELEASE_SEQUENCE || '(unsigned)'} driveKey=${DRIVE_KEY || '(unset)'}`)
-console.log(`           relayRoster=${relayRosterMeta || '(none)'} rosterKey=${RELAY_ROSTER_KEY ? RELAY_ROSTER_KEY.slice(0, 12) + '...' : '(unset)'}`)
+console.log(`[build-web] wrote ${Object.keys(files).length + 3} files to web/`)
+console.log(`           transport=${IS_SUBSTRATE_RELEASE ? `blind-substrate/${SUBSTRATE_PROFILE}` : 'legacy-migration-compatibility'} releaseSequence=${RELEASE_SEQUENCE || '(unsigned)'} driveKey=${DRIVE_KEY || '(unset)'}`)
+if (IS_SUBSTRATE_RELEASE) console.log(`           relayHints=${SUBSTRATE_RELAY_HINTS || '(none — local queue only until qualified)'}`)
+else console.log(`           relay=${RELAY || '(none — local-only)'} readonly=${READONLY} relayRoster=${relayRosterMeta || '(none)'}`)
 if (DHT_RELAY) console.log(`           dhtRelay=${DHT_RELAY} dhtBundle=${files['js/dht-bundle.js'].length} bytes`)
 if (READER_BUNDLE) console.log(`           readerBundle=${files['js/reader-bundle.js'].length} bytes`)
 if (SHARD_ROSTER) console.log(`           shardRoster=${SHARD_ROSTER} sha256=${manifest[SHARD_ROSTER]?.slice(0, 12)}...`)
-if (!RELAY) console.log('           NOTE: no --relay → the bundle loads but stays local-only (gossip-dev) until a relay is configured.')
+if (!IS_SUBSTRATE_RELEASE && !RELAY) console.log('           NOTE: no legacy relay → compatibility build stays local-only.')
 if (RELAY_ROSTER && !RELAY_ROSTER_KEY) console.log('           NOTE: --relay-roster without --relay-roster-key is ignored by clients (no pinned verification key).')
 
 // ---- generated assets -------------------------------------------------------
@@ -367,6 +457,7 @@ const sha = async (b) => { const h = await crypto.subtle.digest('SHA-256', b); r
 
 // Gather every cross-origin endpoint this web build fetches/connects to, so the
 // CSP connect-src can be pinned to exactly those origins (no wildcard). Sources:
+//   - replacement substrate relay hints (untrusted discovery only)
 //   - RELAY (comma-separated failover list) + its roster payload relays
 //   - relay-roster mirror URLs (independent hosts serving the same signed roster)
 //   - shard cohort relays (BlindShard dispersal/recovery)
@@ -374,6 +465,7 @@ const sha = async (b) => { const h = await crypto.subtle.digest('SHA-256', b); r
 function collectConnectOrigins () {
   const origins = new Set()
   const add = (base) => { const o = cspConnectOrigin(base); if (o) origins.add(o) }
+  for (const hint of String(SUBSTRATE_RELAY_HINTS || '').split(',')) add(hint.trim())
   for (const r of String(RELAY || '').split(',')) add(r.trim())
   for (const m of ROSTER_MIRRORS.split(',')) add(m.trim())
   // Relay roster payload (the signed set of relays clients may actually reach).

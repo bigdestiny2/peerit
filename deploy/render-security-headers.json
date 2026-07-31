@@ -4,7 +4,7 @@
   "headers": [
     {
       "name": "Content-Security-Policy",
-      "value": "default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: hyper: pear:; connect-src 'self' hyper: pear: https://outbox.peerit.site; frame-ancestors 'none'; form-action 'none'"
+      "value": "default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: hyper: pear:; connect-src 'self' hyper: pear: https://relay-syd.p2phiverelay.xyz https://relay-dal.p2phiverelay.xyz; frame-ancestors 'none'; form-action 'none'"
     },
     { "name": "X-Content-Type-Options", "value": "nosniff" },
     { "name": "X-Frame-Options", "value": "DENY" },

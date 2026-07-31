@@ -1,10 +1,11 @@
 {
-  "$schema_comment": "Peerit public-test bind scaffold — NOT LIVE for Peerit catalogue/seed. Digests and host facts are copied from frozen public-test run evidence (read-only); do not invent values.",
+  "$schema_comment": "Peerit public-test bind catalogue — BOUND under LIVE_PUBLIC_TEST_ONLY after the owner checklist completed with fresh evidence on 2026-07-26. Relays stay generic and plaintext-blind; all app logic stays client-side. seed_publish stays OFF.",
   "schema": "peerit-blind-public-test-bind/v1",
-  "status": "scaffold_not_live",
+  "status": "bound_public_test_canary",
   "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
-  "status_detail": "Host Blind stacks on syd-1 and dallas-1 have independent qualify evidence in the public-test run; Peerit catalogue bind and seed publish remain OFF until owner checklist completes. Do not flip fleet channels.json. Do not mutate Blind :443 from Peerit.",
+  "status_detail": "Peerit catalogue bind is ON for the two owner-operated failure domains after the Peerit-side checklist completed (DESCRIBE re-probe PASS + two-relay CELL write/readback PASS through the Peerit substrate client only). This is a bounded public-test canary, NOT GA: two failure domains, one operator, direct credential-free HTTPS, no T1, no multi-hop, FORWARD bits zero. The vendored v1 blind-client artifact's pinned wire tuple DRIFTED from the deployed relay wire build (recorded, not silently accepted; see tuple_drift). Fleet channels.json untouched. Blind :443 untouched from Peerit.",
   "release": "1.0.0-rc.1.public-test.1",
+  "bound_at": "2026-07-26T00:00:00Z",
   "source": {
     "run_id": "hiverelay-vnext-direct-https-public-test-storage-first-20260724t110740z",
     "run_path": "00-core/pear-agent-system/runs/hiverelay-vnext-direct-https-public-test-storage-first-20260724t110740z",
@@ -12,44 +13,72 @@
     "pin_history_relative": "assignments/release-and-appliances/worktree/release/blind-public-test/pin-history.json",
     "syd1_qualify_evidence": "assignments/fleet-and-cohort/evidence/syd-1-redeployment-qualification-20260725t223015z.json",
     "syd1_independent_acceptance": "assignments/fleet-and-cohort/evidence/syd-1-independent-acceptance-20260725t225825z.json",
+    "syd1_boot_restore_fix": "assignments/fleet-and-cohort/evidence/syd-1-recovery-boot-restore-fix-20260726t140824z.json",
     "dallas1_qualify_evidence": "assignments/fleet-and-cohort/evidence/dallas-1-deployment-qualification-20260726t1106z.json",
-    "reconstructed_artifact_manifest_sha256": "a2dc6113d4b6965cb9895cc18023059638a71992e5abe448b3f1bd84b5570176",
-    "source_commit_rebuild_branch": "973f25c212553653b65811eacd28ed35b1b54124",
-    "signature_status_reconstructed_manifest": "UNSIGNED-PENDING-CONDUCTOR-RESIGN",
-    "signature_note": "Worktree teardown destroyed signed manifest refs; live host qualify used earlier re-signed successor archives (oci sha256 below). Peerit live bind must re-check which pin set is running on each host before catalogue flip."
+    "dallas1_boot_restore_fix": "assignments/fleet-and-cohort/evidence/dallas-1-patch-boot-restore-fix-20260726t150347z.json",
+    "dallas1_independent_acceptance": "assignments/fleet-and-cohort/evidence/dallas-1-independent-acceptance-20260726t160200z.json",
+    "two_relay_durability_recovery": "assignments/fleet-and-cohort/evidence/two-relay-durability-recovery-complete-20260726t1531z.json",
+    "peerit_describe_probe": "reports/blind-public-test-describe-probe-20260726.json",
+    "peerit_cell_drill": "reports/blind-public-test-cell-drill-20260726.json",
+    "signature_status_reconstructed_manifest": "RE-SIGNED-ENTRY-4",
+    "signature_note": "The re-signed entry-4 artifact manifest (sha256 a2dc6113…) is the live authority; hosts were patched to the boot-restore-fixed entry-4 build on 2026-07-26 (fleet evidence above). Peerit re-probed both DESCRIBE endpoints and ran the two-relay CELL e2e against the live deployment before flipping bound."
   },
   "pins": {
     "deployed_live_public_test": {
-      "note": "Exact digests recorded as running on syd-1 and dallas-1 qualify evidence (amd64).",
+      "note": "Entry-4 build (boot-restore-fixed) verified live via descriptor build/store identity + fleet patch evidence. amd64 manifest digests confirmed EXACT from the re-signed manifest by relay-side acceptance.",
       "edge": {
         "image": "hiverelay/blind-edge",
         "version": "1.0.0-rc.1.public-test.1",
-        "loaded_index_digest": "sha256:d53d21b417d75d291c46c30266e207758bd56675c99dd2607459356ea72c1855",
-        "linux_amd64_manifest_digest": "sha256:949d82e387672099fc87e0e1cba2c3e2591c5eb82e7fdea413efeeae4bcc4ec1",
-        "oci_archive_build2": "blind-edge-1.0.0-rc.1.public-test.1-build2.oci.tar",
-        "oci_archive_build2_sha256": "sha256:5aca19210990909d07b8525f9f26e718f0a220b246f2db4a646dadd9bee9eeb4"
+        "loaded_index_digest": "sha256:79a4e8e735681497772c06f6c35544bf4d6d77afdd0ed9f06bc6c5b2ae564fe7",
+        "linux_amd64_manifest_digest": "sha256:ae95c673f1df8de1d4a719b72fd36a140a12f3821f0ce7379376cadbc1331f57"
       },
       "daemon": {
         "image": "hiverelay/blind-daemon",
         "version": "1.0.0-rc.1.public-test.1",
-        "loaded_index_digest": "sha256:2da1d69138922875ef6df60aa3539658830724c50f4c0e8d9d37e662d2c42a6e",
-        "linux_amd64_manifest_digest": "sha256:baaa83c363602b71f665f2cf4966ed5298ca72287dd2026a53fa8cd9f21a8b7e",
-        "oci_archive_build2": "blind-daemon-1.0.0-rc.1.public-test.1-build2.oci.tar",
-        "oci_archive_build2_sha256": "sha256:d73256c37a4cde954b64d2baf928b5ef90ac5f6cd424dba0666ba97636fc88c3"
+        "loaded_index_digest": "sha256:57b7c2b1645b2c728efd761904b40a838b2db6111b0e9957b081d800ccf98f9f",
+        "linux_amd64_manifest_digest": "sha256:1903df25efbd10bd564a9029245f2812f0bc61cee43bfc36d6063f35186413b4"
       }
     },
-    "reconstructed_manifest_pending_resign": {
-      "note": "Digests from reconstructed artifact-manifest.json after teardown (NOT the digests recorded as currently deployed on hosts). For continuity only until conductor re-sign.",
-      "edge_canonical_image_index_digest": "sha256:79a4e8e735681497772c06f6c35544bf4d6d77afdd0ed9f06bc6c5b2ae564fe7",
-      "daemon_canonical_image_index_digest": "sha256:57b7c2b1645b2c728efd761904b40a838b2db6111b0e9957b081d800ccf98f9f",
-      "edge_linux_amd64_manifest_digest": "sha256:ae95c673f1df8de1d4a719b72fd36a140a12f3821f0ce7379376cadbc1331f57",
-      "daemon_linux_amd64_manifest_digest": "sha256:1903df25efbd10bd564a9029245f2812f0bc61cee43bfc36d6063f35186413b4"
+    "superseded_pre_boot_fix": {
+      "note": "Original deploy digests (replaced by the boot-restore-fix entry-4 redeploy on 2026-07-26); retained for continuity only.",
+      "edge_linux_amd64_manifest_digest": "sha256:949d82e387672099fc87e0e1cba2c3e2591c5eb82e7fdea413efeeae4bcc4ec1",
+      "daemon_linux_amd64_manifest_digest": "sha256:baaa83c363602b71f665f2cf4966ed5298ca72287dd2026a53fa8cd9f21a8b7e"
     },
     "protocol": {
-      "runtime_acceptance_record_sha256": "1febe4dbe0070fbf74e7f6707974ae0decd4174c3e351e78f97b5f1a8974d3a5",
-      "assembly_acceptance_record_sha256": "59bcf6862722fb94f009b50bcd84783a15968d7f90364790637e9e73a41e6d69",
-      "admission_parameter_hash": "6d633c1c4308e8eceb456e95116fe1d85cedae3fbd5e3028ab0c232a8cf3a8ec",
-      "ipc_hash": "PENDING_NAMED_FIELD_NOT_IN_FROZEN_JSON"
+      "deployed_wire_authority": {
+        "profile": "wire-authority-v1",
+        "specHash": "c9ddd235c3963461174e3de13c25a4c995b53ff320be822d8304f870766b6592",
+        "abiHash": "199ba15d94d4d112cfac520a67055ce15ec870f0f6f7bd9adaaf47d552334567",
+        "vectorSetHash": "fa54012cd0d7e4e620878c67e61f435ecb31ddec05a6283917987cc84279ee05",
+        "v2_extension": "wire-authority-v2 (baseAbiHash 199ba15d…, abi cc1abb0e…) adds FORWARD turn schemas only; relays run releaseProfileId 1 LIMITED_PUBLIC_TEST_V1, operationBits 0x1ffff, FORWARD bits zero",
+        "source": "public-test release worktree packages/blind-protocol/hiverelay-blind-wire-authority-v1.json (read-only reference, release commit 1ea903d)"
+      },
+      "vendored_client_artifact": {
+        "path": "vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs",
+        "artifactHash": "17a7e06df5fac172204dc64c79b3398e3bef38a1869b92bd4bed85b6ae3e74f7",
+        "wireTuple": {
+          "specHash": "470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9",
+          "abiHash": "aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d",
+          "vectorSetHash": "09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78"
+        }
+      },
+      "admission": {
+        "profileId": 7,
+        "schemeId": 9,
+        "conformanceClass": 1,
+        "roleBits": 49,
+        "cell_put_cost": "resourceClass 1 / leaseClass 1 / 10 units",
+        "note": "CELL PUT is offered only at leaseClass 1; the Peerit adapter default (4) is incompatible and was NOT used — drills redeem the advertised class 1 (PEERIT-BIND-GAP-LEASE-CLASS)."
+      }
+    },
+    "tuple_drift": {
+      "kind": "WIRE_TUPLE_DRIFT",
+      "vendored_tuple": "470a48af…/aaf29c82…/09bd04c8… (2026-07-16 artifact)",
+      "deployed_tuple": "c9ddd235…/199ba15d…/fa54012c… (2026-07-24 wire build)",
+      "descriptor_advertised_build_tuple": "placeholder (0x01/0x02/0x03 repeating patterns + evidence.example URLs on both relays) — disclosed relay-side finding DAL1-IAR-P2-1, routed for next material rotation",
+      "repin": "NOT re-pinned: the relay release's matching browser artifact (blind-client-control-v3.mjs) declares runtimeReady=false, realBrowserEvidenceAccepted=false, authorizesRelease=false, and the Peerit substrate's 46-file verification chain is built against the v1 artifact",
+      "compatibility_proof": "empirical — DESCRIBE re-probe PASS (client verification + independent signature/hash checks) and two-relay CELL write/readback PASS (signed receipts + byte-exact readback under each relay's own key) on 2026-07-26; INBOX/CORE unary covered by the drills report",
+      "report": "reports/blind-public-test-describe-probe-20260726.json (status drift-recorded, exit 2)"
     }
   },
   "failure_domains": [
@@ -65,16 +94,25 @@
       "describe_url": "https://relay-syd.p2phiverelay.xyz:443/api/blind/v1/describe",
       "edge_port": 443,
       "fleet_relay_port": 9100,
-      "fleet_relay_note": "Ordinary HiveRelay :9100 may track fleet canary/stable (Track A). Blind stack owns :443 only.",
       "qualify_status": "qualified_in_run_evidence",
-      "qualify_evidence": "syd-1-redeployment-qualification-20260725t223015z.json + syd-1-independent-acceptance-20260725t225825z.json",
       "relay_public_key": "52f4d78364180553a944629b5dd90834d3c3d4f7755cc2e452b3308329a88161",
+      "continuity_root_relay_public_key": "52f4d78364180553a944629b5dd90834d3c3d4f7755cc2e452b3308329a88161",
       "store_id": "5193f588aa3b55886e27dc35ead0777d6b3f787e575458d9b2d914f413b130de",
-      "descriptor_head_hash": "82dbf188f51d37453980534697280530a0e370dd8d7488cd222ed246e9fe2b10",
-      "descriptor_genesis_hash": "b2384d4b9e3480a7d4aefa53b97c6c1ac38a4ee1c793b283aefc6fde10f61e92",
+      "descriptor_head_hash": "2d46ac68851b1366ed1d89352707508d1986a7cebe4eb21afb041ee3425ffa5e",
+      "descriptor_head_sequence": 4,
+      "descriptor_window": "issued 82642 / expires 82646",
+      "descriptor_chain": [
+        { "sequence": 0, "hash": "b2384d4b9e3480a7d4aefa53b97c6c1ac38a4ee1c793b283aefc6fde10f61e92", "window": "82637-82641" },
+        { "sequence": 1, "hash": "82dbf188f51d37453980534697280530a0e370dd8d7488cd222ed246e9fe2b10", "window": "82638-82642" },
+        { "sequence": 2, "hash": "3d58df14c740257398a90a85751f83d1e8a68d50e0e430eb64153318d4fc8382", "window": "82639-82643" },
+        { "sequence": 3, "hash": "9b567e2aa5a2e44bcf5f0ed2930bf63c85b74bd891715cd79f638ea320b2fe6f", "window": "82640-82644" },
+        { "sequence": 4, "hash": "2d46ac68851b1366ed1d89352707508d1986a7cebe4eb21afb041ee3425ffa5e", "window": "82642-82646" }
+      ],
+      "admission_parameter_hash": "8a796071cfc688bfd23dfa50dc83a7a56431daae223f0f77236c51bad7476d30",
+      "admission_window": "validFrom 82640 / expires 82647",
       "expected_images": {
-        "edge_linux_amd64_manifest": "sha256:949d82e387672099fc87e0e1cba2c3e2591c5eb82e7fdea413efeeae4bcc4ec1",
-        "daemon_linux_amd64_manifest": "sha256:baaa83c363602b71f665f2cf4966ed5298ca72287dd2026a53fa8cd9f21a8b7e"
+        "edge_linux_amd64_manifest": "sha256:ae95c673f1df8de1d4a719b72fd36a140a12f3821f0ce7379376cadbc1331f57",
+        "daemon_linux_amd64_manifest": "sha256:1903df25efbd10bd564a9029245f2812f0bc61cee43bfc36d6063f35186413b4"
       }
     },
     {
@@ -91,39 +129,68 @@
       "edge_port": 443,
       "fleet_relay_port": 9100,
       "qualify_status": "qualified_in_run_evidence",
-      "qualify_evidence": "dallas-1-deployment-qualification-20260726t1106z.json",
       "relay_public_key": "8b3f4161271cfa511bc49fb03033d6441da01bf27c35a754e2a1b0d7df32e1d2",
-      "descriptor_head_hash": "a18d0dc92a56ed41553a5ca8dee71c9b79f4afeb2d8ad2865ef858f6fbc84ea5",
+      "continuity_root_relay_public_key": "8b3f4161271cfa511bc49fb03033d6441da01bf27c35a754e2a1b0d7df32e1d2",
+      "store_id": "744a7e97bd96f74e7ce7cd6a600a0ff1846da4fe3d39c35c611f12ffcd69cb90",
+      "descriptor_head_hash": "4325b15ab4d6e8ca98bf7e1c6199acb36a3d1c83641c1635ff86fe7a347e344a",
+      "descriptor_head_sequence": 2,
+      "descriptor_window": "issued 82642 / expires 82646",
+      "descriptor_chain": [
+        { "sequence": 0, "hash": "0fb814bdd1b649f4bf2c8dffac4b7ccbfab6de755c25829c877dab950b9ea5ce", "window": "82640-82644" },
+        { "sequence": 1, "hash": "a18d0dc92a56ed41553a5ca8dee71c9b79f4afeb2d8ad2865ef858f6fbc84ea5", "window": "82641-82645" },
+        { "sequence": 2, "hash": "4325b15ab4d6e8ca98bf7e1c6199acb36a3d1c83641c1635ff86fe7a347e344a", "window": "82642-82646" }
+      ],
+      "admission_parameter_hash": "75bde3f84de03f8ceeef9a7a26e8d17e498413e93419762da0e1ee88b1c9adcd",
+      "admission_window": "validFrom 82641 / expires 82645",
       "expected_images": {
-        "edge_linux_amd64_manifest": "sha256:949d82e387672099fc87e0e1cba2c3e2591c5eb82e7fdea413efeeae4bcc4ec1",
-        "daemon_linux_amd64_manifest": "sha256:baaa83c363602b71f665f2cf4966ed5298ca72287dd2026a53fa8cd9f21a8b7e",
-        "continuity": "same image digests as syd-1 + distinct node identity / descriptor head"
+        "edge_linux_amd64_manifest": "sha256:ae95c673f1df8de1d4a719b72fd36a140a12f3821f0ce7379376cadbc1331f57",
+        "daemon_linux_amd64_manifest": "sha256:1903df25efbd10bd564a9029245f2812f0bc61cee43bfc36d6063f35186413b4",
+        "continuity": "same image digests as syd-1 + distinct node identity / descriptor head / store id"
       }
     }
   ],
   "catalogue": {
-    "status": "scaffold_empty",
+    "status": "bound",
     "seed_publish": false,
     "seed_publish_gate": "blocked_until_peerit_two_fd_e2e_and_owner_seed_spec_review",
     "relays": [
       {
         "fd_id": "syd-1",
         "edge_url": "https://relay-syd.p2phiverelay.xyz:443",
-        "bound": false
+        "bound": true,
+        "bound_evidence": "reports/blind-public-test-cell-drill-20260726.json (syd-1 all checks pass)"
       },
       {
         "fd_id": "dal-1",
         "edge_url": "https://relay-dal.p2phiverelay.xyz:443",
-        "bound": false
+        "bound": true,
+        "bound_evidence": "reports/blind-public-test-cell-drill-20260726.json (dal-1 all checks pass)"
       }
     ]
   },
+  "consumer_gaps": [
+    {
+      "id": "PEERIT-BIND-GAP-FIRST-CONTACT",
+      "summary": "First-contact qualification of a non-genesis relay fails closed (UNTRUSTED_RELAY_IDENTITY) unless the descriptor-trust store already holds the exact genesis→head chain. The drills seed the store by walking the chain live (content-hash fetched, client-verified). Production needs the same bootstrap in the descriptor-trust-backend path.",
+      "severity": "canary-workaround-documented"
+    },
+    {
+      "id": "PEERIT-BIND-GAP-LEASE-CLASS",
+      "summary": "createBlindCellRelay defaults leaseClass 4; the deployed public-test admission offers CELL PUT only at leaseClass 1 (10 units) — an unredeemed default fails SPEND_INVALID. Drills pass leaseClass 1 explicitly. The adapter should negotiate from verified admission parameters.",
+      "severity": "canary-workaround-documented"
+    },
+    {
+      "id": "PEERIT-BIND-GAP-PROFILE-HASH-PLACEHOLDERS",
+      "summary": "Relay descriptors advertise placeholder protocol/transport profileHash values (0x0a/0x0b patterns, disclosed DAL1-IAR-P2-1), so the qualifier's contradiction pins are currently vacuous; descriptor hash + signature + chain + admission binding remain the substantive checks.",
+      "severity": "relay-side-followup"
+    }
+  ],
   "peerit_bind_checklist": [
-    "Re-probe both DESCRIBE endpoints; confirm descriptor head hashes still match this scaffold (or update pins from new evidence).",
-    "Confirm running container image digests still match deployed_live_public_test pins (not the reconstructed pending-resign set unless hosts were patched).",
-    "Run two-relay cell write/readback through Peerit client only.",
-    "Set catalogue.relays[].bound true only after e2e.",
-    "Keep seed_publish false until seed-spec owner review.",
-    "Do not mutate fleet/channels.json or Blind compose from Peerit."
+    { "item": "Re-probe both DESCRIBE endpoints; confirm descriptor head hashes still match this scaffold (or update pins from new evidence).", "status": "done", "evidence": "reports/blind-public-test-describe-probe-20260726.json — scaffold heads were stale (syd 82dbf188 seq-1, dal a18d0dc9 seq-1); catalogue updated to live heads (syd 2d46ac68 seq-4, dal 4325b15a seq-2) with full chains" },
+    { "item": "Confirm running container image digests still match deployed_live_public_test pins (not the reconstructed pending-resign set unless hosts were patched).", "status": "done", "evidence": "hosts were patched to the entry-4 build (edge amd64 ae95c673…/daemon amd64 1903df25…); catalogue pins updated to entry-4 with the superseded pre-fix set retained for continuity" },
+    { "item": "Run two-relay cell write/readback through Peerit client only.", "status": "done", "evidence": "reports/blind-public-test-cell-drill-20260726.json — PASS on both relays (signed acks, byte-exact readback, boundary proof)" },
+    { "item": "Set catalogue.relays[].bound true only after e2e.", "status": "done", "evidence": "this document — bound at 2026-07-26 after the two-relay e2e" },
+    { "item": "Keep seed_publish false until seed-spec owner review.", "status": "done", "evidence": "seed_publish remains false" },
+    { "item": "Do not mutate fleet/channels.json or Blind compose from Peerit.", "status": "done", "evidence": "no relay-side or fleet mutation performed; all changes are app-side in this worktree" }
   ]
 }

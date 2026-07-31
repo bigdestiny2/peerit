@@ -11,29 +11,12 @@
 //   sign(payload, namespace) -> { signature, publicKey, driveKey, namespace, algorithm },
 //   isDev, listUsers(), switchUser(pub), createUser(name)  (createUser is async)
 
-import { genKeyPair, sign as edSign, verify as edVerify, ready as cryptoReady, isSecure } from './crypto.js'
+import { genKeyPair, sign as edSign } from './crypto.js'
 import { hasAnyPearBridgeSurface, hasIdentityPearSurface, resolvePear } from './pear-api.js'
+import { verifiedIdentityEntry } from './identity-primitives.js'
 
 const NS = 'peerit'
-const HEX64 = /^[0-9a-f]{64}$/i
-
-// Normalize and cryptographically authenticate an identity entry before its seed
-// is ever installed as an in-memory signer or wrapped for durable storage.
-// Shape checks alone are insufficient: a mismatched seed/pubkey would create a
-// durable identity that can never produce records accepted as that public key.
-export async function verifiedIdentityEntry (entry, context = 'identity') {
-  const seed = String((entry && entry.seed) || '').toLowerCase()
-  const pubkey = String((entry && entry.pubkey) || '').toLowerCase()
-  const driveKey = String((entry && entry.driveKey) || pubkey).toLowerCase()
-  if (!HEX64.test(seed) || !HEX64.test(pubkey)) throw new Error(`${context}: invalid seed or public key`)
-  if (!HEX64.test(driveKey)) throw new Error(`${context}: invalid drive key`)
-  await cryptoReady()
-  if (!isSecure()) throw new Error(`${context}: secure Ed25519 verification is unavailable`)
-  const probe = `peerit-identity-entry-check:${pubkey}`
-  const signature = await edSign(seed, probe)
-  if (!(await edVerify(pubkey, probe, signature))) throw new Error(`${context}: seed does not match public key`)
-  return { seed, pubkey, driveKey, label: entry && entry.label ? String(entry.label) : 'imported' }
-}
+export { verifiedIdentityEntry } from './identity-primitives.js'
 
 class DevIdentity {
   // persistSeed: whether the raw Ed25519 SEED is allowed to be written to disk

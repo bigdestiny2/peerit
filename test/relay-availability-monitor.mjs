@@ -134,18 +134,20 @@ const appSource = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8')
 const writerStart = appSource.indexOf('async function ensureWriterIdentity')
 const writerEnd = appSource.indexOf('\nfunction isBridgeMode', writerStart)
 const writerGate = appSource.slice(writerStart, writerEnd)
-const firstAvailability = writerGate.indexOf('if (durableWebWriter) await requireAtomicWebWriter()')
+const firstAvailability = writerGate.indexOf('if (requiresAtomicWebWriter()) await requireAtomicWebWriter()')
 const vaultPrompt = writerGate.indexOf('await unlockVaultAtBoot')
 const finalAvailability = writerGate.lastIndexOf('await requireAtomicWebWriter()')
 const activeStart = writerGate.indexOf('if (identity.me().pubkey)')
 const activeEnd = writerGate.indexOf('\n  if (_ensuringWriter)', activeStart)
 const activeGate = writerGate.slice(activeStart, activeEnd)
 ok(firstAvailability >= 0 && firstAvailability < vaultPrompt,
-  'public-web write checks atomic quorum before vault prompt or identity mint')
+  'legacy public-web write checks atomic quorum before vault prompt or identity mint')
 ok(activeGate.indexOf('await assertDurableIdentity') >= 0 && activeGate.lastIndexOf('await requireAtomicWebWriter()') > activeGate.indexOf('await assertDurableIdentity'),
   'an existing durable identity rechecks quorum after async device verification and immediately before return')
 ok(finalAvailability > vaultPrompt,
-  'public-web write rechecks atomic quorum after identity activation and before signing')
+  'legacy public-web write rechecks atomic quorum after identity activation and before signing')
+ok(appSource.includes('const durableWebWriter = isWritablePublicWebRuntime()') && appSource.includes('replacement substrate deliberately does not'),
+  'replacement public-web identity remains durable without making relay quorum an authoring gate')
 ok(appSource.includes('atomic.available === true && atomic.pending !== true && atomic.recoveryNeeded !== true') && !appSource.includes('status.atomicWriterAvailable'),
   'Settings and writer UI require available atomic commit with no pending/recovery state')
 ok(appSource.includes('const tokenCache = new Map()') && appSource.includes('tokenCache,') && appSource.includes('tokenCache.delete(apiBase)'),

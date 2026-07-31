@@ -1,0 +1,29 @@
+{
+  "schema": "PeeritVendoredHiveRelayBlindClientV1",
+  "version": 1,
+  "upstreamPackage": "@hiverelay/blind-client",
+  "upstreamArtifactPath": "browser-artifacts/blind-client-control-v1.mjs",
+  "artifactPath": "vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs",
+  "artifactLength": 224014,
+  "artifactHash": "17a7e06df5fac172204dc64c79b3398e3bef38a1869b92bd4bed85b6ae3e74f7",
+  "manifestHash": "bf48196c56f419f02e27427f3b36bac8c8aa2a2eaa3c14475f6aceb85c195c5b",
+  "sourceClosureHash": "38cb0252e218ce07b616fd2697b14af42d629ce0c98a1278221cc95eb6ab91e0",
+  "wireTuple": {
+    "specHash": "470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9",
+    "abiHash": "aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d",
+    "vectorSetHash": "09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78"
+  },
+  "clientComposition": {
+    "formatHash": "5637708aff4a6e93a6ff3a2f96361aa0b1597c229346e124eebeb2d7618ae09a",
+    "vectorSetHash": "ea176ea78a611256689604541e55ba420d426dda2fa4dd64fb3ac9ac7503934d"
+  },
+  "chromium": {
+    "version": "Google Chrome for Testing 151.0.7922.34"
+  },
+  "crossHost": {
+    "platform": "linux",
+    "architecture": "arm64",
+    "containerImageId": "sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4",
+    "node": "v22.23.1"
+  }
+}

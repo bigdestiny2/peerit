@@ -8,16 +8,16 @@
 // build-web.mjs, which builds on import.
 
 // Rewrite the CSP <meta> in an HTML string for a web deployment.
-export function patchCspForWeb (html, { dhtRelay = '', connectOrigins = [] } = {}) {
+export function patchCspForWeb (html, { dhtRelay = '', connectOrigins = [], allowBlobModules = false } = {}) {
   return html.replace(/(<meta http-equiv="Content-Security-Policy" content=")([^"]*)(")/, (m, before, policy, after) => {
-    return before + patchCsp(policy, { dhtRelay, connectOrigins }) + after
+    return before + patchCsp(policy, { dhtRelay, connectOrigins, allowBlobModules }) + after
   })
 }
 
 // Transform a raw CSP policy string:
 //   - script-src: add 'wasm-unsafe-eval' ONLY when a DHT-relay WASM transport is bundled.
 //   - connect-src: add the specific relay/DHT/mirror origins (never a wildcard).
-export function patchCsp (policy, { dhtRelay = '', connectOrigins = [] } = {}) {
+export function patchCsp (policy, { dhtRelay = '', connectOrigins = [], allowBlobModules = false } = {}) {
   const wsOrigin = dhtRelay ? cspSourceForWebSocket(dhtRelay) : null
   const connectSources = [...connectOrigins]
   if (wsOrigin) addSource(connectSources, wsOrigin)
@@ -31,13 +31,17 @@ export function patchCsp (policy, { dhtRelay = '', connectOrigins = [] } = {}) {
     if (name === 'script-src') {
       sawScript = true
       if (dhtRelay) addSource(sources, "'wasm-unsafe-eval'")
+      if (allowBlobModules) addSource(sources, 'blob:')
     } else if (name === 'connect-src') {
       sawConnect = true
       for (const s of connectSources) addSource(sources, s)
     }
     out.push([name, ...sources].join(' '))
   }
-  if (!sawScript && dhtRelay) out.push("script-src 'self' 'wasm-unsafe-eval'")
+  if (!sawScript && (dhtRelay || allowBlobModules)) {
+    out.push(['script-src', "'self'", ...(dhtRelay ? ["'wasm-unsafe-eval'"] : []),
+      ...(allowBlobModules ? ['blob:'] : [])].join(' '))
+  }
   if (!sawConnect) out.push(['connect-src', "'self'", ...connectSources].join(' '))
   return out.join('; ')
 }

@@ -11,6 +11,17 @@ import { dirname, join, posix, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dedupeRelayList, normalizeRelayRosterPayload, verifyRelayRoster } from '../js/relay-roster.js'
 import { RELEASE_MSG_VERSION, verifyReleaseManifest } from '../js/release-verify.js'
+import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from '../js/substrate/production-release-authority.mjs'
+import { normalizePeeritReleaseRelayHintsV1 } from '../js/substrate/release-relay-hints.mjs'
+import {
+  PEERIT_APP_ARTIFACT_PATH,
+  PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE,
+  PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE,
+  PEERIT_SEED_BOOTSTRAP_PATH,
+  PEERIT_WEB_ASSET_MANIFEST_PATH,
+  verifyPeeritSubstrateRuntimeArtifactV1
+} from './substrate-runtime-artifact.mjs'
+import { verifyPeeritProductionPinHistoryReleaseV1 } from './production-pin-history-release.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const WEB = join(ROOT, 'web')
@@ -103,11 +114,51 @@ function repoPath (file, label) {
 }
 
 export function releaseConfig (raw) {
-  if (typeof raw.readonly !== 'boolean') throw new Error('deploy/web-release.json must explicitly set readonly=true or readonly=false')
   const releaseSequence = raw.releaseSequence
   if (!Number.isSafeInteger(releaseSequence) || releaseSequence < 1) {
     throw new Error('deploy/web-release.json releaseSequence must be a positive safe integer')
   }
+  const substrateProfile = String(raw.substrateProfile || '').trim()
+  const pinnedReleaseKey = String(raw.pinnedReleaseKey || raw.releaseKey || '').trim().toLowerCase()
+  if (!HEX64.test(pinnedReleaseKey)) throw new Error('deploy/web-release.json has an invalid pinnedReleaseKey')
+  if (substrateProfile) {
+    if (releaseSequence < PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE) {
+      throw new Error(`blind-substrate replacement releaseSequence must be at least ${PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE}; sequence 6 belongs to the retired legacy artifact`)
+    }
+    if (substrateProfile !== 'blind-v1') throw new Error(`unsupported Peerit substrate profile: ${substrateProfile}`)
+    const forbidden = ['relay', 'bootstrapRelays', 'relayBackend', 'readonly', 'readOnly', 'relayRoster', 'relayRosterMirrors', 'pinnedRosterKey', 'roster', 'dhtRelay', 'shardRoster', 'seedOutboxes']
+      .filter(key => raw[key] != null && raw[key] !== '' && (!Array.isArray(raw[key]) || raw[key].length > 0))
+    if (forbidden.length) throw new Error(`blind-substrate release refuses legacy transport configuration: ${forbidden.join(', ')}`)
+    const relayHints = normalizePeeritReleaseRelayHintsV1(
+      raw.relayHints == null ? [] : raw.relayHints,
+      'deploy/web-release.json')
+    const productionPinHistoryBundle = String(raw.productionPinHistoryBundle || '').trim()
+    if (productionPinHistoryBundle &&
+        productionPinHistoryBundle !== PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)) {
+      throw new Error(`productionPinHistoryBundle must equal ${PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)}`)
+    }
+    const peeritSeedBootstrapBundle = String(raw.peeritSeedBootstrapBundle || '').trim()
+    const peeritSeedDiscoveryAuthorityPublicKey = String(
+      raw.peeritSeedDiscoveryAuthorityPublicKey || '').trim().toLowerCase()
+    if (releaseSequence >= PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE) {
+      if (!peeritSeedBootstrapBundle || !HEX64.test(peeritSeedDiscoveryAuthorityPublicKey)) {
+        throw new Error('sequence-13+ release requires a seed bootstrap bundle and discovery authority key')
+      }
+    } else if (peeritSeedBootstrapBundle || peeritSeedDiscoveryAuthorityPublicKey) {
+      throw new Error('Peerit seed bootstrap configuration requires releaseSequence 13 or later')
+    }
+    return {
+      transport: 'blind-substrate',
+      substrateProfile,
+      relayHints,
+      productionPinHistoryBundle,
+      peeritSeedBootstrapBundle,
+      peeritSeedDiscoveryAuthorityPublicKey,
+      releaseSequence,
+      pinnedReleaseKey
+    }
+  }
+  if (typeof raw.readonly !== 'boolean') throw new Error('legacy migration compatibility must explicitly set readonly=true or readonly=false')
   const bootstrapRelays = Array.isArray(raw.bootstrapRelays)
     ? raw.bootstrapRelays.map((value) => String(value).trim()).filter(Boolean)
     : String(raw.relay || '').split(',').map((value) => value.trim()).filter(Boolean)
@@ -124,7 +175,6 @@ export function releaseConfig (raw) {
   const relayRoster = String(raw.relayRoster || 'relay-roster.json').trim()
   if (!safeManifestPath(relayRoster)) throw new Error('deploy/web-release.json relayRoster must be a safe repository-relative path')
   const pinnedRosterKey = String(raw.pinnedRosterKey || raw.rosterKey || '').trim().toLowerCase()
-  const pinnedReleaseKey = String(raw.pinnedReleaseKey || raw.releaseKey || '').trim().toLowerCase()
   if (!HEX64.test(pinnedRosterKey)) throw new Error('deploy/web-release.json has an invalid pinnedRosterKey')
   if (!HEX64.test(pinnedReleaseKey)) throw new Error('deploy/web-release.json has an invalid pinnedReleaseKey')
 
@@ -148,6 +198,7 @@ export function releaseConfig (raw) {
   }
 
   return {
+    transport: 'legacy-migration-compatibility',
     releaseSequence,
     bootstrapRelays,
     relay: bootstrapRelays.join(','),
@@ -251,6 +302,22 @@ function expectedSeedOutboxes (items) {
 
 export function verifyIndexConfig (html, release) {
   const metas = metaMap(html)
+  if (release.transport === 'blind-substrate') {
+    requireMeta(metas, 'peerit-substrate', release.substrateProfile)
+    if (release.relayHints.length) requireMeta(metas, 'peerit-substrate-relays', release.relayHints.join(','))
+    else forbidMeta(metas, 'peerit-substrate-relays')
+    requireMeta(metas, 'peerit-release-key', release.pinnedReleaseKey)
+    requireMeta(metas, 'peerit-release-sequence', String(release.releaseSequence))
+    requireMeta(metas, 'peerit-production-web-asset-manifest', `/${PEERIT_WEB_ASSET_MANIFEST_PATH}`)
+    if (release.productionPinHistoryBundle) {
+      requireMeta(metas, 'peerit-production-pin-history', PEERIT_PRODUCTION_PIN_HISTORY_PATH)
+    } else {
+      forbidMeta(metas, 'peerit-production-pin-history')
+    }
+    for (const legacy of ['peerit-relay', 'peerit-relay-backend', 'peerit-relay-readonly', 'peerit-relay-roster', 'peerit-relay-roster-key', 'peerit-dht-relay', 'peerit-shard-roster', 'peerit-seed-outboxes']) forbidMeta(metas, legacy)
+    if (String(html).includes('outbox.peerit.site')) throw new Error('blind-substrate index contains the retired outbox.peerit.site destination')
+    return
+  }
   requireMeta(metas, 'peerit-relay', release.relay)
   requireMeta(metas, 'peerit-relay-readonly', release.readonly)
   requireMeta(metas, 'peerit-relay-roster', [release.relayRoster, ...release.relayRosterMirrors].join(','))
@@ -276,7 +343,7 @@ export function verifyIndexConfig (html, release) {
   }
 }
 
-export function verifyManifestConfig (manifest, release, rosterHash, shardRosterHash, driveKey) {
+export function verifyManifestConfig (manifest, release, rosterHash, shardRosterHash, driveKey, seedBootstrapSha256 = '') {
   if (manifest.releaseSequence !== release.releaseSequence) {
     throw new Error('asset-manifest.json releaseSequence does not match deploy/web-release.json')
   }
@@ -284,6 +351,44 @@ export function verifyManifestConfig (manifest, release, rosterHash, shardRoster
   if (manifest.driveKey !== driveKey) throw new Error('asset-manifest.json driveKey does not match manifest.json')
   if (!manifest.webRelease || typeof manifest.webRelease !== 'object' || Array.isArray(manifest.webRelease)) {
     throw new Error('asset-manifest.json webRelease is missing')
+  }
+  if (release.transport === 'blind-substrate') {
+    const appArtifactHash = String(manifest.webRelease.appArtifactHash || '')
+    const canonicalWebAssetManifestHash = String(
+      manifest.webRelease.canonicalWebAssetManifestHash || '')
+    if (!HEX64.test(appArtifactHash) || !HEX64.test(canonicalWebAssetManifestHash)) {
+      throw new Error('asset-manifest.json webRelease has invalid canonical replacement hashes')
+    }
+    if (release.peeritSeedBootstrapBundle && !HEX64.test(seedBootstrapSha256)) {
+      throw new Error('local Peerit seed bootstrap has an invalid SHA-256')
+    }
+    const expected = {
+      releaseSequence: release.releaseSequence,
+      transport: 'blind-substrate',
+      substrateProfile: release.substrateProfile,
+      relayHints: release.relayHints,
+      networkDelivery: 'profile-gated',
+      legacyDestination: null,
+      productionPinHistory: release.productionPinHistoryBundle
+        ? PEERIT_PRODUCTION_PIN_HISTORY_PATH
+        : null,
+      appArtifact: `/${PEERIT_APP_ARTIFACT_PATH}`,
+      appArtifactHash,
+      canonicalWebAssetManifest: `/${PEERIT_WEB_ASSET_MANIFEST_PATH}`,
+      canonicalWebAssetManifestHash,
+      ...(release.peeritSeedBootstrapBundle
+        ? {
+            peeritSeedBootstrap: `/${PEERIT_SEED_BOOTSTRAP_PATH}`,
+            peeritSeedBootstrapSha256: seedBootstrapSha256,
+            peeritSeedDiscoveryAuthorityPublicKey: release.peeritSeedDiscoveryAuthorityPublicKey,
+            peeritSeedBootstrapReleaseSequence: release.releaseSequence
+          }
+        : {}),
+      releaseKey: release.pinnedReleaseKey
+    }
+    if (!equalJson(manifest.webRelease, expected)) throw new Error('asset-manifest.json webRelease does not match the replacement substrate config')
+    if (manifest.files && Object.hasOwn(manifest.files, 'relay-roster.json')) throw new Error('blind-substrate asset manifest must not ship a legacy relay roster')
+    return
   }
   const expected = {
     releaseSequence: release.releaseSequence,
@@ -420,15 +525,19 @@ async function main () {
     throw new Error('manifest.json url/homepage do not match its driveKey')
   }
 
-  const rosterBytes = await readRequired(repoPath(release.relayRoster, 'relayRoster'), release.relayRoster)
-  const rosterHash = sha256(rosterBytes)
-  const roster = parseJson(rosterBytes, release.relayRoster)
-  const verifiedRoster = await verifyRelayRoster(roster, { expectedKey: release.pinnedRosterKey })
-  if (!equalJson(verifiedRoster.payload, release.roster)) {
-    throw new Error('signed relay roster payload does not match deploy/web-release.json')
-  }
-  if (release.readonly === 'false' && verifiedRoster.relays.length < 2 && !verifiedRoster.payload.networkQuorum && verifiedRoster.payload.singleIngressWriter !== true) {
-    throw new Error('writable public web releases require at least two signed roster relays, a signed network-quorum policy, or a signed single-ingress policy')
+  let rosterBytes = null
+  let rosterHash = ''
+  if (release.transport !== 'blind-substrate') {
+    rosterBytes = await readRequired(repoPath(release.relayRoster, 'relayRoster'), release.relayRoster)
+    rosterHash = sha256(rosterBytes)
+    const roster = parseJson(rosterBytes, release.relayRoster)
+    const verifiedRoster = await verifyRelayRoster(roster, { expectedKey: release.pinnedRosterKey })
+    if (!equalJson(verifiedRoster.payload, release.roster)) {
+      throw new Error('signed relay roster payload does not match deploy/web-release.json')
+    }
+    if (release.readonly === 'false' && verifiedRoster.relays.length < 2 && !verifiedRoster.payload.networkQuorum && verifiedRoster.payload.singleIngressWriter !== true) {
+      throw new Error('writable public web releases require at least two signed roster relays, a signed network-quorum policy, or a signed single-ingress policy')
+    }
   }
 
   let shardRosterBytes = null
@@ -436,6 +545,14 @@ async function main () {
   if (release.shardRoster) {
     shardRosterBytes = await readRequired(repoPath(release.shardRoster, 'shardRoster'), release.shardRoster)
     shardRosterHash = sha256(shardRosterBytes)
+  }
+
+  let seedBootstrapSha256 = ''
+  if (release.peeritSeedBootstrapBundle) {
+    const seedBootstrapBytes = await readRequired(
+      repoPath(release.peeritSeedBootstrapBundle, 'peeritSeedBootstrapBundle'),
+      release.peeritSeedBootstrapBundle)
+    seedBootstrapSha256 = sha256(seedBootstrapBytes)
   }
 
   const localManifestBytes = await readRequired(join(WEB, 'asset-manifest.json'), 'web/asset-manifest.json')
@@ -447,7 +564,7 @@ async function main () {
   const signature = parseJson(localSignatureBytes, 'web/asset-manifest.sig')
   const entries = manifestEntries(manifest)
 
-  verifyManifestConfig(manifest, release, rosterHash, shardRosterHash, driveKey)
+  verifyManifestConfig(manifest, release, rosterHash, shardRosterHash, driveKey, seedBootstrapSha256)
   await verifyReleaseManifest({
     manifest,
     signature,
@@ -460,13 +577,44 @@ async function main () {
   const localIndex = localAssets.get('index.html')
   if (!localIndex) throw new Error('asset-manifest.json must include index.html')
   verifyIndexConfig(localIndex.toString('utf8'), release)
+  if (release.transport === 'blind-substrate') {
+    const runtimeFiles = new Map(Object.keys(manifest.files).map(file => [
+      file,
+      localAssets.get(file)
+    ]))
+    const runtime = verifyPeeritSubstrateRuntimeArtifactV1({
+      files: runtimeFiles,
+      releaseSequence: release.releaseSequence,
+      releaseKey: release.pinnedReleaseKey
+    })
+    if (manifest.webRelease.appArtifactHash !== runtime.appArtifactHashHex ||
+        manifest.webRelease.canonicalWebAssetManifestHash !== runtime.webAssetManifestHashHex) {
+      throw new Error('signed JSON manifest does not cross-bind the exact canonical replacement artifacts')
+    }
+    if (release.peeritSeedBootstrapBundle &&
+        (!runtime.seedBootstrap ||
+         runtime.seedBootstrap.path !== manifest.webRelease.peeritSeedBootstrap ||
+         runtime.seedBootstrap.sha256 !== seedBootstrapSha256 ||
+         runtime.seedBootstrap.authorityPublicKey !== release.peeritSeedDiscoveryAuthorityPublicKey ||
+         runtime.seedBootstrap.releaseSequence !== release.releaseSequence)) {
+      throw new Error('signed JSON manifest does not cross-bind the exact Peerit seed bootstrap')
+    }
+    if (release.productionPinHistoryBundle) {
+      await verifyPeeritProductionPinHistoryReleaseV1({
+        bundleBytes: runtimeFiles.get(release.productionPinHistoryBundle),
+        releaseSequence: release.releaseSequence,
+        appArtifactHash: runtime.appArtifactHash,
+        webAssetManifestHash: runtime.webAssetManifestHash
+      })
+    }
+  }
   if (!localAssets.get('verify.html').toString('utf8').includes(driveKey)) {
     throw new Error('verify.html does not carry the release driveKey')
   }
   if (!localAssets.get('verify.html').toString('utf8').includes(release.pinnedReleaseKey)) {
     throw new Error('verify.html does not carry the pinned release key')
   }
-  if (!localAssets.get('sw.js').toString('utf8').includes(`"relay-roster.json":"${rosterHash}"`)) {
+  if (release.transport !== 'blind-substrate' && !localAssets.get('sw.js').toString('utf8').includes(`"relay-roster.json":"${rosterHash}"`)) {
     throw new Error('sw.js does not pin the configured relay roster')
   }
   if (release.shardRoster && !localAssets.get('sw.js').toString('utf8').includes(`"${release.shardRoster}":"${shardRosterHash}"`)) {
@@ -485,9 +633,11 @@ async function main () {
   }
 
   await verifyRemoteAssets(baseUrl, entries, localAssets, nonce)
-  const deployedRoster = localAssets.get('relay-roster.json')
-  if (!deployedRoster || !deployedRoster.equals(rosterBytes)) {
-    throw new Error('deployed relay-roster.json differs from the configured signed roster')
+  if (release.transport !== 'blind-substrate') {
+    const deployedRoster = localAssets.get('relay-roster.json')
+    if (!deployedRoster || !deployedRoster.equals(rosterBytes)) {
+      throw new Error('deployed relay-roster.json differs from the configured signed roster')
+    }
   }
   if (release.shardRoster) {
     const deployedShardRoster = localAssets.get(release.shardRoster)
@@ -496,7 +646,7 @@ async function main () {
     }
   }
 
-  console.log(`[deploy-verify] PASS ${RELEASE_MSG_VERSION}: sequence ${release.releaseSequence}; readonly=${release.readonly}; ${manifest.files && Object.keys(manifest.files).length} files + ${manifest.controls && Object.keys(manifest.controls).length} controls; drive ${driveKey.slice(0, 12)}…; key ${release.pinnedReleaseKey.slice(0, 12)}…`)
+  console.log(`[deploy-verify] PASS ${RELEASE_MSG_VERSION}: sequence ${release.releaseSequence}; transport=${release.transport}; ${manifest.files && Object.keys(manifest.files).length} files + ${manifest.controls && Object.keys(manifest.controls).length} controls; drive ${driveKey.slice(0, 12)}…; key ${release.pinnedReleaseKey.slice(0, 12)}…`)
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {

@@ -109,15 +109,22 @@ async function main () {
     'config/seed-snapshot.json',
     'deploy/web-release.json',
     'deploy/CAPACITY.md',
-    'deploy/peerit-relay/Caddyfile',
-    'deploy/peerit-relay/README.md',
-    'deploy/peerit-relay/docker-compose.yml',
+    'docs/PEERIT-BLIND-SUBSTRATE-DELIVERY-MAP.md',
+    'docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md',
+    'js/substrate',
+    'protocol',
+    'protocol/peerit-release-control-v1.cenc',
+    'protocol/vectors/peerit-release-control-v1.manifest.cenc',
+    'scripts/generate-peerit-release-control.mjs',
+    'scripts/verify-substrate-profile-inventory.mjs',
     'docs/PROTOCOL-V3-CONTENT-IDENTITY.md',
-    'scripts/audit-live-legacy-actions.mjs',
-    'scripts/local-writable-two-relay.mjs',
-    'scripts/soak-atomic-two-relay.mjs',
+    'test/peerit-relay-consumer.mjs',
+    'test/peerit-release-control.mjs',
+    'test/peerit-substrate-sync.mjs',
     'test/seed-idempotency.mjs'
   ]) assert.ok(closure.includes(required), `release input closure includes ${required}`)
+  assert.equal(closure.some((file) => file.startsWith('deploy/peerit-relay/')), false,
+    'replacement release closure excludes the retired app-specific relay appliance')
   assert.equal(closure.some((file) => file.startsWith('docs/diagrams/')), false, 'unrelated diagrams are outside the release cleanliness gate')
   const buildInputDirty = filterReleaseDirtyLines([
     'M  scripts/service-worker-source.mjs',
@@ -225,13 +232,25 @@ async function main () {
   const { parent, fixture } = copyFixture()
   try {
     const configPath = join(fixture, 'deploy', 'web-release.json')
-    const config = JSON.parse(readFileSync(configPath, 'utf8'))
-    config.readonly = true
-    config.relayBackend = ''
-    config.relayRosterMirrors = []
-    config.dhtRelay = ''
-    config.shardRoster = ''
-    config.pinnedReleaseKey = publicKeyFromSeed(TEST_SEED)
+    const replacementConfig = JSON.parse(readFileSync(configPath, 'utf8'))
+    const compatibilityRoster = JSON.parse(readFileSync(join(fixture, 'relay-roster.json'), 'utf8'))
+    // Exercise the generic build-once/sign/verify machinery with an explicitly
+    // separate migration-compatibility fixture. The checked-in official config
+    // remains blind-v1 and is deliberately blocked by the unfinished profile.
+    const config = {
+      bootstrapRelays: compatibilityRoster.payload.relays,
+      readonly: true,
+      releaseSequence: replacementConfig.releaseSequence,
+      relayBackend: '',
+      relayRoster: 'relay-roster.json',
+      relayRosterMirrors: [],
+      pinnedRosterKey: compatibilityRoster.signature.key,
+      pinnedReleaseKey: publicKeyFromSeed(TEST_SEED),
+      dhtRelay: '',
+      shardRoster: '',
+      seedOutboxes: [],
+      roster: compatibilityRoster.payload
+    }
     writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n')
     const requestPath = join(fixture, 'deploy', 'web-signing-request.json')
     if (existsSync(requestPath)) unlinkSync(requestPath) // isolate from the checkout's tracked prior-release record
@@ -259,6 +278,7 @@ async function main () {
     assert.equal(builtManifest.releaseSequence, config.releaseSequence)
     assert.deepEqual(builtManifest.webRelease, {
       releaseSequence: config.releaseSequence,
+      transport: 'legacy-migration-compatibility',
       relay: config.bootstrapRelays.join(','),
       relayBackend: config.relayBackend || '',
       readonly: 'true',

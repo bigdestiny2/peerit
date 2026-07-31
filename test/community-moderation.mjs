@@ -60,6 +60,8 @@ ok(applyModerationPolicy(consensus, { view: MODERATION_VIEW.OPEN }).visibility =
   'Open view displays content even when consensus says buried')
 ok(applyModerationPolicy(aggregateReports([]), { view: MODERATION_VIEW.COMMUNITY, moderatorRemoved: true }).visibility === VISIBILITY.COLLAPSED,
   'Community view applies the moderator overlay')
+ok(applyModerationPolicy(consensus, { view: MODERATION_VIEW.COMMUNITY, moderatorRemoved: true }).visibility === VISIBILITY.BURIED,
+  'a moderator removal cannot downgrade a stronger buried consensus')
 ok(applyModerationPolicy(aggregateReports([]), { view: MODERATION_VIEW.CONSENSUS, moderatorRemoved: true }).visibility === VISIBILITY.VISIBLE,
   'Consensus-only view labels but does not apply moderator removal')
 const permutedA = aggregateReports([

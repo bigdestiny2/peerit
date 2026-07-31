@@ -17,6 +17,7 @@
 
 import { createGossip } from './gossip.js'
 import { hasAnyPearBridgeSurface, hasGossipPearSurface, resolvePear } from './pear-api.js'
+import { createPeeritSubstrateSync } from './substrate/peerit-substrate-sync.js'
 
 export const APP_ID = 'peerit'
 
@@ -213,6 +214,14 @@ const GLOBAL_GROUP_KEY = null
 //                    simple case and the original tests.
 export function createSync (opts = {}) {
   const storage = opts.storage || (typeof localStorage !== 'undefined' ? localStorage : memoryStorage())
+  if (opts.mode === 'substrate') {
+    return createPeeritSubstrateSync({
+      ...opts,
+      storage,
+      relays: opts.relays || [],
+      relayHints: opts.relayHints || []
+    })
+  }
   const pear = resolvePear(opts)
   if ((opts.mode || 'gossip') === 'gossip') {
     if (!opts.forceDev && hasAnyPearBridgeSurface(pear) && !hasGossipPearSurface(pear)) {

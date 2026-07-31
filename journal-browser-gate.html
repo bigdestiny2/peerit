@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Peerit IndexedDB journal gate</title>
+</head>
+<body data-status="running">
+  <main>
+    <h1>Peerit IndexedDB journal gate</h1>
+    <pre id="result">running</pre>
+  </main>
+  <script type="module">
+    import {
+      JOURNAL_DB_VERSION,
+      JOURNAL_STORES
+    } from './js/substrate/peerit-journal-backend.js'
+    import {
+      LEGACY_SUBSTRATE_STATE_KEY,
+      createIndexedDbPeeritJournal
+    } from './js/substrate/peerit-journal.js'
+
+    const result = document.querySelector('#result')
+    const checks = []
+    const dbName = `peerit-journal-iab-${Date.now()}`
+    const id = number => Number(number).toString(16).padStart(64, '0')
+
+    function check (condition, message) {
+      if (!condition) throw new Error(message)
+      checks.push(message)
+    }
+
+    function deleteDatabase (name) {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.deleteDatabase(name)
+        request.onsuccess = () => resolve()
+        request.onerror = () => reject(request.error)
+        request.onblocked = () => reject(new Error(`delete blocked for ${name}`))
+      })
+    }
+
+    function databaseExists (name) {
+      return indexedDB.databases().then(databases => databases.some(database => database.name === name))
+    }
+
+    function journal (name) {
+      return createIndexedDbPeeritJournal({
+        indexedDB,
+        IDBKeyRange,
+        dbName: name,
+        legacyStorage: null,
+        markerStorage: null
+      })
+    }
+
+    function commit (target, number) {
+      return target.commitIntent({
+        intentId: id(number),
+        logicalId: id(number + 10_000),
+        operationBytes: JSON.stringify({
+          version: 1,
+          operations: [{ type: 'post', data: { id: String(number) } }]
+        }),
+        records: [{ key: `post!${number}`, value: { id: String(number), body: `browser ${number}` } }],
+        createdAt: number,
+        discoveryState: 'queued'
+      })
+    }
+
+    async function createLegacyDatabase (name) {
+      await deleteDatabase(name)
+      await new Promise((resolve, reject) => {
+        const request = indexedDB.open(name, 1)
+        request.onupgradeneeded = () => request.result.createObjectStore('state')
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => {
+          const db = request.result
+          const tx = db.transaction(['state'], 'readwrite')
+          tx.objectStore('state').put(JSON.stringify({
+            version: 1,
+            revision: 1,
+            viewRevision: 1,
+            view: { 'post!legacy': { id: 'legacy', body: 'migrated in browser' } },
+            intents: {
+              [id(50)]: {
+                intentId: id(50),
+                logicalId: id(10_050),
+                operationBytes: JSON.stringify({
+                  version: 1,
+                  operations: [{ type: 'post', data: { id: 'legacy' } }]
+                }),
+                recordKeys: ['post!legacy'],
+                createdAt: 1,
+                updatedAt: 1,
+                targets: {}
+              }
+            }
+          }), LEGACY_SUBSTRATE_STATE_KEY)
+          tx.oncomplete = () => { db.close(); resolve() }
+          tx.onerror = () => reject(tx.error)
+        }
+      })
+    }
+
+    async function run () {
+      await deleteDatabase(dbName)
+      const first = journal(dbName)
+      const second = journal(dbName)
+      const ready = await first.ready()
+      check(ready.dormant === true && !(await databaseExists(dbName)),
+        'fresh lurker readiness creates no IndexedDB database')
+
+      await second.ready()
+      await Promise.all([commit(first, 1), commit(second, 2)])
+      const summary = await first.summary()
+      check(summary.intentCount === 2 && summary.viewRecordCount === 2,
+        'independent connections commit without lost metadata or view records')
+
+      const duplicates = await Promise.all([commit(first, 3), commit(second, 3)])
+      check(duplicates.filter(value => value.duplicate).length === 1,
+        'independent connections atomically deduplicate one exact intent')
+
+      const claims = await Promise.all([
+        first.claimTarget({
+          intentId: id(1), targetId: 'relay', state: 'delivering',
+          attemptToken: 'connection-one', leaseUntil: 1000, now: 0
+        }),
+        second.claimTarget({
+          intentId: id(1), targetId: 'relay', state: 'delivering',
+          attemptToken: 'connection-two', leaseUntil: 1000, now: 0
+        })
+      ])
+      check(claims.filter(Boolean).length === 1,
+        'independent connections elect one delivery owner without Web Locks')
+
+      const db = first.backend.db
+      const stores = [...db.objectStoreNames]
+      const tx = db.transaction([JOURNAL_STORES.INTENTS, JOURNAL_STORES.TARGETS], 'readonly')
+      const indexes = [...tx.objectStore(JOURNAL_STORES.INTENTS).indexNames]
+      const targetStore = tx.objectStore(JOURNAL_STORES.TARGETS)
+      const targetIndexes = [...targetStore.indexNames].sort()
+      const dueIndex = targetStore.index('targetStateDueOrder')
+      check(db.version === JOURNAL_DB_VERSION &&
+        Object.values(JOURNAL_STORES).every(name => stores.includes(name)) &&
+        indexes.includes('pendingOrderKey') &&
+        JSON.stringify(targetIndexes) === JSON.stringify([
+          'intentId', 'leaseUntil', 'state', 'stateLeaseOrder',
+          'targetStateDueOrder', 'targetStateLeaseOrder', 'updatedAt'
+        ].sort()) &&
+        JSON.stringify(dueIndex.keyPath) === JSON.stringify([
+          'targetId', 'state', 'nextAttemptAt', 'updatedAt', 'attempts', 'intentId'
+        ]) && dueIndex.unique === false && dueIndex.multiEntry === false,
+      'production schema contains exact stores and exact due-order index key paths/options')
+
+      await Promise.all([first.close(), second.close()])
+      const reopened = journal(dbName)
+      await reopened.ready()
+      const persisted = await reopened.getView('post!2')
+      check(persisted && persisted.body === 'browser 2',
+        'closing and reopening preserves committed IndexedDB records')
+      await reopened.close()
+      await deleteDatabase(dbName)
+
+      const legacyName = `${dbName}-legacy`
+      await createLegacyDatabase(legacyName)
+      const migrated = journal(legacyName)
+      let migrationCode = null
+      try { await migrated.ready() } catch (error) { migrationCode = error.code }
+
+      const migratedDb = migrated.backend.db
+      const source = await new Promise((resolve, reject) => {
+        const request = migratedDb.transaction(['state'], 'readonly')
+          .objectStore('state').get(LEGACY_SUBSTRATE_STATE_KEY)
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      const counts = await new Promise((resolve, reject) => {
+        const tx = migratedDb.transaction([JOURNAL_STORES.META, JOURNAL_STORES.VIEW], 'readonly')
+        const meta = tx.objectStore(JOURNAL_STORES.META).count()
+        const view = tx.objectStore(JOURNAL_STORES.VIEW).count()
+        tx.oncomplete = () => resolve({ meta: meta.result, view: view.result })
+        tx.onerror = () => reject(tx.error)
+      })
+      check(migrationCode === 'PEERIT_JOURNAL_LEGACY_UNVERIFIED' && source != null &&
+        counts.meta === 0 && counts.view === 0,
+      'unsigned legacy rows fail closed, remain invisible, and preserve their source for recovery')
+      await migrated.close()
+      await deleteDatabase(legacyName)
+    }
+
+    try {
+      await run()
+      globalThis.__PEERIT_JOURNAL_GATE__ = { ok: true, assertions: checks.length, checks }
+      document.body.dataset.status = 'passed'
+      result.textContent = `passed ${checks.length}/${checks.length}\n${checks.join('\n')}`
+    } catch (error) {
+      globalThis.__PEERIT_JOURNAL_GATE__ = {
+        ok: false,
+        assertions: checks.length,
+        checks,
+        error: String(error && error.stack || error)
+      }
+      document.body.dataset.status = 'failed'
+      result.textContent = `failed after ${checks.length} checks\n${String(error && error.stack || error)}`
+    }
+  </script>
+</body>
+</html>

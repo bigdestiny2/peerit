@@ -1,0 +1,140 @@
+{
+  "schema": "peerit-web-release-pin-history/v1",
+  "note": "App-level signed Web release continuity. Each entry binds a release sequence to the exact outer asset-manifest signing identity. This is distinct from the canonical PeeritHiveRelayProfilePinV1 production history.",
+  "entries": [
+    {
+      "releaseSequence": 11,
+      "manifestSha256": "91cc2c55e151ce56ca9eeebb6969995b88eabd28262a56a01b8f941580ca34b9",
+      "signingMessageSha256": "605df3a63dbd5b3b8c437b474e3ac9f850f67abaf4f3cbe2edef13e11e68fff0",
+      "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
+      "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
+      "note": "prior production web release (legacy transport line final state before the blind-substrate canary)"
+    },
+    {
+      "releaseSequence": 12,
+      "manifestSha256": "70c6c757a8b0153293cc7298b807db6d70b6f8f0d0b6119185321ac5443c6a83",
+      "signingMessageSha256": "60327ff50224c1d92ceb5fc374a3bd31e6993d0fb46a7fb9a82d8b630ae36649",
+      "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
+      "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
+      "transport": "blind-substrate/blind-v1",
+      "relayHints": [
+        "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+        "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe"
+      ],
+      "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+      "note": "bounded public-test canary artifact; signed with the offline release key after the two-relay blind-cell drills. NOT deployed to peerit.site."
+    },
+    {
+      "releaseSequence": 13,
+      "manifestSha256": "2a8eddf7803ea63bf02ca6bcccbcf774cd9c86464421938c08194fde1d41f55d",
+      "signingMessageSha256": "6394f0a54150e688d261f26d5cc41bf15ee858b20293e1496f274640aae2d572",
+      "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
+      "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
+      "transport": "blind-substrate/blind-v1",
+      "relayHints": [
+        "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+        "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe"
+      ],
+      "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+      "note": "bounded local public-test release sequence 13; not a GA claim"
+    },
+    {
+      "releaseSequence": 14,
+      "manifestSha256": "2ff096bbe1cb1e90ffdd90e566ede334779fe7bf58cf40dd8826e4ff8d907b21",
+      "signingMessageSha256": "3e8a6fe8876fe1bc928d751c06cba8fa8f2f129ba4d2d73b1d2efdaae5c6ebc1",
+      "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
+      "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
+      "transport": "blind-substrate/blind-v1",
+      "relayHints": [
+        "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+        "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe"
+      ],
+      "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+      "note": "bounded local public-test release sequence 14; not a GA claim"
+    },
+    {
+      "releaseSequence": 15,
+      "manifestSha256": "ce2b1a91aae84591a311f4b7d59429ca56329fe9e6c7eaee49be02131a9fd1d0",
+      "signingMessageSha256": "99b0a522809988f10632348985152eaafde207e3e5b79cfaadbb37b4da5627cb",
+      "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
+      "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
+      "transport": "blind-substrate/blind-v1",
+      "relayHints": [
+        "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+        "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe"
+      ],
+      "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+      "note": "bounded local public-test release sequence 15; not a GA claim"
+    },
+    {
+      "releaseSequence": 16,
+      "manifestSha256": "ecf279d546488b8f7d8227ea5531b1ffe9b56ff9e1972686e49cdc7272a8d561",
+      "signingMessageSha256": "4fe62e670c03f8d04c095a7378cd5f1acebf6f4f4125451de033239bd0c48a17",
+      "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
+      "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
+      "transport": "blind-substrate/blind-v1",
+      "relayHints": [
+        "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+        "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe"
+      ],
+      "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+      "note": "bounded local public-test release sequence 16; not a GA claim"
+    },
+    {
+      "releaseSequence": 17,
+      "manifestSha256": "46632dc836a5de1392e0916aeee5cbc66e205fcb6453d05766b1a8c821ddadbd",
+      "signingMessageSha256": "74e8eed91221bbd03e00b9ea54ef82ce14206ae1539645174a56af4cc9f2c2d8",
+      "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
+      "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
+      "transport": "blind-substrate/blind-v1",
+      "relayHints": [
+        "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+        "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe"
+      ],
+      "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+      "note": "bounded local public-test release sequence 17; not a GA claim"
+    },
+    {
+      "releaseSequence": 18,
+      "manifestSha256": "77bbf148e988b18265005991b33055310597f474cfb64ada7cbaeb7e3fbca155",
+      "signingMessageSha256": "2589e1689fecea5b7407554e98f42d9da7d38bb7c613d4754788188dc66f989d",
+      "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
+      "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
+      "transport": "blind-substrate/blind-v1",
+      "relayHints": [
+        "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+        "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe"
+      ],
+      "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+      "note": "bounded local public-test release sequence 18; not a GA claim"
+    },
+    {
+      "releaseSequence": 19,
+      "manifestSha256": "b1ef46e3e354fb1f7817ed651a68c15ff7b231bd6176a010e1860820e46a50ac",
+      "signingMessageSha256": "85232eddc4d5c3fe7caee6d305062033affb374fa3babd34433dd6d30bcef0c2",
+      "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
+      "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
+      "transport": "blind-substrate/blind-v1",
+      "relayHints": [
+        "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+        "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe"
+      ],
+      "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+      "note": "bounded local public-test release sequence 19; not a GA claim"
+    },
+    {
+      "releaseSequence": 20,
+      "manifestSha256": "a0978b9f2f0ceb9cf4779837926b33e977b6fb06a9478428f80fb3b4abd37cad",
+      "signingMessageSha256": "5594993eb531072d066f60d8f9a00a7bf0ecf8d709a5d82605b9c6c3c03eb6b5",
+      "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
+      "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
+      "transport": "blind-substrate/blind-v1",
+      "relayHints": [
+        "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+        "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe"
+      ],
+      "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+      "note": "bounded local public-test release sequence 20; not a GA claim"
+    }
+  ]
+}

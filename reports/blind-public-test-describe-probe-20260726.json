@@ -1,0 +1,370 @@
+{
+  "schema": "PeeritBlindPublicTestDescribeProbeV1",
+  "probedAt": "2026-07-26T17:04:17.226Z",
+  "nowEpoch": 82642,
+  "vendoredArtifact": {
+    "artifactHash": "967cbc42a3583ef158045dfdf6afd82f672153c117236a928bc2c2684776b008",
+    "wireTuple": {
+      "specHash": "470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9",
+      "abiHash": "aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d",
+      "vectorSetHash": "09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78"
+    }
+  },
+  "relays": [
+    {
+      "id": "syd-1",
+      "describeUrl": "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+      "checks": [
+        {
+          "id": "independent.parse",
+          "status": "pass",
+          "detail": "parsed 1554/1554 canonical bytes"
+        },
+        {
+          "id": "client.descriptor.verified",
+          "status": "pass",
+          "detail": "head=2d46ac68851b1366… seq=4 store=5193f588aa3b5588…"
+        },
+        {
+          "id": "independent.relay-key",
+          "status": "pass",
+          "detail": "52f4d78364180553a944629b5dd90834d3c3d4f7755cc2e452b3308329a88161"
+        },
+        {
+          "id": "independent.store-id",
+          "status": "pass",
+          "detail": "5193f588aa3b55886e27dc35ead0777d6b3f787e575458d9b2d914f413b130de"
+        },
+        {
+          "id": "independent.sequence",
+          "status": "pass",
+          "detail": "descriptorSequence=4"
+        },
+        {
+          "id": "independent.ed25519",
+          "status": "pass",
+          "detail": "head signature verifies under pinned relay key (node:crypto)"
+        },
+        {
+          "id": "independent.descriptor-hash",
+          "status": "pass",
+          "detail": "2d46ac68851b1366ed1d89352707508d1986a7cebe4eb21afb041ee3425ffa5e"
+        },
+        {
+          "id": "independent.validity-window",
+          "status": "pass",
+          "detail": "issued=82642 expires=82646 now=82642"
+        }
+      ],
+      "deployedBuild": {
+        "specHash": "0101010101010101010101010101010101010101010101010101010101010101",
+        "abiHash": "0202020202020202020202020202020202020202020202020202020202020202",
+        "vectorSetHash": "0303030303030303030303030303030303030303030303030303030303030303",
+        "evidenceFormatHash": "0404040404040404040404040404040404040404040404040404040404040404",
+        "evidenceVectorSetHash": "0505050505050505050505050505050505050505050505050505050505050505",
+        "storeFormatHash": "d590838a91655dc1cf8d04f277416caacaf1b73ddbddd9f6f19b104dfb92234c",
+        "storeVectorSetHash": "0707070707070707070707070707070707070707070707070707070707070707",
+        "privateIpcFormatHash": "1414141414141414141414141414141414141414141414141414141414141414",
+        "privateIpcVectorSetHash": "1515151515151515151515151515151515151515151515151515151515151515",
+        "buildArtifactHash": "0808080808080808080808080808080808080808080808080808080808080808",
+        "buildArtifactUrl": "68747470733a2f2f65766964656e63652e6578616d706c653a3434332f61727469666163742e63656e63",
+        "buildManifestUrl": "68747470733a2f2f65766964656e63652e6578616d706c653a3434332f6275696c642e63656e63",
+        "buildManifestHash": "0909090909090909090909090909090909090909090909090909090909090909",
+        "releaseEvidenceBundleUrl": "68747470733a2f2f65766964656e63652e6578616d706c653a3434332f72656c656173652e63656e63",
+        "releaseEvidenceBundleHash": "1616161616161616161616161616161616161616161616161616161616161616",
+        "releaseSupportHorizonHash": "1717171717171717171717171717171717171717171717171717171717171717",
+        "runtimeBoundaryEvidenceUrl": "68747470733a2f2f65766964656e63652e6578616d706c653a3434332f72756e74696d652d626f756e646172792e63656e63",
+        "runtimeBoundaryEvidenceHash": "1818181818181818181818181818181818181818181818181818181818181818"
+      },
+      "descriptorAdvertisedTuple": {
+        "specHash": "0101010101010101010101010101010101010101010101010101010101010101",
+        "abiHash": "0202020202020202020202020202020202020202020202020202020202020202",
+        "vectorSetHash": "0303030303030303030303030303030303030303030303030303030303030303"
+      },
+      "descriptorAdvertisedTuplePlaceholder": true,
+      "deployedIdentity": {
+        "relayPublicKey": "52f4d78364180553a944629b5dd90834d3c3d4f7755cc2e452b3308329a88161",
+        "storeId": "5193f588aa3b55886e27dc35ead0777d6b3f787e575458d9b2d914f413b130de",
+        "descriptorSequence": 4,
+        "previousDescriptorHash": "9b567e2aa5a2e44bcf5f0ed2930bf63c85b74bd891715cd79f638ea320b2fe6f",
+        "issuedEpoch": 82642,
+        "expiresEpoch": 82646,
+        "storeLifecycleState": 1,
+        "enabledOperationBits": "0x0001ffff",
+        "cellSizeClassBits": 62,
+        "leaseClassBits": 30,
+        "maxBatchCount": 64,
+        "maxResponseBytes": 4194304,
+        "protocols": [
+          {
+            "protocolId": 1,
+            "major": 1,
+            "minor": 0,
+            "featureBits": "0",
+            "profileHash": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+          },
+          {
+            "protocolId": 2,
+            "major": 1,
+            "minor": 0,
+            "featureBits": "0",
+            "profileHash": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+          },
+          {
+            "protocolId": 3,
+            "major": 1,
+            "minor": 0,
+            "featureBits": "0",
+            "profileHash": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+          },
+          {
+            "protocolId": 4,
+            "major": 1,
+            "minor": 0,
+            "featureBits": "0",
+            "profileHash": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+          }
+        ],
+        "endpoints": [
+          {
+            "endpointId": 1,
+            "transportId": 1,
+            "transportProfileHash": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+            "roleBits": 49,
+            "privacyProfileBits": 1,
+            "canonicalUrl": "https://relay-syd.p2phiverelay.xyz:443/api/blind/v1/describe",
+            "envelopeClassBits": 126,
+            "wireClassBits": 0,
+            "maxStreams": 0
+          }
+        ],
+        "admissionProfiles": [
+          {
+            "profileId": 7,
+            "schemeId": 9,
+            "conformanceClass": 1,
+            "roleBits": 49,
+            "parameterUrl": "https://evidence.example:443/admission.cenc",
+            "parameterHash": "8a796071cfc688bfd23dfa50dc83a7a56431daae223f0f77236c51bad7476d30"
+          }
+        ],
+        "durability": {
+          "profileId": 1,
+          "storeFormatMajor": 1,
+          "storeFormatMinor": 2,
+          "storeFormatHash": "d590838a91655dc1cf8d04f277416caacaf1b73ddbddd9f6f19b104dfb92234c"
+        },
+        "durabilityContinuityHash": "b0d28be1ec93dc70931de0715994deb0295507ada3a26b64b61c261b9c3306eb",
+        "durabilityProfileHash": "3d4067661bf9380c4b2b41edc598878281b9f55257b896a5482a2c6495857e88"
+      }
+    },
+    {
+      "id": "dal-1",
+      "describeUrl": "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe",
+      "checks": [
+        {
+          "id": "independent.parse",
+          "status": "pass",
+          "detail": "parsed 1554/1554 canonical bytes"
+        },
+        {
+          "id": "client.descriptor.verified",
+          "status": "pass",
+          "detail": "head=4325b15ab4d6e8ca… seq=2 store=744a7e97bd96f74e…"
+        },
+        {
+          "id": "independent.relay-key",
+          "status": "pass",
+          "detail": "8b3f4161271cfa511bc49fb03033d6441da01bf27c35a754e2a1b0d7df32e1d2"
+        },
+        {
+          "id": "independent.store-id",
+          "status": "pass",
+          "detail": "744a7e97bd96f74e7ce7cd6a600a0ff1846da4fe3d39c35c611f12ffcd69cb90"
+        },
+        {
+          "id": "independent.sequence",
+          "status": "pass",
+          "detail": "descriptorSequence=2"
+        },
+        {
+          "id": "independent.ed25519",
+          "status": "pass",
+          "detail": "head signature verifies under pinned relay key (node:crypto)"
+        },
+        {
+          "id": "independent.descriptor-hash",
+          "status": "pass",
+          "detail": "4325b15ab4d6e8ca98bf7e1c6199acb36a3d1c83641c1635ff86fe7a347e344a"
+        },
+        {
+          "id": "independent.validity-window",
+          "status": "pass",
+          "detail": "issued=82642 expires=82646 now=82642"
+        }
+      ],
+      "deployedBuild": {
+        "specHash": "0101010101010101010101010101010101010101010101010101010101010101",
+        "abiHash": "0202020202020202020202020202020202020202020202020202020202020202",
+        "vectorSetHash": "0303030303030303030303030303030303030303030303030303030303030303",
+        "evidenceFormatHash": "0404040404040404040404040404040404040404040404040404040404040404",
+        "evidenceVectorSetHash": "0505050505050505050505050505050505050505050505050505050505050505",
+        "storeFormatHash": "d590838a91655dc1cf8d04f277416caacaf1b73ddbddd9f6f19b104dfb92234c",
+        "storeVectorSetHash": "0707070707070707070707070707070707070707070707070707070707070707",
+        "privateIpcFormatHash": "1414141414141414141414141414141414141414141414141414141414141414",
+        "privateIpcVectorSetHash": "1515151515151515151515151515151515151515151515151515151515151515",
+        "buildArtifactHash": "0808080808080808080808080808080808080808080808080808080808080808",
+        "buildArtifactUrl": "68747470733a2f2f65766964656e63652e6578616d706c653a3434332f61727469666163742e63656e63",
+        "buildManifestUrl": "68747470733a2f2f65766964656e63652e6578616d706c653a3434332f6275696c642e63656e63",
+        "buildManifestHash": "0909090909090909090909090909090909090909090909090909090909090909",
+        "releaseEvidenceBundleUrl": "68747470733a2f2f65766964656e63652e6578616d706c653a3434332f72656c656173652e63656e63",
+        "releaseEvidenceBundleHash": "1616161616161616161616161616161616161616161616161616161616161616",
+        "releaseSupportHorizonHash": "1717171717171717171717171717171717171717171717171717171717171717",
+        "runtimeBoundaryEvidenceUrl": "68747470733a2f2f65766964656e63652e6578616d706c653a3434332f72756e74696d652d626f756e646172792e63656e63",
+        "runtimeBoundaryEvidenceHash": "1818181818181818181818181818181818181818181818181818181818181818"
+      },
+      "descriptorAdvertisedTuple": {
+        "specHash": "0101010101010101010101010101010101010101010101010101010101010101",
+        "abiHash": "0202020202020202020202020202020202020202020202020202020202020202",
+        "vectorSetHash": "0303030303030303030303030303030303030303030303030303030303030303"
+      },
+      "descriptorAdvertisedTuplePlaceholder": true,
+      "deployedIdentity": {
+        "relayPublicKey": "8b3f4161271cfa511bc49fb03033d6441da01bf27c35a754e2a1b0d7df32e1d2",
+        "storeId": "744a7e97bd96f74e7ce7cd6a600a0ff1846da4fe3d39c35c611f12ffcd69cb90",
+        "descriptorSequence": 2,
+        "previousDescriptorHash": "a18d0dc92a56ed41553a5ca8dee71c9b79f4afeb2d8ad2865ef858f6fbc84ea5",
+        "issuedEpoch": 82642,
+        "expiresEpoch": 82646,
+        "storeLifecycleState": 1,
+        "enabledOperationBits": "0x0001ffff",
+        "cellSizeClassBits": 62,
+        "leaseClassBits": 30,
+        "maxBatchCount": 64,
+        "maxResponseBytes": 4194304,
+        "protocols": [
+          {
+            "protocolId": 1,
+            "major": 1,
+            "minor": 0,
+            "featureBits": "0",
+            "profileHash": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+          },
+          {
+            "protocolId": 2,
+            "major": 1,
+            "minor": 0,
+            "featureBits": "0",
+            "profileHash": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+          },
+          {
+            "protocolId": 3,
+            "major": 1,
+            "minor": 0,
+            "featureBits": "0",
+            "profileHash": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+          },
+          {
+            "protocolId": 4,
+            "major": 1,
+            "minor": 0,
+            "featureBits": "0",
+            "profileHash": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+          }
+        ],
+        "endpoints": [
+          {
+            "endpointId": 1,
+            "transportId": 1,
+            "transportProfileHash": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+            "roleBits": 49,
+            "privacyProfileBits": 1,
+            "canonicalUrl": "https://relay-dal.p2phiverelay.xyz:443/api/blind/v1/describe",
+            "envelopeClassBits": 126,
+            "wireClassBits": 0,
+            "maxStreams": 0
+          }
+        ],
+        "admissionProfiles": [
+          {
+            "profileId": 7,
+            "schemeId": 9,
+            "conformanceClass": 1,
+            "roleBits": 49,
+            "parameterUrl": "https://evidence.example:443/admission.cenc",
+            "parameterHash": "75bde3f84de03f8ceeef9a7a26e8d17e498413e93419762da0e1ee88b1c9adcd"
+          }
+        ],
+        "durability": {
+          "profileId": 1,
+          "storeFormatMajor": 1,
+          "storeFormatMinor": 2,
+          "storeFormatHash": "d590838a91655dc1cf8d04f277416caacaf1b73ddbddd9f6f19b104dfb92234c"
+        },
+        "durabilityContinuityHash": "b0d28be1ec93dc70931de0715994deb0295507ada3a26b64b61c261b9c3306eb",
+        "durabilityProfileHash": "3d4067661bf9380c4b2b41edc598878281b9f55257b896a5482a2c6495857e88"
+      }
+    }
+  ],
+  "tupleMatch": false,
+  "status": "drift-recorded",
+  "tupleVerdict": {
+    "vendoredTuple": {
+      "specHash": "470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9",
+      "abiHash": "aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d",
+      "vectorSetHash": "09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78"
+    },
+    "descriptorAdvertisedTuple": [
+      {
+        "relay": "syd-1",
+        "specHash": "0101010101010101010101010101010101010101010101010101010101010101",
+        "abiHash": "0202020202020202020202020202020202020202020202020202020202020202",
+        "vectorSetHash": "0303030303030303030303030303030303030303030303030303030303030303"
+      },
+      {
+        "relay": "dal-1",
+        "specHash": "0101010101010101010101010101010101010101010101010101010101010101",
+        "abiHash": "0202020202020202020202020202020202020202020202020202020202020202",
+        "vectorSetHash": "0303030303030303030303030303030303030303030303030303030303030303"
+      }
+    ],
+    "descriptorAdvertisedTuplePlaceholder": true,
+    "descriptorAdvertisedTupleMatchesVendored": false,
+    "relayReleaseWireTuple": {
+      "specHash": "c9ddd235c3963461174e3de13c25a4c995b53ff320be822d8304f870766b6592",
+      "abiHash": "199ba15d94d4d112cfac520a67055ce15ec870f0f6f7bd9adaaf47d552334567",
+      "vectorSetHash": "fa54012cd0d7e4e620878c67e61f435ecb31ddec05a6283917987cc84279ee05",
+      "source": "hiverelay public-test release worktree packages/blind-protocol/hiverelay-blind-wire-authority-v1.json (read-only reference)",
+      "note": "v2 wire authority (baseAbiHash 199ba15d…, abi cc1abb0e…) adds FORWARD turn schemas only; relays run releaseProfileId 1 LIMITED_PUBLIC_TEST_V1 (operationBits 0x1ffff, FORWARD bits zero)"
+    },
+    "relayReleaseTupleMatchesVendored": false,
+    "drift": {
+      "kind": "WIRE_TUPLE_DRIFT",
+      "vendored": {
+        "specHash": "470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9",
+        "abiHash": "aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d",
+        "vectorSetHash": "09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78"
+      },
+      "deployed": {
+        "specHash": "c9ddd235c3963461174e3de13c25a4c995b53ff320be822d8304f870766b6592",
+        "abiHash": "199ba15d94d4d112cfac520a67055ce15ec870f0f6f7bd9adaaf47d552334567",
+        "vectorSetHash": "fa54012cd0d7e4e620878c67e61f435ecb31ddec05a6283917987cc84279ee05"
+      },
+      "vendoredArtifact": {
+        "path": "vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs",
+        "artifactHash": "967cbc42a3583ef158045dfdf6afd82f672153c117236a928bc2c2684776b008",
+        "pinned": "2026-07-16 (Peerit vendor authority)"
+      },
+      "deployedClientArtifact": {
+        "path": "browser-artifacts/blind-client-control-v3.mjs (relay public-test release, read-only reference)",
+        "artifactHash": "46a86079fb5fcaaeee42362113182ca0d41b9d004f0f5d62ec04869c0844f3ff",
+        "authorityFlags": {
+          "runtimeReady": false,
+          "realBrowserEvidenceAccepted": false,
+          "authorizesRelease": false
+        }
+      },
+      "conclusion": "The vendored v1 artifact pins the 2026-07-16 wire tuple; the deployed relays run the 2026-07-24 wire build. DESCRIBE-layer compatibility is empirically proven by this probe (full client verification + independent signature/hash checks pass on both relays). CELL/INBOX/CORE compatibility is NOT proven by DESCRIBE and must be established by the write/readback drills before any catalogue flip."
+    }
+  }
+}

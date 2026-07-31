@@ -1,0 +1,19 @@
+{
+  "schema": "HiveRelayBlindClientBrowserArtifactChromiumEvidenceV1",
+  "version": 1,
+  "evidenceClass": "real-chromium",
+  "artifactPath": "browser-artifacts/blind-client-cell-get-v1.mjs",
+  "artifactLength": 173893,
+  "artifactHash": "2c3400b61daea60670fd1b4003d8cfdc107e8ef78742dc2ba6bbbd443f6c7502",
+  "manifestHash": "cf7fa1d6bc231d1c73f65b0abf9bf0818834b2281e08cee3df0f88149e58f92d",
+  "sourceClosureHash": "d1cf41a27fe66543d7e6afaccaf09f460b467c8d0751394eabef2853030d3ad5",
+  "chromium": "Google Chrome for Testing 151.0.7922.34",
+  "checks": [
+    "STANDALONE_ESM_IMPORT",
+    "EXACT_CELL_GET_ONLY_EXPORTS",
+    "WEBCRYPTO_AES_256_GCM_ROUNDTRIP",
+    "FIXED_CELL_GET_OPERATION_BOUNDARY",
+    "FORWARD_CANDIDATE_CODE_ABSENT"
+  ],
+  "passed": true
+}

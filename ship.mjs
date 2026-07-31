@@ -6,13 +6,25 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createInterface } from 'node:readline/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { SITE_FILES } from './publish.mjs'
+import { SITE_FILES, SUBSTRATE_SITE_FILES } from './publish.mjs'
+import { assertPeeritBlindProductReleaseReady } from './js/substrate/product-release-status.mjs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const DEFAULT_PENDING_SHIP = join(__dir, '.deploy', 'pending-ship.json')
 const DEFAULT_SIGNING_REQUEST = join(__dir, 'deploy', 'web-signing-request.json')
 const WEB_MANIFEST = join(__dir, 'web', 'asset-manifest.json')
 const WEB_SIGNATURE = join(__dir, 'web', 'asset-manifest.sig')
+
+function configuredSiteFiles () {
+  try {
+    const release = JSON.parse(readFileSync(join(__dir, 'deploy', 'web-release.json'), 'utf8'))
+    return release && release.substrateProfile ? SUBSTRATE_SITE_FILES : SITE_FILES
+  } catch {
+    return SITE_FILES
+  }
+}
+
+const RELEASE_SITE_FILES = configuredSiteFiles()
 
 function usage (code = 0, message = '') {
   if (message) console.error('error:', message)
@@ -89,30 +101,30 @@ const RELEASE_EXPLICIT_INPUTS = [
   'manifest.json',
   'package.json',
   'package-lock.json',
-  'relay-roster.json',
   'node-shims.mjs',
   'web',
   'config/seed-snapshot.json',
-  'config/shard-roster.public.json',
   'deploy/web-release.json',
   'deploy/web-signing-request.json',
   'deploy/CAPACITY.md',
-  'deploy/peerit-relay/Caddyfile',
-  'deploy/peerit-relay/README.md',
-  'deploy/peerit-relay/docker-compose.yml',
+  'docs/PEERIT-BLIND-SUBSTRATE-DELIVERY-MAP.md',
+  'docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md',
   'docs/PROTOCOL-V3-CONTENT-IDENTITY.md',
   'docs/WEB-DEPLOYMENT.md',
-  'scripts/audit-live-legacy-actions.mjs',
-  'scripts/audit-live-legacy-pow.mjs',
+  // These directories contain the replacement client/profile authority. They
+  // are release inputs even when a binary/vector is loaded by path rather than
+  // discovered through a JavaScript import.
+  'js/substrate',
+  'protocol',
+  'protocol/peerit-release-control-v1.cenc',
+  'protocol/vectors/peerit-release-control-v1.manifest.cenc',
   'scripts/build-dht-bundle.mjs',
   'scripts/build-reader-bundle.mjs',
   'scripts/csp.mjs',
+  'scripts/generate-peerit-release-control.mjs',
   'scripts/service-worker-source.mjs',
   'scripts/sign-release.mjs',
-  'scripts/local-writable-two-relay.mjs',
-  'scripts/soak-atomic-two-relay.mjs',
-  'scripts/verify-production-readonly.mjs',
-  'scripts/verify-writable-candidate.mjs',
+  'scripts/verify-substrate-profile-inventory.mjs',
   'scripts/web-release.mjs',
   // esbuild entry points and aliases are strings rather than JS imports.
   'js/dht-transport.js',
@@ -153,7 +165,7 @@ function packageTestFiles (root) {
   return files
 }
 
-export function releaseInputClosure ({ root = __dir, siteFiles = SITE_FILES } = {}) {
+export function releaseInputClosure ({ root = __dir, siteFiles = RELEASE_SITE_FILES } = {}) {
   const pending = [...new Set([...siteFiles, ...RELEASE_EXPLICIT_INPUTS, ...packageTestFiles(root)])]
   const closure = new Set(pending)
   while (pending.length) {
@@ -429,7 +441,7 @@ function verifySiteFiles () {
   let totalBytes = 0
   const missing = []
   const empty = []
-  for (const file of SITE_FILES) {
+  for (const file of RELEASE_SITE_FILES) {
     const abs = join(__dir, file)
     if (!existsSync(abs)) {
       missing.push(file)
@@ -440,17 +452,17 @@ function verifySiteFiles () {
     if (stat.size <= 0) empty.push(file)
   }
   if (missing.length) addCheck('files:missing', 'fail', `${missing.length} served file${missing.length === 1 ? '' : 's'} missing.`, { missing })
-  else addCheck('files:present', 'pass', `${SITE_FILES.length} served files are present.`, { files: SITE_FILES.length, bytes: totalBytes })
+  else addCheck('files:present', 'pass', `${RELEASE_SITE_FILES.length} served files are present.`, { files: RELEASE_SITE_FILES.length, bytes: totalBytes })
 
   if (empty.length) addCheck('files:empty', 'fail', `${empty.length} served file${empty.length === 1 ? ' is' : 's are'} empty.`, { empty })
 }
 
 function verifyStaticImports () {
-  const served = new Set(SITE_FILES)
+  const served = new Set(RELEASE_SITE_FILES)
   const missing = []
   const importRe = /(?:^|\n)\s*import\s+(?:[^'"]+\s+from\s*)?['"]([^'"]+)['"]|import\s*\(\s*['"]([^'"]+)['"]\s*\)/g
 
-  for (const file of SITE_FILES) {
+  for (const file of RELEASE_SITE_FILES) {
     if (!file.endsWith('.js')) continue
     const abs = join(__dir, file)
     if (!existsSync(abs)) continue
@@ -466,7 +478,7 @@ function verifyStaticImports () {
   }
 
   if (missing.length) {
-    addCheck('files:imports', 'fail', `${missing.length} static module import${missing.length === 1 ? ' is' : 's are'} missing from SITE_FILES.`, { missing })
+    addCheck('files:imports', 'fail', `${missing.length} static module import${missing.length === 1 ? ' is' : 's are'} missing from the selected release closure.`, { missing })
   } else {
     addCheck('files:imports', 'pass', 'Static module imports are included in the publish file list.')
   }
@@ -532,11 +544,10 @@ async function runTests () {
   }
 
   try {
-    // The release gate must execute the same complete suite advertised to
-    // contributors. The old three-file subset let regressions in identity,
-    // v2, recovery, relay-pool, and storage tests ship unnoticed.
-    await run('npm', ['test'])
-    addCheck('tests:node', 'pass', 'The complete npm test suite passed.')
+    // Ship includes the legacy/full regression suite plus the replacement-only
+    // profile, generated-closure, app-entry, cutover, and authority gates.
+    await run('npm', ['run', 'test:ship'])
+    addCheck('tests:node', 'pass', 'The complete npm and replacement substrate release suites passed.')
   } catch (err) {
     addCheck('tests:node', 'fail', err.message)
   }
@@ -597,15 +608,26 @@ export async function runLiveReleasePreflights ({ publish, readonly, relay, runS
   return steps.map((step) => step.id)
 }
 
-// Backward-compatible export for release workflow consumers. Unlike the old
-// implementation, readonly=false is NOT a skip: it selects the mandatory
-// writable-candidate proof.
+// Explicit legacy migration-compatibility preflight. It is retained for bounded
+// historical reads/audits and is no longer called by the official release path.
 export const runReadonlyLivePreflights = runLiveReleasePreflights
 
 async function runProductionLivePreflights () {
   const release = readJson(join(__dir, 'deploy', 'web-release.json'))
   if (!release) {
     addCheck('production-live:config', 'fail', 'deploy/web-release.json is missing or invalid.')
+    return
+  }
+  if (release.substrateProfile) {
+    try {
+      assertPeeritBlindProductReleaseReady(release)
+      addCheck('blind-product:release-ready', 'pass', `Replacement product ${release.substrateProfile} is release-ready; no legacy relay preflight was selected.`)
+    } catch (error) {
+      addCheck('blind-product:release-ready', 'fail', error.message, {
+        releaseBlockers: error.releaseBlockers || [],
+        legacyDestinationSelected: false
+      })
+    }
     return
   }
   const relay = Array.isArray(release.bootstrapRelays) ? String(release.bootstrapRelays[0] || '') : ''
@@ -639,6 +661,21 @@ async function runProductionLivePreflights () {
     }
     const id = failureChecks[err.preflightId] || 'production-readonly:enforced'
     addCheck(id, 'fail', `Live release preflight failed: ${err.message}`, relay ? { relay } : undefined)
+  }
+}
+
+function runConfiguredBlindProductGate () {
+  const release = readJson(join(__dir, 'deploy', 'web-release.json'))
+  if (!release || !release.substrateProfile) return
+  try {
+    assertPeeritBlindProductReleaseReady(release)
+    addCheck('blind-product:composed-gate', 'pass',
+      `The complete ${release.substrateProfile} Peerit/HiveRelay product gate passed.`)
+  } catch (error) {
+    addCheck('blind-product:composed-gate', 'fail', error.message, {
+      releaseBlockers: error.releaseBlockers || [],
+      profileOnlyGateAccepted: false
+    })
   }
 }
 
@@ -777,6 +814,7 @@ async function main () {
   verifySiteFiles()
   verifyStaticImports()
   verifyManifest()
+  runConfiguredBlindProductGate()
   verifyGitCleanForServedFiles({
     allowPublishedManifest: opts.publish && opts.resumeSignature,
     allowPreparedArtifacts: opts.resumeSignature

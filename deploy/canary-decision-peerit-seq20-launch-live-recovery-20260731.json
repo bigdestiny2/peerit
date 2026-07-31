@@ -1,0 +1,175 @@
+{
+  "schema_version": 5,
+  "decision_id": "peerit-seq20-launch-two-relay-live-recovery-20260731",
+  "decided_at": "2026-07-31T13:02:33Z",
+  "decided_by": "owner authority executed by the active sole Codex conductor",
+  "status": "DECIDED",
+  "decision": "ACCEPT Peerit release sequence 20 as the LIVE bounded-public-test launch slot: limited Cell-GET runtime authority EXPOSED at sequence 20 and signed seed recovery ENABLED for the 34-record live launch seed, superseding the recorded cold-rollback posture for this exact slot. The exact production CSP remains unchanged, authenticated browser authority MUST become active before any relay I/O, recovery performs zero network PUTs, ordinary delivery remains LOCAL_ONLY, the all-five successor remains excluded, and the GA product gate remains blocked with all 22 blockers disclosed-open.",
+  "authority": {
+    "kind": "direct-owner-launch-slot-authorization",
+    "owner_instruction": "OWNER DECISION MADE: option A — make sequence 20 the live bounded-public-test launch slot. Record the decision in the established vendored-decision pattern; issue the releaseSequence-20 seed bootstrap; patch the limited Cell-GET release constant 19 -> 20 and every coupled gate so sequence 20 recovers and any other sequence fails closed; update the rollback-asserting tests; requalify the exact signed candidate in clean Chromium; then run the standard sealed ceremony (web:prepare -> keyvault sealed signing -> web:verify) advancing releaseSequence 19 -> 20. Ceremony caps at sequence 20; do not exceed.",
+    "baseline_commit": "a09410b (peerit: seed bootstrap names the 34 LIVE launch records, on codex/peerit-seq19-csp-safe-20260729)",
+    "baseline_release_sequence": 19,
+    "superseded_slot_posture": "sequence 20 as COLD_FAIL_CLOSED_BEFORE_RELAY_IO rollback, recorded in the seq-19 CSP-safe decision, is superseded for this exact slot only; the rollback tooling remains for any future rollback slot",
+    "cited_prior_decisions": [
+      {
+        "file": "deploy/canary-decision-peerit-seq19-csp-safe-live-recovery-20260729.json",
+        "sha256": "1dfbb512cdd306dec903a407831cc3911c5844ded6e29c38d641bf700b4c1605",
+        "relation": "records the superseded seq-20 rollback posture and the seq-19 functional recovery whose probe-record seed cells were tombstoned in the 2026-07-30 probe purge"
+      },
+      {
+        "file": "deploy/canary-decision-peerit-seq17-exact-admission-url-recovery-20260729.json",
+        "sha256": "d218d4c2ff9c651b96450e5caf85911fe1e715767eecd129c8a7c20ad443297a",
+        "relation": "prior corrective pair 17/18, same vendored-decision pattern"
+      },
+      {
+        "file": "deploy/canary-decision-peerit-seq15-seed-recovery-20260729t172519z.json",
+        "sha256": "11d95b7abd52d7c4d443548089a8dd5455be87ee81ececf50314047a6b10ba50",
+        "relation": "prior recovery pair 15/16, same vendored-decision pattern"
+      },
+      {
+        "file": "deploy/canary-decision-peerit-seq13-three-post-activation-20260729t132650z.json",
+        "sha256": "86130d0257105aecff2a40fee4656edabbffb531ac94854759138a13c06b59b0",
+        "relation": "original bounded canary pair 13/14, same vendored-decision pattern"
+      },
+      {
+        "file": "deploy/canary-decision-peerit-v1-artifact-acceptance-20260727t100542z.json",
+        "sha256": "d862d06948ada8ebb0d33124d426f264adbfe0db0540c577ef6c3f85ae1f5ed2",
+        "relation": "vendored v1 blind-client artifact acceptance; establishes the vendored-decision record pattern and the disclosed-open GA blocker convention"
+      }
+    ]
+  },
+  "activation": {
+    "functional_release_sequence": 20,
+    "rollback_release_sequence": null,
+    "rollback_posture": "SUPERSEDED_FOR_THIS_SLOT_BY_OWNER_DECISION_2026-07-31",
+    "limited_cell_get_authority_release_sequence": 20,
+    "limited_cell_get_runtime_authority_exposed": true,
+    "seed_recovery_enabled": true,
+    "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+    "relays": [
+      "dal-1",
+      "syd-1"
+    ],
+    "required_predeploy_proof": "Clean Chromium loads the exact signed sequence-20 candidate under the exact unchanged production CSP, validates production pin-history terminal 20 and the full loadPeeritBrowserRuntimeAuthorityV1 path, observes authority.active=true before any relay I/O, then performs the signed seed recovery (39 records) with byte-exact verified CELL.GET evidence on both named relays and zero network PUTs.",
+    "allowed_browser_operations": [
+      "DESCRIBE.GET",
+      "DESCRIBE.CHALLENGE",
+      "CELL.GET"
+    ],
+    "network_puts_during_recovery": 0,
+    "ordinary_delivery": "LOCAL_ONLY",
+    "launch_seed": {
+      "record_count": 34,
+      "cell_count_per_relay": 39,
+      "community_claims": 11,
+      "original_posts": 17,
+      "boxed_posts_two_cells_each": 5,
+      "replies": 6,
+      "sizeclass_2_cells_per_relay": 3,
+      "manifest": "launch/FINAL-SEED-MANIFEST.json",
+      "manifest_sha256": "36c15537d9e853cfb599cf59568a067e573a87c8de858183e332dfd3eb9192c0",
+      "capture_redelivery_run": "renew-2026-07-30T23:18:21.374Z (owner-approved; 34/34 receipt-signed + byte-exact-readback-verified on both relays)",
+      "cold_recovery_evidence": "peerit-launch-reader-bootstrap-20260730t233000z.json (fresh empty reader: 39 verified CELL.GETs, 0 PUTs, 34/34 records byte-exact vs manifest)"
+    },
+    "all_five_successor": "EXCLUDED",
+    "ga_product_gate": "BLOCKED — 22 blockers DISCLOSED-OPEN, none cleared by this scope"
+  },
+  "seed_bootstrap": {
+    "path": "deploy/peerit-seed-bootstrap-v1-seq20.json",
+    "sha256": "0a386975293d01e983c5c64074cdbcc8b34cff40bb5147807959de4903e03e69",
+    "embedded_release_sequence": 20,
+    "bootstrap_sequence": 0,
+    "previous_bootstrap_hash": null,
+    "discovery_authority": "691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec",
+    "records": 39,
+    "issued_at": "2026-07-31T13:02:20.889Z",
+    "expires_at": "2026-08-30T13:02:20.889Z",
+    "note": "Names the same 39 live cells as the seq-19-bound artifact 6e620483d8f92a4be6c5fe1a40d681374a98f7d159e118c6d860109fe2374856 (deploy/peerit-seed-bootstrap-v1-seq19.json, commit a09410b, untouched); re-issued only to bind release sequence 20 per the release-binding rule (artifact payload releaseSequence must equal the authenticated release sequence)."
+  },
+  "runtime_patch": {
+    "summary": "PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE 19 -> 20 so the browser runtime authenticates the limited Cell-GET assets at sequence 20 and fails closed at every other sequence; limited Cell-GET profile advanced to releaseSequence 20 with fresh same-day admission parameter pins; the Chromium production runtime gate asserts live two-relay recovery at sequence 20; rollback assertions move to fail-closed at any sequence != 20.",
+    "files": [
+      "js/substrate/browser-runtime-authority.mjs",
+      "peerit-limited-cell-get-profile-v1.json",
+      "scripts/browser-peerit-production-runtime-gate.mjs",
+      "test/peerit-browser-runtime-authority.mjs",
+      "test/peerit-limited-cell-get-recovery.mjs"
+    ]
+  },
+  "exact_admission_parameter_url": {
+    "utf8": "https://evidence.example:443/admission.cenc",
+    "utf8_hex": "68747470733a2f2f65766964656e63652e6578616d706c653a3434332f61646d697373696f6e2e63656e63",
+    "semantics": "EVIDENCE_MIRROR_HINT_ONLY",
+    "browser_fetch": "FORBIDDEN",
+    "dns_resolution": "FORBIDDEN",
+    "url_parsing_or_normalization": "FORBIDDEN",
+    "csp_change": "FORBIDDEN",
+    "comparison": "EXACT_SIGNED_UTF8_BYTES"
+  },
+  "production_csp": {
+    "policy_file": "deploy/render-security-headers.json",
+    "policy_file_sha256": "dc97c87d08bb773712cc739c37ffd4c62c121f7c92c01b20b3a8bf4a14f95724",
+    "script_src": "'self'",
+    "unsafe_eval": "FORBIDDEN",
+    "wasm_unsafe_eval": "FORBIDDEN",
+    "expansion": "FORBIDDEN",
+    "parameter_url_origin_addition": "FORBIDDEN"
+  },
+  "relay_authority": {
+    "note": "same-day pins captured by GET-only live re-probe at 2026-07-31T13:00Z; descriptor heads rotate on an operational cadence (syd-1 seq-11 -> seq-12 and dal-1 seq-8 -> seq-9 since 2026-07-30) so heads are minimum-bound floors at recovery time, while admission parameter hashes are exact equality pins (relay-consumer.js:724) and an admission-parameter rotation requires a bundle re-issue with fresh pins",
+    "dal-1": {
+      "origin": "https://relay-dal.p2phiverelay.xyz",
+      "minimum_descriptor_sequence": 9,
+      "descriptor_head_sha256": "a36845597379c49f492a0b5a99d476723b6e538e7f73052c029f755c68acbdd6",
+      "admission_protocol_sha256": "5494fe9abfc07536392b3d1a51a6ccec7de75063238198fcbf19729c37baf6f7"
+    },
+    "syd-1": {
+      "origin": "https://relay-syd.p2phiverelay.xyz",
+      "minimum_descriptor_sequence": 12,
+      "descriptor_head_sha256": "e1ca456c7e99294b9fde660dc2d597e9bf5abd6e4530064a8c512c1e2de5a507",
+      "admission_protocol_sha256": "03f920f2102e3984e0885867e51c1d87a8aae6b52ae2e1bf472a0b9284e9a265"
+    }
+  },
+  "production_runtime_gate": {
+    "script": "scripts/browser-peerit-production-runtime-gate.mjs",
+    "functional_mode": "live-two-relay",
+    "functional_release_sequence": 20,
+    "rollback_mode": "rollback-preio",
+    "rollback_note": "rollback-preio now targets any sequence != 20 (the limited Cell-GET authority fails closed there); it requires a candidate built at that other sequence and is not part of this functional proof",
+    "full_authority_loader": "loadPeeritBrowserRuntimeAuthorityV1",
+    "production_pin_history_loader": "loadPeeritProductionPinHistoryTerminalV1",
+    "authority_active_before_relay_io": true,
+    "service_worker": "BLOCKED_IN_FRESH_CONTEXT",
+    "sequence_20": {
+      "expected_network_gets": 40,
+      "expected_fallback_count": 1,
+      "expected_record_count": 39,
+      "expected_cell_get_requests": 40,
+      "expected_successful_cell_gets": 39,
+      "expected_network_puts": 0,
+      "expected_parameter_url_requests": 0,
+      "expected_sizeclass_1_responses": 36,
+      "expected_sizeclass_2_responses": 3,
+      "dal-1": {
+        "origin": "https://relay-dal.p2phiverelay.xyz",
+        "injected_cell_get_failures": 1,
+        "successful_cell_gets": 38,
+        "verified_readback_evidence_count": 38
+      },
+      "syd-1": {
+        "origin": "https://relay-syd.p2phiverelay.xyz",
+        "injected_cell_get_failures": 0,
+        "successful_cell_gets": 1,
+        "verified_readback_evidence_count": 1
+      }
+    }
+  },
+  "followups": [
+    "GA product gate remains honestly blocked (22 blockers DISCLOSED-OPEN)",
+    "bundle re-issue with fresh admission parameter pins is required when the relays next rotate admission parameters (exact-equality pin, relay-consumer.js:724); descriptor head rotation is floor-tolerant (minimumDescriptorSequence) but is re-pinned at each re-issue",
+    "publisher --renew on a ~60-day cadence re-mints all seed cells; the reader bootstrap MUST be re-issued after every --renew (new readCaps), then the bundle re-issued to bind it",
+    "seq-20 seed bootstrap artifact expires 2026-08-30T13:02:20.889Z",
+    "site flip (Render deploy + peerit.site) awaits owner merge confirmation of the seq-20 candidate; no push, no merge, no DNS/Render contact from the build lane"
+  ]
+}

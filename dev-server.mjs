@@ -12,7 +12,7 @@ const WEB_ROOT = join(ROOT, 'web')
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json' }
 const PORT = Number(process.env.PORT) || 8777
 const HOST = process.env.HOST || '127.0.0.1'
-const PUBLIC_FILES = new Set(['/index.html', '/styles.css', '/icon.svg', '/manifest.json', '/config/shard-roster.json', '/config/shard-roster.public.json'])
+const PUBLIC_FILES = new Set(['/index.html', '/journal-browser-gate.html', '/journal-scale-browser-gate.html', '/journal-persistence-fault-gate.html', '/substrate-browser-gate.html', '/substrate-state-browser-gate.html', '/styles.css', '/icon.svg', '/manifest.json', '/config/shard-roster.json', '/config/shard-roster.public.json', '/js/vendor/noble-hashes/_md.js', '/js/vendor/noble-hashes/_u64.js', '/test/fixtures/peerit-vnext-journal-fixture.mjs'])
 
 // Bundles that are stubs in js/ but get replaced with real browser builds in web/
 // during build-web / ship:check. In dev mode, serve the built version when present
@@ -22,7 +22,7 @@ const BUILT_BUNDLE_ALIASES = {
 }
 
 function isPublicPath (p) {
-  return PUBLIC_FILES.has(p) || /^\/js\/[a-z0-9-]+\.js$/i.test(p) || /^\/config\/shard-roster(\.public)?\.json$/i.test(p)
+  return PUBLIC_FILES.has(p) || /^\/js\/(?:[a-z0-9-]+\/)*[a-z0-9-]+\.(?:mjs|js)$/i.test(p) || /^\/config\/shard-roster(\.public)?\.json$/i.test(p)
 }
 
 function isInsideRoot (file) {

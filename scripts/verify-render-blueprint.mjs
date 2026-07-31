@@ -29,4 +29,11 @@ for (const header of policy.headers) {
   requireText(row, `${header.name} header policy`)
 }
 
+for (const group of policy.pathRules || []) {
+  for (const header of group.headers) {
+    const row = `      - path: ${JSON.stringify(group.path)}\n        name: ${JSON.stringify(header.name)}\n        value: ${JSON.stringify(header.value)}`
+    requireText(row, `${group.path} ${header.name} path rule`)
+  }
+}
+
 console.log(`[render-blueprint] PASS ${policy.headers.length} static headers match deploy/render-security-headers.json`)

@@ -76,6 +76,7 @@ function contentType (file) {
   if (file.endsWith('.html')) return 'text/html; charset=utf-8'
   if (file.endsWith('.mjs') || file.endsWith('.js')) return 'text/javascript; charset=utf-8'
   if (file.endsWith('.json')) return 'application/json; charset=utf-8'
+  if (file.endsWith('.md')) return 'text/markdown; charset=utf-8'
   if (file.endsWith('.css')) return 'text/css; charset=utf-8'
   if (file.endsWith('.svg')) return 'image/svg+xml'
   if (file.endsWith('.png')) return 'image/png'
@@ -272,14 +273,14 @@ function assertLiveResult (result, expectedHeads) {
   assert.equal(result.recovery.ok, true)
   assert.equal(result.recovery.cached, false)
   assert.equal(result.recovery.qualifiedRelayCount, 2)
-  assert.equal(result.recovery.networkGets, 5)
+  assert.equal(result.recovery.networkGets, 40)
   assert.equal(result.recovery.networkPuts, 0)
   assert.equal(result.recovery.fallbackCount, 1)
   assert.equal(result.recovery.ordinaryDelivery, 'local-only')
-  assert.equal(result.recovery.recordCount, 4)
+  assert.equal(result.recovery.recordCount, 39)
   assert.equal(result.verifiedBatch.releaseSequence, result.expectedSequence)
-  assert.equal(result.verifiedBatch.recordCount, 4)
-  assert.equal(result.verifiedBatch.evidence.length, 4)
+  assert.equal(result.verifiedBatch.recordCount, 39)
+  assert.equal(result.verifiedBatch.evidence.length, 39)
   assert.equal(result.setRelayCalls, 0)
   assert.deepEqual(result.violations, [])
 
@@ -305,12 +306,16 @@ function assertLiveResult (result, expectedHeads) {
   }
 
   const cell = result.requests.filter(row => row.path === CELL_PATH)
-  assert.equal(cell.length, 5)
+  assert.equal(cell.length, 40)
   const successes = cell.filter(row => row.status >= 200 && row.status < 300)
-  assert.equal(successes.length, 4)
-  assert.equal(successes.every(row => row.responseBytes === 16384), true,
-    'a successful Cell GET response was not exactly 16,384 bytes')
-  assert.equal(successes.filter(row => row.origin === RELAYS.dallas).length, 3)
+  assert.equal(successes.length, 39)
+  const sizeClass1 = successes.filter(row => row.responseBytes === 16384)
+  const sizeClass2 = successes.filter(row => row.responseBytes === 65536)
+  assert.equal(sizeClass1.length, 36,
+    `expected 36 sizeClass-1 Cell GET responses of exactly 16,384 bytes, got ${sizeClass1.length}`)
+  assert.equal(sizeClass2.length, 3,
+    `expected 3 sizeClass-2 Cell GET responses of exactly 65,536 bytes, got ${sizeClass2.length}`)
+  assert.equal(successes.filter(row => row.origin === RELAYS.dallas).length, 38)
   assert.equal(successes.filter(row => row.origin === RELAYS.sydney).length, 1)
   assert.equal(cell.filter(row => row.origin === RELAYS.dallas && row.error).length, 1)
 
@@ -319,8 +324,8 @@ function assertLiveResult (result, expectedHeads) {
     evidenceByRelay.set(row.relayId, (evidenceByRelay.get(row.relayId) || 0) + 1)
   }
   assert.equal(evidenceByRelay.size, 2)
-  assert.equal(evidenceByRelay.get('dal-1'), 3,
-    'verified readback evidence did not bind three records to Dallas')
+  assert.equal(evidenceByRelay.get('dal-1'), 38,
+    'verified readback evidence did not bind 38 records to Dallas')
   assert.equal(evidenceByRelay.get('syd-1'), 1,
     'verified readback evidence did not bind the forced fallback record to Sydney')
 }
@@ -338,8 +343,15 @@ function assertRollbackResult (result) {
 const mode = String(argument('--mode', ''))
 if (!MODES.has(mode)) fail('--mode must be live-two-relay or rollback-preio')
 const expectedSequence = requiredInteger('--expected-sequence')
-if (mode === 'live-two-relay' && expectedSequence !== 19) fail('live-two-relay is authorized only for sequence 19')
-if (mode === 'rollback-preio' && expectedSequence !== 20) fail('rollback-preio is authorized only for sequence 20')
+// Owner decision 2026-07-31: sequence 20 is the LIVE bounded-public-test launch
+// slot (limited Cell-GET authority exposed). live-two-relay proves the exact
+// signed candidate recovers the 39-record launch seed at sequence 20.
+// rollback-preio asserts the fail-closed posture everywhere else: the limited
+// Cell-GET authority is inert at any sequence != 20, so a candidate built at
+// such a sequence must refuse recovery with PEERIT_LIMITED_CELL_GET_CONTROL_INVALID
+// before any relay I/O.
+if (mode === 'live-two-relay' && expectedSequence !== 20) fail('live-two-relay is authorized only for sequence 20')
+if (mode === 'rollback-preio' && expectedSequence === 20) fail('rollback-preio targets only sequences without the limited Cell-GET authority (!= 20)')
 const expectedHeads = {
   dallas: optionalHex32('--expected-dallas-head'),
   sydney: optionalHex32('--expected-sydney-head')
@@ -405,7 +417,12 @@ await new Promise((resolve, reject) => {
   server.listen(0, '127.0.0.1', resolve)
 })
 
-const browser = await chromium.launch({ headless: true })
+const browser = await chromium.launch({
+  headless: true,
+  // Optional explicit Chromium binary for multi-version gate sweeps (the
+  // default remains Playwright's bundled newest build).
+  executablePath: process.env.PEERIT_GATE_CHROMIUM_EXECUTABLE || undefined
+})
 const context = await browser.newContext({ serviceWorkers: 'block' })
 const page = await context.newPage()
 const pageErrors = []

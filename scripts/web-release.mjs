@@ -762,7 +762,11 @@ function verifyDocs () {
 // null-URL recovery attempt and its containment rollback, 17/18 for the exact
 // signed parameter-URL correction and its cold rollback, and 19/20 for the
 // CSP-safe authenticated browser recovery and its cold rollback. In each pair
-// the even sequence is prepared only as the monotonic rollback. The all-five successor
+// the even sequence is prepared only as the monotonic rollback. By the owner
+// decision of 2026-07-31, sequence 20 is then RE-SLOTTED as the LIVE
+// bounded-public-test launch release for the 34-record live launch seed
+// (limited Cell-GET authority exposed, signed seed recovery enabled),
+// superseding the rollback posture for this exact slot. The all-five successor
 // remains excluded and the GA product gate remains honestly blocked. This scope verifies everything
 // the selected canary actually is — frozen signed artifact bytes, manifest,
 // pin-history continuity, substrate profile blind-v1, both relay hints, CSP
@@ -781,6 +785,10 @@ const CANARY_CSP_SAFE_RECOVERY_DECISION_FILE =
   'deploy/canary-decision-peerit-seq19-csp-safe-live-recovery-20260729.json'
 const CANARY_CSP_SAFE_RECOVERY_DECISION_SHA256 =
   '1dfbb512cdd306dec903a407831cc3911c5844ded6e29c38d641bf700b4c1605'
+const CANARY_SEQ20_LAUNCH_DECISION_FILE =
+  'deploy/canary-decision-peerit-seq20-launch-live-recovery-20260731.json'
+const CANARY_SEQ20_LAUNCH_DECISION_SHA256 =
+  '2af60f84013989987e4f229b49c858eb8be83e45b20dbe521454cf1bc0a96c82'
 const CANARY_PIN_HISTORY_FILE = 'deploy/web-release-pin-history.json'
 const CANARY_PIN_HISTORY_SIG_FILE = 'deploy/web-release-pin-history.json.sig.json'
 
@@ -801,6 +809,128 @@ function verifyCanaryOwnerDecision (release) {
     'fc80b076becb28c9fbda596def255246cd506fc5ed4e5f4d22499c5cdad95f1b',
     '52f99d16c0ab47bdad025cbd4138549802e552d55835435588887e7ca178e3a6'
   ]
+  if (release.releaseSequence === 20) {
+    const decision = readCanaryOwnerDecision(
+      CANARY_SEQ20_LAUNCH_DECISION_FILE,
+      CANARY_SEQ20_LAUNCH_DECISION_SHA256)
+    const activation = decision.activation || {}
+    const authority = decision.authority || {}
+    const launch = activation.launch_seed || {}
+    const bootstrap = decision.seed_bootstrap || {}
+    const exactUrl = decision.exact_admission_parameter_url || {}
+    const csp = decision.production_csp || {}
+    const runtimeGate = decision.production_runtime_gate || {}
+    const relays = decision.relay_authority || {}
+    const patch = decision.runtime_patch || {}
+    const followups = Array.isArray(decision.followups) ? decision.followups.join('\n') : ''
+    if (decision.schema_version !== 5 ||
+        decision.decision_id !== 'peerit-seq20-launch-two-relay-live-recovery-20260731' ||
+        decision.status !== 'DECIDED' ||
+        !String(decision.decision || '').startsWith('ACCEPT Peerit release sequence 20 as the LIVE bounded-public-test launch slot') ||
+        !followups.includes('GA product gate remains honestly blocked')) {
+      throw new Error('sequence-20 launch decision is not the recorded owner ACCEPT')
+    }
+    if (authority.baseline_release_sequence !== 19 ||
+        authority.superseded_slot_posture !== 'sequence 20 as COLD_FAIL_CLOSED_BEFORE_RELAY_IO rollback, recorded in the seq-19 CSP-safe decision, is superseded for this exact slot only; the rollback tooling remains for any future rollback slot' ||
+        !Array.isArray(authority.cited_prior_decisions) ||
+        !authority.cited_prior_decisions.some(row => row.file === CANARY_CSP_SAFE_RECOVERY_DECISION_FILE && row.sha256 === CANARY_CSP_SAFE_RECOVERY_DECISION_SHA256)) {
+      throw new Error('sequence-20 launch decision does not cite the superseded seq-19 rollback decision')
+    }
+    if (activation.functional_release_sequence !== 20 ||
+        activation.rollback_release_sequence !== null ||
+        activation.rollback_posture !== 'SUPERSEDED_FOR_THIS_SLOT_BY_OWNER_DECISION_2026-07-31' ||
+        activation.limited_cell_get_authority_release_sequence !== 20 ||
+        activation.limited_cell_get_runtime_authority_exposed !== true ||
+        activation.seed_recovery_enabled !== true ||
+        activation.claim_boundary !== 'LIVE_PUBLIC_TEST_ONLY' ||
+        JSON.stringify(activation.relays) !== JSON.stringify(['dal-1', 'syd-1']) ||
+        JSON.stringify(activation.allowed_browser_operations) !==
+          JSON.stringify(['DESCRIBE.GET', 'DESCRIBE.CHALLENGE', 'CELL.GET']) ||
+        activation.network_puts_during_recovery !== 0 ||
+        activation.ordinary_delivery !== 'LOCAL_ONLY' ||
+        launch.record_count !== 34 || launch.cell_count_per_relay !== 39 ||
+        launch.community_claims !== 11 || launch.original_posts !== 17 ||
+        launch.boxed_posts_two_cells_each !== 5 || launch.replies !== 6 ||
+        launch.sizeclass_2_cells_per_relay !== 3 ||
+        launch.manifest_sha256 !== '36c15537d9e853cfb599cf59568a067e573a87c8de858183e332dfd3eb9192c0' ||
+        activation.all_five_successor !== 'EXCLUDED' ||
+        activation.ga_product_gate !== 'BLOCKED — 22 blockers DISCLOSED-OPEN, none cleared by this scope') {
+      throw new Error('sequence-20 launch decision does not bind the exact live launch slot scope')
+    }
+    if (bootstrap.path !== 'deploy/peerit-seed-bootstrap-v1-seq20.json' ||
+        bootstrap.sha256 !== '0a386975293d01e983c5c64074cdbcc8b34cff40bb5147807959de4903e03e69' ||
+        bootstrap.embedded_release_sequence !== 20 ||
+        bootstrap.bootstrap_sequence !== 0 ||
+        bootstrap.previous_bootstrap_hash !== null ||
+        bootstrap.discovery_authority !== '691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec' ||
+        bootstrap.records !== 39) {
+      throw new Error('sequence-20 launch decision does not bind the exact launch seed bootstrap')
+    }
+    if (!Array.isArray(patch.files) ||
+        !patch.files.includes('js/substrate/browser-runtime-authority.mjs') ||
+        !patch.files.includes('peerit-limited-cell-get-profile-v1.json') ||
+        !patch.files.includes('scripts/browser-peerit-production-runtime-gate.mjs')) {
+      throw new Error('sequence-20 launch decision does not record the limited Cell-GET runtime patch surface')
+    }
+    if (csp.policy_file !== 'deploy/render-security-headers.json' ||
+        csp.policy_file_sha256 !== 'dc97c87d08bb773712cc739c37ffd4c62c121f7c92c01b20b3a8bf4a14f95724' ||
+        csp.script_src !== "'self'" || csp.unsafe_eval !== 'FORBIDDEN' ||
+        csp.wasm_unsafe_eval !== 'FORBIDDEN' || csp.expansion !== 'FORBIDDEN' ||
+        csp.parameter_url_origin_addition !== 'FORBIDDEN') {
+      throw new Error('sequence-20 launch decision does not bind the exact unchanged policy')
+    }
+    if (exactUrl.utf8 !== 'https://evidence.example:443/admission.cenc' ||
+        exactUrl.utf8_hex !==
+          '68747470733a2f2f65766964656e63652e6578616d706c653a3434332f61646d697373696f6e2e63656e63' ||
+        exactUrl.semantics !== 'EVIDENCE_MIRROR_HINT_ONLY' ||
+        exactUrl.browser_fetch !== 'FORBIDDEN' ||
+        exactUrl.dns_resolution !== 'FORBIDDEN' ||
+        exactUrl.url_parsing_or_normalization !== 'FORBIDDEN' ||
+        exactUrl.csp_change !== 'FORBIDDEN' ||
+        exactUrl.comparison !== 'EXACT_SIGNED_UTF8_BYTES') {
+      throw new Error('sequence-20 launch decision does not bind the exact no-fetch parameterUrl contract')
+    }
+    const gate20 = runtimeGate.sequence_20 || {}
+    if (runtimeGate.script !== 'scripts/browser-peerit-production-runtime-gate.mjs' ||
+        runtimeGate.functional_mode !== 'live-two-relay' ||
+        runtimeGate.functional_release_sequence !== 20 ||
+        runtimeGate.full_authority_loader !== 'loadPeeritBrowserRuntimeAuthorityV1' ||
+        runtimeGate.production_pin_history_loader !== 'loadPeeritProductionPinHistoryTerminalV1' ||
+        runtimeGate.authority_active_before_relay_io !== true ||
+        gate20.expected_network_gets !== 40 || gate20.expected_fallback_count !== 1 ||
+        gate20.expected_record_count !== 39 || gate20.expected_cell_get_requests !== 40 ||
+        gate20.expected_successful_cell_gets !== 39 ||
+        gate20.expected_network_puts !== 0 || gate20.expected_parameter_url_requests !== 0 ||
+        gate20.expected_sizeclass_1_responses !== 36 ||
+        gate20.expected_sizeclass_2_responses !== 3 ||
+        gate20['dal-1']?.origin !== 'https://relay-dal.p2phiverelay.xyz' ||
+        gate20['dal-1']?.injected_cell_get_failures !== 1 ||
+        gate20['dal-1']?.successful_cell_gets !== 38 ||
+        gate20['dal-1']?.verified_readback_evidence_count !== 38 ||
+        gate20['syd-1']?.origin !== 'https://relay-syd.p2phiverelay.xyz' ||
+        gate20['syd-1']?.injected_cell_get_failures !== 0 ||
+        gate20['syd-1']?.successful_cell_gets !== 1 ||
+        gate20['syd-1']?.verified_readback_evidence_count !== 1) {
+      throw new Error('sequence-20 launch decision does not bind the named-relay production runtime gate')
+    }
+    if (relays['dal-1']?.minimum_descriptor_sequence !== 9 ||
+        relays['dal-1']?.descriptor_head_sha256 !== 'a36845597379c49f492a0b5a99d476723b6e538e7f73052c029f755c68acbdd6' ||
+        relays['dal-1']?.admission_protocol_sha256 !== '5494fe9abfc07536392b3d1a51a6ccec7de75063238198fcbf19729c37baf6f7' ||
+        relays['syd-1']?.minimum_descriptor_sequence !== 12 ||
+        relays['syd-1']?.descriptor_head_sha256 !== 'e1ca456c7e99294b9fde660dc2d597e9bf5abd6e4530064a8c512c1e2de5a507' ||
+        relays['syd-1']?.admission_protocol_sha256 !== '03f920f2102e3984e0885867e51c1d87a8aae6b52ae2e1bf472a0b9284e9a265') {
+      throw new Error('sequence-20 launch decision does not bind the same-day named relay authorities')
+    }
+    addCheck('canary:owner-decision', 'pass', `Owner launch-slot decision verified byte-exact (sha256 ${CANARY_SEQ20_LAUNCH_DECISION_SHA256.slice(0, 12)}...): ACCEPT seq-20 as the LIVE bounded-public-test launch slot for the 34-record launch seed (limited Cell-GET exposed, 39-record signed recovery enabled), superseding the seq-19 rollback posture for this slot; unchanged CSP, zero PUTs, all-five excluded, GA gate still blocked with 22 blockers DISCLOSED-OPEN.`, {
+      file: CANARY_SEQ20_LAUNCH_DECISION_FILE,
+      sha256: CANARY_SEQ20_LAUNCH_DECISION_SHA256,
+      decidedAt: decision.decided_at,
+      functionalReleaseSequence: 20,
+      launchRecords: launch.record_count,
+      launchCellsPerRelay: launch.cell_count_per_relay
+    })
+    return
+  }
   if (release.releaseSequence >= 19 && release.releaseSequence <= 20) {
     const decision = readCanaryOwnerDecision(
       CANARY_CSP_SAFE_RECOVERY_DECISION_FILE,

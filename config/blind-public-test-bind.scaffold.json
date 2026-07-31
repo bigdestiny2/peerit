@@ -55,7 +55,7 @@
       },
       "vendored_client_artifact": {
         "path": "vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs",
-        "artifactHash": "967cbc42a3583ef158045dfdf6afd82f672153c117236a928bc2c2684776b008",
+        "artifactHash": "17a7e06df5fac172204dc64c79b3398e3bef38a1869b92bd4bed85b6ae3e74f7",
         "wireTuple": {
           "specHash": "470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9",
           "abiHash": "aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d",

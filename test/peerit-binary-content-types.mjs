@@ -122,4 +122,104 @@ await assert.rejects(fetchAndVerifyPeeritWebAssetContentV1({
   baseUrl: 'https://peerit.test/'
 }), error => error.code === 'BROWSER_RUNTIME_ASSET_CONTENT_TYPE_INVALID')
 
+// ---- compression tolerance (2026-08-01 live-site unblock, sequence 22):
+// a compressing static edge (Render/Cloudflare) answers browsers with
+// content-encoding br/gzip and a Content-Length of the COMPRESSED size (or
+// none), while the network layer delivers the DECOMPRESSED body. The
+// decompressed payload must satisfy the signed length bound and the signed
+// hash exactly; the compressed header must not be required to equal it.
+import { brotliCompressSync, gzipSync } from 'node:zlib'
+
+function stubEncodedResponse (bodyBytes, encoding, { headerLength = 'compressed', contentType = 'text/javascript' } = {}) {
+  const compressed = encoding === 'br'
+    ? brotliCompressSync(Buffer.from(bodyBytes))
+    : encoding === 'gzip'
+      ? gzipSync(Buffer.from(bodyBytes))
+      : null
+  const headers = {
+    'content-type': contentType,
+    'content-encoding': encoding
+  }
+  if (headerLength === 'compressed') headers['content-length'] = String(compressed.byteLength)
+  else if (headerLength === 'uncompressed') headers['content-length'] = String(bodyBytes.byteLength)
+  else if (headerLength === 'wrong') headers['content-length'] = String(bodyBytes.byteLength + 7)
+  // The browser network layer transparently decompresses: response.body carries
+  // the DECOMPRESSED bytes while the header carries the compressed size.
+  return new Response(bodyBytes, { status: 200, headers })
+}
+function encodedFetch (bodyBytes, encoding, options = {}) {
+  return async (input) => {
+    const path = new URL(input).pathname
+    if (path === '/artifact.cenc') {
+      return new Response(assetBytes, {
+        status: 200,
+        headers: { 'content-length': String(assetBytes.byteLength), 'content-type': 'binary/octet-stream' }
+      })
+    }
+    if (path === '/peerit-app-artifact-v1.json') {
+      return stubResponse(appArtifactBytes, 'application/json')
+    }
+    if (path === '/js/app.js') return stubEncodedResponse(bodyBytes, encoding, options)
+    return new Response('not found', { status: 404 })
+  }
+}
+const appJsBytes = new TextEncoder().encode('export const peerit = "compress me";\n'.repeat(64))
+const compressedManifestBytes = encodePeeritWebAssetManifestV1({
+  version: 1,
+  releaseSequence: 22n,
+  appArtifactHash: hashPeeritAppArtifactV1(appArtifactBytes),
+  recommendedBootstrapHashes: [hashPeeritBootstrapV1(assetBytes)],
+  assets: [
+    { path: '/artifact.cenc', byteLength: BigInt(assetBytes.byteLength), assetHash: blake2b256(assetBytes) },
+    { path: '/js/app.js', byteLength: BigInt(appJsBytes.byteLength), assetHash: blake2b256(appJsBytes) },
+    { path: '/peerit-app-artifact-v1.json', byteLength: BigInt(appArtifactBytes.byteLength), assetHash: blake2b256(appArtifactBytes) }
+  ].sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)))
+})
+
+// compressed header length != signed bound (and header absent) but the
+// decompressed body is exactly the signed bytes -> MUST pass (br and gzip)
+for (const encoding of ['br', 'gzip']) {
+  for (const headerLength of ['compressed', 'absent']) {
+    const verified = await fetchAndVerifyPeeritWebAssetContentV1({
+      fetch: encodedFetch(appJsBytes, encoding, { headerLength }),
+      manifest: compressedManifestBytes,
+      baseUrl: 'https://peerit.test/'
+    })
+    assert.equal(verified.verifiedAssetCount, 3,
+      `${encoding} with ${headerLength} Content-Length must pass when decompressed bytes match the signed bounds`)
+  }
+}
+
+// compressed but the decompressed body is SHORTER than the signed bound -> fail
+await assert.rejects(fetchAndVerifyPeeritWebAssetContentV1({
+  fetch: encodedFetch(appJsBytes.subarray(0, appJsBytes.byteLength - 5), 'br', { headerLength: 'compressed' }),
+  manifest: compressedManifestBytes,
+  baseUrl: 'https://peerit.test/'
+}), error => error.code === 'BROWSER_RUNTIME_ASSET_LENGTH_INVALID')
+
+// compressed, decompressed length matches, but the bytes are WRONG -> the
+// signed hash binding must still fail (no weakening of the byte model)
+const tamperedAppJsBytes = new Uint8Array(appJsBytes)
+tamperedAppJsBytes[tamperedAppJsBytes.byteLength - 2] ^= 0x01
+await assert.rejects(fetchAndVerifyPeeritWebAssetContentV1({
+  fetch: encodedFetch(tamperedAppJsBytes, 'br', { headerLength: 'compressed' }),
+  manifest: compressedManifestBytes,
+  baseUrl: 'https://peerit.test/'
+}), error => error.code !== 'BROWSER_RUNTIME_ASSET_LENGTH_INVALID')
+
+// no content-encoding: the strict header rule is preserved byte-for-byte
+await assert.rejects(fetchAndVerifyPeeritWebAssetContentV1({
+  fetch: encodedFetch(appJsBytes, 'identity', { headerLength: 'wrong' }),
+  manifest: compressedManifestBytes,
+  baseUrl: 'https://peerit.test/'
+}), error => error.code === 'BROWSER_RUNTIME_ASSET_LENGTH_INVALID')
+
+// HTML stays rejected even when compressed
+await assert.rejects(fetchAndVerifyPeeritWebAssetContentV1({
+  fetch: encodedFetch(appJsBytes, 'br', { headerLength: 'compressed', contentType: 'text/html' }),
+  manifest: compressedManifestBytes,
+  baseUrl: 'https://peerit.test/'
+}), error => error.code === 'BROWSER_RUNTIME_ASSET_CONTENT_TYPE_INVALID')
+
 console.log('peerit binary content types: pin-history bootstrap + runtime asset fetch accept application/octet-stream and binary/octet-stream, reject HTML/error responses — passed')
+console.log('peerit compression tolerance: compressed (br/gzip) responses with compressed or absent Content-Length pass on exact decompressed bytes; short or tampered decompressed payloads and uncompressed header drift fail; HTML still rejected — passed')

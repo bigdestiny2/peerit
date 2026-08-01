@@ -343,16 +343,17 @@ function assertRollbackResult (result) {
 const mode = String(argument('--mode', ''))
 if (!MODES.has(mode)) fail('--mode must be live-two-relay or rollback-preio')
 const expectedSequence = requiredInteger('--expected-sequence')
-// Owner decisions 2026-07-31: sequence 20 was the LIVE bounded-public-test
-// launch slot; sequence 21 is its live-site unblock successor (limited
-// Cell-GET authority exposed at sequence 21). live-two-relay proves the exact
-// signed candidate recovers the 39-record launch seed at sequence 21.
+// Owner decisions 2026-07-31/08-01: sequence 20 was the LIVE bounded-public-test
+// launch slot, 21 its content-type unblock successor, and 22 its compression-tolerant
+// successor (limited Cell-GET authority exposed at sequence 22). live-two-relay
+// proves the exact signed candidate recovers the 39-record launch seed at
+// sequence 22.
 // rollback-preio asserts the fail-closed posture everywhere else: the limited
 // Cell-GET authority is inert at any sequence != 21, so a candidate built at
 // such a sequence must refuse recovery with PEERIT_LIMITED_CELL_GET_CONTROL_INVALID
 // before any relay I/O.
-if (mode === 'live-two-relay' && expectedSequence !== 21) fail('live-two-relay is authorized only for sequence 21')
-if (mode === 'rollback-preio' && expectedSequence === 21) fail('rollback-preio targets only sequences without the limited Cell-GET authority (!= 21)')
+if (mode === 'live-two-relay' && expectedSequence !== 22) fail('live-two-relay is authorized only for sequence 22')
+if (mode === 'rollback-preio' && expectedSequence === 22) fail('rollback-preio targets only sequences without the limited Cell-GET authority (!= 22)')
 const expectedHeads = {
   dallas: optionalHex32('--expected-dallas-head'),
   sydney: optionalHex32('--expected-sydney-head')

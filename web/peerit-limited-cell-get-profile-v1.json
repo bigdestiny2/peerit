@@ -1,7 +1,7 @@
 {
   "schema": "peerit-limited-cell-get-profile-v1",
   "version": 1,
-  "releaseSequence": 22,
+  "releaseSequence": 23,
   "mode": "seed-recovery-only",
   "ordinaryDelivery": "local-only",
   "networkPuts": 0,
@@ -9,8 +9,8 @@
   "hiveCellGet": {
     "artifactPath": "/vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.mjs",
     "manifestPath": "/vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.manifest.cenc",
-    "artifactHash": "2c3400b61daea60670fd1b4003d8cfdc107e8ef78742dc2ba6bbbd443f6c7502",
-    "manifestHash": "cf7fa1d6bc231d1c73f65b0abf9bf0818834b2281e08cee3df0f88149e58f92d"
+    "artifactHash": "7a34c2beaca5375c61754d165d5eed1d209489611f84517540bccd241c01ddcd",
+    "manifestHash": "9f71ff6c07d183cb806dcf8c869a1d15db57a55bc22c374eef3bb70fa794560a"
   },
   "supportedProtocolProfiles": [
     {

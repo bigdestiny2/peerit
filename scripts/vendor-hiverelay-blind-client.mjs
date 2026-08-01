@@ -23,10 +23,10 @@ const paths = Object.freeze({
   crossHostEvidence: 'blind-client-control-v1.cross-host-evidence.json'
 })
 const EXPECTED = Object.freeze({
-  artifactLength: 224014,
-  artifactHash: '17a7e06df5fac172204dc64c79b3398e3bef38a1869b92bd4bed85b6ae3e74f7',
-  manifestHash: 'bf48196c56f419f02e27427f3b36bac8c8aa2a2eaa3c14475f6aceb85c195c5b',
-  sourceClosureHash: '38cb0252e218ce07b616fd2697b14af42d629ce0c98a1278221cc95eb6ab91e0'
+  artifactLength: 224158,
+  artifactHash: '8e2ba34a005d00fc18ff76c6ebe7e78f4eafb7d3f557281616950f66228e328b',
+  manifestHash: 'b74feac79f72d84f625159c0b367ead20ec322776e7fcef1cde1c1a76c8f423a',
+  sourceClosureHash: '510905c5dcc538e8515b8111365e4bd0132619b1a560b8270b638f75f6e49ceb'
 })
 
 const bytes = name => new Uint8Array(fs.readFileSync(path.join(sourceArtifacts, name)))

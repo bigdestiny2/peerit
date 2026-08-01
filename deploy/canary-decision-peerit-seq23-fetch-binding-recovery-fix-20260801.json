@@ -1,0 +1,171 @@
+{
+  "schema_version": 5,
+  "decision_id": "peerit-seq23-fetch-binding-recovery-fix-20260801",
+  "decided_at": "2026-08-01T20:45:36Z",
+  "decided_by": "owner authority executed by the active sole Codex conductor",
+  "status": "DECIDED",
+  "decision": "ACCEPT Peerit release sequence 23 as the LIVE bounded-public-test launch successor: the root-caused fetch-binding fix for the live seed-recovery failure (bind the fallback globalThis.fetch wherever the recovery or the vendored blind clients fall back to it), keeping the limited Cell-GET runtime authority EXPOSED at sequence 23 and signed seed recovery ENABLED for the same 34-record live launch seed. The exact production CSP remains unchanged, authenticated browser authority MUST become active before any relay I/O, recovery performs zero network PUTs, ordinary delivery remains LOCAL_ONLY, the all-five successor remains excluded, and the GA product gate remains blocked with all 22 blockers disclosed-open.",
+  "authority": {
+    "kind": "direct-owner-live-site-unblock-authorization",
+    "owner_instruction": "Root-cause task on the live peerit.site (seq-22 deployed, manifest matches byte-exact). Both prior fixes are live and working (release signed-release-coherent; pinHistory verified-production-pin-history; authority authenticated-browser-runtime-ready), but seedRecovery fails with 'descriptor bootstrap failed' with zero failed requests in the trace. Reproduce the exact failure, name the exact failing check, determine why the live-two-relay Chromium gate passes while the deployed app fails, and fix it properly without weakening descriptor/signature/chain verification.",
+    "baseline_commit": "7f4e13f (release(peerit): sequence 22 — live-site compression tolerance unblock, on codex/peerit-seq22-launch-20260801)",
+    "baseline_release_sequence": 22,
+    "cited_prior_decisions": [
+      {
+        "file": "deploy/canary-decision-peerit-seq22-live-site-compression-tolerance-20260801.json",
+        "sha256": "16fc95caa181311f45abe8330fe29307171dd7bd344c730056214acb6debb3be",
+        "relation": "the seq-22 compression-tolerance decision this successor extends"
+      },
+      {
+        "file": "deploy/canary-decision-peerit-seq21-live-site-content-type-unblock-20260731.json",
+        "sha256": "96c0216f4e276595d1099f33537dbc22058a3a6c70d012ccc953225a2a1ba042",
+        "relation": "the seq-21 content-type unblock decision in the same lineage"
+      }
+    ]
+  },
+  "root_cause": {
+    "failing_check": "packages/blind-client/bootstrap-http.js:137 (this.fetch(...) method invocation) -> the unbound globalThis.fetch fallback at bootstrap-http.js:105 and direct-http.js:132 throws 'TypeError: Failed to execute fetch on Window: Illegal invocation', wrapped as TRANSPORT_FAILURE 'descriptor bootstrap failed' at bootstrap-http.js:170 (the catch-all for non-BlindClientError causes; Peerit-side mirror: relay-consumer.js:1583 passed the same unbound fallback)",
+    "mechanism": "the browser recovery path (app-entry.js -> recoverPeeritSeedWithLimitedCellGetAuthorityV1) passes NO fetch option, so the vendored client's descriptor bootstrap fell back to the UNBOUND globalThis.fetch; native Window.fetch requires the window receiver, and invoked as a method on the client instance it throws Illegal invocation at the very first descriptor request — before any relay request is attempted, which is why the live network trace showed zero failed requests.",
+    "asymmetry_explained": "the live-two-relay Chromium gate passes because it supplies an explicit bound fetch wrapper (tracedFetch); Node callers (publisher, the read-only live verifier) pass because Node's global fetch has no Window receiver requirement; and earlier browser DOM probes passed only because a tracing init-script had wrapped window.fetch with a bound function by accident — the real deployed app, with no wrapper, always failed at the first descriptor fetch.",
+    "fix": [
+      "js/substrate/relay-consumer.js (recovery fetch selection): bind the fallback — options.fetch || globalThis.fetch.bind(globalThis) (options.fetch, when supplied, is used exactly as before)",
+      "vendored blind clients (upstream hiverelay codex/blind-client-fetch-binding-20260801 @ 1012ca12): bind the same fallback at packages/blind-client/bootstrap-http.js:105 and packages/blind-client/direct-http.js:132; both browser artifacts rebuilt (control 224158B, cell-get 174037B) and re-vendored with full authority re-verification"
+    ],
+    "no_weakening": "descriptor signature, chain continuity, hash, epoch-window and admission equality verification are all unchanged; the fix only changes WHO the fetch function's receiver is"
+  },
+  "activation": {
+    "functional_release_sequence": 23,
+    "rollback_release_sequence": null,
+    "rollback_posture": "SUPERSEDED_FOR_THIS_SLOT_BY_OWNER_DECISION_2026-08-01",
+    "limited_cell_get_authority_release_sequence": 23,
+    "limited_cell_get_runtime_authority_exposed": true,
+    "seed_recovery_enabled": true,
+    "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+    "relays": [
+      "dal-1",
+      "syd-1"
+    ],
+    "required_predeploy_proof": "Clean Chromium loads the exact signed sequence-23 candidate under the exact unchanged production CSP, validates production pin-history terminal 23 and the full loadPeeritBrowserRuntimeAuthorityV1 path, observes authority.active=true before any relay I/O, then performs the signed seed recovery (39 records) with byte-exact verified CELL.GET evidence on both named relays and zero network PUTs; ADDITIONALLY the exact app-entry boot path (no fetch wrapper of any kind, mirroring the deployed app) must reach data-peerit-substrate-state=seed-recovery-complete with 39 records.",
+    "allowed_browser_operations": [
+      "DESCRIBE.GET",
+      "DESCRIBE.CHALLENGE",
+      "CELL.GET"
+    ],
+    "network_puts_during_recovery": 0,
+    "ordinary_delivery": "LOCAL_ONLY",
+    "launch_seed": {
+      "record_count": 34,
+      "cell_count_per_relay": 39,
+      "community_claims": 11,
+      "original_posts": 17,
+      "boxed_posts_two_cells_each": 5,
+      "replies": 6,
+      "sizeclass_2_cells_per_relay": 3,
+      "manifest": "launch/FINAL-SEED-MANIFEST.json",
+      "manifest_sha256": "36c15537d9e853cfb599cf59568a067e573a87c8de858183e332dfd3eb9192c0",
+      "capture_redelivery_run": "renew-2026-07-30T23:18:21.374Z (owner-approved; 34/34 receipt-signed + byte-exact-readback-verified on both relays)"
+    },
+    "all_five_successor": "EXCLUDED",
+    "ga_product_gate": "BLOCKED — 22 blockers DISCLOSED-OPEN, none cleared by this scope"
+  },
+  "ceremony_extension": {
+    "summary": "production-pin-history ceremony cap PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE 22 -> 23 (single exported constant); PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE 22 -> 23 (live at 23, fail-closed at 22 and 24); limited Cell-GET profile -> releaseSequence 23 with the re-vendored fetch-binding cell-get artifact pins (admission pins unchanged from seq-21/22 — no rotation since 2026-07-31T15:55Z)",
+    "files": [
+      "scripts/production-pin-history-ceremony.mjs",
+      "js/substrate/browser-runtime-authority.mjs",
+      "js/substrate/relay-consumer.js",
+      "peerit-limited-cell-get-profile-v1.json",
+      "scripts/browser-peerit-production-runtime-gate.mjs",
+      "test/peerit-browser-runtime-authority.mjs",
+      "test/peerit-limited-cell-get-recovery.mjs",
+      "test/peerit-web-release-pin-history-append.mjs"
+    ]
+  },
+  "seed_bootstrap": {
+    "path": "deploy/peerit-seed-bootstrap-v1-seq23.json",
+    "sha256": "b0d9b996e112fb542b5577a7fad179ccad6333eb624b256168118c43e3176bec",
+    "embedded_release_sequence": 23,
+    "bootstrap_sequence": 0,
+    "previous_bootstrap_hash": null,
+    "discovery_authority": "691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec",
+    "records": 39,
+    "issued_at": "2026-08-01T20:45:36.286Z",
+    "expires_at": "2026-08-31T20:45:36.286Z",
+    "note": "Release-terminal genesis REQUIRED (build/runtime/ceremony all bind artifact payload releaseSequence === bundle releaseSequence). Names the same 39 live cells; the seq-20/21/22 artifacts are untouched."
+  },
+  "exact_admission_parameter_url": {
+    "utf8": "https://evidence.example:443/admission.cenc",
+    "utf8_hex": "68747470733a2f2f65766964656e63652e6578616d706c653a3434332f61646d697373696f6e2e63656e63",
+    "semantics": "EVIDENCE_MIRROR_HINT_ONLY",
+    "browser_fetch": "FORBIDDEN",
+    "dns_resolution": "FORBIDDEN",
+    "url_parsing_or_normalization": "FORBIDDEN",
+    "csp_change": "FORBIDDEN",
+    "comparison": "EXACT_SIGNED_UTF8_BYTES"
+  },
+  "production_csp": {
+    "policy_file": "deploy/render-security-headers.json",
+    "policy_file_sha256": "dc97c87d08bb773712cc739c37ffd4c62c121f7c92c01b20b3a8bf4a14f95724",
+    "script_src": "'self'",
+    "unsafe_eval": "FORBIDDEN",
+    "wasm_unsafe_eval": "FORBIDDEN",
+    "expansion": "FORBIDDEN",
+    "parameter_url_origin_addition": "FORBIDDEN"
+  },
+  "relay_authority": {
+    "note": "same-day pins re-probed GET-only at 2026-08-01T20:45Z; UNCHANGED from the seq-21/22 pins (no admission rotation since)",
+    "dal-1": {
+      "origin": "https://relay-dal.p2phiverelay.xyz",
+      "minimum_descriptor_sequence": 12,
+      "descriptor_head_sha256": "badfc830eb4eae7e25573e73873b6420801aafb00eab4250a61160e720399440",
+      "admission_protocol_sha256": "7d29e79d20955f14b4553d8517c35a5b548308ff9f44db39590c0ec5c2768ecb"
+    },
+    "syd-1": {
+      "origin": "https://relay-syd.p2phiverelay.xyz",
+      "minimum_descriptor_sequence": 15,
+      "descriptor_head_sha256": "641e01b9777922d6cab36b4bf7411f762e45f8c53c9416006eb00ff352c809c2",
+      "admission_protocol_sha256": "108e53b1e93c56e8c37f281234c23035b888615e8cd904d2751aa58b2dcea120"
+    }
+  },
+  "production_runtime_gate": {
+    "script": "scripts/browser-peerit-production-runtime-gate.mjs",
+    "functional_mode": "live-two-relay",
+    "functional_release_sequence": 23,
+    "rollback_mode": "rollback-preio",
+    "rollback_note": "rollback-preio targets any sequence != 23 (the limited Cell-GET authority fails closed there)",
+    "full_authority_loader": "loadPeeritBrowserRuntimeAuthorityV1",
+    "production_pin_history_loader": "loadPeeritProductionPinHistoryTerminalV1",
+    "authority_active_before_relay_io": true,
+    "service_worker": "BLOCKED_IN_FRESH_CONTEXT",
+    "sequence_23": {
+      "expected_network_gets": 40,
+      "expected_fallback_count": 1,
+      "expected_record_count": 39,
+      "expected_cell_get_requests": 40,
+      "expected_successful_cell_gets": 39,
+      "expected_network_puts": 0,
+      "expected_parameter_url_requests": 0,
+      "expected_sizeclass_1_responses": 36,
+      "expected_sizeclass_2_responses": 3,
+      "dal-1": {
+        "origin": "https://relay-dal.p2phiverelay.xyz",
+        "injected_cell_get_failures": 1,
+        "successful_cell_gets": 38,
+        "verified_readback_evidence_count": 38
+      },
+      "syd-1": {
+        "origin": "https://relay-syd.p2phiverelay.xyz",
+        "injected_cell_get_failures": 0,
+        "successful_cell_gets": 1,
+        "verified_readback_evidence_count": 1
+      }
+    }
+  },
+  "followups": [
+    "GA product gate remains honestly blocked (22 blockers DISCLOSED-OPEN)",
+    "bundle re-issue with fresh admission parameter pins is required on the next relay admission-parameter rotation (exact-equality pin, relay-consumer.js:724)",
+    "publisher --renew on a ~60-day cadence re-mints all seed cells; the reader bootstrap MUST be re-issued after every --renew, then the bundle re-issued to bind it",
+    "seq-23 seed bootstrap artifact expires 2026-08-31T20:45:36.286Z",
+    "site flip / deploy of the seq-23 candidate awaits owner merge confirmation; no push, no merge, no DNS/Render contact from the build lane"
+  ]
+}

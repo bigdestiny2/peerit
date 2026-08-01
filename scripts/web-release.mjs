@@ -797,6 +797,10 @@ const CANARY_SEQ22_COMPRESSION_TOLERANCE_DECISION_FILE =
   'deploy/canary-decision-peerit-seq22-live-site-compression-tolerance-20260801.json'
 const CANARY_SEQ22_COMPRESSION_TOLERANCE_DECISION_SHA256 =
   '16fc95caa181311f45abe8330fe29307171dd7bd344c730056214acb6debb3be'
+const CANARY_SEQ23_FETCH_BINDING_DECISION_FILE =
+  'deploy/canary-decision-peerit-seq23-fetch-binding-recovery-fix-20260801.json'
+const CANARY_SEQ23_FETCH_BINDING_DECISION_SHA256 =
+  '2ded91c43bfaccfe5d227249d0708a90eb29f04a2c3c10e0755de85a1c612f08'
 const CANARY_PIN_HISTORY_FILE = 'deploy/web-release-pin-history.json'
 const CANARY_PIN_HISTORY_SIG_FILE = 'deploy/web-release-pin-history.json.sig.json'
 
@@ -817,6 +821,135 @@ function verifyCanaryOwnerDecision (release) {
     'fc80b076becb28c9fbda596def255246cd506fc5ed4e5f4d22499c5cdad95f1b',
     '52f99d16c0ab47bdad025cbd4138549802e552d55835435588887e7ca178e3a6'
   ]
+  if (release.releaseSequence === 23) {
+    const decision = readCanaryOwnerDecision(
+      CANARY_SEQ23_FETCH_BINDING_DECISION_FILE,
+      CANARY_SEQ23_FETCH_BINDING_DECISION_SHA256)
+    const activation = decision.activation || {}
+    const authority = decision.authority || {}
+    const launch = activation.launch_seed || {}
+    const rootCause = decision.root_cause || {}
+    const extension = decision.ceremony_extension || {}
+    const bootstrap = decision.seed_bootstrap || {}
+    const exactUrl = decision.exact_admission_parameter_url || {}
+    const csp = decision.production_csp || {}
+    const runtimeGate = decision.production_runtime_gate || {}
+    const relays = decision.relay_authority || {}
+    const followups = Array.isArray(decision.followups) ? decision.followups.join('\n') : ''
+    if (decision.schema_version !== 5 ||
+        decision.decision_id !== 'peerit-seq23-fetch-binding-recovery-fix-20260801' ||
+        decision.status !== 'DECIDED' ||
+        !String(decision.decision || '').startsWith('ACCEPT Peerit release sequence 23 as the LIVE bounded-public-test launch successor') ||
+        !followups.includes('GA product gate remains honestly blocked')) {
+      throw new Error('sequence-23 fetch-binding decision is not the recorded owner ACCEPT')
+    }
+    if (authority.baseline_release_sequence !== 22 ||
+        !Array.isArray(authority.cited_prior_decisions) ||
+        !authority.cited_prior_decisions.some(row => row.file === CANARY_SEQ22_COMPRESSION_TOLERANCE_DECISION_FILE && row.sha256 === CANARY_SEQ22_COMPRESSION_TOLERANCE_DECISION_SHA256)) {
+      throw new Error('sequence-23 decision does not cite the seq-22 compression-tolerance decision it extends')
+    }
+    if (!String(rootCause.mechanism || '').includes('UNBOUND globalThis.fetch') ||
+        !Array.isArray(rootCause.fix) ||
+        !rootCause.fix.some(row => String(row).includes('relay-consumer.js')) ||
+        !rootCause.fix.some(row => String(row).includes('codex/blind-client-fetch-binding-20260801'))) {
+      throw new Error('sequence-23 decision does not bind the exact fetch-binding root cause and fix')
+    }
+    if (activation.functional_release_sequence !== 23 ||
+        activation.rollback_release_sequence !== null ||
+        activation.rollback_posture !== 'SUPERSEDED_FOR_THIS_SLOT_BY_OWNER_DECISION_2026-08-01' ||
+        activation.limited_cell_get_authority_release_sequence !== 23 ||
+        activation.limited_cell_get_runtime_authority_exposed !== true ||
+        activation.seed_recovery_enabled !== true ||
+        activation.claim_boundary !== 'LIVE_PUBLIC_TEST_ONLY' ||
+        JSON.stringify(activation.relays) !== JSON.stringify(['dal-1', 'syd-1']) ||
+        JSON.stringify(activation.allowed_browser_operations) !==
+          JSON.stringify(['DESCRIBE.GET', 'DESCRIBE.CHALLENGE', 'CELL.GET']) ||
+        activation.network_puts_during_recovery !== 0 ||
+        activation.ordinary_delivery !== 'LOCAL_ONLY' ||
+        launch.record_count !== 34 || launch.cell_count_per_relay !== 39 ||
+        launch.community_claims !== 11 || launch.original_posts !== 17 ||
+        launch.boxed_posts_two_cells_each !== 5 || launch.replies !== 6 ||
+        launch.sizeclass_2_cells_per_relay !== 3 ||
+        launch.manifest_sha256 !== '36c15537d9e853cfb599cf59568a067e573a87c8de858183e332dfd3eb9192c0' ||
+        activation.all_five_successor !== 'EXCLUDED' ||
+        activation.ga_product_gate !== 'BLOCKED — 22 blockers DISCLOSED-OPEN, none cleared by this scope') {
+      throw new Error('sequence-23 decision does not bind the exact live launch successor scope')
+    }
+    if (!Array.isArray(extension.files) ||
+        !extension.files.includes('js/substrate/relay-consumer.js') ||
+        !extension.files.includes('scripts/production-pin-history-ceremony.mjs') ||
+        !extension.files.includes('js/substrate/browser-runtime-authority.mjs') ||
+        !extension.files.includes('peerit-limited-cell-get-profile-v1.json')) {
+      throw new Error('sequence-23 decision does not record the ceremony extension surface')
+    }
+    if (bootstrap.path !== 'deploy/peerit-seed-bootstrap-v1-seq23.json' ||
+        bootstrap.sha256 !== 'b0d9b996e112fb542b5577a7fad179ccad6333eb624b256168118c43e3176bec' ||
+        bootstrap.embedded_release_sequence !== 23 ||
+        bootstrap.bootstrap_sequence !== 0 ||
+        bootstrap.previous_bootstrap_hash !== null ||
+        bootstrap.discovery_authority !== '691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec' ||
+        bootstrap.records !== 39) {
+      throw new Error('sequence-23 decision does not bind the exact launch seed bootstrap')
+    }
+    if (csp.policy_file !== 'deploy/render-security-headers.json' ||
+        csp.policy_file_sha256 !== 'dc97c87d08bb773712cc739c37ffd4c62c121f7c92c01b20b3a8bf4a14f95724' ||
+        csp.script_src !== "'self'" || csp.unsafe_eval !== 'FORBIDDEN' ||
+        csp.wasm_unsafe_eval !== 'FORBIDDEN' || csp.expansion !== 'FORBIDDEN' ||
+        csp.parameter_url_origin_addition !== 'FORBIDDEN') {
+      throw new Error('sequence-23 decision does not bind the exact unchanged policy')
+    }
+    if (exactUrl.utf8 !== 'https://evidence.example:443/admission.cenc' ||
+        exactUrl.utf8_hex !==
+          '68747470733a2f2f65766964656e63652e6578616d706c653a3434332f61646d697373696f6e2e63656e63' ||
+        exactUrl.semantics !== 'EVIDENCE_MIRROR_HINT_ONLY' ||
+        exactUrl.browser_fetch !== 'FORBIDDEN' ||
+        exactUrl.dns_resolution !== 'FORBIDDEN' ||
+        exactUrl.url_parsing_or_normalization !== 'FORBIDDEN' ||
+        exactUrl.csp_change !== 'FORBIDDEN' ||
+        exactUrl.comparison !== 'EXACT_SIGNED_UTF8_BYTES') {
+      throw new Error('sequence-23 decision does not bind the exact no-fetch parameterUrl contract')
+    }
+    const gate23 = runtimeGate.sequence_23 || {}
+    if (runtimeGate.script !== 'scripts/browser-peerit-production-runtime-gate.mjs' ||
+        runtimeGate.functional_mode !== 'live-two-relay' ||
+        runtimeGate.functional_release_sequence !== 23 ||
+        runtimeGate.full_authority_loader !== 'loadPeeritBrowserRuntimeAuthorityV1' ||
+        runtimeGate.production_pin_history_loader !== 'loadPeeritProductionPinHistoryTerminalV1' ||
+        runtimeGate.authority_active_before_relay_io !== true ||
+        gate23.expected_network_gets !== 40 || gate23.expected_fallback_count !== 1 ||
+        gate23.expected_record_count !== 39 || gate23.expected_cell_get_requests !== 40 ||
+        gate23.expected_successful_cell_gets !== 39 ||
+        gate23.expected_network_puts !== 0 || gate23.expected_parameter_url_requests !== 0 ||
+        gate23.expected_sizeclass_1_responses !== 36 ||
+        gate23.expected_sizeclass_2_responses !== 3 ||
+        gate23['dal-1']?.origin !== 'https://relay-dal.p2phiverelay.xyz' ||
+        gate23['dal-1']?.injected_cell_get_failures !== 1 ||
+        gate23['dal-1']?.successful_cell_gets !== 38 ||
+        gate23['dal-1']?.verified_readback_evidence_count !== 38 ||
+        gate23['syd-1']?.origin !== 'https://relay-syd.p2phiverelay.xyz' ||
+        gate23['syd-1']?.injected_cell_get_failures !== 0 ||
+        gate23['syd-1']?.successful_cell_gets !== 1 ||
+        gate23['syd-1']?.verified_readback_evidence_count !== 1) {
+      throw new Error('sequence-23 decision does not bind the named-relay production runtime gate')
+    }
+    if (relays['dal-1']?.minimum_descriptor_sequence !== 12 ||
+        relays['dal-1']?.descriptor_head_sha256 !== 'badfc830eb4eae7e25573e73873b6420801aafb00eab4250a61160e720399440' ||
+        relays['dal-1']?.admission_protocol_sha256 !== '7d29e79d20955f14b4553d8517c35a5b548308ff9f44db39590c0ec5c2768ecb' ||
+        relays['syd-1']?.minimum_descriptor_sequence !== 15 ||
+        relays['syd-1']?.descriptor_head_sha256 !== '641e01b9777922d6cab36b4bf7411f762e45f8c53c9416006eb00ff352c809c2' ||
+        relays['syd-1']?.admission_protocol_sha256 !== '108e53b1e93c56e8c37f281234c23035b888615e8cd904d2751aa58b2dcea120') {
+      throw new Error('sequence-23 decision does not bind the same-day named relay authorities')
+    }
+    addCheck('canary:owner-decision', 'pass', `Owner fetch-binding root-cause decision verified byte-exact (sha256 ${CANARY_SEQ23_FETCH_BINDING_DECISION_SHA256.slice(0, 12)}...): ACCEPT seq-23 as the LIVE bounded-public-test launch successor — bind the fallback fetch in the recovery path and the re-vendored blind clients (root-caused Illegal invocation -> 'descriptor bootstrap failed'), limited Cell-GET exposed, 39-record signed recovery enabled; unchanged CSP, zero PUTs, all-five excluded, GA gate still blocked with 22 blockers DISCLOSED-OPEN.`, {
+      file: CANARY_SEQ23_FETCH_BINDING_DECISION_FILE,
+      sha256: CANARY_SEQ23_FETCH_BINDING_DECISION_SHA256,
+      decidedAt: decision.decided_at,
+      functionalReleaseSequence: 23,
+      launchRecords: launch.record_count,
+      launchCellsPerRelay: launch.cell_count_per_relay
+    })
+    return
+  }
   if (release.releaseSequence === 22) {
     const decision = readCanaryOwnerDecision(
       CANARY_SEQ22_COMPRESSION_TOLERANCE_DECISION_FILE,

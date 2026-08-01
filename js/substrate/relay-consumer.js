@@ -1580,7 +1580,7 @@ export async function recoverPeeritSeedWithLimitedCellGetAuthorityV1 (options = 
     monotonicMillis,
     supportedProtocolProfiles: profile.supportedProtocolProfiles,
     supportedTransportProfiles: profile.supportedTransportProfiles,
-    fetch: options.fetch || globalThis.fetch
+    fetch: options.fetch || globalThis.fetch.bind(globalThis)
   })
   const profileRelays = new Map(profile.relays.map(relay => [relay.relayId, relay]))
   const qualifications = await Promise.all(seed.payload.relays.map(async relay => {

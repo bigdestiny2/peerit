@@ -51,7 +51,7 @@ export { PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1 } from './production-release-aut
 
 const PEERIT_SEED_BOOTSTRAP_PATH_V1 = '/peerit-seed-bootstrap-v1.json'
 const PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE = 13
-export const PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE = 21
+export const PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE = 22
 const HEX_32 = /^[0-9a-f]{64}$/
 
 function browserRuntimeAssetPathsForRelease (releaseSequence) {
@@ -792,7 +792,44 @@ export async function fetchBoundedPeeritBrowserRuntimeAssetV1 ({
     if (!acceptedContentType(path, response.headers && response.headers.get('content-type'))) {
       fail('BROWSER_RUNTIME_ASSET_CONTENT_TYPE_INVALID', `${path} has an unexpected content type`)
     }
+    const contentEncoding = String(response.headers && response.headers.get('content-encoding') || '')
+      .split(';')[0].trim().toLowerCase()
     const lengthHeader = response.headers && response.headers.get('content-length')
+    if (contentEncoding && contentEncoding !== 'identity') {
+      // Compressing edge (e.g. Render's Cloudflare-backed static host): the
+      // Content-Length header carries the COMPRESSED size or is absent, while
+      // the network layer has already delivered the DECOMPRESSED body. The
+      // compressed header therefore cannot be compared to the signed
+      // uncompressed bound — instead the decompressed payload itself must
+      // satisfy that bound exactly (and the caller still verifies the payload
+      // hash against the signed manifest). The strict uncompressed path below
+      // is unchanged; the header, when present, must still be an integer.
+      if (lengthHeader != null && !/^(?:0|[1-9][0-9]*)$/.test(String(lengthHeader))) {
+        fail('BROWSER_RUNTIME_ASSET_LENGTH_INVALID', `${path} is missing an exact Content-Length`)
+      }
+      const chunks = []
+      let offset = 0
+      while (true) {
+        const { done, value } = await readStreamWithSignal(reader, deadline.signal)
+        if (done) break
+        const chunk = new Uint8Array(asBytes(value, `${path} response chunk`))
+        offset += chunk.byteLength
+        if (offset > maximumBytes) {
+          fail('BROWSER_RUNTIME_ASSET_LENGTH_INVALID', `${path} decompressed response exceeds its signed bound`)
+        }
+        chunks.push(chunk)
+      }
+      if (expectedLength != null && offset !== expectedLength) {
+        fail('BROWSER_RUNTIME_ASSET_LENGTH_INVALID', `${path} decompressed response length differs from its signed bound`)
+      }
+      const output = new Uint8Array(offset)
+      let position = 0
+      for (const chunk of chunks) {
+        output.set(chunk, position)
+        position += chunk.byteLength
+      }
+      return output
+    }
     if (!/^(?:0|[1-9][0-9]*)$/.test(String(lengthHeader || ''))) {
       fail('BROWSER_RUNTIME_ASSET_LENGTH_INVALID', `${path} is missing an exact Content-Length`)
     }

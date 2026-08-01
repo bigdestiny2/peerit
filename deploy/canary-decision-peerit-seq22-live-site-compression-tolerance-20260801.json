@@ -1,0 +1,169 @@
+{
+  "schema_version": 5,
+  "decision_id": "peerit-seq22-live-site-compression-tolerance-20260801",
+  "decided_at": "2026-08-01T17:52:05Z",
+  "decided_by": "owner authority executed by the active sole Codex conductor",
+  "status": "DECIDED",
+  "decision": "ACCEPT Peerit release sequence 22 as the LIVE bounded-public-test launch successor: a compression-tolerant bounded runtime asset fetch (verify the DECOMPRESSED payload against the signed length and hash bounds when a response carries content-encoding, while keeping the strict uncompressed path byte-for-byte when it does not), keeping the limited Cell-GET runtime authority EXPOSED at sequence 22 and signed seed recovery ENABLED for the same 34-record live launch seed. The exact production CSP remains unchanged, authenticated browser authority MUST become active before any relay I/O, recovery performs zero network PUTs, ordinary delivery remains LOCAL_ONLY, the all-five successor remains excluded, and the GA product gate remains blocked with all 22 blockers disclosed-open.",
+  "authority": {
+    "kind": "direct-owner-live-site-unblock-authorization",
+    "owner_instruction": "Second host-compat unblock on the live site. The seq-21 content-type fix WORKED (live DOM probe: pinHistory state=verified-production-pin-history, active=true). The boot then failed at the next check: authority state=blocked-authenticated-browser-runtime with releaseBlockers=[\"BROWSER_RUNTIME_ASSET_LENGTH_INVALID\"], message \"/icon.svg Content-Length exceeds or differs from its signed bound\". MECHANISM (confirmed against the live host): Render's Cloudflare-backed edge compresses text assets (Brotli/gzip) when the client sends accept-encoding (browsers always do); the header Content-Length then carries the COMPRESSED size (or is absent), while browser-runtime-authority.mjs required the header to equal the signed UNCOMPRESSED bound exactly. The compressed length differs -> BROWSER_RUNTIME_ASSET_LENGTH_INVALID -> authority blocked -> seed recovery blocked -> empty site. The asset manifest pins bytes by hash, not by compressed length, so the strict model is preserved by verifying the decompressed payload against the signed length and hash bounds. Patch compression-tolerant without weakening anything; release as sequence 22.",
+    "baseline_commit": "16e642b (release(peerit): sequence 21 — live-site binary content-type unblock, on codex/peerit-seq21-launch-20260731)",
+    "baseline_release_sequence": 21,
+    "cited_prior_decisions": [
+      {
+        "file": "deploy/canary-decision-peerit-seq21-live-site-content-type-unblock-20260731.json",
+        "sha256": "96c0216f4e276595d1099f33537dbc22058a3a6c70d012ccc953225a2a1ba042",
+        "relation": "the seq-21 content-type unblock decision this successor extends"
+      },
+      {
+        "file": "deploy/canary-decision-peerit-seq20-launch-live-recovery-20260731.json",
+        "sha256": "2af60f84013989987e4f229b49c858eb8be83e45b20dbe521454cf1bc0a96c82",
+        "relation": "the seq-20 launch-slot decision in the same lineage"
+      }
+    ]
+  },
+  "activation": {
+    "functional_release_sequence": 22,
+    "rollback_release_sequence": null,
+    "rollback_posture": "SUPERSEDED_FOR_THIS_SLOT_BY_OWNER_DECISION_2026-08-01",
+    "limited_cell_get_authority_release_sequence": 22,
+    "limited_cell_get_runtime_authority_exposed": true,
+    "seed_recovery_enabled": true,
+    "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+    "relays": [
+      "dal-1",
+      "syd-1"
+    ],
+    "required_predeploy_proof": "Clean Chromium loads the exact signed sequence-22 candidate under the exact unchanged production CSP, validates production pin-history terminal 22 and the full loadPeeritBrowserRuntimeAuthorityV1 path, observes authority.active=true before any relay I/O, then performs the signed seed recovery (39 records) with byte-exact verified CELL.GET evidence on both named relays and zero network PUTs; ADDITIONALLY a DOM probe against a locally served copy that brotli-compresses text assets (mirroring Render's edge) must complete seed recovery (39 records materialize, data-peerit-substrate-state becomes seed-recovery-complete).",
+    "allowed_browser_operations": [
+      "DESCRIBE.GET",
+      "DESCRIBE.CHALLENGE",
+      "CELL.GET"
+    ],
+    "network_puts_during_recovery": 0,
+    "ordinary_delivery": "LOCAL_ONLY",
+    "launch_seed": {
+      "record_count": 34,
+      "cell_count_per_relay": 39,
+      "community_claims": 11,
+      "original_posts": 17,
+      "boxed_posts_two_cells_each": 5,
+      "replies": 6,
+      "sizeclass_2_cells_per_relay": 3,
+      "manifest": "launch/FINAL-SEED-MANIFEST.json",
+      "manifest_sha256": "36c15537d9e853cfb599cf59568a067e573a87c8de858183e332dfd3eb9192c0",
+      "capture_redelivery_run": "renew-2026-07-30T23:18:21.374Z (owner-approved; 34/34 receipt-signed + byte-exact-readback-verified on both relays)"
+    },
+    "all_five_successor": "EXCLUDED",
+    "ga_product_gate": "BLOCKED — 22 blockers DISCLOSED-OPEN, none cleared by this scope"
+  },
+  "compression_fix": {
+    "root_cause": "Render's Cloudflare-backed edge compresses text assets (Brotli/gzip) whenever the client sends accept-encoding; the Content-Length header then carries the COMPRESSED size or is absent, while browser-runtime-authority.mjs required it to equal the signed UNCOMPRESSED bound exactly -> BROWSER_RUNTIME_ASSET_LENGTH_INVALID on the first text asset (/icon.svg).",
+    "patched_files": [
+      "js/substrate/browser-runtime-authority.mjs",
+      "js/substrate/release-coherence.js"
+    ],
+    "acceptance_rule": "when a response carries content-encoding (br/gzip/any non-identity token), the Content-Length header may be the compressed size or absent and is not compared to the signed bound; the DECOMPRESSED payload's byte length must equal the signed length bound exactly (runtime asset fetcher) and the signed hash bindings apply unchanged (blake2b256 per asset in the canonical WebAssetManifestV1 for the runtime assets; the signed JSON file-hash comparisons in release coherence); when there is no content-encoding, the existing strict behavior (exact integer Content-Length equal to the signed bound) is preserved byte-for-byte on BOTH fetchers; HTML/error responses stay rejected; deadlines and fail-closed codes unchanged",
+    "unit_coverage": "test/peerit-binary-content-types.mjs compression matrix: br/gzip with compressed or absent Content-Length + exact decompressed bytes PASS; shorter-than-bound decompressed payload FAILS (BROWSER_RUNTIME_ASSET_LENGTH_INVALID); same-length tampered decompressed payload FAILS the signed hash binding; uncompressed response with drifted Content-Length FAILS (strict path preserved); compressed HTML FAILS (BROWSER_RUNTIME_ASSET_CONTENT_TYPE_INVALID)"
+  },
+  "ceremony_extension": {
+    "summary": "production-pin-history ceremony cap PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE 21 -> 22 (single exported constant); PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE 21 -> 22 (live at 22, fail-closed at 21 and 23); limited Cell-GET profile -> releaseSequence 22 (admission pins unchanged from seq-21 — no rotation since 2026-07-31T15:55Z)",
+    "files": [
+      "scripts/production-pin-history-ceremony.mjs",
+      "js/substrate/browser-runtime-authority.mjs",
+      "peerit-limited-cell-get-profile-v1.json",
+      "scripts/browser-peerit-production-runtime-gate.mjs",
+      "test/peerit-browser-runtime-authority.mjs",
+      "test/peerit-limited-cell-get-recovery.mjs",
+      "test/peerit-web-release-pin-history-append.mjs"
+    ]
+  },
+  "seed_bootstrap": {
+    "path": "deploy/peerit-seed-bootstrap-v1-seq22.json",
+    "sha256": "bced239293a268bea05e73c74a8613a0f12802190a6b085209d85ca40931c925",
+    "embedded_release_sequence": 22,
+    "bootstrap_sequence": 0,
+    "previous_bootstrap_hash": null,
+    "discovery_authority": "691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec",
+    "records": 39,
+    "issued_at": "2026-08-01T17:52:05.132Z",
+    "expires_at": "2026-08-31T17:52:05.132Z",
+    "note": "A release-terminal bootstrap at releaseSequence 22 is REQUIRED (build-time seedBuildInput, runtime verify, and ceremony finalize all bind artifact payload releaseSequence === bundle releaseSequence). Each release line is its own source genesis (bootstrapSequence 0, previousBootstrapHash null; the discovery sourceId embeds the release sequence), so there is no prevHash chaining across release lines. Names the same 39 live cells; the seq-20 (0a386975…) and seq-21 (9f7fa45e…) artifacts are untouched."
+  },
+  "exact_admission_parameter_url": {
+    "utf8": "https://evidence.example:443/admission.cenc",
+    "utf8_hex": "68747470733a2f2f65766964656e63652e6578616d706c653a3434332f61646d697373696f6e2e63656e63",
+    "semantics": "EVIDENCE_MIRROR_HINT_ONLY",
+    "browser_fetch": "FORBIDDEN",
+    "dns_resolution": "FORBIDDEN",
+    "url_parsing_or_normalization": "FORBIDDEN",
+    "csp_change": "FORBIDDEN",
+    "comparison": "EXACT_SIGNED_UTF8_BYTES"
+  },
+  "production_csp": {
+    "policy_file": "deploy/render-security-headers.json",
+    "policy_file_sha256": "dc97c87d08bb773712cc739c37ffd4c62c121f7c92c01b20b3a8bf4a14f95724",
+    "script_src": "'self'",
+    "unsafe_eval": "FORBIDDEN",
+    "wasm_unsafe_eval": "FORBIDDEN",
+    "expansion": "FORBIDDEN",
+    "parameter_url_origin_addition": "FORBIDDEN"
+  },
+  "relay_authority": {
+    "note": "same-day pins re-probed GET-only at 2026-08-01T17:52Z; UNCHANGED from the seq-21 pins (no admission rotation since)",
+    "dal-1": {
+      "origin": "https://relay-dal.p2phiverelay.xyz",
+      "minimum_descriptor_sequence": 11,
+      "descriptor_head_sha256": "813f8b6ae289f1beb0716b5208e695c03e3451d0ca963d4547d48bffc82f80d1",
+      "admission_protocol_sha256": "7d29e79d20955f14b4553d8517c35a5b548308ff9f44db39590c0ec5c2768ecb"
+    },
+    "syd-1": {
+      "origin": "https://relay-syd.p2phiverelay.xyz",
+      "minimum_descriptor_sequence": 14,
+      "descriptor_head_sha256": "96a8fcd63f467067f6ff246d75ef629ad31695fd9a9f42a3873e5eb7e1e35d1b",
+      "admission_protocol_sha256": "108e53b1e93c56e8c37f281234c23035b888615e8cd904d2751aa58b2dcea120"
+    }
+  },
+  "production_runtime_gate": {
+    "script": "scripts/browser-peerit-production-runtime-gate.mjs",
+    "functional_mode": "live-two-relay",
+    "functional_release_sequence": 22,
+    "rollback_mode": "rollback-preio",
+    "rollback_note": "rollback-preio targets any sequence != 22 (the limited Cell-GET authority fails closed there)",
+    "full_authority_loader": "loadPeeritBrowserRuntimeAuthorityV1",
+    "production_pin_history_loader": "loadPeeritProductionPinHistoryTerminalV1",
+    "authority_active_before_relay_io": true,
+    "service_worker": "BLOCKED_IN_FRESH_CONTEXT",
+    "sequence_22": {
+      "expected_network_gets": 40,
+      "expected_fallback_count": 1,
+      "expected_record_count": 39,
+      "expected_cell_get_requests": 40,
+      "expected_successful_cell_gets": 39,
+      "expected_network_puts": 0,
+      "expected_parameter_url_requests": 0,
+      "expected_sizeclass_1_responses": 36,
+      "expected_sizeclass_2_responses": 3,
+      "dal-1": {
+        "origin": "https://relay-dal.p2phiverelay.xyz",
+        "injected_cell_get_failures": 1,
+        "successful_cell_gets": 38,
+        "verified_readback_evidence_count": 38
+      },
+      "syd-1": {
+        "origin": "https://relay-syd.p2phiverelay.xyz",
+        "injected_cell_get_failures": 0,
+        "successful_cell_gets": 1,
+        "verified_readback_evidence_count": 1
+      }
+    }
+  },
+  "followups": [
+    "GA product gate remains honestly blocked (22 blockers DISCLOSED-OPEN)",
+    "bundle re-issue with fresh admission parameter pins is required on the next relay admission-parameter rotation (exact-equality pin, relay-consumer.js:724)",
+    "publisher --renew on a ~60-day cadence re-mints all seed cells; the reader bootstrap MUST be re-issued after every --renew, then the bundle re-issued to bind it",
+    "seq-22 seed bootstrap artifact expires 2026-08-31T17:52:05.132Z",
+    "site flip / deploy of the seq-22 candidate awaits owner merge confirmation; no push, no merge, no DNS/Render contact from the build lane"
+  ]
+}

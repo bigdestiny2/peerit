@@ -78,6 +78,9 @@ function failed (code, message) {
 async function exactResponseBytes (response, label, maximumBytes = MAX_RELEASE_CONTROL_BYTES) {
   if (!response || response.ok !== true) throw new Error(`${label} HTTP ${response && response.status}`)
   const lengthText = response.headers && response.headers.get('content-length')
+  const contentEncoding = String(response.headers && response.headers.get('content-encoding') || '')
+    .split(';')[0].trim().toLowerCase()
+  const compressed = contentEncoding !== '' && contentEncoding !== 'identity'
   if (lengthText && (!/^(?:0|[1-9][0-9]*)$/.test(lengthText) ||
       Number(lengthText) > maximumBytes)) {
     throw new Error(`${label} has an invalid Content-Length`)
@@ -96,7 +99,12 @@ async function exactResponseBytes (response, label, maximumBytes = MAX_RELEASE_C
         ? result.value
         : new Uint8Array(result.value)
       total += chunk.byteLength
-      if (total > maximumBytes || (lengthText && total > Number(lengthText))) {
+      // Under content-encoding the header carries the COMPRESSED size (or is
+      // absent) while the network layer delivers the DECOMPRESSED body, so the
+      // header cannot be compared to the payload length — the signed hash
+      // bindings downstream still authenticate every payload byte. Without
+      // content-encoding the header must equal the payload exactly (unchanged).
+      if (total > maximumBytes || (lengthText && !compressed && total > Number(lengthText))) {
         throw new Error(`${label} exceeds its bounded length`)
       }
       chunks.push(chunk)
@@ -107,7 +115,7 @@ async function exactResponseBytes (response, label, maximumBytes = MAX_RELEASE_C
   } finally {
     try { reader.releaseLock() } catch {}
   }
-  if (total < 1 || (lengthText && total !== Number(lengthText))) {
+  if (total < 1 || (lengthText && !compressed && total !== Number(lengthText))) {
     throw new Error(`${label} exceeds or differs from its bounded length`)
   }
   const bytes = new Uint8Array(total)

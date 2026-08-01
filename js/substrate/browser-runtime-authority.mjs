@@ -51,7 +51,7 @@ export { PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1 } from './production-release-aut
 
 const PEERIT_SEED_BOOTSTRAP_PATH_V1 = '/peerit-seed-bootstrap-v1.json'
 const PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE = 13
-export const PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE = 20
+export const PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE = 21
 const HEX_32 = /^[0-9a-f]{64}$/
 
 function browserRuntimeAssetPathsForRelease (releaseSequence) {
@@ -747,7 +747,13 @@ function acceptedContentType (path, value) {
   if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return type === 'image/jpeg'
   if (path.endsWith('.webp')) return type === 'image/webp'
   if (path.endsWith('.wasm')) return type === 'application/wasm'
-  return type === 'application/octet-stream'
+  // Opaque binary artifacts (the .cenc family and any other unmapped binary
+  // asset): static hosts disagree on the label — most serve
+  // application/octet-stream, Render's static host (and its Cloudflare-backed
+  // edge) serves binary/octet-stream. Both name an opaque binary body, so
+  // both are accepted; HTML/error-page responses remain rejected, and the
+  // exact Content-Length and hash bindings are unchanged.
+  return type === 'application/octet-stream' || type === 'binary/octet-stream'
 }
 
 export async function fetchBoundedPeeritBrowserRuntimeAssetV1 ({

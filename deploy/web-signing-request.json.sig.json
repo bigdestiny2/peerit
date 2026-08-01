@@ -2,8 +2,8 @@
   "schema": "peerit-blind-public-test-artifact-sig/v1",
   "alg": "ed25519",
   "key": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
-  "sig": "41d27a04d9709491000a183c8f5f93bb6ef1929fbd243d4ec81a328bcdef832ec16c37e6ff11a28c0c38c23caa655417af9e1d805e7c4fb2c1de23ff1ecca907",
-  "signedBytesSha256": "30d14f7132a68658543fc83ab5e36d77db7d4fbf1bba86d7aa9f2ac0f7c88c1b",
+  "sig": "edeaface338c3255e9203ad888824544141109d8488c9d2274d81e57f8114d5b0aa5b9e2797c28d8825366d15268beba1379cef446dc5b8e0ba17fa7fe462e00",
+  "signedBytesSha256": "bb103a1a438cd349c1a5cb4d4e7a97841e6c2f15bd6814425bd309fa164afad7",
   "signedFile": "deploy/web-signing-request.json",
   "note": "signature covers the exact current bytes of signedFile"
 }

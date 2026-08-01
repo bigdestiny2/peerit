@@ -97,8 +97,14 @@ async function fetchExactBytes (fetchFunction, url, signal) {
   }
   const type = String(response.headers && response.headers.get('content-type') || '')
     .split(';')[0].trim().toLowerCase()
-  if (type !== 'application/octet-stream') {
-    fail('PRODUCTION_PIN_HISTORY_CONTENT_TYPE_INVALID', 'pin-history bundle must use application/octet-stream')
+  // Static hosts disagree on the opaque-binary label for extension-less binary
+  // artifacts: most serve application/octet-stream, while Render's static host
+  // (and its Cloudflare-backed edge) serves binary/octet-stream. Both labels
+  // name an opaque binary body, so both are accepted here; HTML/error-page
+  // responses remain rejected, and the exact Content-Length and hash bindings
+  // below are unchanged.
+  if (type !== 'application/octet-stream' && type !== 'binary/octet-stream') {
+    fail('PRODUCTION_PIN_HISTORY_CONTENT_TYPE_INVALID', 'pin-history bundle must use an opaque binary content type (application/octet-stream or binary/octet-stream)')
   }
   const lengthText = response.headers && response.headers.get('content-length')
   if (!/^(?:0|[1-9][0-9]*)$/.test(String(lengthText || ''))) {

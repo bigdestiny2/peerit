@@ -647,7 +647,7 @@ async function admissionProviderFor (options, qualification, signal) {
     if (!value || typeof value !== 'object' ||
         value.profileId !== qualification.profile.admissionProfile.profileId ||
         value.schemeId !== qualification.profile.admissionProfile.schemeId ||
-        !bytesEqual(value.parameterHash, qualification.profile.admissionProfile.parameterHash)) {
+        !bytesEqual(value.parameterHash, qualification.verifiedAdmissionParameters.parameterHash)) {
       throw qualificationError('PEERIT_ADMISSION_TOKEN_PROFILE_DRIFT',
         'admission provider returned a token for a different signed parameter profile')
     }
@@ -668,8 +668,7 @@ function advertisedAdmissionProfile (control, trustedDescriptor, pinned) {
        bytesEqual(advertised.parameterUrl, pinned.parameterUrl)))
   if (!advertised || advertised.schemeId !== pinned.schemeId ||
       advertised.conformanceClass !== pinned.conformanceClass ||
-      advertised.roleBits !== pinned.roleBits || !sameParameterUrl ||
-      !bytesEqual(advertised.parameterHash, pinned.parameterHash)) {
+      advertised.roleBits !== pinned.roleBits || !sameParameterUrl) {
     throw qualificationError('PEERIT_DESCRIPTOR_ADMISSION_PROFILE_DRIFT',
       'signed relay descriptor does not advertise the exact authenticated Peerit admission profile')
   }
@@ -721,9 +720,14 @@ async function verifyAdmissionForCandidate (options) {
     advertisedProfile,
     { nowEpoch: nowEpoch() }
   )
-  if (!verified || !bytesEqual(verified.parameterHash, profile.admissionProfile.parameterHash)) {
+  // The expected admission parameterHash is descriptor-driven: it comes from
+  // the CURRENT signature-verified descriptor's advertised binding (which
+  // verifyAdmissionParametersBytes has already equated to the served
+  // parameters' own hash), never from a release-pinned file that rotation
+  // would stale.
+  if (!verified || !bytesEqual(verified.parameterHash, advertisedProfile.parameterHash)) {
     throw qualificationError('PEERIT_ADMISSION_PARAMETERS_UNTRUSTED',
-      'relay admission parameters do not match the authenticated Peerit profile pin')
+      'relay admission parameters do not match the current descriptor admission binding')
   }
   return verified
 }
@@ -1249,13 +1253,18 @@ function sameLimitedAdmissionProfile (actual, expected) {
     ((actual?.parameterUrl == null && expected?.parameterUrl == null) ||
       (actual?.parameterUrl != null && expected?.parameterUrl != null &&
         bytesEqual(actual.parameterUrl, expected.parameterUrl)))
+  // The admission parameterHash is deliberately NOT pinned here: it rotates
+  // with the fleet and is carried by the current signature-verified descriptor
+  // (the descriptor chain IS its forward channel). The release-signed profile
+  // pins only the admission scheme's stable shape; wherever signed admission
+  // parameters are consumed, verifyAdmissionParametersBytes verifies them
+  // against the descriptor's own advertised binding with no weakening.
   return actual && expected &&
     actual.profileId === expected.profileId &&
     actual.schemeId === expected.schemeId &&
     actual.conformanceClass === expected.conformanceClass &&
     actual.roleBits === expected.roleBits &&
-    sameParameterUrl &&
-    bytesEqual(actual.parameterHash, expected.parameterHash)
+    sameParameterUrl
 }
 
 function assertLimitedRelayContext (context, relay, head, requirement) {

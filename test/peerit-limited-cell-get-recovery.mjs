@@ -86,7 +86,7 @@ const sodium = sodiumModule.default || sodiumModule
 
 const TEST_EPOCH = 101
 const TEST_NOW = TEST_EPOCH * 21_600_000 + 1_000
-const RELEASE_SEQUENCE = 23n
+const RELEASE_SEQUENCE = 24n
 const EXACT_PARAMETER_URL = 'https://evidence.example:443/admission.cenc'
 const EXACT_PARAMETER_URL_BYTES = Buffer.from(EXACT_PARAMETER_URL, 'utf8')
 const textEncoder = new TextEncoder()
@@ -622,10 +622,12 @@ async function expectRecoveryFailure ({
 
 await cryptoReady()
 
-const admissionByRelay = new Map(limitedProfile.relays.map(relay => [
-  relay.relayId,
-  Buffer.from(relay.admissionProfile.parameterHash, 'hex')
-]))
+// Fixture admission bindings: they ride the descriptors (descriptor-driven),
+// never the release profile — which pins no parameterHash at all.
+const admissionByRelay = new Map([
+  ['dal-1', Buffer.alloc(32, 0x51)],
+  ['syd-1', Buffer.alloc(32, 0x52)]
+])
 const dal = relayChain('dal-1', 0x31, 0x32, admissionByRelay.get('dal-1'))
 const syd = relayChain('syd-1', 0x41, 0x42, admissionByRelay.get('syd-1'))
 const relays = [dal, syd]
@@ -859,12 +861,30 @@ const admissionDriftHeads = new Map(relays.map(relay => [
     nonceByte: relay.relayId === 'dal-1' ? 0x39 : 0x49
   })
 ]))
-await expectRecoveryFailure({
-  authority,
-  relays,
-  heads: admissionDriftHeads,
-  code: 'PEERIT_LIMITED_DESCRIPTOR_ADMISSION_PROFILE_DRIFT'
+// ROTATION TOLERANCE (descriptor-driven admission): the same head descriptors
+// now carry a ROTATED admission binding (0xee) — the fleet's forward channel
+// rotated the signed parameterHash, exactly like the live v5 -> v6 -> v7
+// rotations. The release profile pins no hash, so the SAME build must
+// qualify against the rotated descriptors exactly as before (previously this
+// case demanded PEERIT_LIMITED_DESCRIPTOR_ADMISSION_PROFILE_DRIFT).
+const rotatedServer = relayServer({ relays, heads: admissionDriftHeads })
+const rotatedState = substrate('peerit-limited-cell-get-recovery-rotation')
+await rotatedState.sync.ready()
+const rotatedRecovery = await recoverPeeritSeedWithLimitedCellGetAuthorityV1({
+  releaseAuthority: authority,
+  sync: rotatedState.sync,
+  now: () => TEST_NOW,
+  monotonicMillis: () => 1_000,
+  webCrypto: globalThis.crypto,
+  fetch: rotatedServer.fetch,
+  timeoutMillis: 1_000
 })
+assert.equal(rotatedRecovery.ok, true)
+assert.equal(rotatedRecovery.cached, false)
+assert.equal(rotatedRecovery.recordCount, 2)
+assert.equal(rotatedRecovery.networkPuts, 0)
+assert.equal(rotatedRecovery.qualifiedRelayCount, 2)
+assert.equal(rotatedState.setRelayCalls(), 0)
 
 const parameterUrlDriftHeads = new Map(relays.map(relay => {
   const drift = bytes(relay.admissionParameterUrl)

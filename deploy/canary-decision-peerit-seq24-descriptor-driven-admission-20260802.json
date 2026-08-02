@@ -1,0 +1,174 @@
+{
+  "schema_version": 5,
+  "decision_id": "peerit-seq24-descriptor-driven-admission-20260802",
+  "decided_at": "2026-08-02T10:59:04Z",
+  "decided_by": "owner authority executed by the active sole Codex conductor",
+  "status": "DECIDED",
+  "decision": "ACCEPT Peerit release sequence 24 as the LIVE bounded-public-test launch successor: the systemic descriptor-driven admission fix — admission parameterHash is expected from the CURRENT signature-verified descriptor's advertised binding everywhere a client qualifies, never from a release-pinned file — keeping the limited Cell-GET runtime authority EXPOSED at sequence 24 and signed seed recovery ENABLED for the same 34-record live launch seed. The exact production CSP remains unchanged, authenticated browser authority MUST become active before any relay I/O, recovery performs zero network PUTs, ordinary delivery remains LOCAL_ONLY, the all-five successor remains excluded, and the GA product gate remains blocked with all 22 blockers disclosed-open.",
+  "authority": {
+    "kind": "direct-owner-systemic-admission-fix-authorization",
+    "owner_instruction": "Systemic fix for the rotation class that has now bitten baked-in pins THREE times (descriptor cliffs x3, admission rotations x2). Current live failure on peerit.site (seq-23 deployed): seedRecovery blocked with 'descriptor does not carry the release-signed admission-v3 profile'. Both daemons now run admission-v7; the seq-21/22/23 bundles pin v6-era hashes and fail; the publisher also fails. Clients verify admission against a BAKED-IN parameterHash from build time; the fleet rotates admission on its cadence; every baked pin goes stale within days. Make admission verification DESCRIPTOR-DRIVEN everywhere the client qualifies: derive the expected admission parameterHash from the CURRENT descriptor's admissionProfileBinding (re-probed at runtime), fetch the signed admission parameters where consumed, and verify them against the descriptor's binding. No baked parameterHash anywhere in the qualification path; descriptor signature/chain/admission-parameter signature verification stays exactly as strict — the only change is where the EXPECTED hash comes from (current descriptor, not a file).",
+    "baseline_commit": "ecb9b95 (release(peerit): sequence 23 — live seed-recovery fetch-binding fix, on codex/peerit-seq23-launch-20260801)",
+    "baseline_release_sequence": 23,
+    "cited_prior_decisions": [
+      {
+        "file": "deploy/canary-decision-peerit-seq23-fetch-binding-recovery-fix-20260801.json",
+        "sha256": "2ded91c43bfaccfe5d227249d0708a90eb29f04a2c3c10e0755de85a1c612f08",
+        "relation": "the seq-23 fetch-binding decision this successor extends"
+      },
+      {
+        "file": "deploy/canary-decision-peerit-seq22-live-site-compression-tolerance-20260801.json",
+        "sha256": "16fc95caa181311f45abe8330fe29307171dd7bd344c730056214acb6debb3be",
+        "relation": "the seq-22 compression-tolerance decision in the same lineage"
+      }
+    ]
+  },
+  "root_cause": {
+    "rotation_class": "clients verified admission against a release-time baked parameterHash; the fleet rotates the signed admission parameterHash on its descriptor cadence (observed v5 -> v6 -> v7 across 2026-07-29..2026-08-02); every baked pin went stale within days, and the seq-21 'fresh admission pins' were one rotation behind by the seq-23 deploy.",
+    "baked_pins_replaced": [
+      "js/substrate/relay-consumer.js sameLimitedAdmissionProfile: compared the descriptor's advertised admission profile against the release-signed profile INCLUDING parameterHash (the live 'descriptor does not carry the release-signed admission-v3 profile' failure) -> now compares only the stable scheme shape (profileId/schemeId/conformanceClass/roleBits/parameterUrl); the hash is descriptor-carried",
+      "js/substrate/relay-consumer.js advertisedAdmissionProfile: same baked parameterHash comparison removed (PEERIT_DESCRIPTOR_ADMISSION_PROFILE_DRIFT now only for shape drift)",
+      "js/substrate/relay-consumer.js verifyAdmissionForCandidate: the outer check compared the served parameters' hash against the release profile pin -> now compares against the CURRENT descriptor's advertised binding (which verifyAdmissionParametersBytes already equates to the served parameters' own hash with full signature and window verification)",
+      "js/substrate/relay-consumer.js admissionProviderFor: the admission token's parameterHash had to equal the release profile pin -> now equals the VERIFIED served parameters' hash (== the current descriptor's binding)",
+      "peerit-limited-cell-get-profile-v1.json + js/substrate/limited-cell-get-profile.mjs: the release profile pinned relays[].admissionProfile.parameterHash -> field REMOVED from the profile and from the validator's exact field set; the release profile now pins only the stable admission scheme shape (profileId 7, schemeId 9, conformanceClass 1, roleBits 49, exact evidence.example parameterUrl)"
+    ],
+    "publisher_finding": "02-apps/peerit/scripts/publish-seed-waves-blind.mjs was ALREADY descriptor-driven on admission (bindProfileFromDescriptor reads the CURRENT descriptor's advertised parameterHash every run); its actual current failure was a chain-walk depth cap (for depth < 16) that the syd-1 chain outgrew at seq-16 (17 links to genesis) -> cap raised to 64 (still bounded, fail-closed). The descriptor-driven relay-consumer fixes keep its qualification correct across admission rotations.",
+    "no_weakening": "descriptor signature, chain continuity to pinned genesis, hash, epoch-window, admission-parameter signature + window verification, and the admission scheme-shape pins are all unchanged; the only change is WHERE the expected parameterHash comes from (current signature-verified descriptor, not a file). The descriptor chain IS the admission forward channel, so clients cannot go stale on rotation.",
+    "rotation_tolerance_proof": "test/peerit-limited-cell-get-recovery.mjs: the recovery succeeds against descriptors carrying a ROTATED admission binding (0xee) with no release change, while the parameterUrl shape-drift case still fails closed with PEERIT_LIMITED_DESCRIPTOR_ADMISSION_PROFILE_DRIFT; live: publisher qualifies both relays RIGHT NOW against v7-era bindings (syd-1 chain=17 to pinned genesis, dal-1 chain=14) after the cap fix"
+  },
+  "activation": {
+    "functional_release_sequence": 24,
+    "rollback_release_sequence": null,
+    "rollback_posture": "SUPERSEDED_FOR_THIS_SLOT_BY_OWNER_DECISION_2026-08-02",
+    "limited_cell_get_authority_release_sequence": 24,
+    "limited_cell_get_runtime_authority_exposed": true,
+    "seed_recovery_enabled": true,
+    "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+    "relays": [
+      "dal-1",
+      "syd-1"
+    ],
+    "required_predeploy_proof": "Clean Chromium loads the exact signed sequence-24 candidate under the exact unchanged production CSP, validates production pin-history terminal 24 and the full loadPeeritBrowserRuntimeAuthorityV1 path, observes authority.active=true before any relay I/O, then performs the signed seed recovery (39 records) with byte-exact verified CELL.GET evidence on both named relays and zero network PUTs; ADDITIONALLY the exact app-entry boot path must reach data-peerit-substrate-state=seed-recovery-complete with 39 records against the CURRENT (v7-era) admission bindings with no admission pin of any kind in the release.",
+    "allowed_browser_operations": [
+      "DESCRIBE.GET",
+      "DESCRIBE.CHALLENGE",
+      "CELL.GET"
+    ],
+    "network_puts_during_recovery": 0,
+    "ordinary_delivery": "LOCAL_ONLY",
+    "launch_seed": {
+      "record_count": 34,
+      "cell_count_per_relay": 39,
+      "community_claims": 11,
+      "original_posts": 17,
+      "boxed_posts_two_cells_each": 5,
+      "replies": 6,
+      "sizeclass_2_cells_per_relay": 3,
+      "manifest": "launch/FINAL-SEED-MANIFEST.json",
+      "manifest_sha256": "36c15537d9e853cfb599cf59568a067e573a87c8de858183e332dfd3eb9192c0",
+      "capture_redelivery_run": "renew-2026-07-30T23:18:21.374Z (owner-approved; 34/34 receipt-signed + byte-exact-readback-verified on both relays)"
+    },
+    "all_five_successor": "EXCLUDED",
+    "ga_product_gate": "BLOCKED — 22 blockers DISCLOSED-OPEN, none cleared by this scope"
+  },
+  "ceremony_extension": {
+    "summary": "production-pin-history ceremony cap PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE 23 -> 24 (single exported constant); PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE 23 -> 24 (live at 24, fail-closed at 23 and 25); limited Cell-GET profile -> releaseSequence 24 with the descriptor-driven admission shape (no parameterHash field anywhere)",
+    "files": [
+      "scripts/production-pin-history-ceremony.mjs",
+      "js/substrate/browser-runtime-authority.mjs",
+      "js/substrate/relay-consumer.js",
+      "js/substrate/limited-cell-get-profile.mjs",
+      "peerit-limited-cell-get-profile-v1.json",
+      "scripts/browser-peerit-production-runtime-gate.mjs",
+      "test/peerit-browser-runtime-authority.mjs",
+      "test/peerit-limited-cell-get-recovery.mjs",
+      "test/peerit-web-release-pin-history-append.mjs"
+    ]
+  },
+  "seed_bootstrap": {
+    "path": "deploy/peerit-seed-bootstrap-v1-seq24.json",
+    "sha256": "478fc8bc537276ef14d18dbda3e5463634166c593f28a0a8a6175dbcc1946576",
+    "embedded_release_sequence": 24,
+    "bootstrap_sequence": 0,
+    "previous_bootstrap_hash": null,
+    "discovery_authority": "691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec",
+    "records": 39,
+    "issued_at": "2026-08-02T10:59:04.381Z",
+    "expires_at": "2026-09-01T10:59:04.381Z",
+    "note": "Release-terminal genesis REQUIRED (build/runtime/ceremony all bind artifact payload releaseSequence === bundle releaseSequence). Names the same 39 live cells; the seq-20/21/22/23 artifacts are untouched. The bootstrap carries NO admission material of any kind — admission rides the descriptor chain, not this artifact."
+  },
+  "exact_admission_parameter_url": {
+    "utf8": "https://evidence.example:443/admission.cenc",
+    "utf8_hex": "68747470733a2f2f65766964656e63652e6578616d706c653a3434332f61646d697373696f6e2e63656e63",
+    "semantics": "EVIDENCE_MIRROR_HINT_ONLY",
+    "browser_fetch": "FORBIDDEN",
+    "dns_resolution": "FORBIDDEN",
+    "url_parsing_or_normalization": "FORBIDDEN",
+    "csp_change": "FORBIDDEN",
+    "comparison": "EXACT_SIGNED_UTF8_BYTES"
+  },
+  "production_csp": {
+    "policy_file": "deploy/render-security-headers.json",
+    "policy_file_sha256": "dc97c87d08bb773712cc739c37ffd4c62c121f7c92c01b20b3a8bf4a14f95724",
+    "script_src": "'self'",
+    "unsafe_eval": "FORBIDDEN",
+    "wasm_unsafe_eval": "FORBIDDEN",
+    "expansion": "FORBIDDEN",
+    "parameter_url_origin_addition": "FORBIDDEN"
+  },
+  "relay_authority": {
+    "note": "same-day DESCRIPTOR pins re-probed GET-only at 2026-08-02T10:59Z. The admission parameterHash is descriptor-driven: it rotates with the fleet and is taken from the CURRENT signature-verified descriptor at runtime — this decision deliberately records NO admission hash (recording one would re-create the staling pin this release removes).",
+    "admission_semantics": "descriptor-driven (expected from the current descriptor's advertised binding; signed parameters verified against that binding wherever consumed; scheme shape pinned by the release profile: profileId 7, schemeId 9, conformanceClass 1, roleBits 49, exact evidence.example parameterUrl)",
+    "dal-1": {
+      "origin": "https://relay-dal.p2phiverelay.xyz",
+      "minimum_descriptor_sequence": 13,
+      "descriptor_head_sha256": "34541f0f9364a22259479640254e26cef8cab30e89208ba22f6e3cdee5633ad4"
+    },
+    "syd-1": {
+      "origin": "https://relay-syd.p2phiverelay.xyz",
+      "minimum_descriptor_sequence": 16,
+      "descriptor_head_sha256": "71bd00aeb6419c859b99fb37f41e834a1d5bf9232568dad2bb1344a1dac9f613"
+    }
+  },
+  "production_runtime_gate": {
+    "script": "scripts/browser-peerit-production-runtime-gate.mjs",
+    "functional_mode": "live-two-relay",
+    "functional_release_sequence": 24,
+    "rollback_mode": "rollback-preio",
+    "rollback_note": "rollback-preio targets any sequence != 24 (the limited Cell-GET authority fails closed there)",
+    "full_authority_loader": "loadPeeritBrowserRuntimeAuthorityV1",
+    "production_pin_history_loader": "loadPeeritProductionPinHistoryTerminalV1",
+    "authority_active_before_relay_io": true,
+    "service_worker": "BLOCKED_IN_FRESH_CONTEXT",
+    "sequence_24": {
+      "expected_network_gets": 40,
+      "expected_fallback_count": 1,
+      "expected_record_count": 39,
+      "expected_cell_get_requests": 40,
+      "expected_successful_cell_gets": 39,
+      "expected_network_puts": 0,
+      "expected_parameter_url_requests": 0,
+      "expected_sizeclass_1_responses": 36,
+      "expected_sizeclass_2_responses": 3,
+      "dal-1": {
+        "origin": "https://relay-dal.p2phiverelay.xyz",
+        "injected_cell_get_failures": 1,
+        "successful_cell_gets": 38,
+        "verified_readback_evidence_count": 38
+      },
+      "syd-1": {
+        "origin": "https://relay-syd.p2phiverelay.xyz",
+        "injected_cell_get_failures": 0,
+        "successful_cell_gets": 1,
+        "verified_readback_evidence_count": 1
+      }
+    }
+  },
+  "followups": [
+    "GA product gate remains honestly blocked (22 blockers DISCLOSED-OPEN)",
+    "admission rotation no longer requires a bundle re-issue: the expected parameterHash is descriptor-driven; a bundle re-issue is required only when the admission SCHEME SHAPE changes (profileId/schemeId/conformanceClass/roleBits/parameterUrl) or on the established --renew cadence",
+    "publisher --renew on a ~60-day cadence re-mints all seed cells; the reader bootstrap MUST be re-issued after every --renew, then the bundle re-issued to bind it",
+    "seq-24 seed bootstrap artifact expires 2026-09-01T10:59:04.381Z",
+    "site flip / deploy of the seq-24 candidate awaits owner merge confirmation; no push, no merge, no DNS/Render contact from the build lane"
+  ]
+}

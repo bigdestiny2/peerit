@@ -51,7 +51,7 @@ export { PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1 } from './production-release-aut
 
 const PEERIT_SEED_BOOTSTRAP_PATH_V1 = '/peerit-seed-bootstrap-v1.json'
 const PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE = 13
-export const PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE = 23
+export const PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE = 24
 const HEX_32 = /^[0-9a-f]{64}$/
 
 function browserRuntimeAssetPathsForRelease (releaseSequence) {

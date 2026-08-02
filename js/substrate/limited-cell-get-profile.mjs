@@ -70,19 +70,22 @@ function profileHashRow (value, index) {
 function admissionProfile (value, relayId) {
   exact(value, [
     'profileId', 'schemeId', 'conformanceClass', 'roleBits',
-    'parameterUrl', 'parameterHash'
+    'parameterUrl'
   ], `${relayId}.admissionProfile`)
   if (value.parameterUrl !== PEERIT_LIMITED_CELL_GET_PARAMETER_URL_V1) {
     fail('PEERIT_LIMITED_CELL_GET_PROFILE_INVALID',
       `${relayId} admission parameterUrl must match the exact signed evidence hint`)
   }
+  // The admission parameterHash is deliberately absent from the release
+  // profile: it rotates with the fleet and is carried by the current
+  // signature-verified descriptor (descriptor-driven), so no release file may
+  // pin it. The stable admission scheme shape below is all a release may pin.
   return {
     profileId: integer(value.profileId, `${relayId}.profileId`, 7, 7),
     schemeId: integer(value.schemeId, `${relayId}.schemeId`, 9, 9),
     conformanceClass: integer(value.conformanceClass, `${relayId}.conformanceClass`, 1, 1),
     roleBits: integer(value.roleBits, `${relayId}.roleBits`, 49, 49),
-    parameterUrl: encoder.encode(value.parameterUrl),
-    parameterHash: fromHex(hex32(value.parameterHash, `${relayId}.parameterHash`))
+    parameterUrl: encoder.encode(value.parameterUrl)
   }
 }
 

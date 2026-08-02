@@ -354,15 +354,21 @@ const fakeControl = Object.freeze({
     })
   },
   trustedAdmissionProfile (trustedDescriptor) {
+    // seq-24: admission-profile drift is a STABLE-SHAPE mismatch (profileId /
+    // schemeId / conformanceClass / roleBits / parameterUrl), not a rotating
+    // parameterHash mismatch. A rotated binding is descriptor-driven and
+    // accepted; only shape drift fails closed, with the single canonical
+    // PEERIT_DESCRIPTOR_ADMISSION_PROFILE_DRIFT. This fixture therefore drifts
+    // the schemeId (shape) while keeping the accepted descriptor-driven
+    // parameterHash, so the drift candidate still exercises the fail-closed path.
+    const shapeDrift = trustedDescriptor.fixture.mode === 'admission-drift'
     return Object.freeze({
       profileId: 7,
-      schemeId: 9,
+      schemeId: shapeDrift ? 10 : 9,
       conformanceClass: 1,
       roleBits: 1,
       parameterUrl: null,
-      parameterHash: trustedDescriptor.fixture.mode === 'admission-drift'
-        ? fill(0xa2)
-        : admissionParameterHash
+      parameterHash: admissionParameterHash
     })
   },
   trustedDescriptorValidity (trustedDescriptor) {

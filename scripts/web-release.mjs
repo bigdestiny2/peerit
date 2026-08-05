@@ -805,6 +805,10 @@ const CANARY_SEQ24_DESCRIPTOR_DRIVEN_DECISION_FILE =
   'deploy/canary-decision-peerit-seq24-descriptor-driven-admission-20260802.json'
 const CANARY_SEQ24_DESCRIPTOR_DRIVEN_DECISION_SHA256 =
   'd29b9ec3eb1e7f8c20df1e4a4cccbfab99dfae849b574b0118e34d5fee5c6c25'
+const CANARY_SEQ25_FIRST_VISIT_RECOVERY_DECISION_FILE =
+  'deploy/canary-decision-peerit-seq25-first-visit-recovery-20260805.json'
+const CANARY_SEQ25_FIRST_VISIT_RECOVERY_DECISION_SHA256 =
+  'd5e8f263045f7e0cbcdacbfe8d873959a1432561fff9f5f0ccb84c73128e9093'
 const CANARY_PIN_HISTORY_FILE = 'deploy/web-release-pin-history.json'
 const CANARY_PIN_HISTORY_SIG_FILE = 'deploy/web-release-pin-history.json.sig.json'
 
@@ -825,6 +829,139 @@ function verifyCanaryOwnerDecision (release) {
     'fc80b076becb28c9fbda596def255246cd506fc5ed4e5f4d22499c5cdad95f1b',
     '52f99d16c0ab47bdad025cbd4138549802e552d55835435588887e7ca178e3a6'
   ]
+  if (release.releaseSequence === 25) {
+    const decision = readCanaryOwnerDecision(
+      CANARY_SEQ25_FIRST_VISIT_RECOVERY_DECISION_FILE,
+      CANARY_SEQ25_FIRST_VISIT_RECOVERY_DECISION_SHA256)
+    const activation = decision.activation || {}
+    const authority = decision.authority || {}
+    const launch = activation.launch_seed || {}
+    const rootCause = decision.root_cause || {}
+    const extension = decision.ceremony_extension || {}
+    const bootstrap = decision.seed_bootstrap || {}
+    const exactUrl = decision.exact_admission_parameter_url || {}
+    const csp = decision.production_csp || {}
+    const runtimeGate = decision.production_runtime_gate || {}
+    const relays = decision.relay_authority || {}
+    const followups = Array.isArray(decision.followups) ? decision.followups.join('\n') : ''
+    if (decision.schema_version !== 5 ||
+        decision.decision_id !== 'peerit-seq25-first-visit-recovery-20260805' ||
+        decision.status !== 'DECIDED' ||
+        !String(decision.decision || '').startsWith('ACCEPT Peerit release sequence 25 as the LIVE bounded-public-test launch successor') ||
+        !followups.includes('GA product gate remains honestly blocked')) {
+      throw new Error('sequence-25 first-visit recovery decision is not the recorded owner ACCEPT')
+    }
+    if (authority.baseline_release_sequence !== 24 ||
+        !Array.isArray(authority.cited_prior_decisions) ||
+        !authority.cited_prior_decisions.some(row => row.file === CANARY_SEQ24_DESCRIPTOR_DRIVEN_DECISION_FILE && row.sha256 === CANARY_SEQ24_DESCRIPTOR_DRIVEN_DECISION_SHA256)) {
+      throw new Error('sequence-25 decision does not cite the seq-24 descriptor-driven decision it extends')
+    }
+    if (!Array.isArray(rootCause.liveness_fix_applied) ||
+        rootCause.liveness_fix_applied.length < 2 ||
+        !rootCause.liveness_fix_applied.some(row => String(row).includes('fetchDescriptorWithTransientRetry')) ||
+        !rootCause.liveness_fix_applied.some(row => String(row).includes('cold-reader')) ||
+        !String(rootCause.no_weakening || '').includes('descriptor signature')) {
+      throw new Error('sequence-25 decision does not bind the exact transient-retry liveness fix')
+    }
+    if (activation.functional_release_sequence !== 25 ||
+        activation.rollback_release_sequence !== null ||
+        activation.rollback_posture !== 'SUPERSEDED_FOR_THIS_SLOT_BY_OWNER_DECISION_2026-08-05' ||
+        activation.limited_cell_get_authority_release_sequence !== 25 ||
+        activation.limited_cell_get_runtime_authority_exposed !== true ||
+        activation.seed_recovery_enabled !== true ||
+        activation.claim_boundary !== 'LIVE_PUBLIC_TEST_ONLY' ||
+        JSON.stringify(activation.relays) !== JSON.stringify(['dal-1', 'syd-1']) ||
+        JSON.stringify(activation.allowed_browser_operations) !==
+          JSON.stringify(['DESCRIBE.GET', 'DESCRIBE.CHALLENGE', 'CELL.GET']) ||
+        activation.network_puts_during_recovery !== 0 ||
+        activation.ordinary_delivery !== 'LOCAL_ONLY' ||
+        launch.record_count !== 34 || launch.cell_count_per_relay !== 39 ||
+        launch.community_claims !== 11 || launch.original_posts !== 17 ||
+        launch.boxed_posts_two_cells_each !== 5 || launch.replies !== 6 ||
+        launch.sizeclass_2_cells_per_relay !== 3 ||
+        launch.manifest_sha256 !== '36c15537d9e853cfb599cf59568a067e573a87c8de858183e332dfd3eb9192c0' ||
+        activation.all_five_successor !== 'EXCLUDED' ||
+        activation.ga_product_gate !== 'BLOCKED — 22 blockers DISCLOSED-OPEN, none cleared by this scope') {
+      throw new Error('sequence-25 decision does not bind the exact live launch successor scope')
+    }
+    if (!Array.isArray(extension.files) ||
+        !extension.files.includes('js/substrate/relay-consumer.js') ||
+        !extension.files.includes('js/substrate/cold-reader.mjs') ||
+        !extension.files.includes('js/substrate/limited-cell-get-profile.mjs') ||
+        !extension.files.includes('peerit-limited-cell-get-profile-v1.json') ||
+        !extension.files.includes('scripts/production-pin-history-ceremony.mjs')) {
+      throw new Error('sequence-25 decision does not record the ceremony extension surface')
+    }
+    if (bootstrap.path !== 'deploy/peerit-seed-bootstrap-v1-seq25.json' ||
+        bootstrap.sha256 !== 'e1e0879adf0fa3fd5b78f67ecd8a88ff17f28adcc1eab4c487f9872afa3b98b3' ||
+        bootstrap.embedded_release_sequence !== 25 ||
+        bootstrap.bootstrap_sequence !== 0 ||
+        bootstrap.previous_bootstrap_hash !== null ||
+        bootstrap.discovery_authority !== '691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec' ||
+        bootstrap.records !== 39) {
+      throw new Error('sequence-25 decision does not bind the exact launch seed bootstrap')
+    }
+    if (csp.policy_file !== 'deploy/render-security-headers.json' ||
+        csp.policy_file_sha256 !== 'dc97c87d08bb773712cc739c37ffd4c62c121f7c92c01b20b3a8bf4a14f95724' ||
+        csp.script_src !== "'self'" || csp.unsafe_eval !== 'FORBIDDEN' ||
+        csp.wasm_unsafe_eval !== 'FORBIDDEN' || csp.expansion !== 'FORBIDDEN' ||
+        csp.parameter_url_origin_addition !== 'FORBIDDEN') {
+      throw new Error('sequence-25 decision does not bind the exact unchanged policy')
+    }
+    if (exactUrl.utf8 !== 'https://evidence.example:443/admission.cenc' ||
+        exactUrl.utf8_hex !==
+          '68747470733a2f2f65766964656e63652e6578616d706c653a3434332f61646d697373696f6e2e63656e63' ||
+        exactUrl.semantics !== 'EVIDENCE_MIRROR_HINT_ONLY' ||
+        exactUrl.browser_fetch !== 'FORBIDDEN' ||
+        exactUrl.dns_resolution !== 'FORBIDDEN' ||
+        exactUrl.url_parsing_or_normalization !== 'FORBIDDEN' ||
+        exactUrl.csp_change !== 'FORBIDDEN' ||
+        exactUrl.comparison !== 'EXACT_SIGNED_UTF8_BYTES') {
+      throw new Error('sequence-25 decision does not bind the exact no-fetch parameterUrl contract')
+    }
+    const gate25 = runtimeGate.sequence_25 || {}
+    if (runtimeGate.script !== 'scripts/browser-peerit-production-runtime-gate.mjs' ||
+        runtimeGate.functional_mode !== 'live-two-relay' ||
+        runtimeGate.functional_release_sequence !== 25 ||
+        runtimeGate.full_authority_loader !== 'loadPeeritBrowserRuntimeAuthorityV1' ||
+        runtimeGate.production_pin_history_loader !== 'loadPeeritProductionPinHistoryTerminalV1' ||
+        runtimeGate.authority_active_before_relay_io !== true ||
+        gate25.expected_network_gets !== 40 || gate25.expected_fallback_count !== 1 ||
+        gate25.expected_record_count !== 39 || gate25.expected_cell_get_requests !== 40 ||
+        gate25.expected_successful_cell_gets !== 39 ||
+        gate25.expected_network_puts !== 0 || gate25.expected_parameter_url_requests !== 0 ||
+        gate25.expected_sizeclass_1_responses !== 36 ||
+        gate25.expected_sizeclass_2_responses !== 3 ||
+        gate25['dal-1']?.origin !== 'https://relay-dal.p2phiverelay.xyz' ||
+        gate25['dal-1']?.injected_cell_get_failures !== 1 ||
+        gate25['dal-1']?.successful_cell_gets !== 38 ||
+        gate25['dal-1']?.verified_readback_evidence_count !== 38 ||
+        gate25['syd-1']?.origin !== 'https://relay-syd.p2phiverelay.xyz' ||
+        gate25['syd-1']?.injected_cell_get_failures !== 0 ||
+        gate25['syd-1']?.successful_cell_gets !== 1 ||
+        gate25['syd-1']?.verified_readback_evidence_count !== 1) {
+      throw new Error('sequence-25 decision does not bind the named-relay production runtime gate')
+    }
+    if (relays.admission_semantics == null ||
+        !String(relays.admission_semantics).startsWith('descriptor-driven') ||
+        relays['dal-1']?.minimum_descriptor_sequence !== 19 ||
+        relays['dal-1']?.descriptor_head_sha256 !== 'f13ea495ba3d50057f77e71ff40b020eb672bd98f51b42a53474ffacfc590f65' ||
+        relays['syd-1']?.minimum_descriptor_sequence !== 22 ||
+        relays['syd-1']?.descriptor_head_sha256 !== '5690f7faf41492291f8c93dd21dbfa1c466e56b7a818857b6f0ceb8d6f7acaec' ||
+        relays['dal-1']?.admission_protocol_sha256 != null ||
+        relays['syd-1']?.admission_protocol_sha256 != null) {
+      throw new Error('sequence-25 decision does not bind the descriptor-driven admission authority (descriptor pins present, admission hash deliberately absent)')
+    }
+    addCheck('canary:owner-decision', 'pass', `Owner first-visit recovery decision verified byte-exact (sha256 ${CANARY_SEQ25_FIRST_VISIT_RECOVERY_DECISION_SHA256.slice(0, 12)}...): ACCEPT seq-25 as the LIVE bounded-public-test launch successor — cold descriptor walk + Cell-GET fallback retry ONLY transient transport failures (bounded, backoff), no verification relaxation, limited Cell-GET exposed, 39-record signed recovery enabled; unchanged CSP, zero PUTs, all-five excluded, GA gate still blocked with 22 blockers DISCLOSED-OPEN.`, {
+      file: CANARY_SEQ25_FIRST_VISIT_RECOVERY_DECISION_FILE,
+      sha256: CANARY_SEQ25_FIRST_VISIT_RECOVERY_DECISION_SHA256,
+      decidedAt: decision.decided_at,
+      functionalReleaseSequence: 25,
+      launchRecords: launch.record_count,
+      launchCellsPerRelay: launch.cell_count_per_relay
+    })
+    return
+  }
   if (release.releaseSequence === 24) {
     const decision = readCanaryOwnerDecision(
       CANARY_SEQ24_DESCRIPTOR_DRIVEN_DECISION_FILE,

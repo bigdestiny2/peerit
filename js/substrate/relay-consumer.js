@@ -1296,6 +1296,83 @@ function assertLimitedRelayContext (context, relay, head, requirement) {
   }
 }
 
+// A cold first visit re-walks the signed descriptor chain head→genesis with one
+// sequential describe round-trip per link. The walk carries no overall deadline,
+// so a single transient transport abort (a dropped connection, a network change,
+// or the vendored client's own per-request deadline truncating one response)
+// would otherwise fail the whole chain and surface as blocked-seed-recovery.
+// Retry ONLY transient transport failures, a bounded number of times with
+// exponential backoff (400ms × 2^attempt → a ~12s cumulative window) so a
+// SUSTAINED transient outage (a network change / VPN or WiFi handoff that
+// aborts several consecutive describes) is survived, not just an isolated blip.
+// A TRUNCATED HTTP body — the relay edge closing the connection mid-response so
+// the vendored client reads fewer bytes than the response's declared size class
+// ("bootstrap response is shorter than the selected class") — is the same class
+// of transient short read: the incomplete body is never parsed, verified, or
+// accepted, so re-asking relaxes nothing. That retry is scoped to the EXACT
+// vendored short-read message; every OTHER RELAY_PROTOCOL_VIOLATION (framing,
+// wrong content-length, trailing bytes, malformed frame) still fails closed
+// forever. And as before, a verification failure (discontinuity, duplicate,
+// fork, drift, bad signature) is never retried and fails closed immediately,
+// and an explicit caller/lifecycle abort is never retried either.
+const LIMITED_WALK_TRANSIENT_RETRY_ATTEMPTS = 6
+const LIMITED_WALK_TRANSIENT_RETRY_BASE_MILLIS = 400
+
+export function isTransientDescriptorFetchFailure (error) {
+  if (!error || typeof error !== 'object') return false
+  if (error.code === 'TRANSPORT_FAILURE') return true
+  if (error.name === 'AbortError') return true
+  if (error instanceof TypeError) return true
+  // Exact truncated-body short-reads only. The walk's responses come from two
+  // vendored readers — the describe/bootstrap reader ("bootstrap response is
+  // shorter than the selected class") and the health-challenge / generic reader
+  // ("response is shorter than the selected class") — and either can be cut
+  // mid-body by the relay edge; both are the same transient short read, never
+  // parsed or verified. Every OTHER RELAY_PROTOCOL_VIOLATION fails closed.
+  return error.code === 'RELAY_PROTOCOL_VIOLATION' &&
+    (error.message === 'bootstrap response is shorter than the selected class' ||
+     error.message === 'response is shorter than the selected class')
+}
+
+function abortableWalkDelay (milliseconds, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal && signal.aborted) {
+      reject(signal.reason || Object.assign(new Error('descriptor walk retry aborted'), { name: 'AbortError' }))
+      return
+    }
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(signal.reason || Object.assign(new Error('descriptor walk retry aborted'), { name: 'AbortError' }))
+    }
+    const timer = setTimeout(() => {
+      if (signal) signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, milliseconds)
+    if (signal) signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+async function fetchDescriptorWithTransientRetry (fetchOnce, signal) {
+  let lastError = null
+  for (let attempt = 0; attempt < LIMITED_WALK_TRANSIENT_RETRY_ATTEMPTS; attempt++) {
+    if (signal && signal.aborted) {
+      throw signal.reason || Object.assign(new Error('descriptor walk aborted'), { name: 'AbortError' })
+    }
+    try {
+      return await fetchOnce()
+    } catch (error) {
+      lastError = error
+      const callerAborted = signal && signal.aborted
+      if (callerAborted || !isTransientDescriptorFetchFailure(error) ||
+          attempt === LIMITED_WALK_TRANSIENT_RETRY_ATTEMPTS - 1) {
+        throw error
+      }
+      await abortableWalkDelay(LIMITED_WALK_TRANSIENT_RETRY_BASE_MILLIS * (2 ** attempt), signal)
+    }
+  }
+  throw lastError
+}
+
 async function qualifyLimitedSeedRelay ({
   control,
   relay,
@@ -1307,11 +1384,11 @@ async function qualifyLimitedSeedRelay ({
   timeoutMillis
 }) {
   const canonicalUrl = new TextEncoder().encode(relay.canonicalDescribeUrl)
-  const headDescriptor = await control.fetchDescriptorHead({
+  const headDescriptor = await fetchDescriptorWithTransientRetry(() => control.fetchDescriptorHead({
     canonicalUrl,
     signal,
     timeoutMillis
-  })
+  }), signal)
   const head = control.descriptorLinkage(headDescriptor)
   if (head.descriptorSequence < BigInt(relay.minimumDescriptorSequence) ||
       fixedHex(head.storeId) !== relay.storeId) {
@@ -1333,12 +1410,12 @@ async function qualifyLimitedSeedRelay ({
       throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_CHAIN_DUPLICATE',
         'descriptor history repeated a hash')
     }
-    const previousDescriptor = await control.fetchDescriptorHistory({
+    const previousDescriptor = await fetchDescriptorWithTransientRetry(() => control.fetchDescriptorHistory({
       canonicalUrl,
       expectedDescriptorHash: current.previousDescriptorHash,
       signal,
       timeoutMillis
-    })
+    }), signal)
     const previous = control.descriptorLinkage(previousDescriptor)
     if (previous.descriptorSequence + 1n !== current.descriptorSequence ||
         fixedHex(previous.descriptorHash) !== previousHash ||
@@ -1381,7 +1458,11 @@ async function qualifyLimitedSeedRelay ({
       'descriptor does not carry the release-signed admission-v3 profile')
   }
 
-  const qualified = await control.qualifyCellGetCandidate({
+  // The health proof (a DESCRIBE.CHALLENGE over the direct client) is the one
+  // remaining relay fetch in this qualification; a transient transport abort of
+  // it is retried exactly like the chain-walk describes above. A genuine
+  // not-qualified / health rejection is non-transient and still fails closed.
+  const qualified = await fetchDescriptorWithTransientRetry(() => control.qualifyCellGetCandidate({
     canonicalUrl,
     expectedDescriptorHash: head.descriptorHash,
     continuityRootRelayPublicKey: bytes(
@@ -1393,7 +1474,7 @@ async function qualifyLimitedSeedRelay ({
     transportSupportBit: profile.requirement.transportSupportBit,
     signal,
     timeoutMillis
-  })
+  }), signal)
   // The health proof was observed inside the qualifier before it returned.
   // This post-return snapshot is therefore conservative; never restart that
   // proof's local freshness window when adapters are assembled later.

@@ -191,6 +191,20 @@
       ],
       "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
       "note": "bounded local public-test release sequence 24; not a GA claim"
+    },
+    {
+      "releaseSequence": 25,
+      "manifestSha256": "0256300f279963066d4cad7ed2ffeeb5a96300b013d93fb6ad77518959af59cc",
+      "signingMessageSha256": "4d3268c7811af64b08da68324e6e985f8409a987ca2fec4bb17935dc55938212",
+      "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
+      "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
+      "transport": "blind-substrate/blind-v1",
+      "relayHints": [
+        "https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe",
+        "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe"
+      ],
+      "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+      "note": "bounded local public-test release sequence 25; not a GA claim"
     }
   ]
 }

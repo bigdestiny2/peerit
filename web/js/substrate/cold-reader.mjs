@@ -86,6 +86,52 @@ async function bounded (milliseconds, operation, parentSignal) {
   }
 }
 
+// A cold first visit has no cached floor, so every record is a network GET. A
+// sub-second transient transport burst (a dropped connection or network change)
+// can abort every declared replica of one record inside the same fallback pass,
+// exhausting fallback and blocking the whole recovery. A TRUNCATED HTTP body —
+// the relay edge closing the connection mid-response so the vendored client
+// reads fewer bytes than the declared size class ("response is shorter than the
+// selected class") — is the same transient short read: the incomplete Cell is
+// never parsed, verified, or accepted, so re-asking relaxes nothing; that retry
+// is scoped to the EXACT vendored short-read message, and every OTHER
+// RELAY_PROTOCOL_VIOLATION still fails closed forever. Retry the full replica
+// set for a bounded number of extra passes, but ONLY when every failure in the
+// pass was transient — a verification failure still fails closed with no retry,
+// and an explicit caller abort is never retried. Each returned Cell still
+// passes the unchanged assertVerifiedPeeritRelayCellGetResult / target-binding
+// checks below.
+const MAX_TRANSIENT_GET_RETRY_PASSES = 3
+const GET_RETRY_BACKOFF_MILLIS = 400
+
+export function isTransientCellGetFailure (error) {
+  if (!error || typeof error !== 'object') return false
+  if (error.code === 'TRANSPORT_FAILURE' || error.code === 'PEERIT_COLD_READER_DEADLINE') return true
+  if (error.name === 'AbortError') return true
+  if (error instanceof TypeError) return true
+  // Exact truncated-body short-read only — all other protocol violations fail closed.
+  return error.code === 'RELAY_PROTOCOL_VIOLATION' &&
+    error.message === 'response is shorter than the selected class'
+}
+
+function abortableGetDelay (milliseconds, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal && signal.aborted) {
+      reject(signal.reason || Object.assign(new Error('cold reader retry aborted'), { name: 'AbortError' }))
+      return
+    }
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(signal.reason || Object.assign(new Error('cold reader retry aborted'), { name: 'AbortError' }))
+    }
+    const timer = setTimeout(() => {
+      if (signal) signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, milliseconds)
+    if (signal) signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 function relayContextMatches (context, signed) {
   return context.canonicalDescribeUrl === signed.canonicalDescribeUrl &&
     context.continuityRootRelayPublicKey === signed.continuityRootRelayPublicKey &&
@@ -180,22 +226,40 @@ export function createPeeritSeedColdReaderV1 (options = {}) {
     let fallbackCount = 0
     const results = await runBounded(bootstrap.payload.records, concurrency, async record => {
       const failures = []
-      for (let index = 0; index < record.replicas.length; index++) {
-        const replica = record.replicas[index]
-        const relay = relays.get(replica.relayId)
-        if (!relay) {
-          failures.push({ relayId: replica.relayId, code: 'PEERIT_COLD_READER_RELAY_UNAVAILABLE' })
-          continue
-        }
-        try {
-          throwIfAborted(signal)
-          if (capabilityVault && typeof capabilityVault.persistReaderCapability === 'function') {
-            await capabilityVault.persistReaderCapability({
-              sourceId: bootstrap.sourceId,
+      for (let pass = 0; ; pass++) {
+        let sawTransient = false
+        let sawNonTransient = false
+        for (let index = 0; index < record.replicas.length; index++) {
+          const replica = record.replicas[index]
+          const relay = relays.get(replica.relayId)
+          if (!relay) {
+            sawNonTransient = true
+            failures.push({ relayId: replica.relayId, code: 'PEERIT_COLD_READER_RELAY_UNAVAILABLE' })
+            continue
+          }
+          try {
+            throwIfAborted(signal)
+            if (capabilityVault && typeof capabilityVault.persistReaderCapability === 'function') {
+              await capabilityVault.persistReaderCapability({
+                sourceId: bootstrap.sourceId,
+                recordId: record.recordId,
+                logicalId: record.logicalHash,
+                targetId: replica.targetId,
+                relayId: replica.relayId,
+                innerCodec: record.innerCodec,
+                innerLength: record.innerLength,
+                sizeClass: record.sizeClass,
+                logicalHash: record.logicalHash,
+                encodingCommitment: record.encodingCommitment,
+                readCapability: decodePeeritSeedReadCapabilityV1(replica.readCapability)
+              })
+            }
+            throwIfAborted(signal)
+            const request = Object.freeze({
               recordId: record.recordId,
               logicalId: record.logicalHash,
-              targetId: replica.targetId,
               relayId: replica.relayId,
+              targetId: replica.targetId,
               innerCodec: record.innerCodec,
               innerLength: record.innerLength,
               sizeClass: record.sizeClass,
@@ -203,46 +267,39 @@ export function createPeeritSeedColdReaderV1 (options = {}) {
               encodingCommitment: record.encodingCommitment,
               readCapability: decodePeeritSeedReadCapabilityV1(replica.readCapability)
             })
+            networkGets++
+            const result = assertVerifiedPeeritRelayCellGetResult(await bounded(
+              timeoutMillis,
+              context => relay.readCellCapability(request, context),
+              signal
+            ))
+            if (result.targetId !== replica.targetId || result.relayId !== replica.relayId) {
+              fail('PEERIT_COLD_READER_UNVERIFIED_RESULT',
+                'authenticated Cell result does not match the signed replica target')
+            }
+            if (index > 0) fallbackCount++
+            return Object.freeze({
+              recordId: record.recordId,
+              relayId: replica.relayId,
+              targetId: replica.targetId,
+              innerBytes: new Uint8Array(result.innerBytes),
+              evidenceRef: String(result.evidenceRef),
+              verified: true
+            })
+          } catch (error) {
+            if (signal && signal.aborted) throw signal.reason || error
+            if (isTransientCellGetFailure(error)) sawTransient = true
+            else sawNonTransient = true
+            failures.push({
+              relayId: replica.relayId,
+              code: String((error && (error.code || error.name)) || 'PEERIT_COLD_READER_GET_FAILED')
+            })
           }
-          throwIfAborted(signal)
-          const request = Object.freeze({
-            recordId: record.recordId,
-            logicalId: record.logicalHash,
-            relayId: replica.relayId,
-            targetId: replica.targetId,
-            innerCodec: record.innerCodec,
-            innerLength: record.innerLength,
-            sizeClass: record.sizeClass,
-            logicalHash: record.logicalHash,
-            encodingCommitment: record.encodingCommitment,
-            readCapability: decodePeeritSeedReadCapabilityV1(replica.readCapability)
-          })
-          networkGets++
-          const result = assertVerifiedPeeritRelayCellGetResult(await bounded(
-            timeoutMillis,
-            context => relay.readCellCapability(request, context),
-            signal
-          ))
-          if (result.targetId !== replica.targetId || result.relayId !== replica.relayId) {
-            fail('PEERIT_COLD_READER_UNVERIFIED_RESULT',
-              'authenticated Cell result does not match the signed replica target')
-          }
-          if (index > 0) fallbackCount++
-          return Object.freeze({
-            recordId: record.recordId,
-            relayId: replica.relayId,
-            targetId: replica.targetId,
-            innerBytes: new Uint8Array(result.innerBytes),
-            evidenceRef: String(result.evidenceRef),
-            verified: true
-          })
-        } catch (error) {
-          if (signal && signal.aborted) throw signal.reason || error
-          failures.push({
-            relayId: replica.relayId,
-            code: String((error && (error.code || error.name)) || 'PEERIT_COLD_READER_GET_FAILED')
-          })
         }
+        // Retry the whole replica set only when every failure this pass was a
+        // transient transport abort; any verification failure breaks immediately.
+        if (pass >= MAX_TRANSIENT_GET_RETRY_PASSES || sawNonTransient || !sawTransient) break
+        await abortableGetDelay(GET_RETRY_BACKOFF_MILLIS * (pass + 1), signal)
       }
       fail('PEERIT_COLD_READER_RECORD_UNAVAILABLE', `no declared replica returned record ${record.recordId}`, failures)
     }, signal)

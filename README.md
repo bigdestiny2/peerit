@@ -52,16 +52,23 @@ npm run dev                    # opens the loopback dev server on 127.0.0.1:8777
 
 The app itself has no install step and no runtime npm dependencies. Publishing is
 the only workflow that needs the HiveRelay client. For a public GitHub checkout,
-clone HiveRelay next to peerit and install its own dependencies:
+clone the stable HiveRelay source next to peerit and install its own dependencies.
+The stable operator/source baseline is `v0.24.3`; exact `0.24.3` HiveRelay
+packages were not published to npm, so do not substitute npm `latest` or an RC:
 
 ```bash
 cd ..
 git clone https://github.com/bigdestiny2/p2p-hiverelay.git
 cd p2p-hiverelay
-npm install
+git checkout v0.24.3
+npm ci
 cd ../peerit
 HIVERELAY_ROOT=../p2p-hiverelay npm run publish:local
 ```
+
+HiveRelay `v0.25.0-rc.*` and the separate blind-substrate track are opt-in
+candidate/development work. peerit's stable docs do not require or present them
+as the production relay baseline.
 
 `publish.mjs` resolves the HiveRelay client in this order:
 

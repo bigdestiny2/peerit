@@ -1,5 +1,10 @@
 # Peerit / community — HiveRelay v0.25.0-rc.1 blurb
 
+> **Historical candidate announcement:** `v0.25.0-rc.1` has been superseded by
+> later `0.25` candidates. It was never the stable channel. Stable remains
+> `v0.24.3`; do not use this blurb as current installation or promotion
+> guidance.
+
 **Source of truth (full short + long + social):**  
 `00-core/hiverelay/docs/COMMUNITY-UPDATE-0.25.0-rc.1.md`
 

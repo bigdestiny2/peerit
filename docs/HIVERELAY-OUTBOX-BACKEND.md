@@ -1,5 +1,11 @@
 # HiveRelay outboxlog backend (B3)
 
+**Stable version boundary:** this integration documents the application-aware
+HiveRelay `v0.24.3` outboxlog contract. `v0.25.0-rc.*` and the separate blind
+substrate are candidate/development tracks and are not assumed by this backend.
+The runtime probe below remains authoritative when an operator explicitly tests
+a later relay.
+
 peerit's browser bridge can be pointed at a **HiveRelay `outboxlog` service** instead
 of the bespoke `peerit-relay`. The two are **wire-identical** — same `/api/token`,
 `/api/sync/*`, `/api/directory`, `/api/swarm/*` — so retiring `peerit-relay` in favour

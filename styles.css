@@ -306,6 +306,32 @@ button{font-family:inherit}
 .about-side h3{margin-top:8px!important;font-size:17px!important;line-height:1.35}.about-side p{margin-bottom:0}
 .about-mode{display:flex;flex-direction:column;gap:2px;padding:10px 0;border-bottom:1px solid var(--border)}
 .about-mode b{font-size:13.5px}.about-mode span{color:var(--muted);font-size:12.5px}
+
+/* standalone product explainer */
+.explainer-body{min-height:100vh}
+.explainer-topbar{position:sticky;top:0;z-index:40;display:flex;align-items:center;justify-content:space-between;gap:20px;height:64px;padding:0 24px;
+  background:rgba(10,14,23,.86);backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
+.explainer-topbar nav{display:flex;align-items:center;gap:8px}.explainer-topbar nav a{padding:8px 11px;border-radius:8px;color:var(--muted);font-size:13.5px;font-weight:700}
+.explainer-topbar nav a:hover{color:var(--text);background:var(--surface)}
+.explainer-topbar nav a.btn-primary,.explainer-topbar nav a.btn-primary:hover{color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent-2))}
+.explainer-main{display:flex;flex-direction:column;gap:18px;width:min(1120px,calc(100% - 36px));margin:28px auto 64px}
+.explainer-main .about-hero{padding:clamp(34px,6vw,64px)}
+.explainer-main .about-hero h1{max-width:820px}.explainer-main .about-lede{max-width:790px;font-size:18px}
+.explainer-flow{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.explainer-flow .about-step{position:relative}.explainer-flow .about-step:not(:last-child)::after{content:"→";position:absolute;right:-16px;top:27px;z-index:2;
+  display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--surface);color:var(--faint);font-weight:800}
+.explainer-map{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.explainer-map article,.explainer-feature{padding:20px;border:1px solid var(--border);border-radius:12px;background:var(--bg-2)}
+.explainer-map strong,.explainer-feature h3{display:block;margin:8px 0 7px;font-size:16px}
+.explainer-map p,.explainer-feature p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.6}
+.explainer-map .about-label{color:var(--accent)}
+.explainer-features{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.explainer-feature span{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,rgba(79,140,255,.18),rgba(155,108,255,.18));
+  color:#b9c8ff;font-weight:800}
+.explainer-boundaries{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;overflow:hidden;border:1px solid rgba(255,107,61,.24);border-radius:12px;background:rgba(255,107,61,.18)}
+.explainer-boundaries div{padding:20px;background:#161923}.explainer-boundaries b{display:block;margin-bottom:7px;color:#ff9b78;font-size:14px}
+.explainer-boundaries p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.6}
+.explainer-footer{display:flex;justify-content:space-between;gap:20px;padding-top:24px;border-top:1px solid var(--border);color:var(--faint);font-size:12.5px}
 label{display:block;font-size:13.5px;font-weight:600;color:var(--muted);margin-bottom:14px}
 label input,label select,label textarea{display:block;width:100%;margin-top:6px;background:var(--bg-2);border:1px solid var(--border-2);
   border-radius:10px;color:var(--text);padding:10px 12px;font-family:inherit;font-size:14px;outline:none}
@@ -416,6 +442,9 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
   .starter-grid{grid-template-columns:1fr}
   .welcome-panel{align-items:flex-start;flex-direction:column}
   .welcome-actions{justify-content:flex-start}
+  .explainer-flow{grid-template-columns:1fr 1fr}
+  .explainer-flow .about-step:not(:last-child)::after{display:none}
+  .explainer-features{grid-template-columns:1fr 1fr}
 }
 @media(max-width:760px){
   .topbar-link{display:none}
@@ -426,6 +455,8 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
   .about-benefits,.about-first{grid-template-columns:1fr}
   .about-cta{align-items:flex-start;flex-direction:column}
   .about-cta .about-actions{margin-top:4px}
+  .explainer-topbar nav a:not(.btn){display:none}
+  .explainer-map,.explainer-boundaries{grid-template-columns:1fr}
 }
 @media(max-width:560px){
   /* keep search reachable on phones — just shrink the chrome around it */
@@ -443,6 +474,10 @@ label textarea.keybox.command{min-height:78px;word-break:normal}
   .about-lede{font-size:15px}
   .about-section h2,.about-honest h2{font-size:23px}
   .about-benefits{grid-template-columns:1fr}
+  .explainer-topbar{padding:0 14px}.explainer-main{width:min(100% - 20px,1120px);margin-top:14px}
+  .explainer-topbar .brand-name{display:block}
+  .explainer-flow,.explainer-features{grid-template-columns:1fr}
+  .explainer-main .about-lede{font-size:15px}
   .feed-pager{align-items:stretch;flex-wrap:wrap}
   .feed-pager .btn{flex:1;text-align:center}
   .feed-page-status{order:-1;flex:0 0 100%}

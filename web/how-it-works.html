@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'none'; style-src 'self'; img-src 'self' data:; form-action 'none'">
+  <title>How peerit works — peer-to-peer communities, explained</title>
+  <meta name="description" content="An easy-to-understand guide to peerit's signed identities, personal outboxes, peer replication, local verification, feeds, moderation, and relay boundaries.">
+  <link rel="canonical" href="https://peerit.site/how-it-works.html">
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="explainer-body">
+  <header class="explainer-topbar">
+    <a class="brand" href="index.html#/" aria-label="peerit home">
+      <span class="brand-mark">P</span><span class="brand-name">peerit</span>
+    </a>
+    <nav aria-label="Explainer navigation">
+      <a href="#journey">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#boundaries">Trust boundaries</a>
+      <a class="btn btn-primary" href="index.html#/">Open peerit</a>
+    </nav>
+  </header>
+
+  <main class="explainer-main">
+    <section class="about-hero">
+      <div class="about-kicker"><span></span>peer-to-peer communities, explained</div>
+      <h1>A Reddit-shaped community network with no company in the middle.</h1>
+      <p class="about-lede">peerit has communities, posts, comments, votes, feeds, and moderation. The difference is underneath: each person signs their own activity, peers carry copies, and your device checks the result.</p>
+      <div class="about-actions">
+        <a class="btn btn-primary" href="index.html#/">Explore communities</a>
+        <a class="btn btn-ghost" href="#journey">See the five steps</a>
+      </div>
+      <div class="about-proofbar" aria-label="peerit at a glance">
+        <div><b>Your identity</b><span>Your key signs every action</span></div>
+        <div><b>Your verification</b><span>Your device checks every record</span></div>
+        <div><b>No master database</b><span>Infrastructure carries data, not authority</span></div>
+      </div>
+    </section>
+
+    <section id="journey" class="about-section" aria-labelledby="journey-title">
+      <div class="about-section-head">
+        <span class="about-label">How it works</span>
+        <h2 id="journey-title">One action becomes a shared, verifiable conversation.</h2>
+        <p>There is no central server deciding what happened. The record proves who made it, and every reader applies the same public rules.</p>
+      </div>
+      <div class="explainer-flow">
+        <article class="about-step"><span class="about-step-no">01</span><h3>Write &amp; sign</h3><p>You create a post, comment, vote, edit, or moderation action. Your private key signs it on your device.</p></article>
+        <article class="about-step"><span class="about-step-no">02</span><h3>Publish your outbox</h3><p>The signed action is appended to your personal log. You remain the authoritative writer for your activity.</p></article>
+        <article class="about-step"><span class="about-step-no">03</span><h3>Replicate</h3><p>PearBrowser peers copy outboxes directly. Optional relays or seeders can keep the same signed data available.</p></article>
+        <article class="about-step"><span class="about-step-no">04</span><h3>Verify</h3><p>Each reader checks signatures, sequence, proof of work, community rules, and moderation authority.</p></article>
+        <article class="about-step"><span class="about-step-no">05</span><h3>Assemble your feed</h3><p>Your device merges valid records into threads and ranks the feed with visible, deterministic logic.</p></article>
+      </div>
+      <p class="about-callout"><b>The important shift:</b> the network helps records arrive; signatures and deterministic rules decide whether they are valid.</p>
+    </section>
+
+    <section class="about-section" aria-labelledby="routes-title">
+      <div class="about-section-head">
+        <span class="about-label">Three ways to reach the same network</span>
+        <h2 id="routes-title">The trust model stays the same across every route.</h2>
+      </div>
+      <div class="explainer-map">
+        <article><span class="about-label">PearBrowser</span><strong>Direct peer-to-peer</strong><p>Join Hyperswarm, exchange signed outboxes with peers, keep local state, and work without an authoritative web server.</p></article>
+        <article><span class="about-label">Normal browser</span><strong>Verified relay delivery</strong><p>A configured relay carries records the browser cannot fetch from Hyperswarm directly. The client still verifies every record.</p></article>
+        <article><span class="about-label">Offline or reconnecting</span><strong>Local-first continuity</strong><p>Read what is already on your device, queue work locally where supported, then reconcile valid records when peers return.</p></article>
+      </div>
+    </section>
+
+    <section id="features" class="about-section" aria-labelledby="features-title">
+      <div class="about-section-head">
+        <span class="about-label">What you can do</span>
+        <h2 id="features-title">A full community product, not just a protocol demo.</h2>
+        <p>The familiar product features sit on top of portable identity, signed history, and local verification.</p>
+      </div>
+      <div class="explainer-features">
+        <article class="explainer-feature"><span>◇</span><h3>Portable identity</h3><p>Create, export, recover, and use an identity that is not owned by a platform account.</p></article>
+        <article class="explainer-feature"><span>⌂</span><h3>Communities</h3><p>Browse and create named spaces with rules, descriptions, memberships, and signed moderator rosters.</p></article>
+        <article class="explainer-feature"><span>↳</span><h3>Conversations</h3><p>Publish posts and threaded comments, then edit or delete through new signed actions.</p></article>
+        <article class="explainer-feature"><span>↑</span><h3>Votes &amp; feeds</h3><p>Vote, sort, window, and rank locally with inspectable algorithms rather than a hidden server feed.</p></article>
+        <article class="explainer-feature"><span>✓</span><h3>Verifiable moderation</h3><p>Check that moderator actions came from a valid community authority before applying them.</p></article>
+        <article class="explainer-feature"><span>⌁</span><h3>Peer discovery</h3><p>Find and refresh activity across direct peers, configured relays, and known community records.</p></article>
+        <article class="explainer-feature"><span>◫</span><h3>Recovery &amp; resilience</h3><p>Use local journals, replica policies, and recovery paths to survive churn without inventing new authority.</p></article>
+        <article class="explainer-feature"><span>●</span><h3>Privacy controls</h3><p>Keep private keys local, use encrypted storage for identity material, and expose only the capabilities you grant.</p></article>
+      </div>
+    </section>
+
+    <section id="boundaries" class="about-honest" aria-labelledby="boundaries-title">
+      <span class="about-label">Serverless, honestly</span>
+      <h2 id="boundaries-title">No central authority does not mean no infrastructure.</h2>
+      <p>Peers still need routes and replicas. The key distinction is that infrastructure can improve delivery without gaining the power to author your activity or silently rewrite community history.</p>
+      <div class="explainer-boundaries">
+        <div><b>A relay can withhold, not forge</b><p>A relay may be slow, unavailable, or selective. It cannot produce a valid signature for somebody else's identity.</p></div>
+        <div><b>Availability is not authority</b><p>More replicas make data easier to reach. They do not make invalid data true or grant moderation power.</p></div>
+        <div><b>The web origin still matters</b><p>In a normal browser, the site origin delivers the client code. PearBrowser is the fully peer-to-peer application path.</p></div>
+        <div><b>Reads today, writes next</b><p>The web client currently reads and verifies; anything you write is signed and stored on your device. Cross-device relay publishing — PoW-gated and permissionless — opens with the write milestone now in build.</p></div>
+      </div>
+    </section>
+
+    <section class="about-cta">
+      <div><span class="about-label">See it in action</span><h2>Join a community. Keep your identity.</h2></div>
+      <div class="about-actions"><a class="btn btn-primary" href="index.html#/">Open peerit</a><a class="btn btn-ghost" href="index.html#/">Back to the board</a></div>
+    </section>
+
+    <footer class="explainer-footer"><span>peerit · signed-outbox communities</span><span>Open source · peer-to-peer · locally verified</span></footer>
+  </main>
+</body>
+</html>

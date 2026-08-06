@@ -1,0 +1,220 @@
+{
+  "schema_version": 5,
+  "decision_id": "peerit-t2-cell-put-pow-issuance-20260806",
+  "decided_at": "2026-08-06T23:48:19Z",
+  "decided_by": "owner authority executed by the active sole Codex conductor",
+  "status": "DECIDED",
+  "decision": "ACCEPT Peerit release sequence 28 as the LIVE bounded-public-test launch successor carrying the T2 CELL.PUT browser-write half: the signed limited Cell-PUT authority profile (peerit-limited-cell-put-profile-v1.json) and the pure-JS/WebCrypto pow-issuance-v1 spend provider ride the signed web closure, so a stock browser can author a record, obtain a PoW admission token from the live issuer, CELL.PUT the sealed record to BOTH live relays with verified receipts and byte-exact readback, then render locally. Writes are explicit user actions only (networkPuts 1, mode explicit-user-writes); ordinary feed delivery remains LOCAL_ONLY and the read path is byte-exact unchanged (limited Cell-GET profile re-issued at 28 with identical semantics). INBOX work is explicitly excluded (discovery half is a separate assignment against the rebuilt browser artifact). The exact production CSP remains unchanged, authenticated browser authority MUST become active before any relay I/O, recovery performs zero network PUTs, the all-five successor remains excluded, and the GA product gate remains blocked with all 22 blockers disclosed-open.",
+  "authority": {
+    "kind": "direct-owner-t2-cell-put-write-authorization",
+    "owner_instruction": "Ship the CELL.PUT half of the T2 browser-write milestone: a stock browser authors a record (comment/post), obtains a PoW admission token from the live issuer, CELL.PUTs the sealed record to BOTH live relays with verified receipts + byte-exact readback, then renders locally. Explicitly NO INBOX work (the vendored blind client has no INBOX constructors; that half waits for the relay-lane upstream artifact rebuild). Hard constraints: no git push, no merge to main, no deploy/Render/DNS contact, no relay config changes (public endpoints only), no weakening of any check — in-record PoW comment-14/post-16 bits still minted+verified on ingest, relays stay blind, zero relay trust, the pow-issuance token is IN ADDITION to in-record PoW. Worktree ends clean on the branch tip.",
+    "baseline_commit": "d0f5fc0 (fix(release): track web/how-it-works.html, on main)",
+    "baseline_release_sequence": 27,
+    "cited_prior_decisions": [
+      {
+        "file": "deploy/canary-decision-peerit-seq27-reseed-distribution-20260806.json",
+        "sha256": "08b574698816131651f23ca0c4d6d7ec557479d8a270c40a9788841295710727",
+        "relation": "the seq-27 reseed-distribution decision this successor extends"
+      },
+      {
+        "file": "deploy/canary-decision-peerit-seq26-first-visit-ux-honesty-20260806.json",
+        "sha256": "6fea93c3dde24637344da71d65c076cd776564bd6dd261935588d6fce4b063df",
+        "relation": "the seq-26 ux-honesty decision in the same lineage"
+      }
+    ]
+  },
+  "root_cause": {
+    "mechanism": "Browser writes were parked: the signed limited Cell-GET authority pins networkPuts 0 and ordinaryDelivery local-only, so the outbox flush queue never ran. The relay lane (T2-A) shipped pow-issuance-v1 — an OPEN fleet write admission profile (schemeId 1, profileId 8, conformanceClass 1, roleBits 49, parameterUrl null) with a public issuer per relay — so permissionless writes are now possible without host keys. This half ships the browser side: a CSP-safe spend provider (challenge -> pure-JS/WebCrypto PoW at 20 bits -> /redeem -> one-use token presentation) wired into the existing createAdmissionProvider seam, plus the signed limited Cell-PUT authority profile that pins the exact write posture. One record per authored item; the two relay slots are ordered by relay-public-key byte order (syd-1 52f4... slot 0, dal-1 8b3f... slot 1); ONE /redeem per record mints a 2-slot token over the binding root of both ordered request commitments, and each relay receives token || itsSlot || otherSlots as its CELL.PUT admission presentation.",
+    "correction_applied": [
+      "js/substrate/pow-issuance-spend-provider.mjs: pure-JS/WebCrypto/CSP-safe pow-issuance-v1 spend provider + createPowIssuanceV1AdmissionProviderFactory; byte primitives asserted byte-identical to the relay lane's token-codec.js (binding root, preimage, leading-zero-bits, presentation).",
+      "js/substrate/limited-cell-put-profile.mjs + peerit-limited-cell-put-profile-v1.json: verifyPeeritLimitedCellPutProfileV1 validator + the deterministic ceremony-signed profile source pinning the exact write authority (see pow_issuance_binding).",
+      "Flush wiring without flush-machinery changes: the admissionProviderFor seam drives the factory, the provider feeds createRelayAdapter, and createCellReplica spreads createAdmissionProvider at install time.",
+      "test/peerit-pow-issuance-spend.mjs: local dual-relay drill — ONE mint covered both relays (20 bits, allowance 2, redeem calls 1), CELL.PUT STORED + signature-valid on both, byte-exact CELL.GET readback on both, replay idempotent, re-slot/bad-PoW/expired/foreign-key all rejected, added to the package.json test chain."
+    ],
+    "pow_issuance_binding": {
+      "scheme": "pow-issuance-v1 (00-core/v1-integration docs/POW-ISSUANCE-V1.md)",
+      "schemeId": 1,
+      "profileId": 8,
+      "conformanceClass": 1,
+      "roleBits": 49,
+      "parameterUrl": null,
+      "parameterHash_semantics": "descriptor-driven (rotates with the fleet; taken from the current signature-verified descriptor at runtime — the release profile deliberately pins NO admission parameter hash)",
+      "difficultyBits": 20,
+      "maximumTokenAllowance": 2,
+      "tokenMaxBytes": 512,
+      "maximumCellSizeClass": 2,
+      "maximumCellLeaseClass": 2,
+      "one_token_per_record": "ONE /redeem per authored record mints exactly one 2-slot token bound to the binding root of the two slot-ordered request commitments; a second mint for the same record is never attempted",
+      "slot_order": "relay-public-key byte order: syd-1 (52f4d783...) slot 0, dal-1 (8b3f4161...) slot 1",
+      "issuer_origins": {
+        "syd-1": "https://relay-syd.p2phiverelay.xyz:8443/",
+        "dal-1": "https://relay-dal.p2phiverelay.xyz:8443/"
+      },
+      "issuer_relay_key": "identical on both relays (2f64e5f3..., shared issuer master key); issuer origins pinned per relayPublicKey in the authority profile because the vendored VerifiedAdmissionParameters brand exposes only parameterHash client-side",
+      "cost_units": "relay-internal WAL/quota metadata (CELL.PUT sizeClass 1/2 x leaseClass 1/2 = 10..280 costUnits); never computed or enforced client-side",
+      "mint_performance": "the in-browser mint must land a 20-bit proof far inside the issuer's 120s challenge TTL: the vendored noble-hashes SHA-256 inner loop (pure JS, strict-CSP safe) measures ~160k candidates/s in headless Chromium (p50 7.1s, p99 17.6s over 12 mints at 20 bits — scripts/browser-peerit-pow-issuance-bench.mjs); a challenge that outlives the mint is a liveness event, never a verification failure — the mint restarts from a FRESH challenge (bounded 3 attempts, abortable), and invalid-proof rejections (POW_INSUFFICIENT_WORK) are never retried",
+      "record_commitment": "HMAC-SHA256(key=BIND, count‖c₀‖…‖c_{allowance-1}) — the DEPLOYED fleet design (00-core/hiverelay packages/blind-daemon/pow-issuance-v1/token-codec.js); the superseded blake2b256 design (retired v1-integration checkout) is never used. Relay-lane handoff 2026-08-07: the fleet verifier rejects blake2b-bound tokens (observed as canonical INTERNAL/code-17 on dal-1 across two drill runs, nothing stored); the two fleet binding-root vectors are pinned verbatim in test/peerit-pow-issuance-spend.mjs (b)",
+      "in_record_pow": "UNCHANGED — the app-level comment-14/post-16-bit PoW is still minted at author time and verified by every client on ingest; the pow-issuance token is IN ADDITION to it, not a replacement",
+      "relay_blindness": "relays stay blind: sealed records, hash-addressed cells, zero relay trust; the issuer sees a challenge-bound record commitment, not content",
+      "operator_trust_boundary": "issuer and relay are operator-run; unlinkability is operator-trust at v1, the same boundary as the relays today (lane plan D2 honesty note)"
+    },
+    "no_inbox": "NO INBOX work rides this release: the vendored blind client has no INBOX constructors, and the discovery half (INBOX READ composition) is a separate assignment against the relay lane's rebuilt browser artifact (codex/blind-client-browser-artifact-inbox-20260806). No hand-rolled INBOX protocol code was written; no INBOX.CREATE/APPEND is performed by the browser write path — the authored record is CELL.PUT only.",
+    "no_weakening": "no verification, transport, retry-budget, or protocol check is weakened or removed; descriptor-driven admission verification, the full ingest verifier (signature, PoW, content-id, moderation overlay), and the fail-closed authority posture are all unchanged. The write path adds checks (profile validator, token verification, receipt signature verification, byte-exact readback), never subtracts."
+  },
+  "activation": {
+    "functional_release_sequence": 28,
+    "rollback_release_sequence": null,
+    "rollback_posture": "SUPERSEDED_FOR_THIS_SLOT_BY_OWNER_DECISION_2026-08-06",
+    "limited_cell_get_authority_release_sequence": 28,
+    "limited_cell_get_runtime_authority_exposed": true,
+    "limited_cell_put_authority_release_sequence": 28,
+    "limited_cell_put_authority_carried_signed": true,
+    "limited_cell_put_runtime_authority_exposed": false,
+    "limited_cell_put_runtime_exposure_note": "the signed PUT authority profile + spend provider ride the signed web closure as authenticated assets; the product runtime does NOT yet activate them (no composer/flush UI wiring rides this release) — the write path is proven by the explicit live write drill driving those exact signed bytes from a real Chromium context; product-UI activation is a recorded follow-up",
+    "seed_recovery_enabled": true,
+    "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+    "browser_authored_records": "EXPLICIT_USER_WRITES_ONLY",
+    "relays": [
+      "dal-1",
+      "syd-1"
+    ],
+    "required_predeploy_proof": "Clean Chromium loads the exact signed sequence-28 candidate under the exact unchanged production CSP, validates production pin-history terminal 28 and the full loadPeeritBrowserRuntimeAuthorityV1 path, observes authority.active=true before any relay I/O, then performs the signed seed recovery (39 records) with byte-exact verified CELL.GET evidence on both named relays and zero network PUTs. Separately, the live write drill: from a real Chromium context serving the exact signed closure under the production CSP, author ONE declared smoke comment (text marked 'T2 write smoke — declared, lease expires <=30d', sizeClass 1, leaseClass <=2), drive the spend provider + flush path end-to-end — mint ONE 2-slot token (log challenge -> PoW ms -> receipts), CELL.PUT to BOTH relays, verify receipts STORED + signature-valid on BOTH, byte-exact readback on BOTH, and the record renders locally in the authoring browser. NO INBOX pointer append.",
+    "allowed_browser_operations": [
+      "DESCRIBE.GET",
+      "DESCRIBE.CHALLENGE",
+      "CELL.GET",
+      "CELL.PUT"
+    ],
+    "network_puts_during_recovery": 0,
+    "ordinary_delivery": "LOCAL_ONLY",
+    "launch_seed": {
+      "record_count": 34,
+      "cell_count_per_relay": 39,
+      "community_claims": 11,
+      "original_posts": 17,
+      "boxed_posts_two_cells_each": 5,
+      "replies": 6,
+      "sizeclass_2_cells_per_relay": 3,
+      "manifest": "launch/RESEED-MANIFEST-2026-08-06.json",
+      "manifest_sha256": "f3d660a10419e2fd588e3349b9a9fcd4b72c1f0f034274beaee389193df00f64",
+      "capture_redelivery_run": "unchanged from seq-27 (reseed 2026-08-06T15:55:26.508Z; no seed content change rides this release)"
+    },
+    "all_five_successor": "EXCLUDED",
+    "ga_product_gate": "BLOCKED — 22 blockers DISCLOSED-OPEN, none cleared by this scope"
+  },
+  "ceremony_extension": {
+    "summary": "production-pin-history ceremony cap PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE 27 -> 28 (single exported constant); PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE 27 -> 28 (live at 28, fail-closed at 27 and 29); limited Cell-GET profile -> releaseSequence 28 (semantics identical); limited Cell-PUT profile signed at releaseSequence 28 and added to the site files; pow-issuance spend provider + PUT profile modules ride the build; seq-28 launch reader bootstrap re-issued naming the SAME 39-cell set (no seed content change)",
+    "files": [
+      "scripts/production-pin-history-ceremony.mjs",
+      "js/substrate/browser-runtime-authority.mjs",
+      "js/substrate/limited-cell-put-profile.mjs",
+      "js/substrate/pow-issuance-spend-provider.mjs",
+      "peerit-limited-cell-get-profile-v1.json",
+      "peerit-limited-cell-put-profile-v1.json",
+      "scripts/browser-peerit-production-runtime-gate.mjs",
+      "scripts/browser-peerit-t2-cell-put-live-drill.mjs",
+      "scripts/browser-peerit-pow-issuance-bench.mjs",
+      "publish.mjs",
+      "test/peerit-pow-issuance-spend.mjs",
+      "test/peerit-browser-runtime-authority.mjs",
+      "test/peerit-limited-cell-get-recovery.mjs",
+      "test/peerit-web-release-pin-history-append.mjs"
+    ]
+  },
+  "seed_bootstrap": {
+    "path": "deploy/peerit-seed-bootstrap-v1-seq28.json",
+    "sha256": "f25f2eb3ac285294d823d7e58019b79906f5ea5ebbd7ff59dbf7fcf74751c556",
+    "embedded_release_sequence": 28,
+    "bootstrap_sequence": 0,
+    "previous_bootstrap_hash": null,
+    "discovery_authority": "691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec",
+    "records": 39,
+    "issued_at": "2026-08-06T23:29:14.586Z",
+    "expires_at": "2026-09-05T23:29:14.586Z",
+    "note": "Release-terminal genesis REQUIRED (build/runtime/ceremony all bind artifact payload releaseSequence === bundle releaseSequence). Names the SAME 39 live cells as seq-27 (no seed content change rides this release); the seq-20..27 artifacts are untouched. The bootstrap carries NO admission material of any kind — admission rides the descriptor chain, not this artifact."
+  },
+  "exact_admission_parameter_url": {
+    "utf8": "https://evidence.example:443/admission.cenc",
+    "utf8_hex": "68747470733a2f2f65766964656e63652e6578616d706c653a3434332f61646d697373696f6e2e63656e63",
+    "semantics": "EVIDENCE_MIRROR_HINT_ONLY",
+    "browser_fetch": "FORBIDDEN",
+    "dns_resolution": "FORBIDDEN",
+    "url_parsing_or_normalization": "FORBIDDEN",
+    "csp_change": "FORBIDDEN",
+    "comparison": "EXACT_SIGNED_UTF8_BYTES"
+  },
+  "production_csp": {
+    "policy_file": "deploy/render-security-headers.json",
+    "policy_file_sha256": "e672153d1c396e617491fce64ed5472635314e20c45864e959b48e5f1b52b312",
+    "script_src": "'self'",
+    "unsafe_eval": "FORBIDDEN",
+    "wasm_unsafe_eval": "FORBIDDEN",
+    "expansion": "FORBIDDEN",
+    "parameter_url_origin_addition": "FORBIDDEN"
+  },
+  "relay_authority": {
+    "note": "same-day DESCRIPTOR pins re-probed GET-only at 2026-08-07T03:06Z (fetchDescriptorHead, unpinned, read-only). Heads advanced since seq-27: dal-1 seq-21 -> seq-23, syd-1 seq-24 -> seq-26; each new head chains through the intermediate heads recorded at 2026-08-06T23:47Z (dal seq-22 d50e992e..., syd seq-25 d7d3c6ec...) to the seq-27 pinned heads (previousDescriptorHash continuity verified hop by hop); genesis anchors unchanged (dal 0fb814bd..., syd b2384d4b...). The READ admission parameterHash stays descriptor-driven, and the WRITE (pow-issuance) parameterHash is likewise descriptor-driven — this decision deliberately records NO admission hash for either scheme.",
+    "admission_semantics": "descriptor-driven (READ: profileId 7, schemeId 9, conformanceClass 1, roleBits 49, exact evidence.example parameterUrl; WRITE pow-issuance: profileId 8, schemeId 1, conformanceClass 1, roleBits 49, parameterUrl null — both shapes pinned by the signed release profiles, both parameter hashes taken from the current signature-verified descriptor at runtime)",
+    "dal-1": {
+      "origin": "https://relay-dal.p2phiverelay.xyz",
+      "minimum_descriptor_sequence": 23,
+      "descriptor_head_sha256": "42f35aed554182c395288fc8301f94edda93b319c707ac8fa188ca2e6961f859",
+      "issuance_url": "https://relay-dal.p2phiverelay.xyz:8443/",
+      "admission_protocol_sha256": null,
+      "pow_issuance_parameter_sha256": null
+    },
+    "syd-1": {
+      "origin": "https://relay-syd.p2phiverelay.xyz",
+      "minimum_descriptor_sequence": 26,
+      "descriptor_head_sha256": "df903bca328667e1718bf5fe794bfff1334e6198387e722f4713ba4869b14d7b",
+      "issuance_url": "https://relay-syd.p2phiverelay.xyz:8443/",
+      "admission_protocol_sha256": null,
+      "pow_issuance_parameter_sha256": null
+    }
+  },
+  "production_runtime_gate": {
+    "script": "scripts/browser-peerit-production-runtime-gate.mjs",
+    "functional_mode": "live-two-relay",
+    "functional_release_sequence": 28,
+    "rollback_mode": "rollback-preio",
+    "rollback_note": "rollback-preio targets any sequence != 28 (the limited Cell-GET authority fails closed there)",
+    "full_authority_loader": "loadPeeritBrowserRuntimeAuthorityV1",
+    "production_pin_history_loader": "loadPeeritProductionPinHistoryTerminalV1",
+    "authority_active_before_relay_io": true,
+    "service_worker": "BLOCKED_IN_FRESH_CONTEXT",
+    "sequence_28": {
+      "expected_network_gets": 40,
+      "expected_fallback_count": 1,
+      "expected_record_count": 39,
+      "expected_cell_get_requests": 40,
+      "expected_successful_cell_gets": 39,
+      "expected_network_puts": 0,
+      "expected_parameter_url_requests": 0,
+      "expected_sizeclass_1_responses": 36,
+      "expected_sizeclass_2_responses": 3,
+      "dal-1": {
+        "origin": "https://relay-dal.p2phiverelay.xyz",
+        "injected_cell_get_failures": 1,
+        "successful_cell_gets": 38,
+        "verified_readback_evidence_count": 38
+      },
+      "syd-1": {
+        "origin": "https://relay-syd.p2phiverelay.xyz",
+        "injected_cell_get_failures": 0,
+        "successful_cell_gets": 1,
+        "verified_readback_evidence_count": 1
+      }
+    }
+  },
+  "followups": [
+    "GA product gate remains honestly blocked (22 blockers DISCLOSED-OPEN)",
+    "product-UI composer write wiring: the signed PUT authority + spend provider are carried as authenticated assets but NOT runtime-exposed; activating the composer/flush path in the product runtime is the immediate follow-up before any broader write claim",
+    "INBOX discovery half (T2-C): re-vendor the relay lane's rebuilt browser artifact (codex/blind-client-browser-artifact-inbox-20260806, 51 exports incl. 7 inbox constructors) and compose INBOX READ from the persisted floor; separate assignment, NOT started here",
+    "issuer/relay operator-trust boundary (lane plan D2): unlinkability is operator-trust at v1; the oblivious blind-credit upgrade (open-admission-v1) remains the right end-state",
+    "relay-lane follow-up carried from seq-25/27: blind-edge degradation windows recur on BOTH relays; edge write-timeout/daemon-IPC tuning belongs to the relay lane, not the client",
+    "publisher capability persistence gap carried from seq-27: publish-seed-waves-blind.mjs must persist writeCap/dropPrivateKey to a durable vault; superseded cells (13) expire via relay lease-GC (~late October 2026)",
+    "publisher --renew on a ~60-day cadence re-mints all seed cells; the reader bootstrap MUST be re-issued after every --renew, then the bundle re-issued to bind it",
+    "seq-28 seed bootstrap artifact expires 2026-09-05T23:29:14.586Z",
+    "site flip / deploy of the seq-28 candidate awaits owner merge confirmation; no push, no merge, no DNS/Render contact from the build lane"
+  ]
+}

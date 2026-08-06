@@ -1,16 +1,20 @@
 {
-  "schema": "peerit-limited-cell-get-profile-v1",
+  "schema": "peerit-limited-cell-put-profile-v1",
   "version": 1,
   "releaseSequence": 28,
-  "mode": "seed-recovery-only",
+  "mode": "explicit-user-writes",
   "ordinaryDelivery": "local-only",
-  "networkPuts": 0,
+  "networkPuts": 1,
   "maximumDescriptorHistory": 4096,
-  "hiveCellGet": {
-    "artifactPath": "/vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.mjs",
-    "manifestPath": "/vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.manifest.cenc",
-    "artifactHash": "7a34c2beaca5375c61754d165d5eed1d209489611f84517540bccd241c01ddcd",
-    "manifestHash": "9f71ff6c07d183cb806dcf8c869a1d15db57a55bc22c374eef3bb70fa794560a"
+  "powIssuance": {
+    "schemeId": 1,
+    "profileId": 8,
+    "conformanceClass": 1,
+    "roleBits": 49,
+    "difficultyBits": 20,
+    "maximumTokenAllowance": 2,
+    "maximumCellSizeClass": 2,
+    "maximumCellLeaseClass": 2
   },
   "supportedProtocolProfiles": [
     {
@@ -47,6 +51,14 @@
   ],
   "requirement": {
     "familyId": 2,
+    "operationId": 1,
+    "endpointId": 1,
+    "requiredRoleBits": 49,
+    "privacyProfileBit": 1,
+    "transportSupportBit": 1
+  },
+  "readRequirement": {
+    "familyId": 2,
     "operationId": 2,
     "endpointId": 1,
     "requiredRoleBits": 49,
@@ -56,22 +68,26 @@
   "relays": [
     {
       "relayId": "dal-1",
+      "relayPublicKey": "8b3f4161271cfa511bc49fb03033d6441da01bf27c35a754e2a1b0d7df32e1d2",
+      "issuanceUrl": "https://relay-dal.p2phiverelay.xyz:8443/",
       "admissionProfile": {
-        "profileId": 7,
-        "schemeId": 9,
+        "profileId": 8,
+        "schemeId": 1,
         "conformanceClass": 1,
         "roleBits": 49,
-        "parameterUrl": "https://evidence.example:443/admission.cenc"
+        "parameterUrl": null
       }
     },
     {
       "relayId": "syd-1",
+      "relayPublicKey": "52f4d78364180553a944629b5dd90834d3c3d4f7755cc2e452b3308329a88161",
+      "issuanceUrl": "https://relay-syd.p2phiverelay.xyz:8443/",
       "admissionProfile": {
-        "profileId": 7,
-        "schemeId": 9,
+        "profileId": 8,
+        "schemeId": 1,
         "conformanceClass": 1,
         "roleBits": 49,
-        "parameterUrl": "https://evidence.example:443/admission.cenc"
+        "parameterUrl": null
       }
     }
   ]

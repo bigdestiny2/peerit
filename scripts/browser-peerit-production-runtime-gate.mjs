@@ -352,8 +352,8 @@ const expectedSequence = requiredInteger('--expected-sequence')
 // Cell-GET authority is inert at any sequence != 21, so a candidate built at
 // such a sequence must refuse recovery with PEERIT_LIMITED_CELL_GET_CONTROL_INVALID
 // before any relay I/O.
-if (mode === 'live-two-relay' && expectedSequence !== 27) fail('live-two-relay is authorized only for sequence 27')
-if (mode === 'rollback-preio' && expectedSequence === 27) fail('rollback-preio targets only sequences without the limited Cell-GET authority (!= 27)')
+if (mode === 'live-two-relay' && expectedSequence !== 28) fail('live-two-relay is authorized only for sequence 28')
+if (mode === 'rollback-preio' && expectedSequence === 28) fail('rollback-preio targets only sequences without the limited Cell-GET authority (!= 28)')
 const expectedHeads = {
   dallas: optionalHex32('--expected-dallas-head'),
   sydney: optionalHex32('--expected-sydney-head')

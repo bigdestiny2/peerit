@@ -79,7 +79,7 @@ const html = `<!DOCTYPE html>
   <div class="boot">
     <div class="boot-mark">P</div>
     <div class="boot-name">peerit</div>
-    <div class="boot-sub">connecting to peers…</div>
+    <div class="boot-sub">first visit: verifying the signed substrate — about a minute · instant after that</div>
   </div>
   <script>${js}</script>
 </body>

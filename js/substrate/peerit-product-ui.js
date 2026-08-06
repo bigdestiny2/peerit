@@ -141,11 +141,11 @@ function voteBox (record, targetType, postCid = '') {
 
 function postCard (post, { full = false, mine = false, revealed = new Set() } = {}) {
   const body = post.deleted ? '' : String(post.body || '')
-  const text = full ? body : body.slice(0, 360)
+  const text = full ? body : body.slice(0, 700)
   const href = postHref(post)
   const link = post.kind !== 'text' && post.url
     ? `<a class="post-link" href="${esc(post.url)}" target="_blank" rel="noopener noreferrer">${esc(post.url)}</a>`
-    : text ? `<div class="post-excerpt md">${esc(text)}${!full && body.length > text.length ? '…' : ''}</div>` : ''
+    : text ? `<div class="post-excerpt md">${esc(text)}${!full && body.length > text.length ? `… <a href="${href}">read more →</a>` : ''}</div>` : ''
   const collapsed = isCollapsed(post, revealed)
   const buried = post.moderation?.visibility === VISIBILITY.BURIED
   return `<article class="post ${full ? 'full' : 'card'}" data-post="${esc(post.cid)}">
@@ -175,7 +175,7 @@ async function homeView (runtime, route, ui) {
   const welcome = '<section class="welcome-panel"><div class="welcome-copy"><span class="tag">blind substrate</span><h2>Local-first communities, without a relay permission gate</h2><p>Browse as a lurker. Your first explicit post creates one durable device identity; every event is signed and visible locally before delivery.</p></div><div class="welcome-actions"><a class="btn btn-primary" href="#/create">Create a community</a></div></section>'
   const feed = posts.length
     ? `<div class="feed">${posts.map(post => postCard(post, { mine: post.author === me, revealed: ui.revealed })).join('')}</div>`
-    : empty('Your local feed is ready', 'No verified posts are materialized on this device yet. Create a community or wait for authenticated discovery.', '<div class="empty-actions"><a class="btn btn-primary" href="#/create">Create community</a></div>')
+    : empty('Recovering the verified seed…', 'First visit: the browser verifies two signed relay chains and the 39-record launch seed from scratch — about a minute, no server does it for you. Later visits load instantly. Still empty after two minutes? The relays may be unreachable — refresh to retry.', '<div class="empty-actions"><a class="btn btn-primary" href="#/create">Create community</a></div>')
   return `<div class="feed-head"><h1>Home</h1><a class="btn btn-ghost" href="#/submit/${pathPart(communities[0]?.slug || DEFAULT_COMMUNITY)}">New post</a></div>${welcome}${sortTabs(sort, '#/')}${feed}`
 }
 
@@ -219,7 +219,7 @@ async function postView (runtime, route, ui) {
   const buriedAudit = moderatedPost.moderation?.visibility === VISIBILITY.BURIED && ui.moderationView !== MODERATION_VIEW.OPEN
     ? '<div class="notice warn"><b>Buried in this policy view</b><p>This direct link remains available for audit. Switch to Open to inspect the content.</p></div>'
     : ''
-  return `<div class="post-detail">${buriedAudit}${postCard(moderatedPost, { full: true, mine: post.author === me, revealed: ui.revealed })}<section class="comment-section"><form class="composer" data-form="comment"><input type="hidden" name="community" value="${esc(route.community)}"><input type="hidden" name="postCid" value="${esc(route.cid)}"><input type="hidden" name="parentCid" value=""><label>Join the discussion<textarea name="body" rows="4" maxlength="10000" required placeholder="Write a signed comment…"></textarea></label><div class="composer-actions"><button class="btn btn-primary" type="submit">Comment</button><span class="small dim" data-reply-note></span></div></form><div class="comment-bar"><span>${comments.length} visible comment${comments.length === 1 ? '' : 's'}</span><span class="csort">${COMMENT_SORTS.map(kind => `<a class="${sort === kind ? 'active' : ''}" href="${postHref(post)}?sort=${pathPart(kind)}">${esc(kind)}</a>`).join('')}</span></div>${comments.length ? `<div class="comments">${commentTree(comments, ui)}</div>` : '<div class="no-comments">No comments in this policy view.</div>'}</section></div>`
+  return `<div class="post-detail">${buriedAudit}${postCard(moderatedPost, { full: true, mine: post.author === me, revealed: ui.revealed })}<section class="comment-section"><form class="composer" data-form="comment"><input type="hidden" name="community" value="${esc(route.community)}"><input type="hidden" name="postCid" value="${esc(route.cid)}"><input type="hidden" name="parentCid" value=""><label>Join the discussion<textarea name="body" rows="4" maxlength="10000" required placeholder="Signed and stored on this device — cross-device relay publishing opens in a later milestone…"></textarea></label><div class="composer-actions"><button class="btn btn-primary" type="submit">Comment</button><span class="small dim" data-reply-note></span></div></form><div class="comment-bar"><span>${comments.length} visible comment${comments.length === 1 ? '' : 's'}</span><span class="csort">${COMMENT_SORTS.map(kind => `<a class="${sort === kind ? 'active' : ''}" href="${postHref(post)}?sort=${pathPart(kind)}">${esc(kind)}</a>`).join('')}</span></div>${comments.length ? `<div class="comments">${commentTree(comments, ui)}</div>` : '<div class="no-comments">No comments in this policy view.</div>'}</section></div>`
 }
 
 async function createView () {
@@ -230,7 +230,7 @@ async function submitView (runtime, route) {
   const communities = await runtime.data.listCommunities()
   if (!communities.length) return empty('Create a community first', 'A post belongs to a signed community record.', '<a class="btn btn-primary" href="#/create">Create community</a>')
   const selected = communities.some(row => row.slug === route.community) ? route.community : communities[0].slug
-  return `<section class="panel"><h1>Create a post</h1><form data-form="post"><label>Community<select name="community">${communities.map(row => `<option value="${esc(row.slug)}"${row.slug === selected ? ' selected' : ''}>r/${esc(row.slug)}</option>`).join('')}</select></label><label>Title<input name="title" maxlength="300" required></label><div class="kind-tabs"><label><input type="radio" name="kind" value="text" checked> Text</label><label><input type="radio" name="kind" value="link"> Link</label></div><label data-body-field>Body<textarea name="body" maxlength="40000" rows="9"></textarea></label><label data-url-field hidden>URL<input name="url" maxlength="2000" placeholder="https://"></label><div class="form-actions"><button class="btn btn-primary" type="submit">Publish locally</button><a class="btn btn-ghost" href="${communityHref(selected)}">Cancel</a></div></form></section>`
+  return `<section class="panel"><h1>Create a post</h1><form data-form="post"><label>Community<select name="community">${communities.map(row => `<option value="${esc(row.slug)}"${row.slug === selected ? ' selected' : ''}>r/${esc(row.slug)}</option>`).join('')}</select></label><label>Title<input name="title" maxlength="300" required></label><div class="kind-tabs"><label><input type="radio" name="kind" value="text" checked> Text</label><label><input type="radio" name="kind" value="link"> Link</label></div><label data-body-field>Body<textarea name="body" maxlength="40000" rows="9" placeholder="Signed and stored on this device — cross-device relay publishing opens in a later milestone…"></textarea></label><label data-url-field hidden>URL<input name="url" maxlength="2000" placeholder="https://"></label><div class="form-actions"><button class="btn btn-primary" type="submit">Publish locally</button><a class="btn btn-ghost" href="${communityHref(selected)}">Cancel</a></div></form></section>`
 }
 
 async function profileView (runtime) {

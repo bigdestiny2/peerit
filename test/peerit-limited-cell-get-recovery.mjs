@@ -86,7 +86,7 @@ const sodium = sodiumModule.default || sodiumModule
 
 const TEST_EPOCH = 101
 const TEST_NOW = TEST_EPOCH * 21_600_000 + 1_000
-const RELEASE_SEQUENCE = 25n
+const RELEASE_SEQUENCE = 26n
 const EXACT_PARAMETER_URL = 'https://evidence.example:443/admission.cenc'
 const EXACT_PARAMETER_URL_BYTES = Buffer.from(EXACT_PARAMETER_URL, 'utf8')
 const textEncoder = new TextEncoder()

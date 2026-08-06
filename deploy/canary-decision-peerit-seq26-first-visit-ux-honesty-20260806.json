@@ -1,0 +1,177 @@
+{
+  "schema_version": 5,
+  "decision_id": "peerit-seq26-first-visit-ux-honesty-20260806",
+  "decided_at": "2026-08-06T01:18:44Z",
+  "decided_by": "owner authority executed by the active sole Codex conductor",
+  "status": "DECIDED",
+  "decision": "ACCEPT Peerit release sequence 26 as the LIVE bounded-public-test launch successor: a copy-and-affordance UX-honesty release — first-visit boot-time indication (cold start is about a minute, instant after), a 'read more' affordance on truncated feed excerpts, and composer local-only honesty — riding the seq-25 first-visit liveness posture with ZERO verification, transport, or logic changes beyond the listed copy. It explicitly records that browser-authored records remain LOCAL_ONLY: no public CELL.PUT authority exists, ordinary delivery is local-only, and cross-device sync is roadmap track 2. The exact production CSP remains unchanged, authenticated browser authority MUST become active before any relay I/O, recovery performs zero network PUTs, ordinary delivery remains LOCAL_ONLY, the all-five successor remains excluded, and the GA product gate remains blocked with all 22 blockers disclosed-open.",
+  "authority": {
+    "kind": "direct-owner-ux-honesty-authorization",
+    "owner_instruction": "Three copy/UX items, no logic. (A) First-time visitors stare at a blank boot during the ~60-100s cold recovery with no indication why — tell them the cold start takes about a minute (boot splash + the home empty state they see while the 39-record seed materializes). (B) Feed excerpts truncate at 360 chars with a bare ellipsis and feel cut off — lengthen to 700 and add an explicit 'read more' link on truncation. (C) A browser comment does not sync cross-machine; that is the DISCLOSED boundary (browser writes are roadmap T2, relays accept no public CELL.PUT) — say so honestly in the composer instead of implying it syncs. Zero verification, transport, or logic changes beyond this copy.",
+    "baseline_commit": "c955281 (release(peerit): sequence 25 — first-visit seed-recovery liveness fix, merged to main at 2ec2a3d)",
+    "baseline_release_sequence": 25,
+    "cited_prior_decisions": [
+      {
+        "file": "deploy/canary-decision-peerit-seq25-first-visit-recovery-20260805.json",
+        "sha256": "d5e8f263045f7e0cbcdacbfe8d873959a1432561fff9f5f0ccb84c73128e9093",
+        "relation": "the seq-25 first-visit liveness decision this successor extends"
+      },
+      {
+        "file": "deploy/canary-decision-peerit-seq24-descriptor-driven-admission-20260802.json",
+        "sha256": "d29b9ec3eb1e7f8c20df1e4a4cccbfab99dfae849b574b0118e34d5fee5c6c25",
+        "relation": "the seq-24 descriptor-driven admission decision in the same lineage"
+      }
+    ]
+  },
+  "root_cause": {
+    "mechanism": "UX-honesty only, no defect. (A) A cold first visit spends ~60-100s verifying two signed relay chains and the 39-record launch seed from scratch; the boot splash ('connecting to peers') and the home empty state gave no indication, so first-time visitors read it as hung. (B) Feed post excerpts truncated at body.slice(0, 360) with a bare ellipsis, feeling cut off. (C) The comment composer invited 'Write a signed comment' without disclosing that browser-authored records are stored on this device only (no public CELL.PUT authority exists; ordinary delivery is local-only; cross-device sync is roadmap track 2).",
+    "ux_changes_applied": [
+      "index.html + scripts/build-single-file.mjs boot-sub line (kept in sync): 'connecting to peers…' -> 'first visit: verifying the signed substrate — about a minute · instant after that' (index.html is the source template; web/index.html mirrors it via the established web build, never hand-edited).",
+      "js/substrate/peerit-product-ui.js home empty state: title -> 'Recovering the verified seed…'; copy explains the first-visit from-scratch verification takes about a minute, later visits load instantly, and to refresh if still empty after two minutes; the Create-community action markup is unchanged.",
+      "js/substrate/peerit-product-ui.js postCard: feed excerpt length 360 -> 700, and on truncation appends an explicit 'read more →' link to the post's own href after the ellipsis; the detail-page (full: true) full-body behavior is unchanged.",
+      "js/substrate/peerit-product-ui.js comment composer local-only honesty placeholder -> 'Signed and stored on this device — cross-device relay publishing opens in a later milestone…', and the same honesty placeholder added to the top-level post body composer (which previously carried no placeholder); no form logic touched."
+    ],
+    "local_only_honesty": "This decision explicitly records that browser-authored records remain LOCAL_ONLY: no public CELL.PUT authority exists, ordinary delivery is local-only, and cross-device sync is roadmap track 2. The composer copy discloses that boundary rather than implying cross-device sync.",
+    "no_verification_or_transport_change": "No verification, transport, retry-budget, or protocol change rides this release. The seq-25 bounded transient-retry liveness posture is unchanged; only display copy and one excerpt-length constant changed."
+  },
+  "activation": {
+    "functional_release_sequence": 26,
+    "rollback_release_sequence": null,
+    "rollback_posture": "SUPERSEDED_FOR_THIS_SLOT_BY_OWNER_DECISION_2026-08-06",
+    "limited_cell_get_authority_release_sequence": 26,
+    "limited_cell_get_runtime_authority_exposed": true,
+    "seed_recovery_enabled": true,
+    "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+    "browser_authored_records": "LOCAL_ONLY",
+    "relays": [
+      "dal-1",
+      "syd-1"
+    ],
+    "required_predeploy_proof": "Clean Chromium loads the exact signed sequence-26 candidate under the exact unchanged production CSP, validates production pin-history terminal 26 and the full loadPeeritBrowserRuntimeAuthorityV1 path, observes authority.active=true before any relay I/O, then performs the signed seed recovery (39 records) with byte-exact verified CELL.GET evidence on both named relays and zero network PUTs; the rendered boot-sub, empty-state, excerpt, and composer copy matches the recorded UX-honesty text.",
+    "allowed_browser_operations": [
+      "DESCRIBE.GET",
+      "DESCRIBE.CHALLENGE",
+      "CELL.GET"
+    ],
+    "network_puts_during_recovery": 0,
+    "ordinary_delivery": "LOCAL_ONLY",
+    "launch_seed": {
+      "record_count": 34,
+      "cell_count_per_relay": 39,
+      "community_claims": 11,
+      "original_posts": 17,
+      "boxed_posts_two_cells_each": 5,
+      "replies": 6,
+      "sizeclass_2_cells_per_relay": 3,
+      "manifest": "launch/FINAL-SEED-MANIFEST.json",
+      "manifest_sha256": "36c15537d9e853cfb599cf59568a067e573a87c8de858183e332dfd3eb9192c0",
+      "capture_redelivery_run": "renew-2026-07-30T23:18:21.374Z (owner-approved; 34/34 receipt-signed + byte-exact-readback-verified on both relays)"
+    },
+    "all_five_successor": "EXCLUDED",
+    "ga_product_gate": "BLOCKED — 22 blockers DISCLOSED-OPEN, none cleared by this scope"
+  },
+  "ceremony_extension": {
+    "summary": "production-pin-history ceremony cap PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE 25 -> 26 (single exported constant); PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE 25 -> 26 (live at 26, fail-closed at 25 and 27); limited Cell-GET profile -> releaseSequence 26 with the descriptor-driven admission shape (no parameterHash field anywhere); the UX-honesty copy rides index.html, scripts/build-single-file.mjs, and js/substrate/peerit-product-ui.js",
+    "files": [
+      "scripts/production-pin-history-ceremony.mjs",
+      "js/substrate/browser-runtime-authority.mjs",
+      "js/substrate/limited-cell-get-profile.mjs",
+      "js/substrate/peerit-product-ui.js",
+      "index.html",
+      "scripts/build-single-file.mjs",
+      "peerit-limited-cell-get-profile-v1.json",
+      "scripts/browser-peerit-production-runtime-gate.mjs",
+      "test/peerit-browser-runtime-authority.mjs",
+      "test/peerit-limited-cell-get-recovery.mjs",
+      "test/peerit-web-release-pin-history-append.mjs"
+    ]
+  },
+  "seed_bootstrap": {
+    "path": "deploy/peerit-seed-bootstrap-v1-seq26.json",
+    "sha256": "057ab1e1a888be8cf3d70ebef034bbd13488517652508e9a7700e5322637e64c",
+    "embedded_release_sequence": 26,
+    "bootstrap_sequence": 0,
+    "previous_bootstrap_hash": null,
+    "discovery_authority": "691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec",
+    "records": 39,
+    "issued_at": "2026-08-06T01:15:25.125Z",
+    "expires_at": "2026-09-05T01:15:25.125Z",
+    "note": "Release-terminal genesis REQUIRED (build/runtime/ceremony all bind artifact payload releaseSequence === bundle releaseSequence). Names the same 39 live cells; the seq-20/21/22/23/24/25 artifacts are untouched. The bootstrap carries NO admission material of any kind — admission rides the descriptor chain, not this artifact."
+  },
+  "exact_admission_parameter_url": {
+    "utf8": "https://evidence.example:443/admission.cenc",
+    "utf8_hex": "68747470733a2f2f65766964656e63652e6578616d706c653a3434332f61646d697373696f6e2e63656e63",
+    "semantics": "EVIDENCE_MIRROR_HINT_ONLY",
+    "browser_fetch": "FORBIDDEN",
+    "dns_resolution": "FORBIDDEN",
+    "url_parsing_or_normalization": "FORBIDDEN",
+    "csp_change": "FORBIDDEN",
+    "comparison": "EXACT_SIGNED_UTF8_BYTES"
+  },
+  "production_csp": {
+    "policy_file": "deploy/render-security-headers.json",
+    "policy_file_sha256": "e672153d1c396e617491fce64ed5472635314e20c45864e959b48e5f1b52b312",
+    "script_src": "'self'",
+    "unsafe_eval": "FORBIDDEN",
+    "wasm_unsafe_eval": "FORBIDDEN",
+    "expansion": "FORBIDDEN",
+    "parameter_url_origin_addition": "FORBIDDEN"
+  },
+  "relay_authority": {
+    "note": "same-day DESCRIPTOR pins re-probed GET-only at 2026-08-06T01:15Z. The admission parameterHash is descriptor-driven: it rotates with the fleet and is taken from the CURRENT signature-verified descriptor at runtime — this decision deliberately records NO admission hash. Heads advanced since seq-25: dal-1 seq-19 -> seq-20, syd-1 seq-22 -> seq-23; genesis anchors unchanged (dal 0fb814bd..., syd b2384d4b...).",
+    "admission_semantics": "descriptor-driven (expected from the current descriptor's advertised binding; signed parameters verified against that binding wherever consumed; scheme shape pinned by the release profile: profileId 7, schemeId 9, conformanceClass 1, roleBits 49, exact evidence.example parameterUrl)",
+    "dal-1": {
+      "origin": "https://relay-dal.p2phiverelay.xyz",
+      "minimum_descriptor_sequence": 20,
+      "descriptor_head_sha256": "56edc91e12e141be4387fa3f96aa9c74595e6c93db306e33b784ac43e008cf46"
+    },
+    "syd-1": {
+      "origin": "https://relay-syd.p2phiverelay.xyz",
+      "minimum_descriptor_sequence": 23,
+      "descriptor_head_sha256": "e2a97e77badddac29234a48c0fff185df1646baeb7fcc291dfc495326361da78"
+    }
+  },
+  "production_runtime_gate": {
+    "script": "scripts/browser-peerit-production-runtime-gate.mjs",
+    "functional_mode": "live-two-relay",
+    "functional_release_sequence": 26,
+    "rollback_mode": "rollback-preio",
+    "rollback_note": "rollback-preio targets any sequence != 26 (the limited Cell-GET authority fails closed there)",
+    "full_authority_loader": "loadPeeritBrowserRuntimeAuthorityV1",
+    "production_pin_history_loader": "loadPeeritProductionPinHistoryTerminalV1",
+    "authority_active_before_relay_io": true,
+    "service_worker": "BLOCKED_IN_FRESH_CONTEXT",
+    "sequence_26": {
+      "expected_network_gets": 40,
+      "expected_fallback_count": 1,
+      "expected_record_count": 39,
+      "expected_cell_get_requests": 40,
+      "expected_successful_cell_gets": 39,
+      "expected_network_puts": 0,
+      "expected_parameter_url_requests": 0,
+      "expected_sizeclass_1_responses": 36,
+      "expected_sizeclass_2_responses": 3,
+      "dal-1": {
+        "origin": "https://relay-dal.p2phiverelay.xyz",
+        "injected_cell_get_failures": 1,
+        "successful_cell_gets": 38,
+        "verified_readback_evidence_count": 38
+      },
+      "syd-1": {
+        "origin": "https://relay-syd.p2phiverelay.xyz",
+        "injected_cell_get_failures": 0,
+        "successful_cell_gets": 1,
+        "verified_readback_evidence_count": 1
+      }
+    }
+  },
+  "followups": [
+    "GA product gate remains honestly blocked (22 blockers DISCLOSED-OPEN)",
+    "browser-authored records remain LOCAL_ONLY: no public CELL.PUT authority exists, ordinary delivery is local-only, and cross-device sync is roadmap track 2 — the composer copy now discloses this boundary rather than implying sync",
+    "relay-lane follow-up carried from seq-25: blind-edge 'public response write timed out' / 'private IPC exchange aborted' degradation window observed on BOTH relays 2026-08-05 19:00-21:00 UTC (containers restarted 18:08 same image) — edge write-timeout/daemon-IPC tuning belongs to the relay lane, not the client",
+    "admission rotation no longer requires a bundle re-issue: the expected parameterHash is descriptor-driven; a bundle re-issue is required only when the admission SCHEME SHAPE changes (7/9/1/49/parameterUrl) or on the established --renew cadence",
+    "publisher --renew on a ~60-day cadence re-mints all seed cells; the reader bootstrap MUST be re-issued after every --renew, then the bundle re-issued to bind it",
+    "seq-26 seed bootstrap artifact expires 2026-09-05T01:15:25.125Z",
+    "site flip / deploy of the seq-26 candidate awaits owner merge confirmation; no push, no merge, no DNS/Render contact from the build lane"
+  ]
+}

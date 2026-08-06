@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const EXPECTED_HEADER_POLICY_SHA256 = 'dc97c87d08bb773712cc739c37ffd4c62c121f7c92c01b20b3a8bf4a14f95724'
+const EXPECTED_HEADER_POLICY_SHA256 = 'e672153d1c396e617491fce64ed5472635314e20c45864e959b48e5f1b52b312'
 const EXPECTED_CSP = "default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; " +
   "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: hyper: pear:; " +
   "connect-src 'self' hyper: pear: https://relay-syd.p2phiverelay.xyz " +
@@ -352,8 +352,8 @@ const expectedSequence = requiredInteger('--expected-sequence')
 // Cell-GET authority is inert at any sequence != 21, so a candidate built at
 // such a sequence must refuse recovery with PEERIT_LIMITED_CELL_GET_CONTROL_INVALID
 // before any relay I/O.
-if (mode === 'live-two-relay' && expectedSequence !== 25) fail('live-two-relay is authorized only for sequence 25')
-if (mode === 'rollback-preio' && expectedSequence === 25) fail('rollback-preio targets only sequences without the limited Cell-GET authority (!= 25)')
+if (mode === 'live-two-relay' && expectedSequence !== 26) fail('live-two-relay is authorized only for sequence 26')
+if (mode === 'rollback-preio' && expectedSequence === 26) fail('rollback-preio targets only sequences without the limited Cell-GET authority (!= 26)')
 const expectedHeads = {
   dallas: optionalHex32('--expected-dallas-head'),
   sydney: optionalHex32('--expected-sydney-head')

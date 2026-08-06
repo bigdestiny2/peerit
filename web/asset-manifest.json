@@ -1,8 +1,8 @@
 {
-  "releaseSequence": 25,
+  "releaseSequence": 26,
   "files": {
-    "index.html": "220b030f7cfd840e89a80463bed6a8c2e274a6aaad95ed1e0753687973c32a2f",
-    "styles.css": "a1415e011f39383f0365ed06493ad37249b65fd45c59eaaec3f8f0865c7ae051",
+    "index.html": "bdabe40681088d75008e965ff26e897034c32bfa9c98eaa05ce353204282eab7",
+    "styles.css": "c26451183acbcce6c1a138530dc84c56503cd06d05bd7e39093086f95ef0fad6",
     "icon.svg": "7925827f718381ddf887d3c5bea9b5b94e6e80de569d6604e384033767914a1c",
     "js/blob-store.js": "1a947ca86c25a590a73d8a7808476e4ee659604da1f848d6da57a289392bfbc9",
     "js/box.js": "7d4460772ef79358bc57c7cc7bcb820af1a6aa96638f1a98b44e4d00fd5fe947",
@@ -28,7 +28,7 @@
     "js/substrate/author-bind-inner-envelope-policy.mjs": "559b7c91d96458e295821dac8a2f7efaafe3b1bbb4c6f19d50e98a214f1e12f1",
     "js/substrate/blind-client-browser-verifier.mjs": "e1c6a2d478c090b3477ee473366e77c0a0215f5bd2654732f584cb2c8c6856ba",
     "js/substrate/blind-client-relay.js": "c583d9429e031bbc6cc92068049210a56f04da98e5b9dc1751877829ba29dc24",
-    "js/substrate/browser-runtime-authority.mjs": "abbdc2f018a366221ba2da0ebd6df4c4e1c9abd49476c7ae9c3f9345d36d9a77",
+    "js/substrate/browser-runtime-authority.mjs": "d79867184924b43b7562f20445191c36f20598e022667f7d73485b035033be7e",
     "js/substrate/capability-vault.js": "82aa9c629fccfd66b2e89b0172c509d0b2a5efb742e160ca3aa6a841fdf39f5d",
     "js/substrate/cold-reader.mjs": "de3fbcc4efec3049975e8cf4eef86b4e08afbbd317baca47772ae8a748180c5e",
     "js/substrate/descriptor-trust-backend.js": "f20428b40970dd1e31afb35c0ebbe34543a070f3bd1cf4f93dc7260331471258",
@@ -43,7 +43,7 @@
     "js/substrate/peerit-journal.js": "a79e3e33bc4f741e3f094af1bf74fd6ac6cd4fb3082c2c3dcd49eb9243c56842",
     "js/substrate/peerit-operation-authority-v1.js": "fae7940063a907042f8ae21754089170fb9f8c68400e86e3804a4c641258f9bf",
     "js/substrate/peerit-product-runtime.js": "a37644be4b4a0ddacef304620881ac5ea17d9eef3a9a736ba0860fd1cb60f752",
-    "js/substrate/peerit-product-ui.js": "06560f23bfbc41727b178aba9a1ec6b5174ffdc5d6be71e1e586b386f222b32c",
+    "js/substrate/peerit-product-ui.js": "5e83f147c5992344950695ee5b2b8556baaf3308e29efade40cb15178b6bc058",
     "js/substrate/peerit-substrate-sync.js": "cb2f52b1c15d2821b9d0637e3d30a0b87f8952ac3dc1ed0e2c16f33ea2bd675a",
     "js/substrate/pin-history-bootstrap.mjs": "66cef66075743fd1d4eab94ddaa45da0f6f3ee186521b58689d91e40e2ee1e14",
     "js/substrate/pin-history-witness-backend.mjs": "f7428ed50126c419c805c4aa49c818e0b9be5af00172f356489e22d8a00a0605",
@@ -79,7 +79,7 @@
     "protocol/validator/peerit-validator-v1.manifest.cenc": "c62063e33a037c58770d66116e34226512880246b9bf03752bcb264539558e17",
     "protocol/availability-policy-v1.cenc": "3d5bcc0547a28779fa30673bff1fbb0b5e15f6b75d56ddcab67b5b7f645645a1",
     "protocol/vectors/peerit-recovery-contract-v2.manifest.json": "5ec246ffa6ee0c2126193e29c4cc64146f77764ec02044bc3fc8b6930b26fb25",
-    "peerit-limited-cell-get-profile-v1.json": "067e1e49ff9ff404d41bfc0b72d94f0e5ccddeff5297a2f92c92794fdffa509b",
+    "peerit-limited-cell-get-profile-v1.json": "56df9d04d31006fa70a3f7b0390349c99954ade41b001997916337163af74cde",
     "vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs": "64e50f14cd58c4279aff99ccff478ec6c6fc2f80e860d2d51602b816b6909bb9",
     "vendor/hiverelay-blind-client-v1/blind-client-control-v1.manifest.cenc": "0c7ec86cfd4e8be31f0691012f4cbc2be8ff94abe1620b3014d31ff770fe398d",
     "vendor/hiverelay-blind-client-v1/blind-client-control-v1.chromium-evidence.json": "85750ce8159a56d6eb74dc81724e48edb445d454d829e356ab6c8c85537ff92f",
@@ -90,19 +90,19 @@
     "vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.chromium-evidence.json": "706fb2f2596358e1975237d7f4fc47533238affdd4ef39368c0d0c7a99b23d86",
     "vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.cross-host-evidence.json": "0c333a48b5cc2c3fe83c856f9c896871d8c25fd932c41f88ebc9785ea2288fe0",
     "vendor/hiverelay-blind-cell-get-v1/authority.json": "2fd6e1906d2ed88fa7de671ec3fa4bf7768e327fe87309f05c5bf6b6d62ee216",
-    "peerit-seed-bootstrap-v1.json": "e1e0879adf0fa3fd5b78f67ecd8a88ff17f28adcc1eab4c487f9872afa3b98b3",
+    "peerit-seed-bootstrap-v1.json": "057ab1e1a888be8cf3d70ebef034bbd13488517652508e9a7700e5322637e64c",
     "sw-register.js": "aca6bb8cccf12aa754e24c6fe7fbf74cb087d2209e723d01f939b596225540ea",
-    "peerit-app-artifact-v1.json": "6fa82f5acd29260e87ead87730ca0e83829525dc75e13fc7dca901e403d6d34b",
-    "peerit-web-assets-v1.cenc": "f3ba710fe221c83c64ed7f5b6b261d2b761cfd883da0feceb7ae18aa0257df15",
-    "peerit-production-pin-history-v1.cenc": "74d821df49fb3bd65d1687742621a0985c7b1d1f1fc23de9979a504096da2bb7"
+    "peerit-app-artifact-v1.json": "f1f90626beac7f6f0f4249255802beabf7514926d35f1a01936b0159e0ffe3b9",
+    "peerit-web-assets-v1.cenc": "d7f16096facf529f920feb5216132f8cbbcfc902e49a9c96eabbb18f43285734",
+    "peerit-production-pin-history-v1.cenc": "6b825668c3fb3c8c2863fb7ce1e3d1a5d44b74214461ce4a4efd77a4d6930ab3"
   },
   "controls": {
-    "sw.js": "2d9dc950bed97fbfa950432b5bcf63d2d28427029227501f87908e3802402e83",
-    "verify.html": "41eb6b81deb7c7355586103a3e64fcdb63a1f57d83a0ec3c8a2acdc61da826a0"
+    "sw.js": "fccd2eb5974240d478e0979c2ba06b4dc937a71107f9b61cefef77a7fc48245a",
+    "verify.html": "6a180442e98de79a43120305c887af2ca44ae3368cf2ee9f0fe7e7ad07ca62da"
   },
   "driveKey": "ec6e2d6d9d22b9d6b40e11a9ca3042be3197e4bdca9e9a7f079be6ee830761b4",
   "webRelease": {
-    "releaseSequence": 25,
+    "releaseSequence": 26,
     "transport": "blind-substrate",
     "substrateProfile": "blind-v1",
     "relayHints": [
@@ -113,13 +113,13 @@
     "legacyDestination": null,
     "productionPinHistory": "/peerit-production-pin-history-v1.cenc",
     "appArtifact": "/peerit-app-artifact-v1.json",
-    "appArtifactHash": "c52f5dafce1fdef0d5b9ee7226576d73e548cf1436de73af5e22784b8955a997",
+    "appArtifactHash": "0c3da7fc7c25d7779851968d7b8516d0189159736decb6410a0e6c333f06b7dc",
     "canonicalWebAssetManifest": "/peerit-web-assets-v1.cenc",
-    "canonicalWebAssetManifestHash": "68c327887477b5dc5127194ebdb1a445830aad3b42ba42e6ea295095e263c5e3",
+    "canonicalWebAssetManifestHash": "e010dd1e66a444b030d28250bf5fa30fae95213832bf023b2c4161faf79df66f",
     "peeritSeedBootstrap": "/peerit-seed-bootstrap-v1.json",
-    "peeritSeedBootstrapSha256": "e1e0879adf0fa3fd5b78f67ecd8a88ff17f28adcc1eab4c487f9872afa3b98b3",
+    "peeritSeedBootstrapSha256": "057ab1e1a888be8cf3d70ebef034bbd13488517652508e9a7700e5322637e64c",
     "peeritSeedDiscoveryAuthorityPublicKey": "691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec",
-    "peeritSeedBootstrapReleaseSequence": 25,
+    "peeritSeedBootstrapReleaseSequence": 26,
     "releaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b"
   },
   "note": "SHA-256 of every served file. Cross-check driveKey against the published hyper:// drive in PearBrowser. If asset-manifest.sig is present, verify it against releaseKey (see verify.html / js/release-verify.js)."

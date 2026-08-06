@@ -1151,6 +1151,7 @@ function viewAbout ({ guard, token }) {
       <p class="about-lede">peerit has the communities, conversations, votes, and moderation people already understand — but replaces the central database with signed personal outboxes that peers replicate and verify for themselves.</p>
       <div class="about-actions">
         <a class="btn btn-primary" href="#/communities">Explore communities</a>
+        <a class="btn btn-ghost" href="how-it-works.html">Full visual explainer</a>
         <a class="btn btn-ghost" href="https://pears.com/" target="_blank" rel="noopener">Get PearBrowser ↗</a>
       </div>
       <div class="about-proofbar" aria-label="peerit at a glance">

@@ -198,10 +198,10 @@ assert.equal(sequence19.value.entries.at(-1).note,
 assert.equal(sequence20.value.entries.at(-1).note,
   'bounded local public-test release sequence 20; not a GA claim')
 assert.throws(() => appendPeeritWebReleasePinHistoryV1(
-  successorOptions(27, sequence20.value)), /sequence 13\.\.26/)
+  successorOptions(28, sequence20.value)), /sequence 13\.\.27/)
 assert.throws(() => appendPeeritWebReleasePinHistoryV1(successorOptions(12, {
   schema: 'peerit-web-release-pin-history/v1',
   entries: [{ releaseSequence: 11 }]
-})), /sequence 13\.\.26/)
+})), /sequence 13\.\.27/)
 
 console.log('peerit-web-release-pin-history-append: exact 13..20 request/config copy, contiguous predecessor, stale-note replacement and drift rejection green')

@@ -1,0 +1,187 @@
+{
+  "schema_version": 5,
+  "decision_id": "peerit-seq27-reseed-distribution-20260806",
+  "decided_at": "2026-08-06T16:07:58Z",
+  "decided_by": "owner authority executed by the active sole Codex conductor",
+  "status": "DECIDED",
+  "decision": "ACCEPT Peerit release sequence 27 as the LIVE bounded-public-test launch successor: the owner-approved seed RE-DISTRIBUTION — the owner-ordered community swap is applied (fediverse + cypherpunk replaced by redditalternatives + showcase), the seed now spans 7 content boards / 4 reserved bounty boards (nostr, privacy, redditalternatives, osint), and 7 posts are re-minted from the over-crowded r/p2pbuilders board to their correct boards, with the 13 superseded cells documented and left to relay lease-GC — and it folds in the standalone product explainer page (how-it-works.html, a script-src 'none' static page with links pointed at live routes and the write-milestone honesty disclosure) plus the welcome-panel entry link. Zero client/substrate verification, transport, retry, or protocol changes ride this release beyond the explainer page and copy. The exact production CSP remains unchanged, authenticated browser authority MUST become active before any relay I/O, recovery performs zero network PUTs, ordinary delivery remains LOCAL_ONLY, the all-five successor remains excluded, and the GA product gate remains blocked with all 22 blockers disclosed-open.",
+  "authority": {
+    "kind": "direct-owner-reseed-distribution-authorization",
+    "owner_instruction": "The live seed has a distribution error: 14/17 posts are crammed into r/p2pbuilders, 9/11 boards are empty, and the owner-ordered community swap (fediverse + cypherpunk -> redditalternatives + showcase) was never applied. Re-curate the seed (RESEED-MANIFEST-2026-08-06.json): preserve the same 17 posts + 6 replies + 11 boards (7 with content, 4 empty for the bounty), keep unchanged records on identical CIDs, re-mint the 7 moved posts + their nested replies + the 2 new community claims with new CIDs, and drop the fediverse + cypherpunk community cells. Publish all waves to both relays immediately (correction deploy, idempotent LWW-overwrite, leaseClass-4), then re-issue the reader bootstrap naming the new 39-cell set. ALSO pick up the standalone product explainer page (how-it-works.html) with its welcome-panel entry link. Purge question resolved by owner direction: accept relay lease-expiry GC for the superseded cells; do NOT attempt relay store surgery and do NOT pursue the drop-key purge.",
+    "baseline_commit": "b2c2a7c (release(peerit): sequence 26 — first-visit UX honesty, on main)",
+    "baseline_release_sequence": 26,
+    "cited_prior_decisions": [
+      {
+        "file": "deploy/canary-decision-peerit-seq26-first-visit-ux-honesty-20260806.json",
+        "sha256": "6fea93c3dde24637344da71d65c076cd776564bd6dd261935588d6fce4b063df",
+        "relation": "the seq-26 UX-honesty decision this successor extends"
+      },
+      {
+        "file": "deploy/canary-decision-peerit-seq25-first-visit-recovery-20260805.json",
+        "sha256": "d5e8f263045f7e0cbcdacbfe8d873959a1432561fff9f5f0ccb84c73128e9093",
+        "relation": "the seq-25 first-visit liveness decision in the same lineage"
+      }
+    ]
+  },
+  "root_cause": {
+    "mechanism": "The live seed's distribution was wrong: 14 of 17 posts were crammed into r/p2pbuilders and 9 of 11 boards were empty, and the owner-ordered community swap (fediverse + cypherpunk -> redditalternatives + showcase) had never been applied. The reseed (RESEED-MANIFEST-2026-08-06.json, sha256 f3d660a10419e2fd588e3349b9a9fcd4b72c1f0f034274beaee389193df00f64) rebalances to 7 content boards and applies the swap. The okey (HMAC over owner‖_t‖semanticId where semanticId includes the board) and the cell intentId both include the board, so a moved post mints a NEW cell recordId/slot while its contentId (seed-derived) is unchanged; the old cell is thereby superseded by slot. Unchanged records keep identical CIDs and are LWW-overwritten in place (idempotent, no duplicates).",
+    "correction_applied": [
+      "Community swap applied: fediverse + cypherpunk community claims dropped; redditalternatives + showcase community claims minted.",
+      "7 posts re-minted from r/p2pbuilders to correct boards (selfhosted, hiverelay, localfirst x3, homelab, showcase); their nested reply cells re-minted too.",
+      "Distribution now: 7 content boards (p2pbuilders 7 posts, ai_local 3, localfirst 3, selfhosted 1, hiverelay 1, homelab 1, showcase 1) and 4 reserved bounty boards left empty (nostr, privacy, redditalternatives, osint).",
+      "Published all waves to BOTH relays immediately via the drill-proven blind CELL path: 34/34 records (39 cells), every write with a signed relay receipt and byte-exact readback PASS, idempotent LWW-overwrite (leaseClass-4, ~90-day leases)."
+    ],
+    "superseded_cells_documented": {
+      "count": 13,
+      "breakdown": "2 community-swap-dropped cells (fediverse, cypherpunk) + 10 moved-post cells (3 boxed x2 + 4 inline x1) + 1 reply-under-moved-post cell",
+      "disposition": "reader-invisible: the seq-27 reader bootstrap names only the new 39-cell set; these 13 superseded cells are NOT named and are left to relay lease-expiry GC (leaseClass-4, ~90 days from the 2026-07-30 renew run, i.e. ~late October 2026).",
+      "no_protocol_purge": "a protocol CELL.DROP requires the per-cell dropPrivateKey, an ephemeral random ed25519 seed generated at CELL.PUT and bound into the allocation commitment; the publisher used an in-memory capability vault (memoryCapabilityVaultKv), so those keys were never persisted and are unrecoverable (the readcap vault stores only reader capabilities). No relay operator purge route exists for blind cells. Owner direction: accept lease-expiry GC.",
+      "slot_list_artifact": "evidence/seq27-superseded-list.json (exact per-relay storageSlot list for the 13 superseded cells, for a future optional maintenance window)"
+    },
+    "explainer_page": "includes the standalone product explainer page (how-it-works.html, a script-src 'none' static page included in SUBSTRATE_SITE_FILES and the signed asset manifest, links pointed at live routes — index.html#/, no #/about or #/communities — with the four trust-boundary items and the write-milestone honesty disclosure) plus the welcome-panel 'How it works' entry link in js/substrate/peerit-product-ui.js.",
+    "no_weakening": "no verification, transport, retry-budget, or protocol change rides this release; the seq-25 bounded transient-retry liveness posture is unchanged. The only content changes are the seed re-distribution, the explainer page, and copy."
+  },
+  "activation": {
+    "functional_release_sequence": 27,
+    "rollback_release_sequence": null,
+    "rollback_posture": "SUPERSEDED_FOR_THIS_SLOT_BY_OWNER_DECISION_2026-08-06",
+    "limited_cell_get_authority_release_sequence": 27,
+    "limited_cell_get_runtime_authority_exposed": true,
+    "seed_recovery_enabled": true,
+    "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+    "browser_authored_records": "LOCAL_ONLY",
+    "relays": [
+      "dal-1",
+      "syd-1"
+    ],
+    "required_predeploy_proof": "Clean Chromium loads the exact signed sequence-27 candidate under the exact unchanged production CSP, validates production pin-history terminal 27 and the full loadPeeritBrowserRuntimeAuthorityV1 path, observes authority.active=true before any relay I/O, then performs the signed seed recovery (39 records) with byte-exact verified CELL.GET evidence on both named relays and zero network PUTs; the recovered distribution shows exactly 11 communities with nostr/privacy/redditalternatives/osint empty and each of the 7 moved posts in its new board; the explainer page /how-it-works.html renders with no CSP violations.",
+    "allowed_browser_operations": [
+      "DESCRIBE.GET",
+      "DESCRIBE.CHALLENGE",
+      "CELL.GET"
+    ],
+    "network_puts_during_recovery": 0,
+    "ordinary_delivery": "LOCAL_ONLY",
+    "launch_seed": {
+      "record_count": 34,
+      "cell_count_per_relay": 39,
+      "community_claims": 11,
+      "original_posts": 17,
+      "boxed_posts_two_cells_each": 5,
+      "replies": 6,
+      "sizeclass_2_cells_per_relay": 3,
+      "manifest": "launch/RESEED-MANIFEST-2026-08-06.json",
+      "manifest_sha256": "f3d660a10419e2fd588e3349b9a9fcd4b72c1f0f034274beaee389193df00f64",
+      "capture_redelivery_run": "live-2026-08-06T15:55:26.508Z (reseed; 34/34 receipt-signed + byte-exact-readback-verified on both relays)"
+    },
+    "all_five_successor": "EXCLUDED",
+    "ga_product_gate": "BLOCKED — 22 blockers DISCLOSED-OPEN, none cleared by this scope"
+  },
+  "ceremony_extension": {
+    "summary": "production-pin-history ceremony cap PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE 26 -> 27 (single exported constant); PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE 26 -> 27 (live at 27, fail-closed at 26 and 28); limited Cell-GET profile -> releaseSequence 27; seq-27 launch reader bootstrap re-issued naming the redistributed 39-cell set; the explainer page (how-it-works.html) + welcome-panel link ride the build",
+    "files": [
+      "scripts/production-pin-history-ceremony.mjs",
+      "js/substrate/browser-runtime-authority.mjs",
+      "js/substrate/limited-cell-get-profile.mjs",
+      "peerit-limited-cell-get-profile-v1.json",
+      "scripts/browser-peerit-production-runtime-gate.mjs",
+      "publish.mjs",
+      "index.html",
+      "how-it-works.html",
+      "styles.css",
+      "js/substrate/peerit-product-ui.js",
+      "test/peerit-browser-runtime-authority.mjs",
+      "test/peerit-limited-cell-get-recovery.mjs",
+      "test/peerit-web-release-pin-history-append.mjs"
+    ]
+  },
+  "seed_bootstrap": {
+    "path": "deploy/peerit-seed-bootstrap-v1-seq27.json",
+    "sha256": "cc7ce9a92967f6fdbec5038a612f996810935394b8c91db31c9c3d53ab25b77b",
+    "embedded_release_sequence": 27,
+    "bootstrap_sequence": 0,
+    "previous_bootstrap_hash": null,
+    "discovery_authority": "691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec",
+    "records": 39,
+    "issued_at": "2026-08-06T16:05:13.423Z",
+    "expires_at": "2026-09-05T16:05:13.423Z",
+    "note": "Release-terminal genesis REQUIRED (build/runtime/ceremony all bind artifact payload releaseSequence === bundle releaseSequence). Names the REDISTRIBUTED 39 live cells (community swap applied, 7 posts re-minted to correct boards); the seq-20..26 artifacts are untouched. The bootstrap carries NO admission material of any kind — admission rides the descriptor chain, not this artifact."
+  },
+  "exact_admission_parameter_url": {
+    "utf8": "https://evidence.example:443/admission.cenc",
+    "utf8_hex": "68747470733a2f2f65766964656e63652e6578616d706c653a3434332f61646d697373696f6e2e63656e63",
+    "semantics": "EVIDENCE_MIRROR_HINT_ONLY",
+    "browser_fetch": "FORBIDDEN",
+    "dns_resolution": "FORBIDDEN",
+    "url_parsing_or_normalization": "FORBIDDEN",
+    "csp_change": "FORBIDDEN",
+    "comparison": "EXACT_SIGNED_UTF8_BYTES"
+  },
+  "production_csp": {
+    "policy_file": "deploy/render-security-headers.json",
+    "policy_file_sha256": "e672153d1c396e617491fce64ed5472635314e20c45864e959b48e5f1b52b312",
+    "script_src": "'self'",
+    "unsafe_eval": "FORBIDDEN",
+    "wasm_unsafe_eval": "FORBIDDEN",
+    "expansion": "FORBIDDEN",
+    "parameter_url_origin_addition": "FORBIDDEN"
+  },
+  "relay_authority": {
+    "note": "same-day DESCRIPTOR pins re-probed GET-only at 2026-08-06T16:05Z. The admission parameterHash is descriptor-driven: it rotates with the fleet and is taken from the CURRENT signature-verified descriptor at runtime — this decision deliberately records NO admission hash. Heads advanced since seq-26: dal-1 seq-20 -> seq-21, syd-1 seq-23 -> seq-24; genesis anchors unchanged (dal 0fb814bd..., syd b2384d4b...).",
+    "admission_semantics": "descriptor-driven (expected from the current descriptor's advertised binding; signed parameters verified against that binding wherever consumed; scheme shape pinned by the release profile: profileId 7, schemeId 9, conformanceClass 1, roleBits 49, exact evidence.example parameterUrl)",
+    "dal-1": {
+      "origin": "https://relay-dal.p2phiverelay.xyz",
+      "minimum_descriptor_sequence": 21,
+      "descriptor_head_sha256": "3986870f1b56ec0ac601b9f0e0b939af9980d6568febb03aae5907d0ba721dc1"
+    },
+    "syd-1": {
+      "origin": "https://relay-syd.p2phiverelay.xyz",
+      "minimum_descriptor_sequence": 24,
+      "descriptor_head_sha256": "d4cae7212ff6da966c811eed4bab4f9195aaf822cd4a131dc6fa3079b273b881"
+    }
+  },
+  "production_runtime_gate": {
+    "script": "scripts/browser-peerit-production-runtime-gate.mjs",
+    "functional_mode": "live-two-relay",
+    "functional_release_sequence": 27,
+    "rollback_mode": "rollback-preio",
+    "rollback_note": "rollback-preio targets any sequence != 27 (the limited Cell-GET authority fails closed there)",
+    "full_authority_loader": "loadPeeritBrowserRuntimeAuthorityV1",
+    "production_pin_history_loader": "loadPeeritProductionPinHistoryTerminalV1",
+    "authority_active_before_relay_io": true,
+    "service_worker": "BLOCKED_IN_FRESH_CONTEXT",
+    "sequence_27": {
+      "expected_network_gets": 40,
+      "expected_fallback_count": 1,
+      "expected_record_count": 39,
+      "expected_cell_get_requests": 40,
+      "expected_successful_cell_gets": 39,
+      "expected_network_puts": 0,
+      "expected_parameter_url_requests": 0,
+      "expected_sizeclass_1_responses": 36,
+      "expected_sizeclass_2_responses": 3,
+      "dal-1": {
+        "origin": "https://relay-dal.p2phiverelay.xyz",
+        "injected_cell_get_failures": 1,
+        "successful_cell_gets": 38,
+        "verified_readback_evidence_count": 38
+      },
+      "syd-1": {
+        "origin": "https://relay-syd.p2phiverelay.xyz",
+        "injected_cell_get_failures": 0,
+        "successful_cell_gets": 1,
+        "verified_readback_evidence_count": 1
+      }
+    }
+  },
+  "followups": [
+    "GA product gate remains honestly blocked (22 blockers DISCLOSED-OPEN)",
+    "publisher capability persistence gap — publish-seed-waves-blind.mjs must persist writeCap/dropPrivateKey to a durable vault (not memoryCapabilityVaultKv) so future CELL.DROP purges are possible; the July + reseed runs' keys are unrecoverable; relay-side operator purge route does not exist for blind cells",
+    "superseded cells (13) are reader-invisible and expire via relay lease-GC (~late October 2026); the exact slot list is archived at evidence/seq27-superseded-list.json for a future optional maintenance window",
+    "relay-lane follow-up carried from seq-25: blind-edge 'public response write timed out' / 'private IPC exchange aborted' degradation windows recur on BOTH relays (observed again 2026-08-06 ~14:00-16:00 UTC during the reseed publish) — edge write-timeout/daemon-IPC tuning belongs to the relay lane, not the client",
+    "admission rotation no longer requires a bundle re-issue: the expected parameterHash is descriptor-driven; a bundle re-issue is required only when the admission SCHEME SHAPE changes (7/9/1/49/parameterUrl) or on the established --renew cadence",
+    "publisher --renew on a ~60-day cadence re-mints all seed cells; the reader bootstrap MUST be re-issued after every --renew, then the bundle re-issued to bind it",
+    "seq-27 seed bootstrap artifact expires 2026-09-05T16:05:13.423Z",
+    "site flip / deploy of the seq-27 candidate awaits owner merge confirmation; no push, no merge, no DNS/Render contact from the build lane"
+  ]
+}

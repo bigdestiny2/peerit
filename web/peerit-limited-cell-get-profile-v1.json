@@ -1,7 +1,7 @@
 {
   "schema": "peerit-limited-cell-get-profile-v1",
   "version": 1,
-  "releaseSequence": 26,
+  "releaseSequence": 27,
   "mode": "seed-recovery-only",
   "ordinaryDelivery": "local-only",
   "networkPuts": 0,

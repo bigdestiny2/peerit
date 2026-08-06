@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Peerit Launch Status — Seq-25 First-Visit Liveness · 2026-08-06</title>
+<style>
+  :root{
+    --bg:#0a0e14; --bg-2:#0f1620; --panel:#111821; --panel-2:#0d141d;
+    --ink:#e8eef6; --dim:#8b9bb0; --faint:#5b6b80;
+    --line:#1f2a3a; --line-2:#152028;
+    --accent:#4fd1c5; --accent-2:#5b9fd4; --gold:#e0a54b; --rose:#e0533d; --violet:#9b7ed9; --green:#3ecf8e;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--accent-2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{background:#0a0f16;border:1px solid var(--line);padding:.05em .4em;border-radius:4px;
+    font:.88em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cfe3ff}
+  pre{background:#0a0f16;border:1px solid var(--line);border-radius:10px;padding:1em 1.2em;overflow:auto}
+  pre code{background:none;border:0;padding:0;color:#cfe3ff}
+  .wrap{max-width:920px;margin:0 auto;padding:0 1.4em}
+  main{padding-bottom:6em}
+  header.hero{padding:4.5em 0 3em;border-bottom:1px solid var(--line);
+    background:radial-gradient(ellipse at top,rgba(79,209,197,.07),transparent 60%)}
+  .eyebrow{color:var(--accent);font-size:.8em;font-weight:700;letter-spacing:.18em;text-transform:uppercase;margin:0 0 .8em}
+  h1{font-size:2.5em;line-height:1.12;margin:.1em 0 .3em;letter-spacing:-.025em;font-weight:800}
+  h1 .grad{background:linear-gradient(120deg,var(--accent),var(--accent-2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:1.18em;color:var(--dim);max-width:64ch;margin:1em 0 0}
+  .meta{margin-top:2em;display:flex;flex-wrap:wrap;gap:.6em;font-size:.82em;color:var(--faint)}
+  .meta span{padding:.3em .7em;border:1px solid var(--line);border-radius:999px;background:var(--panel)}
+  section{padding:2.8em 0;border-bottom:1px solid var(--line-2)}
+  section:last-of-type{border-bottom:0}
+  h2{font-size:1.65em;letter-spacing:-.015em;margin:0 0 .6em;font-weight:700}
+  h2 .num{color:var(--accent);font-variant-numeric:tabular-nums;margin-right:.5em;font-weight:800}
+  h3{font-size:1.18em;margin:1.6em 0 .5em;font-weight:700;letter-spacing:-.01em}
+  p{margin:.7em 0}
+  ul,ol{margin:.7em 0;padding-left:1.5em}
+  li{margin:.35em 0}
+  .lead{font-size:1.08em;color:#cdd6e3}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.2em 1.4em;margin:1.1em 0}
+  .callout{border-left:3px solid var(--accent);background:var(--panel-2);padding:.9em 1.2em;border-radius:0 8px 8px 0;margin:1.2em 0}
+  .callout.warn{border-left-color:var(--gold)}
+  .callout.bad{border-left-color:var(--rose)}
+  .callout.good{border-left-color:var(--green)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:1em;margin:1.2em 0}
+  @media (max-width:720px){.grid2{grid-template-columns:1fr}}
+  .stat{text-align:center;padding:1.05em .6em;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+  .stat b{display:block;font-size:1.8em;color:var(--accent);font-variant-numeric:tabular-nums}
+  .stat span{font-size:.84em;color:var(--dim)}
+  table{width:100%;border-collapse:collapse;margin:1.2em 0;font-size:.92em}
+  th,td{text-align:left;padding:.55em .7em;border-bottom:1px solid var(--line-2);vertical-align:top}
+  th{color:var(--accent-2);font-weight:700;border-bottom:1px solid var(--line)}
+  .small{font-size:.85em;color:var(--dim)}
+  .tag{display:inline-block;padding:.1em .55em;border-radius:999px;font-size:.78em;font-weight:700;letter-spacing:.03em}
+  .tag.green{background:rgba(62,207,142,.12);color:var(--green);border:1px solid rgba(62,207,142,.35)}
+  .tag.gold{background:rgba(224,165,75,.1);color:var(--gold);border:1px solid rgba(224,165,75,.35)}
+  .tag.rose{background:rgba(224,83,61,.1);color:var(--rose);border:1px solid rgba(224,83,61,.35)}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Pear ecosystem · Peerit launch status · 2026-08-06</p>
+    <h1>First-visit recovery is <span class="grad">fixed and live</span></h1>
+    <p class="lede">Sequence 25 is deployed to peerit.site. The last launch blocker — a fresh
+      first-time visit intermittently landing on an empty page — is root-caused, fixed, proven
+      30/30 across three hostile network proofs, and verified byte-exact on the live site.
+      The substrate never relaxed a single check to get here: this was a liveness fix, not a
+      trust fix.</p>
+    <div class="meta">
+      <span>peerit.site → seq-25 bundle</span>
+      <span>2 blind relays · self-maintaining</span>
+      <span>39 launch cells · byte-exact</span>
+      <span>soak 30/30 (baseline + abort-storm + slow-link)</span>
+      <span>claim boundary: LIVE_PUBLIC_TEST_ONLY</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<div class="callout warn">
+  <strong>Historical sequence snapshot:</strong> this page records the seq-25 liveness proof. Repository
+  <code>main</code> now carries accepted release sequence 26; use <code>deploy/web-release.json</code> and
+  the seq-26 decision/bootstrap artifacts for current release state.
+</div>
+
+<section id="summary">
+  <h2><span class="num">01</span>What happened, in one paragraph</h2>
+  <p class="lead">After the vNext cutover shipped, one defect remained: a <em>first-time</em> visitor
+    (no cached floor) sometimes got the empty "blocked" page instead of the seeded boards. The cause was
+    not a bug in verification — it was <strong>liveness fragility</strong>: the cold boot walks each relay's
+    signed descriptor chain link-by-link (23 links Sydney, 20 Dallas, growing hourly) and then reads 39
+    cells, and the client treated <em>any single network hiccup</em> as fatal to the whole walk. A dropped
+    connection, a WiFi handoff, or the relay edge closing a response mid-body during a load window was
+    enough to strand a new visitor. Sequence 25 makes the walk and the cell reads <strong>retry only those
+    transient events</strong>, bounded (6 attempts, ~12s window), while every signature, chain-continuity,
+    genesis, admission, and epoch check remains exactly as strict — a retried response is still verified
+    byte-for-byte before it is accepted, and a verification failure is never retried.</p>
+  <div class="callout good">
+    <strong>Live now:</strong> seq-25 bundle <code>0256300f…</code> served from peerit.site (auto-deploy
+    from main, no manual step), CI green on merge commit <code>2ec2a3d</code>, relays healthy and rotating
+    on their normal hourly cadence.
+  </div>
+</section>
+
+<section id="symptom">
+  <h2><span class="num">02</span>The symptom and the hunt</h2>
+  <p>The visible symptom was a <strong>coin flip</strong>: some first visits rendered all 11 communities and
+    17 posts; others showed the empty lurker page with <code>blocked-seed-recovery</code>. Refreshing usually
+    fixed it — which made it easy to miss and hard to catch. It was caught properly only by a purpose-built
+    soak harness that cold-boots a fresh browser context against the live relays, ten times per run.</p>
+  <h3>What the evidence showed</h3>
+  <ul>
+    <li><strong>Never a timeout.</strong> No deadline ever fired naturally. The failures were single,
+      sub-second transport events: <code>Failed to fetch</code>, an aborted describe, or — the subtle one —
+      a <em>truncated HTTP body</em>, where the relay edge closes the connection mid-response and the client
+      reads fewer bytes than the response declared.</li>
+    <li><strong>The walk had zero retry.</strong> One bad describe out of ~49 was enough to fail the entire
+      cold recovery. That is the right posture for a <em>verification</em> failure — but a dropped connection
+      is not a verification failure, and the client was treating them identically.</li>
+    <li><strong>A relay degradation window made it visible.</strong> On 2026-08-05 between 19:00–21:00 UTC
+      both relay edges logged <code>public response write timed out</code> and IPC aborts — under load the
+      edge gave up writing some responses and cut connections mid-body. During that window a baseline soak
+      blocked 5–7 of 10 boots. Outside it, blocks were rarer but still present.</li>
+  </ul>
+  <div class="callout">
+    <strong>The truncation subtlety:</strong> the vendored blind client classifies a truncated body as
+    <code>RELAY_PROTOCOL_VIOLATION</code> ("response is shorter than the selected class") — the same error
+    class as a genuinely malformed or dishonest relay response. The fix scopes the retry to the
+    <em>exact</em> truncated-body message and nothing else; every other violation in that class still fails
+    closed forever, and a test pins the exact vendored strings so a future client rebuild can't silently
+    reword them.
+  </div>
+</section>
+
+<section id="fix">
+  <h2><span class="num">03</span>The fix, precisely</h2>
+  <table>
+    <tr><th>Path</th><th>What retried now</th><th>Budget</th><th>What is never retried</th></tr>
+    <tr>
+      <td>Descriptor chain walk<br><span class="small">relay-consumer.js</span></td>
+      <td><code>TRANSPORT_FAILURE</code>, <code>AbortError</code>, fetch <code>TypeError</code>, and
+        <code>RELAY_PROTOCOL_VIOLATION</code> with <em>exactly</em> the two truncated-body messages</td>
+      <td>6 attempts, exponential backoff (~12s cumulative), abortable</td>
+      <td rowspan="2">Any verification failure (signature, chain discontinuity, duplicate, fork, genesis
+        mismatch, admission drift, epoch window), every other protocol violation, and any explicit
+        caller/lifecycle abort</td>
+    </tr>
+    <tr>
+      <td>Cell-GET fallback<br><span class="small">cold-reader.mjs</span></td>
+      <td>The same set, plus the cold-reader deadline code</td>
+      <td>3 extra full-replica passes, 400ms backoff, abortable</td>
+    </tr>
+  </table>
+  <p class="small">A truncated body is never parsed, verified, or accepted — re-asking relaxes nothing.
+    This principle is stated in the code comments at both classifiers and in the decision record, and is
+    enforced by <code>test/peerit-transient-fetch-classifiers.mjs</code> in the CI chain.</p>
+</section>
+
+<section id="proof">
+  <h2><span class="num">04</span>The proof</h2>
+  <div class="grid2">
+    <div class="stat"><b>10/10</b><span>baseline cold boots<br>(was 3/10 pre-fix)</span></div>
+    <div class="stat"><b>10/10</b><span>abort-storm boots<br>(60 injected aborts absorbed)</span></div>
+    <div class="stat"><b>10/10</b><span>+1400ms slow-link boots<br>(was 7/10 pre-fix)</span></div>
+    <div class="stat"><b>0</b><span>verification relaxations,<br>network PUTs, budget growth</span></div>
+  </div>
+  <ul>
+    <li>Soak harness: <code>scripts/browser-peerit-first-visit-recovery-soak.mjs</code> — fresh browser
+      context per boot, no persisted floor, live relays, injection via route interception. Evidence:
+      <code>seq25e-soak-{baseline,abort9,d1400}.json</code> in the run evidence dir.</li>
+    <li>Full ceremony green: <code>test:ci</code> exit 0 (incl. the new classifier test), canary verify
+      <strong>READY</strong>, render blueprint <strong>PASS</strong>, Chromium live-two-relay gate PASS.</li>
+    <li>Live verification: merge commit <code>2ec2a3d</code> CI green; auto-deploy published
+      <code>0256300f279963066d4cad7ed2ffeeb5a96300b013d93fb6ad77518959af59cc</code>; post-deploy DOM probes
+      below.</li>
+  </ul>
+  <div class="callout good" id="postdeploy">
+    <strong>Post-deploy live probes:</strong> 5/5 fresh cold boots against <strong>peerit.site</strong>
+    (fresh browser context, no persisted floor, service workers blocked) reached
+    <code>seed-recovery-complete</code> — zero blocks, 73–80s per boot, 39-cell recovery on the deployed
+    seq-25 bytes. Pre-fix, the same probe blocked 3/3 and then 1/2 within the hour.
+  </div>
+</section>
+
+<section id="chain">
+  <h2><span class="num">05</span>The full fix chain since cutover</h2>
+  <table>
+    <tr><th>Seq</th><th>Fix</th><th>Class</th></tr>
+    <tr><td>21</td><td>Binary cells served as <code>application/octet-stream</code> — content-type mismatch blocked cell reads</td><td>serving</td></tr>
+    <tr><td>22</td><td>Compression-tolerant asset verification — decompressed-payload hash vs signed bytes</td><td>serving</td></tr>
+    <tr><td>23</td><td>Fetch-binding fix — vendored client lost its <code>fetch</code> binding ("Illegal invocation")</td><td>client</td></tr>
+    <tr><td>24</td><td><strong>Descriptor-driven admission</strong> — the expected admission hash is read from the current
+      signature-verified descriptor at runtime, so the fleet's hourly rotation can no longer stale the client;
+      no more bundle re-issues per rotation</td><td>systemic</td></tr>
+    <tr><td>25</td><td><strong>First-visit liveness</strong> — bounded transient retry (incl. truncated-body short reads),
+      zero verification relaxation</td><td>liveness</td></tr>
+  </table>
+  <p class="small">Each sequence was DECIDED with its own signed decision record under <code>deploy/</code>;
+    the lineage is intact and auditable back to the cutover.</p>
+</section>
+
+<section id="honest">
+  <h2><span class="num">06</span>Honest edges</h2>
+  <ul>
+    <li><span class="tag gold">KNOWN</span> <strong>Relay degradation windows are a relay-lane item.</strong>
+      The 2026-08-05 19:00–21:00 UTC window (edge write timeouts + daemon IPC aborts on both relays) is recorded
+      in the seq-25 decision follow-ups. The client now survives it; the relays should stop causing it.
+      Edge write-timeout and daemon-IPC tuning is queued for the relay lane.</li>
+    <li><span class="tag gold">KNOWN</span> <strong>First-visit boot takes ~60–100s.</strong> That is the price of
+      zero-trust cold start: walk two chains to genesis, verify every link, read 39 cells, verify every record.
+      Returning visits are instant (cached floor). The structural fix — bootstrap sharding / compressed chain
+      checkpoints — is roadmap track 2, not a patch.</li>
+    <li><span class="tag gold">KNOWN</span> <strong>browser-smoke CI flake.</strong> The first-comment-write step
+      fails ~2/3 of runs and passes on rerun (it failed once on this merge and passed on rerun). It is a test-harness
+      timing issue, not a product defect; tracked for a proper fix.</li>
+    <li><span class="tag rose">UNCHANGED</span> <strong>GA gate stays closed.</strong> 22 blockers disclosed-open;
+      nothing in this line clears them. Claim boundary remains <strong>LIVE_PUBLIC_TEST_ONLY</strong>.</li>
+  </ul>
+</section>
+
+<section id="next">
+  <h2><span class="num">07</span>What's next</h2>
+  <h3>Track 1 — Own the origin</h3>
+  <p>Move the static bundle host off Render onto our own VPS (Caddy + Let's Encrypt, byte-exact headers from
+    the signed policy file, cron <code>git pull → verify → rsync</code>, DNS cut, mirrors later). Plan is written;
+    needs a small third VPS.</p>
+  <h3>Track 2 — Substrate depth</h3>
+  <p>Bootstrap sharding and INBOX/CORE client composition (cold-start at content scale), browser writes
+    (posting from the browser, not just reading), and the durability tier follow-up from the roadmap.</p>
+  <h3>Track 3 — Launch motion</h3>
+  <p>Telegram community campaign with the bounty board, adjudication script, and monitoring. The seed content
+    and 11 communities are live and stable — the board is ready to be shown.</p>
+  <div class="callout">
+    <strong>Standing items:</strong> seq-19 bundle reassessment (same vendor WASM/CSP class, same fix shape);
+    checkpoint cron Aug 25 (bootstrap expiry) and renewal cron Sep 23 are armed; the seq-25 bootstrap artifact
+    expires 2026-09-04 and renews on the established cadence.
+  </div>
+</section>
+
+<section id="receipts">
+  <h2><span class="num">08</span>Receipts</h2>
+  <table>
+    <tr><th>Item</th><th>Value</th></tr>
+    <tr><td>Live bundle (asset-manifest sha256)</td><td><code>0256300f279963066d4cad7ed2ffeeb5a96300b013d93fb6ad77518959af59cc</code></td></tr>
+    <tr><td>Release commit / merge</td><td><code>c955281</code> → merge <code>2ec2a3d</code> (CI green)</td></tr>
+    <tr><td>Decision record</td><td><code>deploy/canary-decision-peerit-seq25-first-visit-recovery-20260805.json</code>
+      sha256 <code>d5e8f263…</code></td></tr>
+    <tr><td>Seed bootstrap (seq-25)</td><td>sha256 <code>e1e0879a…</code> · expires 2026-09-04T16:20:24Z</td></tr>
+    <tr><td>Soak evidence</td><td><code>seq25e-soak-{baseline,abort9,d1400}.json</code> · run evidence dir,
+      <code>peerit-seq25-first-visit-recovery-evidence-20260805t235519z.json</code></td></tr>
+    <tr><td>Relays</td><td><code>relay-syd.p2phiverelay.xyz</code> · <code>relay-dal.p2phiverelay.xyz</code> —
+      hourly descriptor rotation, genesis anchors unchanged</td></tr>
+    <tr><td>Launch seed</td><td>34 records / 39 cells per relay · 11 communities · 17 posts · 90-day leases
+      (leaseClass-4), byte-exact on both relays</td></tr>
+  </table>
+  <p class="small">Prepared by the conductor lane from signed decision records, CI runs, relay logs, and live
+    probes. Every number in this document has a machine-readable receipt in the repo or the run evidence dir.</p>
+</section>
+
+</main>
+</body>
+</html>

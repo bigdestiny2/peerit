@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Peerit · Browser blind architecture, pure-JS clients &amp; seed bootstrap</title>
+  <style>
+    :root {
+      --bg: #0a0c10;
+      --bg2: #10141b;
+      --card: #141a22;
+      --line: #273141;
+      --line2: #1c2430;
+      --text: #e8eef6;
+      --muted: #8b9aab;
+      --faint: #5a6a7c;
+      --teal: #5eead4;
+      --sky: #7dd3fc;
+      --gold: #fbbf24;
+      --green: #4ade80;
+      --red: #f87171;
+      --violet: #c4b5fd;
+      --orange: #fb923c;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      --sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      --r: 12px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--text);
+      line-height: 1.62;
+      background:
+        radial-gradient(1000px 500px at 0% -5%, rgba(94,234,212,.07), transparent 50%),
+        radial-gradient(800px 400px at 100% 0%, rgba(125,211,252,.06), transparent 45%),
+        var(--bg);
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--sky); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 2.25rem 1.2rem 4.5rem; }
+
+    /* nav */
+    nav.toc {
+      position: sticky; top: 0; z-index: 20;
+      backdrop-filter: blur(12px);
+      background: rgba(10,12,16,.85);
+      border-bottom: 1px solid var(--line2);
+      margin: 0 -1.2rem 1.75rem;
+      padding: .65rem 1.2rem;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    nav.toc a {
+      display: inline-block;
+      font-size: .72rem;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-right: .9rem;
+      font-weight: 600;
+    }
+    nav.toc a:hover { color: var(--teal); }
+
+    header.hero {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 1.85rem 1.6rem 1.5rem;
+      background:
+        linear-gradient(145deg, rgba(94,234,212,.07), transparent 42%),
+        linear-gradient(225deg, rgba(125,211,252,.05), transparent 48%),
+        var(--bg2);
+      margin-bottom: 2rem;
+      position: relative;
+      overflow: hidden;
+    }
+    header.hero::before {
+      content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+      background: linear-gradient(90deg, var(--teal), var(--sky), var(--violet));
+    }
+    .eyebrow {
+      font-size: .72rem; letter-spacing: .14em; text-transform: uppercase;
+      color: var(--teal); font-weight: 700; margin-bottom: .7rem;
+    }
+    h1 {
+      font-size: clamp(1.55rem, 3.8vw, 2.05rem);
+      line-height: 1.18; margin: 0 0 .7rem; letter-spacing: -.02em;
+    }
+    .lede { color: var(--muted); font-size: 1.04rem; margin: 0 0 1.1rem; max-width: 48em; }
+    .chips { display: flex; flex-wrap: wrap; gap: .45rem; }
+    .chip {
+      font-family: var(--mono); font-size: .74rem;
+      border: 1px solid var(--line); border-radius: 999px;
+      padding: .28rem .7rem; color: var(--muted); background: rgba(0,0,0,.28);
+    }
+    .chip b { color: var(--text); font-weight: 650; }
+    .chip.ok { color: var(--green); border-color: rgba(74,222,128,.35); }
+    .chip.warn { color: var(--gold); border-color: rgba(251,191,36,.35); }
+    .chip.bad { color: var(--red); border-color: rgba(248,113,113,.35); }
+
+    section { margin: 2.4rem 0; }
+    h2 {
+      font-size: 1.28rem; margin: 0 0 .9rem; padding-bottom: .5rem;
+      border-bottom: 1px solid var(--line2); letter-spacing: -.01em;
+    }
+    h3 { font-size: 1.02rem; color: var(--sky); margin: 1.35rem 0 .5rem; }
+    h4 { font-size: .92rem; color: var(--violet); margin: 1.1rem 0 .4rem; }
+    p { margin: 0 0 .95rem; }
+    .muted { color: var(--muted); }
+    .faint { color: var(--faint); }
+    ul, ol { margin: 0 0 1rem; padding-left: 1.25rem; }
+    li { margin: .32rem 0; }
+    li::marker { color: var(--teal); }
+    code, .mono {
+      font-family: var(--mono); font-size: .86em;
+      background: rgba(255,255,255,.04); border: 1px solid var(--line2);
+      padding: .08em .32em; border-radius: 5px;
+    }
+    pre {
+      font-family: var(--mono); font-size: .78rem; line-height: 1.45;
+      background: #0d1117; border: 1px solid var(--line); border-radius: var(--r);
+      padding: 1rem 1.1rem; overflow-x: auto; color: #c9d1d9; margin: 0 0 1rem;
+    }
+    strong { font-weight: 650; }
+
+    .card {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: var(--r); padding: 1.05rem 1.15rem; margin: 0 0 .9rem;
+    }
+    .card.hl {
+      border-color: rgba(94,234,212,.32);
+      background: linear-gradient(160deg, rgba(94,234,212,.06), var(--card));
+    }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+    @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+
+    .callout {
+      border-left: 3px solid var(--teal);
+      background: rgba(94,234,212,.05);
+      padding: .85rem 1rem; border-radius: 0 var(--r) var(--r) 0; margin: 1rem 0;
+    }
+    .callout.warn { border-left-color: var(--gold); background: rgba(251,191,36,.06); }
+    .callout.bad { border-left-color: var(--red); background: rgba(248,113,113,.06); }
+    .callout p:last-child { margin-bottom: 0; }
+
+    .quote {
+      border: 1px solid rgba(94,234,212,.28);
+      background: linear-gradient(135deg, rgba(94,234,212,.07), rgba(125,211,252,.04));
+      border-radius: var(--r); padding: 1.05rem 1.15rem; margin: 1rem 0;
+      font-weight: 500;
+    }
+    .quote cite {
+      display: block; margin-top: .55rem; font-size: .8rem;
+      color: var(--faint); font-style: normal; font-weight: 500;
+    }
+
+    .table-wrap {
+      border: 1px solid var(--line); border-radius: var(--r);
+      overflow: hidden; background: var(--card); margin: 0 0 1rem;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th, td { text-align: left; padding: .6rem .75rem; border-bottom: 1px solid var(--line2); vertical-align: top; }
+    th {
+      background: rgba(0,0,0,.25); color: var(--muted); font-size: .72rem;
+      text-transform: uppercase; letter-spacing: .06em; font-weight: 650;
+    }
+    tr:last-child td { border-bottom: 0; }
+    td.ok { color: var(--green); }
+    td.no { color: var(--red); }
+    td.mid { color: var(--gold); }
+
+    /* diagram chrome */
+    .diagram {
+      border: 1px solid var(--line); border-radius: 14px;
+      background: #0c1016; padding: 1rem 1rem 1.1rem; margin: 0 0 1.15rem;
+      overflow-x: auto;
+    }
+    .diagram .label {
+      font-size: .7rem; letter-spacing: .1em; text-transform: uppercase;
+      color: var(--faint); font-weight: 700; margin-bottom: .65rem;
+    }
+    .diagram .cap {
+      font-size: .82rem; color: var(--muted); margin-top: .7rem; line-height: 1.45;
+    }
+    .diagram svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .lvl {
+      display: inline-block; font-family: var(--mono); font-size: .68rem;
+      border: 1px solid var(--line); border-radius: 6px; padding: .12rem .4rem;
+      color: var(--gold); margin-right: .4rem; vertical-align: middle;
+    }
+
+    .steps { counter-reset: step; list-style: none; padding: 0; margin: 0 0 1rem; }
+    .steps li {
+      counter-increment: step; position: relative;
+      padding: .75rem .9rem .75rem 3rem;
+      border: 1px solid var(--line2); border-radius: 10px;
+      background: var(--card); margin: 0 0 .55rem;
+    }
+    .steps li::before {
+      content: counter(step, decimal-leading-zero);
+      position: absolute; left: .75rem; top: .85rem;
+      font-family: var(--mono); font-size: .75rem; font-weight: 700;
+      color: var(--teal);
+    }
+
+    .timeline { border-left: 2px solid var(--line); padding-left: 1.1rem; margin: 1rem 0; }
+    .timeline .item { position: relative; margin: 0 0 1rem; }
+    .timeline .item::before {
+      content: ""; position: absolute; left: calc(-1.1rem - 5px); top: .4rem;
+      width: 10px; height: 10px; border-radius: 50%; background: var(--teal);
+      box-shadow: 0 0 0 3px rgba(94,234,212,.15);
+    }
+    .timeline .item.old::before { background: var(--faint); box-shadow: none; }
+    .timeline .item.now::before { background: var(--gold); box-shadow: 0 0 0 3px rgba(251,191,36,.2); }
+    .timeline .t { font-family: var(--mono); font-size: .78rem; color: var(--teal); font-weight: 650; }
+    .timeline .d { color: var(--muted); font-size: .92rem; }
+
+    footer {
+      margin-top: 3rem; padding-top: 1.2rem; border-top: 1px solid var(--line2);
+      color: var(--faint); font-size: .8rem;
+    }
+
+    @media print {
+      body { background: #fff; color: #111; }
+      nav.toc { display: none; }
+      .diagram, .card, .table-wrap, header.hero { background: #fff; border-color: #ccc; color: #111; }
+      .muted, .lede, th { color: #444; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="toc">
+      <a href="#claim">Claim boundary</a>
+      <a href="#simple">Simple view</a>
+      <a href="#medium">Medium view</a>
+      <a href="#complex">Full boot</a>
+      <a href="#how">How it was achieved</a>
+      <a href="#purejs">Pure-JS + CSP</a>
+      <a href="#bootstrap">Bootstrap evolution</a>
+      <a href="#dmc">DMC lens</a>
+      <a href="#tiny">Tiny-file idea</a>
+      <a href="#claims">What to say</a>
+    </nav>
+
+    <header class="hero">
+      <div class="eyebrow">Peerit architecture brief · browser path · 2026-07-31</div>
+      <h1>Blind client in a normal browser — not Bare-in-Chrome, not a trusted API</h1>
+      <p class="lede">
+        How peerit.site reaches the same signed social world as PearBrowser without pretending
+        the browser joined Hyperswarm: pure-JS vendored clients under hard CSP, a signed seed
+        bootstrap for cold start, dual-relay Cell-GET recovery, and an honest split between
+        <strong>P2P integrity</strong> and <strong>relay-assisted availability</strong>.
+      </p>
+      <div class="chips">
+        <span class="chip ok"><b>integrity</b> client-verified</span>
+        <span class="chip warn"><b>topology</b> not a DHT node</span>
+        <span class="chip"><b>path</b> blind-v1 · dal + syd</span>
+        <span class="chip"><b>seq</b> limited Cell-GET @ 20</span>
+        <span class="chip bad"><b>claim</b> LIVE_PUBLIC_TEST_ONLY</span>
+      </div>
+    </header>
+
+    <!-- 1 CLAIM -->
+    <section id="claim">
+      <h2>1. Claim boundary (read this first)</h2>
+      <div class="grid2">
+        <div class="card hl">
+          <h3 style="margin-top:0;color:var(--green)">Fair to claim</h3>
+          <ul>
+            <li>P2P <em>data model</em> in the browser (signed records, client merge)</li>
+            <li>P2P <em>integrity</em> (relay cannot forge)</li>
+            <li>Blind custody (relays hold opaque cells)</li>
+            <li>Cold start from a <em>signed</em> seed bootstrap + GET-only recovery</li>
+            <li>Works under production CSP <code>script-src 'self'</code> with pure-JS clients</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0;color:var(--red)">Overclaim / false</h3>
+          <ul>
+            <li>“We have full P2P in the browser”</li>
+            <li>“Bare / Hyperswarm worker runs in Chrome”</li>
+            <li>“No middleman for browser users”</li>
+            <li>“Browser is a DHT node”</li>
+            <li>“Independent multi-operator network” (today: two owner-operated relays)</li>
+          </ul>
+        </div>
+      </div>
+      <div class="quote">
+        A normal browser is never a standalone DHT node. There is always a reachable relay
+        (or bridge) in the path. What Peerit ships is the best honest substitute:
+        a <strong>blind client</strong> of a P2P network.
+        <cite>— Peerit honest ceiling (Browser Pear Apps)</cite>
+      </div>
+    </section>
+
+    <!-- 2 SIMPLE -->
+    <section id="simple">
+      <h2>2. Dead-simple view</h2>
+      <p class="muted"><span class="lvl">L0</span> One picture for non-engineers and landing pages.</p>
+
+      <div class="diagram">
+        <div class="label">Diagram A · two doors, same signed world</div>
+        <svg viewBox="0 0 860 280" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Two access paths to the same signed Peerit world">
+          <defs>
+            <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#5a6a7c"/>
+            </marker>
+          </defs>
+          <!-- center world -->
+          <rect x="320" y="90" width="220" height="100" rx="14" fill="#141a22" stroke="#5eead4" stroke-width="1.5"/>
+          <text x="430" y="128" text-anchor="middle" fill="#5eead4" font-size="13" font-weight="700" font-family="ui-monospace,monospace">SIGNED WORLD</text>
+          <text x="430" y="150" text-anchor="middle" fill="#8b9aab" font-size="11" font-family="system-ui,sans-serif">communities · posts</text>
+          <text x="430" y="168" text-anchor="middle" fill="#8b9aab" font-size="11" font-family="system-ui,sans-serif">votes · mod · karma</text>
+
+          <!-- left pear -->
+          <rect x="40" y="95" width="160" height="90" rx="12" fill="#0f1a14" stroke="#4ade80" stroke-width="1.4"/>
+          <text x="120" y="130" text-anchor="middle" fill="#4ade80" font-size="12" font-weight="700" font-family="system-ui,sans-serif">PearBrowser</text>
+          <text x="120" y="152" text-anchor="middle" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">true P2P peer</text>
+          <text x="120" y="168" text-anchor="middle" fill="#5a6a7c" font-size="9" font-family="ui-monospace,monospace">Hyperswarm</text>
+          <line x1="200" y1="140" x2="318" y2="140" stroke="#4ade80" stroke-width="1.6" marker-end="url(#arr)"/>
+
+          <!-- right browser -->
+          <rect x="660" y="95" width="160" height="90" rx="12" fill="#0f1520" stroke="#7dd3fc" stroke-width="1.4"/>
+          <text x="740" y="130" text-anchor="middle" fill="#7dd3fc" font-size="12" font-weight="700" font-family="system-ui,sans-serif">peerit.site</text>
+          <text x="740" y="152" text-anchor="middle" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">blind client</text>
+          <text x="740" y="168" text-anchor="middle" fill="#5a6a7c" font-size="9" font-family="ui-monospace,monospace">HTTPS · cells</text>
+          <line x1="660" y1="140" x2="542" y2="140" stroke="#7dd3fc" stroke-width="1.6" marker-end="url(#arr)"/>
+
+          <text x="430" y="40" text-anchor="middle" fill="#e8eef6" font-size="14" font-weight="700" font-family="system-ui,sans-serif">Same app truth · different transport</text>
+          <text x="430" y="60" text-anchor="middle" fill="#8b9aab" font-size="11" font-family="system-ui,sans-serif">Keys + verification always live in the client</text>
+
+          <text x="120" y="240" text-anchor="middle" fill="#4ade80" font-size="10" font-family="system-ui,sans-serif">no middleman</text>
+          <text x="740" y="240" text-anchor="middle" fill="#fbbf24" font-size="10" font-family="system-ui,sans-serif">relay can withhold, never forge</text>
+        </svg>
+        <p class="cap">
+          <strong>One-liner:</strong> PearBrowser is a peer. Chrome is a blind client.
+          Both assemble the feed from signed records; only the path differs.
+        </p>
+      </div>
+
+      <div class="diagram">
+        <div class="label">Diagram B · the trust split (three boxes)</div>
+        <svg viewBox="0 0 860 200" xmlns="http://www.w3.org/2000/svg">
+          <rect x="30" y="40" width="240" height="120" rx="12" fill="#141a22" stroke="#5eead4"/>
+          <text x="150" y="85" text-anchor="middle" fill="#5eead4" font-size="13" font-weight="700" font-family="system-ui,sans-serif">YOUR BROWSER</text>
+          <text x="150" y="110" text-anchor="middle" fill="#8b9aab" font-size="11" font-family="system-ui,sans-serif">keys · verify · merge · UI</text>
+          <text x="150" y="132" text-anchor="middle" fill="#4ade80" font-size="10" font-family="ui-monospace,monospace">SOURCE OF TRUTH</text>
+
+          <rect x="310" y="40" width="240" height="120" rx="12" fill="#141a22" stroke="#fbbf24"/>
+          <text x="430" y="85" text-anchor="middle" fill="#fbbf24" font-size="13" font-weight="700" font-family="system-ui,sans-serif">BLIND RELAYS</text>
+          <text x="430" y="110" text-anchor="middle" fill="#8b9aab" font-size="11" font-family="system-ui,sans-serif">opaque cells only</text>
+          <text x="430" y="132" text-anchor="middle" fill="#fbbf24" font-size="10" font-family="ui-monospace,monospace">AVAILABILITY</text>
+
+          <rect x="590" y="40" width="240" height="120" rx="12" fill="#141a22" stroke="#c4b5fd"/>
+          <text x="710" y="85" text-anchor="middle" fill="#c4b5fd" font-size="13" font-weight="700" font-family="system-ui,sans-serif">ORIGIN (peerit.site)</text>
+          <text x="710" y="110" text-anchor="middle" fill="#8b9aab" font-size="11" font-family="system-ui,sans-serif">ships static JS + CSP</text>
+          <text x="710" y="132" text-anchor="middle" fill="#c4b5fd" font-size="10" font-family="ui-monospace,monospace">CODE DELIVERY</text>
+        </svg>
+        <p class="cap">
+          Three different trust jobs. Confusing them produces overclaims
+          (“the site is the database”) or underclaims (“relays are worthless”).
+        </p>
+      </div>
+    </section>
+
+    <!-- 3 MEDIUM -->
+    <section id="medium">
+      <h2>3. Medium view — what a cold browser actually does</h2>
+      <p class="muted"><span class="lvl">L1</span> The seq-20 limited public-test recovery path (read / cold-start shaped).</p>
+
+      <div class="diagram">
+        <div class="label">Diagram C · cold tab → feed (happy path)</div>
+        <svg viewBox="0 0 900 420" xmlns="http://www.w3.org/2000/svg">
+          <!-- steps as vertical flow -->
+          <defs>
+            <marker id="arr2" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#5eead4"/>
+            </marker>
+          </defs>
+
+          <!-- column left browser steps -->
+          <text x="40" y="28" fill="#7dd3fc" font-size="12" font-weight="700" font-family="system-ui,sans-serif">BROWSER (peerit.site)</text>
+
+          <rect x="40" y="45" width="380" height="48" rx="10" fill="#141a22" stroke="#273141"/>
+          <text x="55" y="65" fill="#5eead4" font-size="10" font-family="ui-monospace,monospace">01</text>
+          <text x="85" y="65" fill="#e8eef6" font-size="12" font-weight="600" font-family="system-ui,sans-serif">Load signed static app + pin-history</text>
+          <text x="85" y="82" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">SRI · releaseSequence · CSP locks connect-src</text>
+
+          <line x1="230" y1="93" x2="230" y2="112" stroke="#5eead4" stroke-width="1.4" marker-end="url(#arr2)"/>
+
+          <rect x="40" y="112" width="380" height="48" rx="10" fill="#141a22" stroke="#273141"/>
+          <text x="55" y="132" fill="#5eead4" font-size="10" font-family="ui-monospace,monospace">02</text>
+          <text x="85" y="132" fill="#e8eef6" font-size="12" font-weight="600" font-family="system-ui,sans-serif">Assemble browser runtime authority</text>
+          <text x="85" y="149" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">verify vendored pure-JS control + Cell-GET clients</text>
+
+          <line x1="230" y1="160" x2="230" y2="179" stroke="#5eead4" stroke-width="1.4" marker-end="url(#arr2)"/>
+
+          <rect x="40" y="179" width="380" height="48" rx="10" fill="#141a22" stroke="#273141"/>
+          <text x="55" y="199" fill="#5eead4" font-size="10" font-family="ui-monospace,monospace">03</text>
+          <text x="85" y="199" fill="#e8eef6" font-size="12" font-weight="600" font-family="system-ui,sans-serif">Fetch + verify seed bootstrap artifact</text>
+          <text x="85" y="216" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">names 39 cells × 2 relays · no app schema for relays</text>
+
+          <line x1="230" y1="227" x2="230" y2="246" stroke="#5eead4" stroke-width="1.4" marker-end="url(#arr2)"/>
+
+          <rect x="40" y="246" width="380" height="48" rx="10" fill="#141a22" stroke="#273141"/>
+          <text x="55" y="266" fill="#5eead4" font-size="10" font-family="ui-monospace,monospace">04</text>
+          <text x="85" y="266" fill="#e8eef6" font-size="12" font-weight="600" font-family="system-ui,sans-serif">DESCRIBE + qualify each relay</text>
+          <text x="85" y="283" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">descriptor chain · admission · fail closed</text>
+
+          <line x1="230" y1="294" x2="230" y2="313" stroke="#5eead4" stroke-width="1.4" marker-end="url(#arr2)"/>
+
+          <rect x="40" y="313" width="380" height="48" rx="10" fill="#141a22" stroke="#273141"/>
+          <text x="55" y="333" fill="#5eead4" font-size="10" font-family="ui-monospace,monospace">05</text>
+          <text x="85" y="333" fill="#e8eef6" font-size="12" font-weight="600" font-family="system-ui,sans-serif">CELL.GET only · zero PUTs</text>
+          <text x="85" y="350" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">fallback dal → syd · byte-hash check</text>
+
+          <line x1="230" y1="361" x2="230" y2="380" stroke="#5eead4" stroke-width="1.4" marker-end="url(#arr2)"/>
+
+          <rect x="40" y="380" width="380" height="32" rx="10" fill="#0f1a14" stroke="#4ade80"/>
+          <text x="230" y="400" text-anchor="middle" fill="#4ade80" font-size="12" font-weight="700" font-family="system-ui,sans-serif">06  decode · merge · render feed</text>
+
+          <!-- right side relays -->
+          <text x="520" y="28" fill="#fbbf24" font-size="12" font-weight="700" font-family="system-ui,sans-serif">BLIND RELAYS (Track B)</text>
+
+          <rect x="520" y="80" width="160" height="100" rx="12" fill="#141a22" stroke="#fbbf24"/>
+          <text x="600" y="120" text-anchor="middle" fill="#fbbf24" font-size="13" font-weight="700" font-family="system-ui,sans-serif">dal-1</text>
+          <text x="600" y="142" text-anchor="middle" fill="#8b9aab" font-size="10" font-family="ui-monospace,monospace">relay-dal…</text>
+          <text x="600" y="160" text-anchor="middle" fill="#5a6a7c" font-size="9" font-family="system-ui,sans-serif">Dallas cells</text>
+
+          <rect x="700" y="80" width="160" height="100" rx="12" fill="#141a22" stroke="#fbbf24"/>
+          <text x="780" y="120" text-anchor="middle" fill="#fbbf24" font-size="13" font-weight="700" font-family="system-ui,sans-serif">syd-1</text>
+          <text x="780" y="142" text-anchor="middle" fill="#8b9aab" font-size="10" font-family="ui-monospace,monospace">relay-syd…</text>
+          <text x="780" y="160" text-anchor="middle" fill="#5a6a7c" font-size="9" font-family="system-ui,sans-serif">Sydney cells</text>
+
+          <!-- arrows from mid steps to relays -->
+          <path d="M420 270 C470 270, 470 130, 520 130" fill="none" stroke="#7dd3fc" stroke-width="1.2" stroke-dasharray="4 3"/>
+          <path d="M420 337 C480 337, 480 160, 520 160" fill="none" stroke="#7dd3fc" stroke-width="1.2"/>
+
+          <rect x="520" y="220" width="340" height="120" rx="12" fill="#0f1520" stroke="#273141"/>
+          <text x="690" y="250" text-anchor="middle" fill="#8b9aab" font-size="11" font-weight="700" font-family="system-ui,sans-serif">What relays never learn</text>
+          <text x="690" y="275" text-anchor="middle" fill="#e8eef6" font-size="12" font-family="system-ui,sans-serif">post text · vote targets · community names</text>
+          <text x="690" y="298" text-anchor="middle" fill="#e8eef6" font-size="12" font-family="system-ui,sans-serif">Peerit codecs · author private keys</text>
+          <text x="690" y="321" text-anchor="middle" fill="#5a6a7c" font-size="10" font-family="ui-monospace,monospace">app-agnostic CELL surface only</text>
+        </svg>
+        <p class="cap">
+          Authority activates <em>before</em> any relay I/O. Recovery is GET-only.
+          Ordinary open write remains outside this limited launch-slot posture.
+        </p>
+      </div>
+    </section>
+
+    <!-- 4 COMPLEX -->
+    <section id="complex">
+      <h2>4. Complex view — release authority + cell recovery</h2>
+      <p class="muted"><span class="lvl">L2</span> How the pieces lock so a bad origin or lying relay fails closed.</p>
+
+      <div class="diagram">
+        <div class="label">Diagram D · trust graph (release → bootstrap → cells)</div>
+        <svg viewBox="0 0 900 460" xmlns="http://www.w3.org/2000/svg">
+          <!-- root -->
+          <rect x="300" y="20" width="300" height="54" rx="12" fill="#1a1028" stroke="#c4b5fd"/>
+          <text x="450" y="42" text-anchor="middle" fill="#c4b5fd" font-size="11" font-weight="700" font-family="system-ui,sans-serif">RELEASE AUTHORITY</text>
+          <text x="450" y="60" text-anchor="middle" fill="#8b9aab" font-size="10" font-family="ui-monospace,monospace">Ed25519 d6633dea… · pin-history chain</text>
+
+          <line x1="450" y1="74" x2="450" y2="100" stroke="#c4b5fd" stroke-width="1.3"/>
+
+          <!-- three children -->
+          <rect x="40" y="100" width="240" height="70" rx="10" fill="#141a22" stroke="#7dd3fc"/>
+          <text x="160" y="128" text-anchor="middle" fill="#7dd3fc" font-size="11" font-weight="700" font-family="system-ui,sans-serif">Web asset manifest</text>
+          <text x="160" y="148" text-anchor="middle" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">every file hash · SRI</text>
+          <text x="160" y="164" text-anchor="middle" fill="#5a6a7c" font-size="9" font-family="ui-monospace,monospace">releaseSequence N</text>
+
+          <rect x="330" y="100" width="240" height="70" rx="10" fill="#141a22" stroke="#5eead4"/>
+          <text x="450" y="128" text-anchor="middle" fill="#5eead4" font-size="11" font-weight="700" font-family="system-ui,sans-serif">Limited Cell-GET profile</text>
+          <text x="450" y="148" text-anchor="middle" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">only seq == 20 exposes GETs</text>
+          <text x="450" y="164" text-anchor="middle" fill="#5a6a7c" font-size="9" font-family="ui-monospace,monospace">fail closed otherwise</text>
+
+          <rect x="620" y="100" width="240" height="70" rx="10" fill="#141a22" stroke="#fbbf24"/>
+          <text x="740" y="128" text-anchor="middle" fill="#fbbf24" font-size="11" font-weight="700" font-family="system-ui,sans-serif">Seed bootstrap hash pin</text>
+          <text x="740" y="148" text-anchor="middle" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">terminal release reverse-binds</text>
+          <text x="740" y="164" text-anchor="middle" fill="#5a6a7c" font-size="9" font-family="ui-monospace,monospace">peeritSeedBootstrapSha256</text>
+
+          <!-- lines from root to three - already one line; add more -->
+          <line x1="450" y1="74" x2="160" y2="100" stroke="#273141" stroke-width="1"/>
+          <line x1="450" y1="74" x2="740" y2="100" stroke="#273141" stroke-width="1"/>
+
+          <!-- vendor clients -->
+          <rect x="80" y="210" width="320" height="70" rx="10" fill="#0f1520" stroke="#7dd3fc"/>
+          <text x="240" y="238" text-anchor="middle" fill="#7dd3fc" font-size="11" font-weight="700" font-family="system-ui,sans-serif">Vendored pure-JS clients</text>
+          <text x="240" y="256" text-anchor="middle" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">control (~224 KB) + cell-get (~174 KB)</text>
+          <text x="240" y="272" text-anchor="middle" fill="#5a6a7c" font-size="9" font-family="ui-monospace,monospace">zero wasm · authority.json + evidence</text>
+
+          <rect x="500" y="210" width="320" height="70" rx="10" fill="#0f1520" stroke="#fbbf24"/>
+          <text x="660" y="238" text-anchor="middle" fill="#fbbf24" font-size="11" font-weight="700" font-family="system-ui,sans-serif">PeeritSeedBootstrapV1</text>
+          <text x="660" y="256" text-anchor="middle" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">39 records · 2 relays · read caps</text>
+          <text x="660" y="272" text-anchor="middle" fill="#5a6a7c" font-size="9" font-family="ui-monospace,monospace">domain peerit.seed-bootstrap.v1</text>
+
+          <line x1="160" y1="170" x2="240" y2="210" stroke="#273141"/>
+          <line x1="450" y1="170" x2="240" y2="210" stroke="#273141"/>
+          <line x1="740" y1="170" x2="660" y2="210" stroke="#273141"/>
+
+          <!-- cells -->
+          <rect x="200" y="330" width="500" height="90" rx="12" fill="#141a22" stroke="#5eead4"/>
+          <text x="450" y="360" text-anchor="middle" fill="#5eead4" font-size="12" font-weight="700" font-family="system-ui,sans-serif">Per-record dual replicas → CELL.GET</text>
+          <text x="450" y="382" text-anchor="middle" fill="#8b9aab" font-size="11" font-family="system-ui,sans-serif">readCapability: relayKey · storageSlot · cellKey · expectedCellBlobHash</text>
+          <text x="450" y="402" text-anchor="middle" fill="#5a6a7c" font-size="10" font-family="ui-monospace,monospace">HiveRelay never sees Peerit record semantics</text>
+
+          <line x1="240" y1="280" x2="350" y2="330" stroke="#273141"/>
+          <line x1="660" y1="280" x2="550" y2="330" stroke="#273141"/>
+        </svg>
+        <p class="cap">
+          Binding is deliberately one-way: the bootstrap names a release sequence + authority;
+          the authenticated terminal release reverse-binds the exact bootstrap hash.
+          That avoids a hash cycle between manifest and bootstrap.
+        </p>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">Axes checklist (honest ceiling)</h3>
+        <div class="table-wrap" style="margin:0">
+          <table>
+            <thead><tr><th>Axis</th><th>PearBrowser</th><th>peerit.site today</th></tr></thead>
+            <tbody>
+              <tr><td>1 · Client keys</td><td class="ok">yes</td><td class="ok">yes</td></tr>
+              <tr><td>2 · Client verify / no forge</td><td class="ok">yes</td><td class="ok">yes</td></tr>
+              <tr><td>3 · Blind custody path</td><td class="ok">P2P + optional seeders</td><td class="ok">dual blind cells</td></tr>
+              <tr><td>4 · Topology (true peer, no middleman)</td><td class="ok">yes</td><td class="no">no — HTTPS relays</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 HOW -->
+    <section id="how">
+      <h2>5. How this architecture was achieved</h2>
+      <p>
+        Not a single flip. It is a <strong>replacement production path</strong> (blind substrate)
+        layered under the same Peerit app protocol, then hardened through launch sequences 13→20.
+      </p>
+
+      <h3>Design moves that made it possible</h3>
+      <ol class="steps">
+        <li>
+          <strong>Separate app meaning from transport.</strong>
+          Model, ranking, mod, identity stay Peerit-owned. Network I/O becomes
+          generic Blind DESCRIBE / CELL surfaces. Relays stay app-agnostic.
+        </li>
+        <li>
+          <strong>Accept the first-hop constraint.</strong>
+          A cold browser cannot introduce itself to another browser. Something
+          reachable must exist. Design for an untrusted reachable helper, not for
+          pure browser-to-browser fantasy.
+        </li>
+        <li>
+          <strong>Vendor the blind clients into the web release.</strong>
+          Control + Cell-GET artifacts are pinned, evidenced, and verified at boot —
+          not “npm install something at runtime.”
+        </li>
+        <li>
+          <strong>Make recovery GET-only and sequence-gated.</strong>
+          Limited Cell-GET authority exposes only at the live sequence (20).
+          Any other sequence fails closed before relay I/O.
+        </li>
+        <li>
+          <strong>Name the launch seed cryptographically.</strong>
+          <code>PeeritSeedBootstrapV1</code> lists records + dual read capabilities.
+          Empty reader + artifact → 34/34 byte-exact recovery proven.
+        </li>
+        <li>
+          <strong>Survive production CSP.</strong>
+          Rebuild clients pure-JS (no eager wasm) so <code>script-src 'self'</code>
+          does not brick Chromium with CompileError / CSP violations.
+        </li>
+      </ol>
+
+      <div class="timeline">
+        <div class="item old">
+          <div class="t">OutboxLog / peerit-relay era</div>
+          <div class="d">Signed roster + HTTP/SSE gossip. Relay still app-shaped (directory, heads, ranges).</div>
+        </div>
+        <div class="item old">
+          <div class="t">Blind public-test bind (late July)</div>
+          <div class="d">syd-1 + dal-1 edges; CELL write/readback drills; CSP origins locked.</div>
+        </div>
+        <div class="item old">
+          <div class="t">seq 13–18</div>
+          <div class="d">Canary activation, seed recovery pairs, admission/cold-rollback hardening.</div>
+        </div>
+        <div class="item old">
+          <div class="t">seq 19 · CSP-safe</div>
+          <div class="d">Pure-JS rebuild of vendored clients; wasm path rejected by production CSP.</div>
+        </div>
+        <div class="item now">
+          <div class="t">seq 20 · LIVE launch slot</div>
+          <div class="d">Limited Cell-GET + 34-record seed bootstrap as cold-start authority for the public test.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6 PURE JS -->
+    <section id="purejs">
+      <h2>6. Pure-JS clients under hard CSP</h2>
+      <p>
+        Production peerit.site ships a strict policy: <code>script-src 'self'</code>,
+        no <code>unsafe-eval</code>, no <code>wasm-unsafe-eval</code>. That is intentional
+        (smaller attack surface, harder supply-chain tricks) — and it broke the first
+        generation of browser blind clients.
+      </p>
+
+      <div class="grid2">
+        <div class="card">
+          <h3 style="margin-top:0;color:var(--red)">Before (failed on live CSP)</h3>
+          <ul>
+            <li>Vendored clients eagerly compiled WebAssembly at import</li>
+            <li><code>sha512-wasm</code> sync / <code>blake2b-wasm</code> async probes</li>
+            <li>Even a <em>caught</em> CompileError still fires <code>securitypolicyviolation</code></li>
+            <li>seq-20 Chromium gate: FAIL under unchanged production CSP</li>
+          </ul>
+        </div>
+        <div class="card hl">
+          <h3 style="margin-top:0;color:var(--green)">After (CSP-safe pure-JS)</h3>
+          <ul>
+            <li>Wasm packages aliased out entirely</li>
+            <li>Pure-JS fallbacks; byte-identical crypto output</li>
+            <li>Zero wasm bytes, zero compile attempts</li>
+            <li>Control ~224 KB · Cell-GET ~174 KB</li>
+            <li>Chromium 145/149/151 production gate: PASS</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout">
+        <p>
+          <strong>What this buys:</strong> a real browser can run the full verify/reconstruct
+          path without relaxing CSP to “whatever crypto needs.” That is a shipping barrier,
+          not a research demo. It is <em>not</em> the DHT barrier — pure-JS does not create
+          UDP sockets or swarm membership.
+        </p>
+      </div>
+
+      <h3>Boot-time verification (not “trust the CDN”)</h3>
+      <p class="muted">
+        Runtime authority loads pinned paths under <code>/vendor/hiverelay-blind-client-v1/</code>
+        and <code>/vendor/hiverelay-blind-cell-get-v1/</code>, checks manifests, authority.json,
+        and chromium/cross-host evidence before any relay call. Caps bound download size and
+        assembly time so a huge malicious asset cannot hang the tab forever.
+      </p>
+    </section>
+
+    <!-- 7 BOOTSTRAP -->
+    <section id="bootstrap">
+      <h2>7. Bootstrap evolution — how a browser finds the world</h2>
+
+      <h3>7.1 How a “normal website” bootstraps</h3>
+      <div class="diagram">
+        <div class="label">Diagram E · classic web app</div>
+        <svg viewBox="0 0 860 160" xmlns="http://www.w3.org/2000/svg">
+          <rect x="40" y="40" width="140" height="70" rx="10" fill="#141a22" stroke="#7dd3fc"/>
+          <text x="110" y="80" text-anchor="middle" fill="#7dd3fc" font-size="12" font-weight="700" font-family="system-ui,sans-serif">Browser</text>
+          <text x="200" y="78" fill="#5a6a7c" font-size="18" font-family="system-ui,sans-serif">→</text>
+          <rect x="230" y="40" width="160" height="70" rx="10" fill="#141a22" stroke="#c4b5fd"/>
+          <text x="310" y="72" text-anchor="middle" fill="#c4b5fd" font-size="12" font-weight="700" font-family="system-ui,sans-serif">Origin API</text>
+          <text x="310" y="92" text-anchor="middle" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">trusted JSON</text>
+          <text x="410" y="78" fill="#5a6a7c" font-size="18" font-family="system-ui,sans-serif">→</text>
+          <rect x="440" y="40" width="180" height="70" rx="10" fill="#141a22" stroke="#f87171"/>
+          <text x="530" y="72" text-anchor="middle" fill="#f87171" font-size="12" font-weight="700" font-family="system-ui,sans-serif">Company DB</text>
+          <text x="530" y="92" text-anchor="middle" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">source of truth</text>
+          <text x="640" y="78" fill="#5a6a7c" font-size="18" font-family="system-ui,sans-serif">→</text>
+          <rect x="670" y="40" width="150" height="70" rx="10" fill="#141a22" stroke="#8b9aab"/>
+          <text x="745" y="80" text-anchor="middle" fill="#8b9aab" font-size="12" font-weight="700" font-family="system-ui,sans-serif">Feed UI</text>
+        </svg>
+        <p class="cap">Integrity = “we trust the server.” Bootstrap = “call our API.” Censorship / rewrite / ban = one desk.</p>
+      </div>
+
+      <h3>7.2 How Peerit used to bootstrap (outbox / web era)</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Mechanism</th><th>What it solved</th><th>Honest limit</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Baked seed snapshot in the web bundle</td>
+              <td>Instant first paint for curated posts</td>
+              <td>Static; ages; still needs live reconcile</td>
+            </tr>
+            <tr>
+              <td>Local cache + background connect</td>
+              <td>Returning visitors not blank</td>
+              <td>Empty-cache poisoning attacks had to be fixed explicitly</td>
+            </tr>
+            <tr>
+              <td>Signed relay roster in <code>index.html</code></td>
+              <td>Which HTTPS relays to try; failover</td>
+              <td>Tells you <em>where</em>, not <em>which cells/records</em></td>
+            </tr>
+            <tr>
+              <td>Directory / heads / range fan-out</td>
+              <td>Discover authors + pull outboxes</td>
+              <td>O(authors) burst; rate limits; app-shaped relay API</td>
+            </tr>
+            <tr>
+              <td><code>GET /api/boot</code> (designed, then <strong>withdrawn</strong>)</td>
+              <td>One-shot hot bundle to kill boot RTT storm</td>
+              <td>Pushed app-shaped read into the relay — Service Contract violation</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout warn">
+        <p>
+          <code>/api/boot</code> was a correct <em>latency</em> idea and a wrong <em>layering</em> idea.
+          Withdrawn 2026-07-08: app releases must never require relay updates; cold-boot cost
+          should be solved client-side or on a generic read surface that any app can use.
+        </p>
+      </div>
+
+      <h3>7.3 How Peerit bootstraps now (blind launch path)</h3>
+      <div class="diagram">
+        <div class="label">Diagram F · signed seed bootstrap vs old directory fan-out</div>
+        <svg viewBox="0 0 900 280" xmlns="http://www.w3.org/2000/svg">
+          <!-- old -->
+          <text x="40" y="30" fill="#f87171" font-size="12" font-weight="700" font-family="system-ui,sans-serif">BEFORE · outbox fan-out</text>
+          <rect x="40" y="45" width="100" height="40" rx="8" fill="#141a22" stroke="#f87171"/>
+          <text x="90" y="70" text-anchor="middle" fill="#e8eef6" font-size="11" font-family="system-ui,sans-serif">browser</text>
+          <text x="155" y="70" fill="#5a6a7c" font-size="14">→</text>
+          <rect x="175" y="45" width="90" height="40" rx="8" fill="#141a22" stroke="#fbbf24"/>
+          <text x="220" y="70" text-anchor="middle" fill="#fbbf24" font-size="10" font-family="system-ui,sans-serif">token</text>
+          <text x="280" y="70" fill="#5a6a7c" font-size="14">→</text>
+          <rect x="300" y="45" width="100" height="40" rx="8" fill="#141a22" stroke="#fbbf24"/>
+          <text x="350" y="70" text-anchor="middle" fill="#fbbf24" font-size="10" font-family="system-ui,sans-serif">directory</text>
+          <text x="415" y="70" fill="#5a6a7c" font-size="14">→</text>
+          <rect x="440" y="45" width="200" height="40" rx="8" fill="#141a22" stroke="#fbbf24"/>
+          <text x="540" y="70" text-anchor="middle" fill="#fbbf24" font-size="10" font-family="system-ui,sans-serif">N × heads + ranges</text>
+          <text x="660" y="70" fill="#5a6a7c" font-size="14">→</text>
+          <rect x="685" y="45" width="170" height="40" rx="8" fill="#141a22" stroke="#8b9aab"/>
+          <text x="770" y="70" text-anchor="middle" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">admit() each row</text>
+
+          <!-- new -->
+          <text x="40" y="140" fill="#4ade80" font-size="12" font-weight="700" font-family="system-ui,sans-serif">NOW · seed bootstrap cold recovery</text>
+          <rect x="40" y="155" width="100" height="40" rx="8" fill="#141a22" stroke="#4ade80"/>
+          <text x="90" y="180" text-anchor="middle" fill="#e8eef6" font-size="11" font-family="system-ui,sans-serif">browser</text>
+          <text x="155" y="180" fill="#5a6a7c" font-size="14">→</text>
+          <rect x="175" y="155" width="200" height="40" rx="8" fill="#141a22" stroke="#5eead4"/>
+          <text x="275" y="180" text-anchor="middle" fill="#5eead4" font-size="10" font-family="system-ui,sans-serif">verify runtime authority</text>
+          <text x="390" y="180" fill="#5a6a7c" font-size="14">→</text>
+          <rect x="415" y="155" width="180" height="40" rx="8" fill="#141a22" stroke="#5eead4"/>
+          <text x="505" y="180" text-anchor="middle" fill="#5eead4" font-size="10" font-family="system-ui,sans-serif">signed bootstrap</text>
+          <text x="610" y="180" fill="#5a6a7c" font-size="14">→</text>
+          <rect x="635" y="155" width="220" height="40" rx="8" fill="#141a22" stroke="#5eead4"/>
+          <text x="745" y="180" text-anchor="middle" fill="#5eead4" font-size="10" font-family="system-ui,sans-serif">CELL.GET dual replicas</text>
+
+          <text x="40" y="230" fill="#8b9aab" font-size="11" font-family="system-ui,sans-serif">Difference in one line:</text>
+          <text x="40" y="252" fill="#e8eef6" font-size="12" font-family="system-ui,sans-serif">
+            Old path discovers “who exists” via an app-aware directory. New path is handed exact cell addresses + expected hashes for a bounded seed, then verifies every byte client-side on a generic blind surface.
+          </text>
+        </svg>
+      </div>
+
+      <h3>7.4 What <code>PeeritSeedBootstrapV1</code> contains</h3>
+      <div class="card">
+        <ul>
+          <li><strong>Profile:</strong> <code>LIMITED_PUBLIC_TEST_V1</code></li>
+          <li><strong>Operator boundary (honest):</strong> <code>two-owner-operated-relays-not-independent-operators</code></li>
+          <li><strong>Exactly two relays</strong> with canonical DESCRIBE URLs, store IDs, descriptor genesis, continuity keys</li>
+          <li><strong>Records[]</strong> — each with <code>recordId</code>, author key, logical hash, encoding commitment, wire keys, size class</li>
+          <li><strong>Replicas[]</strong> — one per declared relay: <code>readCapability</code> (storageSlot, cellKey, expectedCellBlobHash…)</li>
+          <li><strong>Validity window</strong> + authority public key + releaseSequence binding</li>
+          <li><strong>Signature domain:</strong> <code>peerit.seed-bootstrap.v1</code></li>
+        </ul>
+        <p class="muted" style="margin:0">
+          HiveRelay only ever sees generic ReadCellCap material. Peerit record semantics
+          never cross the relay boundary.
+        </p>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Launch seed (seq 20 target)</th><th>Value</th></tr></thead>
+          <tbody>
+            <tr><td>Logical launch records</td><td>34</td></tr>
+            <tr><td>Cells named per relay</td><td>39 (includes multi-cell boxed posts)</td></tr>
+            <tr><td>Allowed network ops</td><td>DESCRIBE.* · CELL.GET</td></tr>
+            <tr><td>PUTs during recovery</td><td>0</td></tr>
+            <tr><td>Cold empty-reader proof</td><td>34/34 byte-exact vs FINAL-SEED-MANIFEST</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 8 DMC -->
+    <section id="dmc">
+      <h2>8. DMC lens — first hop, constraints in tension, when AI fails</h2>
+      <p class="muted">
+        David Mark Clements’s feedback shaped both the architecture and the process around it.
+        Two different lessons — one technical, one operational.
+      </p>
+
+      <h3>8.1 Technical: the first hop is not optional</h3>
+      <div class="quote">
+        A browser can’t make the first hop to another browser on its own — something reachable
+        has to introduce them. Designs that try to “remove the pipe entirely” can be coherent,
+        detailed, and still useless if that assumption is a fantasy.
+        <cite>— Operator summary of DMC pushback (Peer-to-Pears creator story)</cite>
+      </div>
+      <p>
+        That killed a whole class of “pure browser-to-browser bootstrap” rabbitholes.
+        Peerit’s answer is not “no pipe.” It is:
+      </p>
+      <ul>
+        <li>pipe is real and allowed,</li>
+        <li>pipe is <strong>blind</strong> (no app truth),</li>
+        <li>pipe is <strong>untrusted for integrity</strong>,</li>
+        <li>pipe is dual (dal + syd) for bounded availability,</li>
+        <li>cold discovery is a <strong>signed artifact</strong>, not “ask the pipe what exists.”</li>
+      </ul>
+
+      <h3>8.2 Process: deep novel work is where LLMs thrash</h3>
+      <p>
+        From a recent DMC conversation (paraphrased / quoted for the working notes):
+      </p>
+      <div class="card">
+        <ul>
+          <li>
+            Once you’re past pattern-matching depth, models start “winging it on crazy tangents.”
+            You burn days, then get a polished apology and a blank “what would you like to do now?”
+          </li>
+          <li>
+            Context growth makes every wrong swing expensive — a few off-tracks can eat a third of budget
+            just to re-rail.
+          </li>
+          <li>
+            At the frontier of a pet project, the hard part is holding <strong>constraints in tension</strong>.
+            Models either inject unexplained “crucial” bits or drop a minor-sounding note that invalidates
+            the whole design.
+          </li>
+          <li>
+            Analogy: like approaching the speed of light — the closer you get to the real edge of the
+            problem, the more the medium works against you. Diminishing returns are real.
+          </li>
+          <li>
+            Independent code review still leaves implementation work. Eventually you need one or two
+            strong devs onboarded to P2P to get it across the line.
+          </li>
+          <li>
+            Upside of AI: experiment for PMF (Peerit included) before paying full man-hours —
+            then put real resources into users when the shape is interesting enough.
+          </li>
+        </ul>
+      </div>
+      <div class="callout">
+        <p>
+          <strong>Why this belongs in an architecture doc:</strong> the blind-client design,
+          the withdrawn <code>/api/boot</code>, the CSP pure-JS fight, and the signed seed bootstrap
+          are all artifacts of holding those tensions deliberately — and of checking assumptions
+          with humans who have built this class of system before. The architecture is as much
+          “what we refused to claim” as “what we shipped.”
+        </p>
+      </div>
+    </section>
+
+    <!-- 9 TINY FILE -->
+    <section id="tiny">
+      <h2>9. Tiny-file / data-URL bootstrap idea (related, not shipped)</h2>
+      <p>
+        A separate research track (Pear-dev chat → <code>DATA-URL-BOOTSTRAP-SCOPE.md</code>) asked:
+        can we shrink first contact to a <strong>tiny pasteable stub</strong> so the hosted origin
+        is not the permanent code authority?
+      </p>
+
+      <div class="diagram">
+        <div class="label">Diagram G · tiny stub dream vs browser facts</div>
+        <svg viewBox="0 0 900 240" xmlns="http://www.w3.org/2000/svg">
+          <rect x="30" y="30" width="260" height="180" rx="12" fill="#141a22" stroke="#5eead4"/>
+          <text x="160" y="60" text-anchor="middle" fill="#5eead4" font-size="12" font-weight="700" font-family="system-ui,sans-serif">Tiny stub (idea)</text>
+          <text x="160" y="90" text-anchor="middle" fill="#8b9aab" font-size="11" font-family="system-ui,sans-serif">pinned pubkey</text>
+          <text x="160" y="112" text-anchor="middle" fill="#8b9aab" font-size="11" font-family="system-ui,sans-serif">pure-JS verify</text>
+          <text x="160" y="134" text-anchor="middle" fill="#8b9aab" font-size="11" font-family="system-ui,sans-serif">fetch signed bundle</text>
+          <text x="160" y="156" text-anchor="middle" fill="#8b9aab" font-size="11" font-family="system-ui,sans-serif">run or hand off</text>
+          <text x="160" y="185" text-anchor="middle" fill="#5a6a7c" font-size="10" font-family="ui-monospace,monospace">data: or bookmark</text>
+
+          <text x="320" y="120" fill="#5a6a7c" font-size="22" font-family="system-ui,sans-serif">→</text>
+
+          <rect x="360" y="30" width="240" height="180" rx="12" fill="#1a1210" stroke="#f87171"/>
+          <text x="480" y="60" text-anchor="middle" fill="#f87171" font-size="12" font-weight="700" font-family="system-ui,sans-serif">Hard walls</text>
+          <text x="480" y="95" text-anchor="middle" fill="#e8eef6" font-size="11" font-family="system-ui,sans-serif">no shareable data: links</text>
+          <text x="480" y="118" text-anchor="middle" fill="#e8eef6" font-size="11" font-family="system-ui,sans-serif">opaque origin ≠ secure context</text>
+          <text x="480" y="141" text-anchor="middle" fill="#e8eef6" font-size="11" font-family="system-ui,sans-serif">no subtle / no IndexedDB</text>
+          <text x="480" y="164" text-anchor="middle" fill="#e8eef6" font-size="11" font-family="system-ui,sans-serif">full app can’t live there</text>
+          <text x="480" y="190" text-anchor="middle" fill="#5a6a7c" font-size="10" font-family="system-ui,sans-serif">paste/bookmark only</text>
+
+          <text x="630" y="120" fill="#5a6a7c" font-size="22" font-family="system-ui,sans-serif">→</text>
+
+          <rect x="670" y="30" width="200" height="180" rx="12" fill="#0f1a14" stroke="#4ade80"/>
+          <text x="770" y="60" text-anchor="middle" fill="#4ade80" font-size="12" font-weight="700" font-family="system-ui,sans-serif">What survived</text>
+          <text x="770" y="100" text-anchor="middle" fill="#e8eef6" font-size="11" font-family="system-ui,sans-serif">ephemeral viewer</text>
+          <text x="770" y="122" text-anchor="middle" fill="#e8eef6" font-size="11" font-family="system-ui,sans-serif">or handoff to HTTPS</text>
+          <text x="770" y="155" text-anchor="middle" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">not peerit.site GA</text>
+          <text x="770" y="175" text-anchor="middle" fill="#8b9aab" font-size="10" font-family="system-ui,sans-serif">not “no origin”</text>
+        </svg>
+        <p class="cap">
+          The tiny-file idea and the signed seed bootstrap share DNA (small signed root → fetch → verify)
+          but solve different layers: code delivery vs data cold-start. Seed bootstrap shipped for content;
+          data-URL bootstrap remains scoped research, not the production path.
+        </p>
+      </div>
+
+      <div class="callout warn">
+        <p>
+          <strong>Do not merge these stories in marketing.</strong>
+          “Tiny pasteable Peerit” is not what peerit.site is today.
+          Today is: normal HTTPS origin + hard CSP + pure-JS + signed seed bootstrap + blind cells.
+        </p>
+      </div>
+    </section>
+
+    <!-- 10 CLAIMS -->
+    <section id="claims">
+      <h2>10. Language you can use</h2>
+      <div class="card hl">
+        <p style="margin:0">
+          <strong>Public one-liner:</strong><br />
+          Chrome still can’t be a Hyperswarm peer — that barrier is real. Peerit.site is a
+          <em>blind client</em>: keys and verification in the browser, dual geo cells for
+          availability, and a signed seed bootstrap so a cold tab can recover the launch world
+          with GET-only Cell reads under production CSP.
+        </p>
+      </div>
+      <div class="grid2">
+        <div class="card">
+          <h3 style="margin-top:0">For builders</h3>
+          <p class="muted" style="margin:0">
+            Axes 1–3 achieved in a normal browser; axis 4 only in PearBrowser.
+            First hop requires a reachable helper; we made the helper blind and the
+            cold-start artifact application-owned and reverse-bound by release authority.
+          </p>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0">For users</h3>
+          <p class="muted" style="margin:0">
+            Open peerit.site like a normal site. Your browser checks every post.
+            Relays store sealed cells, not a company database of your feed.
+            For the strongest path, use PearBrowser.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <p>
+        <strong style="color:var(--muted)">Peerit</strong> · Browser blind architecture &amp; bootstrap · 2026-07-31<br />
+        Sources: <code>js/substrate/browser-runtime-authority.mjs</code>,
+        <code>peerit-release-bind/js/substrate/seed-bootstrap-v1.mjs</code>,
+        <code>cold-reader.mjs</code>, seq 19/20 canary decisions,
+        <code>docs/BROWSER-PEAR-APPS-THE-HONEST-CEILING.html</code>,
+        <code>docs/BOOT-BUNDLE-SPEC.md</code> (withdrawn),
+        <code>docs/DATA-URL-BOOTSTRAP-SCOPE.md</code>,
+        <code>docs/WEB-DEPLOYMENT.md</code>,
+        DMC first-hop + process notes (creator story + working conversation).
+      </p>
+      <p>Claim boundary: <strong>LIVE_PUBLIC_TEST_ONLY</strong>. GA blockers remain disclosed-open.</p>
+    </footer>
+  </div>
+</body>
+</html>

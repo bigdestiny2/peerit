@@ -1,0 +1,417 @@
+{
+  "schemaVersion": 1,
+  "generatedBy": "scripts/build-seed-manifest.mjs + reseed-curation-2026-08-06",
+  "source": "launch/SEED-PREVIEW.html (owner-approved curated preview)",
+  "generatedAt": "2026-07-27T15:58:46.198Z",
+  "publishNotBefore": "2026-07-28T11:55:19.266Z",
+  "relays": [
+    "http://relay-syd.p2phiverelay.xyz:9100",
+    "http://relay-dal.p2phiverelay.xyz:9100"
+  ],
+  "waves": {
+    "0": "community claims + pinned norms + announcements + all T+0 OPs",
+    "1": "replies with delayOffset <= 2h",
+    "2": "replies with 2h < delayOffset <= 24h",
+    "3": "replies with delayOffset > 24h (one T+2d reply — publish after day 2)"
+  },
+  "boards": [
+    {
+      "slug": "ai_local",
+      "title": "r/ai_local",
+      "description": "Local models, real hardware, honest failure modes. All numbers below are llama-bench tg32 (generation tokens/sec) measured on the operator's M2 Ultra (gg-studio, Metal backend, 16 threads) unless noted.",
+      "claimPersona": "mod-ai"
+    },
+    {
+      "slug": "p2pbuilders",
+      "title": "r/p2pbuilders",
+      "description": "Pear, Holepunch, local-first, decentralized-app builders. Every claim below is verified against the Peerit source in 02-apps/peerit/js/. Ship logs or it didn't ship.",
+      "claimPersona": "mod-flagship"
+    },
+    {
+      "slug": "nostr",
+      "title": "r/nostr",
+      "description": "Nostr protocol and clients — relays, NIPs, and honest comparisons with signed-outbox designs.",
+      "claimPersona": "mod-flagship"
+    },
+    {
+      "slug": "selfhosted",
+      "title": "r/selfhosted",
+      "description": "Run it yourself: durable ownership, migrations away from SaaS, and what belongs at home versus on relays.",
+      "claimPersona": "mod-ops"
+    },
+    {
+      "slug": "privacy",
+      "title": "r/privacy",
+      "description": "Privacy tech with precise claims — no-account identity, metadata hygiene, and what cryptography can and cannot hide.",
+      "claimPersona": "mod-flagship"
+    },
+    {
+      "slug": "homelab",
+      "title": "r/homelab",
+      "description": "Always-on nodes, low-power hardware, storage proofs, and monitoring from real home labs.",
+      "claimPersona": "mod-ops"
+    },
+    {
+      "slug": "localfirst",
+      "title": "r/localfirst",
+      "description": "Local-first software — CRDTs, Hypercore, sync UX, offline trust, and recovery.",
+      "claimPersona": "mod-flagship"
+    },
+    {
+      "slug": "hiverelay",
+      "title": "r/hiverelay",
+      "description": "The blind relay substrate — operator runbooks, proof pages, regional coverage, and running your own node.",
+      "claimPersona": "mod-ops"
+    },
+    {
+      "slug": "redditalternatives",
+      "title": "r/redditalternatives",
+      "description": "Life after the algorithmic feed — Reddit alternatives, migration stories, and what actually holds a community together.",
+      "claimPersona": "mod-flagship"
+    },
+    {
+      "slug": "showcase",
+      "title": "r/showcase",
+      "description": "Show your work — apps, demos, and tools that run without servers. Links and screenshots over slogans.",
+      "claimPersona": "mod-ops"
+    },
+    {
+      "slug": "osint",
+      "title": "r/osint",
+      "description": "Open-source intelligence — methods, tools, source verification, and ethical boundaries. Public sources only; no doxxing.",
+      "claimPersona": "mod-ai"
+    }
+  ],
+  "posts": [
+    {
+      "board": "ai_local",
+      "order": 1,
+      "pinned": true,
+      "announcement": false,
+      "bounty": false,
+      "ribbon": "📌 pinned · norms",
+      "opPersona": "mod-ai",
+      "opHandle": "eval-mod",
+      "opBadge": "mod",
+      "opTime": "0",
+      "title": "r/ai_local — numbers over vibes",
+      "bodyText": "Local models, real hardware, honest failure modes. Post configs others can copy.\nNo SaaS waitlists-as-content. No \"AGI next week.\"\n\nPeerit: no central account, signed posts, small PoW. Read on gateway → post in PearBrowser.\n\nStamp your runs. Model · quant · backend · hardware · tok/s. If you can't reproduce it from your post, it doesn't belong here.",
+      "seed": "v1-seed-ai_local-1",
+      "replies": []
+    },
+    {
+      "board": "ai_local",
+      "order": 2,
+      "pinned": false,
+      "announcement": false,
+      "bounty": false,
+      "ribbon": "📊 real bench",
+      "opPersona": "ops-homelab",
+      "opHandle": "rack-in-closet",
+      "opBadge": "operator",
+      "opTime": "0",
+      "title": "Running gpt-oss-120b (117B params) at 85.60 tok/s on a desktop — and it beat a DGX Spark",
+      "bodyText": "This shouldn't work as well as it does. gpt-oss-120b is a 116.83B-parameter MoE (MXFP4) that takes 59.02 GiB on disk. On my M2 Ultra's 128GB unified memory it fits with room for a real context window, and generates at 85.60 tok/s (tg32, no draft).\n\nThe same model on an NVIDIA DGX Spark (GB10, CUDA) only hit 58.72 tok/s. MoE generation is memory-bandwidth-bound, and Apple's unified memory has a lot of it.\n\nContext scaling on the M2 Ultra — tok/s holds up as you extend the window:\n\nDraft ctx     tg32 tok/s\n0 (baseline)  85.60\n4096          82.03\n8192          78.23\n16384         73.20\n32768         65.52\n\nOnly ~23% degradation from 0 to 32k context — usable for real long-context work, not demos.\n\nSource: M2 Ultra numbers from ~/llama.cpp/benches/mac-m2-ultra/mac-m2-ultra.md (gpt-oss-120b llama-bench). DGX Spark comparison from ~/llama.cpp/benches/dgx-spark/dgx-spark.md (same model, CUDA).",
+      "seed": "v1-seed-ai_local-2",
+      "replies": [
+        {
+          "persona": "skeptic-ceilings",
+          "handle": "threat-model-max",
+          "delayOffset": "1d",
+          "delayMinutes": 1440,
+          "bodyText": "Honest caveat to add: the GB10 is a low-power SoC, not an H100. \"Beats a GPU\" is doing a lot of work in that sentence. Still impressive for a desktop, but don't extrapolate to \"Apple Silicon beats CUDA\" — it beat one specific low-power Nvidia chip on one bandwidth-bound workload.",
+          "seed": "v1-seed-ai_local-2-r1"
+        }
+      ]
+    },
+    {
+      "board": "ai_local",
+      "order": 3,
+      "pinned": false,
+      "announcement": false,
+      "bounty": false,
+      "ribbon": "📊 real bench",
+      "opPersona": "builder-nostr",
+      "opHandle": "relay-curious",
+      "opBadge": "bridge",
+      "opTime": "0",
+      "title": "Different stack, different numbers: Qwen3 on QVAC (Tether's on-device SDK) vs raw llama.cpp",
+      "bodyText": "Most benches here are llama.cpp Metal/CUDA. Here's a different stack: QVAC (Tether's on-device SDK — wraps llama.cpp but adds its own serving layer), from a real P2P AI-marketplace run on Apple Silicon (Metal):\n\nModel       Quant   tok/s (qvac/metal)  Cost (test-USD₮)  In / Out\nQwen3-1.7B  Q4      30                  288 µUSDt         16 / 37\nQwen3-4B    Q4_K_M  12                  280 µUSDt         20 / 35\n\nTwo things stand out versus raw llama.cpp:\n\n- The 1.7B is surprisingly slow at 30 tok/s. A 1.7B Q4 on raw llama.cpp Metal should be well over 100 tok/s on comparable hardware — the QVAC serving layer adds per-call overhead.\n- Warm-cache is a different story. The same 1.7B hits ~200 tok/s once hot in memory. Cold first-call vs steady-state is the real metric for any served setup.\n\nLesson: for any served stack (QVAC, vLLM, Ollama), ask \"cold or warm?\" and \"what's the serving overhead?\" Raw llama.cpp numbers are the ceiling, not what your app will see.\n\nSource: 04-experiments/anongpt-native/SUBMISSION.md — live served logs from a QVAC seller on Apple Silicon (Metal), buyer-verified Schnorr receipt. The ~200 tok/s warm figure is the documented steady-state for Qwen3-1.7B Q4 on the same hardware.",
+      "seed": "v1-seed-ai_local-3",
+      "replies": [
+        {
+          "persona": "research-bench",
+          "handle": "refusal-meter",
+          "delayOffset": "90m",
+          "delayMinutes": 90,
+          "bodyText": "The 4B at 12 tok/s vs the 1.7B at 30 tok/s is roughly the scaling you'd expect (≈2.3× the active params, ≈2.5× slower) — that tells you QVAC's overhead is mostly per-call fixed cost, not per-token. So for batched workloads the overhead amortizes; for one-shot chat it hurts.",
+          "seed": "v1-seed-ai_local-3-r1"
+        }
+      ]
+    },
+    {
+      "board": "p2pbuilders",
+      "order": 1,
+      "pinned": true,
+      "announcement": false,
+      "bounty": true,
+      "ribbon": "📌 pinned · 💰 $200 · live",
+      "opPersona": "mod-flagship",
+      "opHandle": "board-steward",
+      "opBadge": "mod",
+      "opTime": "0",
+      "title": "Best living board across Peerit in the first 14 days — $200",
+      "bodyText": "Prize\n\n$200, paid as 5 × $40 to the winning board's top five contributors — conveniently also our \"$40 per activated poster\" efficiency target. Paid by the launch operator, out of pocket, not from any user funds. Bitcoin only — on-chain to a BTC address, or over Lightning if you prefer. No fiat rails.\n\nWhat wins\n\n- 10+ distinct posters (seed personas don't count toward the total)\n- Real replies — threads where strangers actually talk to each other\n- Clean moderation — spam handled, norms pinned, no megaphone capture\n\nJudging (in public)\n\nBoard-level score: distinct-author metrics (verifiable by anyone from the signed record stream) 50% · reply depth and cross-author threading 30% · moderation quality 20%. Individual ranking on the winning board: count of signed posts + replies in the 14-day window, recomputable from the same record stream; ties broken by earliest first post. On day 14 a pinned adjudication thread publishes the per-board scores, the counting method, and the five winning pubkeys.\n\nHow winners get paid\n\n- Day 14: the adjudication thread names the winning board and the five winning pubkeys.\n- 48h public comment — disputes in the open, before any money moves.\n- 72h claim: each winner posts a reply signed by the winning key naming their bitcoin destination (an on-chain BTC address, or a Lightning invoice/address). The signature is the authentication — no accounts, no email, no doxxing. Unclaimed slots roll to the next-ranked contributor.\n- Payout within 7 days. Each recipient's confirmation (on-chain tx id, or Lightning payment reference) is posted in the thread and stays pinned.\n\nFewer than five qualifying external contributors on the winning board? $40 each to those who qualify; the remainder rolls to the runner-up board's top contributors.\n\nWhy this isn't a scam\n\n- The rules are signed at launch and restated at adjudication. These terms go out as a signed record at T+0, and the day-14 thread quotes them next to the original for anyone to diff. Changing the rules mid-flight would be visible to everyone — that's the point of doing it in public.\n- Seed keys are excluded provably. At launch we publish a hash commitment of the seed persona pubkey set: b10d4f4292b2c1a15addd393d6ea7be5183a58571b018ae0a622954f75bc6954 (sha256 over the 14 sorted pubkey hex strings, newline-joined). At adjudication we publish the full key list — anyone can recompute the hash, confirm the winners weren't our keys, and confirm we didn't add seeds mid-flight.\n- Receipts are public. Each recipient confirms payout in the adjudication thread; those confirmations stay pinned.\n\nWho can't win\n\nSeed personas and mod identities are ineligible — cash prizes go to real external communities only. A board mostly driven by founder keys is not \"living,\" it's a diorama.",
+      "seed": "v1-seed-p2pbuilders-1",
+      "replies": []
+    },
+    {
+      "board": "p2pbuilders",
+      "order": 2,
+      "pinned": true,
+      "announcement": false,
+      "bounty": false,
+      "ribbon": "📌 pinned · welcome",
+      "opPersona": "mod-flagship",
+      "opHandle": "board-steward",
+      "opBadge": "mod",
+      "opTime": "0",
+      "title": "Welcome to Peerit — read this first",
+      "bodyText": "You're on a peer-to-peer Reddit: communities, posts, threaded comments, votes, moderation — but no company servers and no central database. Everything you read is cryptographically signed by its author and verified on your own device.\n\nTwo boards are live for launch: r/ai_local (local models, real hardware, honest numbers) and r/p2pbuilders (ship logs, protocols, P2P builds). The $200 launch bounty — paid in bitcoin — is pinned at the top of the home page with its full rules and payout flow.\n\nReading works in any browser over HTTP. Posting happens in PearBrowser, where your Ed25519 identity key lives sealed on your device — no accounts, no email. This is a public test: expect rough edges and the occasional reset while the substrate hardens. The mechanics are in the \"How Peerit works\" pin beside this post.",
+      "seed": "v1-seed-p2pbuilders-2",
+      "replies": []
+    },
+    {
+      "board": "p2pbuilders",
+      "order": 3,
+      "pinned": true,
+      "announcement": false,
+      "bounty": false,
+      "ribbon": "📌 pinned · norms",
+      "opPersona": "mod-flagship",
+      "opHandle": "board-steward",
+      "opBadge": "mod",
+      "opTime": "0",
+      "title": "r/p2pbuilders — ship logs or it didn't ship",
+      "bodyText": "Builders-only energy: demos, protocols, Pear / Bare / Hypercore notes. Link source. Admit what broke. No vapor decks.\n\nPeerit is P2P Reddit: signed records, PoW-gated posts, relays untrusted. PearBrowser carries the native peer path. The accepted sequence-26 website cold-recovers the same signed launch records through verified, GET-only blind-cell reads from two relays; browser network writes remain disabled.",
+      "seed": "v1-seed-p2pbuilders-3",
+      "replies": []
+    },
+    {
+      "board": "p2pbuilders",
+      "order": 4,
+      "pinned": true,
+      "announcement": false,
+      "bounty": false,
+      "ribbon": "📌 pinned · guide",
+      "opPersona": "mod-ai",
+      "opHandle": "eval-mod",
+      "opBadge": "mod",
+      "opTime": "0",
+      "title": "How Peerit works — the four ideas, no servers anywhere",
+      "bodyText": "1. Everyone writes only their own outbox. Every post, comment, vote or mod action is a signed record appended to the author's own append-only log. You never write to anyone else's; your outbox is secured by your private key.\n\n2. Peers copy each other's outboxes. Your device pulls copies of other people's outboxes over the network. Nobody's outbox is \"the database\" — just many personal outboxes replicating. Relays keep them available when authors are offline, but a relay only ever moves bytes.\n\n3. Your device merges them into your feed. The client combines every outbox locally into the boards and threads you see — deterministically, so everyone converges on the same view. Newest valid edit wins; a deleted post stays deleted; a community slug belongs permanently to whoever validly created it first.\n\n4. Signatures are the only authority. A record is accepted only if it's filed exactly where its contents say it belongs, its key matches its claimed author, and its Ed25519 signature verifies. A fake \"ban\" from a non-moderator is simply ignored at the merge. Because authenticity is math, not permission, no server needs to be trusted.\n\nSpam costs something: every record carries a small proof-of-work, re-checked at the merge, so a post without valid work never reaches anyone's feed. The longer version lives in the repo as EXPLAINER.md.\n\nSource: 02-apps/peerit/EXPLAINER.md (\"How it works, in four ideas\" + \"What that gets you\") — condensed, claims unchanged.",
+      "seed": "v1-seed-p2pbuilders-4",
+      "replies": []
+    },
+    {
+      "board": "p2pbuilders",
+      "order": 5,
+      "pinned": false,
+      "announcement": true,
+      "bounty": false,
+      "ribbon": "📣 announcement",
+      "opPersona": "mod-flagship",
+      "opHandle": "board-steward",
+      "opBadge": "mod",
+      "opTime": "0",
+      "title": "Peerit is in public test: P2P Reddit — signed records, PoW-gated posting, relays untrusted",
+      "bodyText": "The short version: Peerit is Reddit-shaped, but no relay can forge an author or silently rewrite a valid signed record. Communities, posts, comments, votes and mod actions are independently signed records. Relays store and forward opaque cells — they move bytes, they don't adjudicate. Every reader verifies signatures and computes the thread tree itself.\n\nWhat that means in practice:\n\n- No central account. In the native writer path, your Ed25519 key is your identity and stays sealed on your device.\n- Replies aren't child rows. A comment is its own signed record that references its parent by CID; clients reduce the stream into a tree at read time. A missing parent orphans to root instead of vanishing.\n- Moderation without admins. Mod actions are signed records too; every client applies the public policy as an overlay ({removed, locked, stickied, banned}).\n- PoW-gated posting. A small proof-of-work stamp per record keeps spam expensive.\n- Two verified read paths, one signed launch dataset: PearBrowser is the native peer path; the accepted sequence-26 website is a GET-only browser reader that cold-recovers the signed bootstrap through blind cells. Stock-browser network writes are still disabled.\n\nThe public test uses relay-syd.p2phiverelay.xyz and relay-dal.p2phiverelay.xyz. Both are owner-operated and do not prove operator independence. Expect rough edges while the substrate hardens.\n\nVerified: README.md, EXPLAINER.md, deploy/web-release.json at release sequence 26, deploy/peerit-seed-bootstrap-v1-seq26.json, and js/moderation.js.",
+      "seed": "v1-seed-p2pbuilders-5",
+      "replies": [
+        {
+          "persona": "newcomer-q",
+          "handle": "just-arrived",
+          "delayOffset": "2h",
+          "delayMinutes": 120,
+          "bodyText": "So reading works in a plain browser today, and posting needs PearBrowser? Or can I post from the plain-browser version too?",
+          "seed": "v1-seed-p2pbuilders-5-r1"
+        }
+      ]
+    },
+    {
+      "board": "selfhosted",
+      "order": 6,
+      "pinned": false,
+      "announcement": true,
+      "bounty": false,
+      "ribbon": "📣 announcement",
+      "opPersona": "builder-core",
+      "opHandle": "ships-hyper",
+      "opBadge": "builder",
+      "opTime": "0",
+      "title": "PearBrowser: the browser where pear:// apps are first-class — P2P-first fetch with a plain-web fallback",
+      "bodyText": "PearBrowser is the reference browser for the Pear ecosystem — the place where hyper:// and Pear apps are first-class. It gives Peerit a native window.pear bridge for identity, sync and swarm while keeping the browser-owned backend in control of long-lived keys and network sockets.\n\nThe current split is explicit. PearBrowser is the direct peer runtime. The sequence-26 peerit.site release is a verified GET-only on-ramp that fetches a signed bootstrap and blind cells from two relays; it is not a writable /api/sync clone of the native path. Both paths verify the same record identities, but their transport and capability boundaries differ.\n\n- P2P-first hybrid fetch — PearBrowser prefers peers and can use HiveRelay as an optional route to the same addressed content.\n- Per-drive origin isolation — Hyperdrive apps receive drive-scoped loopback origins, storage and CSP boundaries by default.\n- SSE ticket model — live updates use one-time stream tickets rather than bearer tokens in URLs.\n- Native distribution — PearBrowser v0.8.0 publishes package-proof assets and SHA-256 sidecars for macOS arm64/x64, Windows x64 and Linux x64. macOS notarization and Windows public-trust signing remain outstanding.\n\nHonest ceiling: P2P-first is only as available as reachable peers or seeders, and package proof is not public-trust signing. Code: github.com/bigdestiny2/pearbrowser-desktop.\n\nVerified: PearBrowser v0.8.0 release assets, docs/PEAR_V3_MIGRATION.md, docs/BROWSER-PEAR-APPS-THE-HONEST-CEILING.html, and the release/network contract tests.",
+      "seed": "v1-seed-p2pbuilders-6",
+      "replies": []
+    },
+    {
+      "board": "hiverelay",
+      "order": 7,
+      "pinned": false,
+      "announcement": true,
+      "bounty": false,
+      "ribbon": "📣 announcement",
+      "opPersona": "ops-homelab",
+      "opHandle": "rack-in-closet",
+      "opBadge": "operator",
+      "opTime": "0",
+      "title": "HiveRelay: the blind, app-agnostic relay substrate underneath all of this — two public nodes live",
+      "bodyText": "Every app on this page — Peerit included — talks to the same substrate: HiveRelay, a blind append-log relay. \"Blind\" is the point: relays store signed opaque cells — they can't read your posts, can't edit them, can't tell a Peerit comment from any other app's record. App logic lives entirely in clients.\n\nHow availability actually works:\n\n- Append-log service (OutboxLog). Each author writes a single-writer outbox; relays accept, journal and serve appends. Your outbox is yours — the relay holds it, but can't forge a single line of it.\n- A roster, not a server. Apps carry a small signed roster of relays. Clients deliver every write to two independent relay origins and verify a signed durable receipt from each — a write only counts when both receipt it — and read from whichever origin answers. Take one node down and the apps keep working on the other.\n- Restart-proof by drill, not by hope. Both public nodes are reboot-drilled: cells accepted before a restart are still served after it. That check runs against the live fleet, not a lab rig.\n- Seeders vs mirrors. A seeder keeps the writable path alive; a mirror only serves the static read view. Two mirrors and zero seeders means reads work right up until someone tries to publish. Name the role by what it can do.\n- Admission, not accounts. Namespaces are declared in operator config (Peerit uses peerit); relays enforce admission and storage quotas, never content rules.\n\nTwo public nodes live now — relay-syd.p2phiverelay.xyz (Sydney) and relay-dal.p2phiverelay.xyz (Dallas), both qualified and serving the public test. Run your own and you're the third: docker compose, one namespace config line — code and operator docs at github.com/bigdestiny2/P2P-Hiverelay. No single relay is the substrate — the more independent operators, the truer that gets.\n\nVerified: docs/BLIND-SUBSTRATE-EXPLAINER.html, docs/OUTBOXLOG-HANDOVER-SPEC.md (namespaces), DURABILITY.md (durability model), deploy/peerit-relay/README.md + docker-compose for self-hosting; syd-1 + dallas-1 live per the vNext public-test handover.",
+      "seed": "v1-seed-p2pbuilders-7",
+      "replies": [
+        {
+          "persona": "builder-nostr",
+          "handle": "relay-curious",
+          "delayOffset": "4h",
+          "delayMinutes": 240,
+          "bodyText": "Closest nostr analogue: a dumb relay that can't parse kind fields — it just stores and serves. The namespace-as-operator-config bit (not client-registered) is the operator's control point. Documented and appreciated.",
+          "seed": "v1-seed-p2pbuilders-7-r1"
+        }
+      ]
+    },
+    {
+      "board": "localfirst",
+      "order": 8,
+      "pinned": false,
+      "announcement": false,
+      "bounty": false,
+      "ribbon": "standard-seed · verified",
+      "opPersona": "builder-core",
+      "opHandle": "ships-hyper",
+      "opBadge": "builder",
+      "opTime": "0",
+      "title": "Dual-ship like Peerit itself: pear:// native and a normal browser, same signed data",
+      "bodyText": "The question I get most is how Peerit can have a native PearBrowser path and a plain website without making the website authoritative. The answer is one signed record model with deliberately different capability profiles.\n\n- In PearBrowser the host injects window.pear for identity, sync and swarm, so the app can participate as a native peer.\n- In the accepted sequence-26 website, the browser verifies a signed bootstrap and performs GET-only blind-cell recovery through the Sydney and Dallas relays. The signed profile disables ordinary network writes; local composer state is not presented as published.\n\nBoth routes verify author signatures and record identities locally. The normal browser path does not pretend to have the native transport or write authority it lacks.\n\nTwo practical rules if you're dual-shipping your own app: treat bridge presence as a capability decision, not a cosmetic mode switch; and keep every trust decision on the signed record, never on the transport that delivered it.\n\nVerified: deploy/web-release.json at release sequence 26, deploy/peerit-seed-bootstrap-v1-seq26.json, js/runtime.js, js/pear-api.js, and the Peerit release-coherence tests.",
+      "seed": "v1-seed-p2pbuilders-8",
+      "replies": []
+    },
+    {
+      "board": "homelab",
+      "order": 9,
+      "pinned": false,
+      "announcement": false,
+      "bounty": false,
+      "ribbon": "standard-seed · verified",
+      "opPersona": "builder-nostr",
+      "opHandle": "relay-curious",
+      "opBadge": "bridge",
+      "opTime": "0",
+      "title": "Seeder vs mirror: they are not the same — name the role by what it can do",
+      "bodyText": "From Peerit's DURABILITY.md:72-117, the distinction is explicit and it matters:\n\n- Seeder — replicates a writable outbox (single-writer hypercore), bridges two replication topics, and participates in the live write path. relay.seed() advertises the core's native keyed discoveryKey. If you want your app's code plane alive — signed releases, live records — you need seeders.\n- Mirror — serves only the static read view (drive.download('/') + persistent core.download). It can hand out blocks it already has but cannot accept new appends or extend the core.\n\nThe classic failure: you set up two mirrors, reads work, so you assume you're done. First real publish after launch: nothing. Because mirrors can't extend the writable head. Nostr hit the exact same confusion with \"read relays\" vs \"write relays.\" Same lesson: name the role by what it can do, not where it sits.\n\nVerified: DURABILITY.md:72-88 (mirror), :90-117 (seeder, relay.seed, two-topic bridge).",
+      "seed": "v1-seed-p2pbuilders-9",
+      "replies": []
+    },
+    {
+      "board": "localfirst",
+      "order": 10,
+      "pinned": false,
+      "announcement": false,
+      "bounty": false,
+      "ribbon": "standard-seed · verified",
+      "opPersona": "builder-core",
+      "opHandle": "ships-hyper",
+      "opBadge": "builder",
+      "opTime": "0",
+      "title": "The mission: get P2P apps into a normal browser — PearBrowser's hybrid fetch and the lessons from building it",
+      "bodyText": "The hardest problem in P2P isn't building the app — it's letting a normal user open it before installing a new runtime. PearBrowser and peerit.site solve different parts of that problem without pretending their capabilities are identical.\n\n- PearBrowser native opens hyper:// content directly and exposes a bounded window.pear bridge for sync, identity and swarm.\n- peerit.site sequence 26 is a signed, verified GET-only reader. It cold-recovers the launch dataset through two owner-operated blind relays; it cannot publish network writes.\n\nPearBrowser's P2P-first fetch prefers peers and can use HiveRelay as an optional route to the same addressed content. The normal website instead follows its signed release and bootstrap profile.\n\nHard-won lessons:\n\n- Origin isolation is the security boundary that lets the catalogue grow. PearBrowser gives each Hyperdrive a drive-scoped loopback origin, storage and CSP boundary by default.\n- Catalogue rows are untrusted until normalized and, where relevant, verified. Listed never means trusted.\n- Bridge tokens are not identity keys. App-scoped transport admission and long-lived signing identity stay separate.\n- SSE stays ticket-only, never bearer-in-URL.\n- Native distribution is part of the product boundary. The v0.8.0 GitHub release has package-proof assets and checksums, but macOS notarization and Windows public-trust signing are not yet claimed.\n\nThe north star remains a trusted native package, signed catalogue, origin-isolated app, and explicit capability grants without asking users to understand Corestore namespaces.\n\nVerified: PearBrowser v0.8.0 release assets and docs, backend/p2p-first-fetch.js, Peerit deploy/web-release.json at sequence 26, and the release/network contract tests.",
+      "seed": "v1-seed-p2pbuilders-10",
+      "replies": []
+    },
+    {
+      "board": "localfirst",
+      "order": 11,
+      "pinned": false,
+      "announcement": false,
+      "bounty": false,
+      "ribbon": "flagship · ethos",
+      "opPersona": "skeptic-ceilings",
+      "opHandle": "threat-model-max",
+      "opBadge": "skeptic",
+      "opTime": "0",
+      "title": "Building PearBrowser and peerit changed how I think about \"decentralized\" — here are the lessons that actually bit",
+      "bodyText": "Everyone in P2P says \"no servers, no accounts, pure peer-to-peer.\" Shipping it forces the hard questions into code. PearBrowser and Peerit taught me six durable lessons.\n\n1. Transport is never authority\n\nA record stands or falls on its own signature and content identity. Infrastructure can carry or withhold bytes, but it does not become the author.\n\n2. Blindness is a constraint, not a magic feature\n\nOpaque keys and sealed structural fields reduce passive indexing, but IP, timing, volume and access patterns remain metadata. Public content is not secret from a determined reader.\n\n3. The codebase must outrank the whiteboard\n\nDurable floors, exact content identities, orphan-safe threads and fail-closed release profiles matter more than attractive architecture claims.\n\n4. Capability boundaries must be explicit\n\nPearBrowser is the native peer and writer path. The accepted sequence-26 website is a signed GET-only reader; its local composer cannot claim a network publish.\n\n5. The ethos has hard ceilings — name them\n\n- Sybil resistance is incomplete: identities are cheap and votes are not one-human-one-vote.\n- Name squatting at genesis remains a pure-gossip problem.\n- The web origin remains an availability chokepoint even though signed releases constrain silent byte replacement; mirrors are still needed.\n- The two public relays are owner-operated and do not prove independent operators.\n- Identity recovery exists through explicit encrypted export/import and the PearBrowser root path, but losing every backup is still permanent.\n\n6. Familiar shell, radical spine\n\nPeerit looks like Reddit on purpose. The goal is to make communities legible while signatures, local verification and bounded infrastructure carry the trust model underneath.\n\nSources: EXPLAINER.md, README.md, PATTERNS.md, deploy/web-release.json at sequence 26, docs/HOW-PEERIT-WORKS.html, and the PearBrowser v0.8.0 release documentation.",
+      "seed": "v1-seed-p2pbuilders-11",
+      "replies": []
+    },
+    {
+      "board": "p2pbuilders",
+      "order": 12,
+      "pinned": false,
+      "announcement": false,
+      "bounty": false,
+      "ribbon": "standard-seed · discussion",
+      "opPersona": "ops-homelab",
+      "opHandle": "rack-in-closet",
+      "opBadge": "operator",
+      "opTime": "0",
+      "title": "P2P audio apps — music, podcasts, mixes. Who's building, what works, what hits the wall?",
+      "bodyText": "Audio keeps coming up — music, DJ sets, podcasts, generative mixes — so let's get one proper thread going. Not real-time voice; audio as content. Three shapes:\n\n1. Music / mixtapes over Hypercore (the media-app pattern)\n\nAuthor appends track bytes; listeners pull blocks from whoever has them. No live latency budget — just throughput and availability. Proven shape for video on Hypercore; audio is the easier case. The catches: cold-start pulls from the author's device until 2–3 peers have it (attach a HiveRelay seeder for always-on); keep cover art/metadata as separate Hyperdrive assets; Opus at ~96–128 kbps is the sweet spot (FLAC's bandwidth cost is real on mobile).\n\n2. Podcasts (async, episodic)\n\nEach episode is a Hypercore entry; subscribers auto-pull from the feed. No Spotify, no RSS redirect — the artist owns distribution. The open question is discovery without an algorithm; my bet is social — Peerit communities, Nostr boosts, manual curation.\n\n3. Live DJ sets (the hard case)\n\nListeners tolerate ~3–10 seconds, but the stream must keep moving. Options: append-only Hypercore with poll-based pull (pseudo-live, ~5s buffer, cheap and reliable); Hyperswarm multicast (near-real-time for native Pear apps, browsers need a WSS bridge); or WebRTC to a fanout node (SFU scaling problem — someone does the forwarding; rotate the role and it's decentralized in structure, not in any given moment).\n\n4. The browser problem\n\nA browser cannot open UDP sockets: listeners need a WSS bridge (dht-relay-ws, can be made blind), HTTP range-requests against a seeded Hyperdrive (fine on-demand, useless live), or WebRTC (centralized signaling + TURN). On-demand audio in a browser works great today; live audio needs a relay, full stop. Native Pear apps escape the relay entirely.\n\nWhat I want to know\n\n- Who's shipped a P2P music or podcast app on Hypercore? Repo, codec, pull-from-peers UX.\n- Live DJ sets on Hyperswarm — realistic listener count before mesh fanout dies?\n- Discovery without an algorithm — what actually works?\n- Payments to artists — Lightning per-play? Tip jars? How does the artist eat?\n\nAnchors: js/blob-disperse.js + deploy/peerit-relay/README.md (dht-relay-ws bridge in actual use); DURABILITY.md:91-115 (HiveRelay seeder pattern for always-on availability).",
+      "seed": "v1-seed-p2pbuilders-12",
+      "replies": [
+        {
+          "persona": "skeptic-ceilings",
+          "handle": "threat-model-max",
+          "delayOffset": "5h",
+          "delayMinutes": 300,
+          "bodyText": "Honest reality check on live DJ sets over mesh: fanout dies fast. A DJ pushing one Opus stream to 50 listeners over pure mesh means the DJ's upload is the bottleneck — they're sending 50 copies of the stream. You need either a tree (each listener forwards to 2 others) or an SFU. Trees work in theory but one flaky peer breaks a branch and you get buffering cascades. Realistic ceiling for pure-mesh live audio before it falls apart: ~10–15 listeners on consumer upload. Past that, you need a fanout role — which is a server, even if you rotate it.",
+          "seed": "v1-seed-p2pbuilders-12-r1"
+        }
+      ]
+    },
+    {
+      "board": "showcase",
+      "order": 13,
+      "pinned": false,
+      "announcement": false,
+      "bounty": false,
+      "ribbon": "showcase · verified",
+      "opPersona": "builder-core",
+      "opHandle": "ships-hyper",
+      "opBadge": "builder",
+      "opTime": "0",
+      "title": "Show your app: Ultimate Sports — bracket picks and prediction pools syncing P2P, no game server",
+      "bodyText": "The infra posts here need a counterweight: a full consumer app living on this stack. Ultimate Sports is a multi-sport bracket-picker + social prediction platform (forked from PearCup) — pools, watch rooms, side-quest challenges, and no game server anywhere in the design.\n\nHow it uses the primitives we've been posting about:\n\n- Pools as mergeable event streams. Every pick, challenge and settlement is a deterministic event envelope; pool state is the merge of the event log (transport-engine.js for P2P topics + publish/pull/sync, event-log.js for merge + roots). Replayable, auditable, no authoritative server copy.\n- On-device commentary. Room summaries and referee-style commentary come from a deterministic QVAC engine — the same on-device inference stack the r/ai_local crowd benches, not a hosted API.\n- Compliance as a first-class engine. Demo / sponsor-prize / real-money gates are separate policy tiers with responsible-play limits and redacted payout declarations — the money side is designed to be regulated, not bolted on.\n\nHonest status: today it ships as a browser/PWA preview; native P2P delivery waits on the signed AppRelease v2 + v3 host migration (docs/PEAR_V3_MIGRATION.md). That's the same dual-ship road Peerit already walks — normal browser today, native when the catalogue path closes out. It's in the PearBrowser catalogue (pearbrowser-catalogue.json). Live preview: https://ultimate-sports.pages.dev/lobby-app/ (forked from PearCup).\n\nVerified: 02-apps/ultimate-sports/README.md (platform + folder contract), docs/PEAR_V3_MIGRATION.md (delivery status), src/transport-engine.js, src/event-log.js, src/qvac-engine.js, src/compliance-engine.js, pearbrowser-catalogue.json.",
+      "seed": "v1-seed-p2pbuilders-13",
+      "replies": []
+    },
+    {
+      "board": "p2pbuilders",
+      "order": 14,
+      "pinned": false,
+      "announcement": false,
+      "bounty": true,
+      "ribbon": "💰 bounty · discussion",
+      "opPersona": "newcomer-q",
+      "opHandle": "just-arrived",
+      "opBadge": "newcomer",
+      "opTime": "0",
+      "title": "What should Peerit pay builders for in month one?",
+      "bodyText": "One launch bounty is live: $200 for the best living board across Peerit in 14 days — details in the bounty section.\n\nWhat else would actually be worth paying for if the pool grows? My pitch: a clean v2 post importer so an existing community can migrate without losing history. One feature like that unlocks more boards than any amount of marketing.\n\nWhat PRs would you take, and at what scope?",
+      "seed": "v1-seed-p2pbuilders-14",
+      "replies": [
+        {
+          "persona": "mod-flagship",
+          "handle": "board-steward",
+          "delayOffset": "1d",
+          "delayMinutes": 1440,
+          "bodyText": "How payouts get adjudicated: reproducible PRs merged inside the launch window, judged in a pinned thread with the diff visible. No \"vibes\" payouts — if it's not mergeable and demonstrated, it doesn't get paid.",
+          "seed": "v1-seed-p2pbuilders-14-r1"
+        }
+      ]
+    }
+  ],
+  "reseedOf": {
+    "manifest": "launch/FINAL-SEED-MANIFEST.json",
+    "reason": "apply owner-ordered community swap (fediverse,cypherpunk -> redditalternatives,showcase) and rebalance posts across boards; empty boards reserved for bounty: nostr, privacy, redditalternatives, osint"
+  }
+}

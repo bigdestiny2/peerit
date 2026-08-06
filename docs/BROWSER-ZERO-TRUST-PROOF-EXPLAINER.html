@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Browser Is a Zero-Trust Client Now — the seq-20 Browser Proof</title>
+<style>
+  :root{
+    --bg:#0a0e14; --bg-2:#0f1620; --panel:#111821; --panel-2:#0d141d;
+    --ink:#e8eef6; --dim:#8b9bb0; --faint:#5b6b80;
+    --line:#1f2a3a; --line-2:#152028;
+    --accent:#4fd1c5; --accent-2:#5b9fd4; --gold:#e0a54b; --rose:#e0533d; --violet:#9b7ed9; --green:#3ecf8e;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--accent-2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{background:#0a0f16;border:1px solid var(--line);padding:.05em .4em;border-radius:4px;
+    font:.88em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cfe3ff}
+  pre{background:#0a0f16;border:1px solid var(--line);border-radius:10px;padding:1em 1.2em;overflow:auto}
+  pre code{background:none;border:0;padding:0;color:#cfe3ff}
+
+  .wrap{max-width:920px;margin:0 auto;padding:0 1.4em}
+  main{padding-bottom:6em}
+
+  header.hero{padding:4.5em 0 3em;border-bottom:1px solid var(--line);
+    background:radial-gradient(ellipse at top,rgba(79,209,197,.07),transparent 60%)}
+  .eyebrow{color:var(--accent);font-size:.8em;font-weight:700;letter-spacing:.18em;text-transform:uppercase;margin:0 0 .8em}
+  h1{font-size:2.6em;line-height:1.1;margin:.1em 0 .3em;letter-spacing:-.025em;font-weight:800}
+  h1 .grad{background:linear-gradient(120deg,var(--accent),var(--accent-2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:1.2em;color:var(--dim);max-width:62ch;margin:1em 0 0}
+  .meta{margin-top:2em;display:flex;flex-wrap:wrap;gap:.6em;font-size:.82em;color:var(--faint)}
+  .meta span{padding:.3em .7em;border:1px solid var(--line);border-radius:999px;background:var(--panel)}
+
+  section{padding:3em 0;border-bottom:1px solid var(--line-2)}
+  section:last-of-type{border-bottom:0}
+  h2{font-size:1.7em;letter-spacing:-.015em;margin:0 0 .6em;font-weight:700}
+  h2 .num{color:var(--accent);font-variant-numeric:tabular-nums;margin-right:.5em;font-weight:800}
+  h3{font-size:1.2em;margin:1.6em 0 .5em;font-weight:700;letter-spacing:-.01em}
+  h4{font-size:1.02em;margin:1.4em 0 .4em;color:var(--accent-2);font-weight:700}
+  p{margin:.7em 0}
+  ul,ol{margin:.7em 0;padding-left:1.5em}
+  li{margin:.35em 0}
+  .lead{font-size:1.08em;color:#cdd6e3}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.3em 1.5em;margin:1.2em 0}
+  .card h3,.card h4{margin-top:0}
+  .callout{border-left:3px solid var(--accent);background:var(--panel-2);padding:.9em 1.2em;border-radius:0 8px 8px 0;margin:1.2em 0}
+  .callout.warn{border-left-color:var(--gold)}
+  .callout.bad{border-left-color:var(--rose)}
+  .callout.good{border-left-color:var(--green)}
+  .callout p{margin:.3em 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:1em;margin:1.2em 0}
+  @media (max-width:720px){.grid2{grid-template-columns:1fr}}
+  .stat{text-align:center;padding:1.1em .6em;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+  .stat b{display:block;font-size:1.9em;color:var(--accent);font-variant-numeric:tabular-nums}
+  .stat span{font-size:.85em;color:var(--dim)}
+  table{width:100%;border-collapse:collapse;margin:1.2em 0;font-size:.92em}
+  th,td{text-align:left;padding:.55em .7em;border-bottom:1px solid var(--line-2);vertical-align:top}
+  th{color:var(--accent-2);font-weight:700;border-bottom:1px solid var(--line)}
+  .small{font-size:.85em;color:var(--dim)}
+  .tag{display:inline-block;padding:.1em .55em;border-radius:999px;font-size:.78em;font-weight:700;letter-spacing:.03em}
+  .tag.green{background:rgba(62,207,142,.12);color:var(--green);border:1px solid rgba(62,207,142,.35)}
+  .tag.rose{background:rgba(224,83,61,.1);color:var(--rose);border:1px solid rgba(224,83,61,.35)}
+  .tag.gold{background:rgba(224,165,75,.1);color:var(--gold);border:1px solid rgba(224,165,75,.35)}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Peerit × HiveRelay · bounded public test · 2026-07-31</p>
+    <h1>The browser is a <span class="grad">zero-trust client</span> now</h1>
+    <p class="lede">A completely stock Chrome — no extension, no flags, no install — can now be a full,
+      cryptographically self-verifying client of the blind P2P substrate, under a strict production CSP.
+      It was never true before. It is true now, three browser versions deep, with receipts.</p>
+    <div class="meta">
+      <span>Chromium 145 / 149 / 151 — identical results</span>
+      <span>40 verified CELL.GETs · 0 PUTs</span>
+      <span>39 live records, byte-exact</span>
+      <span>script-src 'self' · zero violations</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<div class="callout warn">
+  <strong>Historical proof snapshot:</strong> this page records the seq-20 browser proof. Repository
+  <code>main</code> now carries accepted release sequence 26 with the same GET-only trust boundary plus
+  subsequent recovery and first-visit fixes.
+</div>
+
+<section id="achieved">
+  <h2><span class="num">01</span>What was achieved</h2>
+  <p class="lead">A fresh browser, given nothing but a signed bootstrap artifact and two relay URLs,
+    can now do all of the following on its own:</p>
+  <ul>
+    <li><strong>Verify the relays before trusting them.</strong> It walks each relay's descriptor chain
+      back to a pinned genesis and checks every Ed25519 signature locally. No trust assumption, no
+      "because the site says so."</li>
+    <li><strong>Cold-recover the entire seeded forum.</strong> It enumerates all 11 launch communities
+      and assembles the feeds — <strong>40 verified CELL.GETs and 0 PUTs</strong> — pulling 39 live
+      records and checking every one byte-for-byte against what was published, boxed blob payloads
+      included.</li>
+    <li><strong>Do it under a strict production CSP.</strong> <code>script-src 'self'</code> — no
+      <code>unsafe-eval</code>, no <code>wasm-unsafe-eval</code> — with <strong>zero CSP violations
+      and zero page errors</strong>, identically across Chromium 145, 149, and 151.</li>
+  </ul>
+  <div class="callout good">
+    <p><strong>The property this delivers:</strong> the browser trusts math, not the relay. Every post,
+    comment, and community on the page is verified against its author's signature on the user's own
+    machine. The relay can withhold data. It can never forge it.</p>
+  </div>
+  <div class="grid2">
+    <div class="stat"><b>0</b><span>trust placed in relays</span></div>
+    <div class="stat"><b>39</b><span>live records recovered byte-exact</span></div>
+    <div class="stat"><b>0</b><span>WASM bytes shipped to the browser</span></div>
+    <div class="stat"><b>3</b><span>Chromium versions, same result</span></div>
+  </div>
+</section>
+
+<section id="defect">
+  <h2><span class="num">02</span>What was blocking it — and why nobody saw it</h2>
+  <p class="lead">The browser bundle's crypto libraries eagerly compiled WebAssembly <em>at import</em>.
+    Under a strict CSP, that is a hard <code>CompileError</code> — the entire module graph dies before
+    one line of application code executes. The app was completely unrunnable in a real browser.</p>
+
+  <h3>The chain of the defect</h3>
+  <pre><code>bundle import
+  └─ sodium-universal
+     └─ sodium-javascript@0.8
+        ├─ sha512-universal → sha512-wasm   ← synchronous new WebAssembly.Module() at import — the import-killer
+        └─ blake2b          → blake2b-wasm  ← async compile left as an unhandled rejection</code></pre>
+
+  <p>The uncomfortable part is <em>why it was invisible</em>:</p>
+  <ul>
+    <li><strong>Every prior proof ran in Node.</strong> Node has no CSP. Write/readback drills, cold-recovery
+      proofs, canary drills — all green, all in an environment where the defect cannot exist.</li>
+    <li><strong>The accepted release line listed the browser gate as a <em>retained hold</em>.</strong>
+      The seq-19 acceptance named the live-two-relay Chromium gate among items explicitly not executed.
+      The browser path had literally never been run.</li>
+    <li><strong>The static gates would have passed anyway.</strong> They verify decision documents and
+      continuity — not browser behavior. The bundle would have shipped browser-broken with every
+      checkbox green.</li>
+  </ul>
+  <div class="callout bad">
+    <p><strong>It only surfaced because the launch chain had a rule:</strong> a real Chromium gate
+    passes, or nothing ships. The gate ran, on three Chrome versions, and caught what review and CI
+    had both missed — a latent ship-blocker in an <em>accepted</em> artifact.</p>
+  </div>
+</section>
+
+<section id="fix">
+  <h2><span class="num">03</span>The fix — and why it's the right fix, not the cheat</h2>
+  <p class="lead">The easy way out was to relax the CSP — add <code>wasm-unsafe-eval</code> and let the
+    page weaken its own security posture to make the app run. Both owner decisions explicitly forbid
+    that. So the fix went the other way: <strong>the WASM packages were aliased out of the browser
+    build entirely.</strong></p>
+
+  <div class="card">
+    <h3>Artifact-side, zero-WASM</h3>
+    <p>Checked-in stand-ins answer "unavailable" through the exact <code>ready()</code> /
+      <code>SUPPORTED</code> surface the libraries expect, so their built-in <strong>pure-JS
+      fallbacks</strong> execute instead. Result: zero WASM bytes in the bundle, zero violation
+      attempts, CSP untouched.</p>
+    <p class="small">Note the intermediate failure: a first pass that merely wrapped the compiles in
+      try/catch still produced <code>wasm-eval</code> securitypolicyviolation reports — an attempted
+      compile is a violation even when caught. The packages had to go, not be wrapped.</p>
+  </div>
+
+  <h3>Why it's legitimate and not a hack</h3>
+  <p>The protocol is <strong>byte-identical</strong> either way. The same request construction was run
+    through three engines and produced identical bytes:</p>
+  <table>
+    <thead><tr><th>Engine</th><th>Environment</th><th><code>createGetCellRequest</code> output</th></tr></thead>
+    <tbody>
+      <tr><td>blake2b-wasm (old)</td><td>Node</td><td>66 B · sha256 <code>1ef97899…fb925c</code></td></tr>
+      <tr><td>pure-JS (new)</td><td>Node</td><td>66 B · sha256 <code>1ef97899…fb925c</code></td></tr>
+      <tr><td>pure-JS (new)</td><td>Chromium under production CSP</td><td>66 B · sha256 <code>1ef97899…fb925c</code></td></tr>
+    </tbody>
+  </table>
+  <p>Same wire format, same signatures, same semantics. Only the engine computing the hash changed.
+    Wire tuple and composition hashes are unchanged everywhere.</p>
+</section>
+
+<section id="significance">
+  <h2><span class="num">04</span>Why it's significant</h2>
+
+  <h4>The dual-ship claim is finally honest</h4>
+  <p>Peerit's pitch has always been "same signed data, two ways to run — native P2P or a normal
+    browser." Until this week, the normal-browser half of the <em>blind-substrate</em> path was
+    aspirational: it had never been executed under a real CSP. Now it has receipts.</p>
+
+  <h4>Zero-install zero-trust works in practice</h4>
+  <p>A user who installs nothing can read a P2P forum whose integrity depends on no server. That is
+    the entire point of the architecture — demonstrated end-to-end for the first time, in the
+    environment users actually have.</p>
+
+  <h4>CSP-safe P2P deploys anywhere static</h4>
+  <p>No WASM, no eval, no plugins: the entire client is static files that can sit on any host —
+    Render, Cloudflare Pages, IPFS — behind a hardened CSP. "P2P apps that deploy like plain web
+    pages" is a genuine distribution unlock, and it's what makes "try it in a tab, graduate to
+    native" real instead of a slogan.</p>
+
+  <h4>The catch matters as much as the fix</h4>
+  <p>A latent ship-blocker inside an <em>accepted</em> release was caught because the chain refused
+    to trust static gates. That discipline — evidence over checkboxes — is the same discipline that
+    caught the atomic-ingress deployability gap and the probe-purge ambiguity earlier in the same
+    launch. It is the reason the launch is honest.</p>
+</section>
+
+<section id="boundary">
+  <h2><span class="num">05</span>The honest boundary</h2>
+  <p class="lead">Significance without inflation:</p>
+  <ul>
+    <li>What is proven is the <strong>read/recovery path</strong> in stock browsers. INBOX/CORE client
+      composition remains limited.</li>
+    <li>The GA product gate stays closed — <strong>22 blockers disclosed-open</strong> in the release
+      evidence, not hidden.</li>
+    <li>The relays are two <strong>owner-operated</strong> failure domains. This is a bounded public-test
+      canary, not independent operation, and it is labelled that way everywhere.</li>
+    <li>The seq-19 accepted bundle carries the same latent defect; it is recorded in the disclosure
+      ledger for reassessment after this fix line.</li>
+  </ul>
+  <div class="callout warn">
+    <p>The specific new truth is narrow and exact: <strong>a stock browser can be a verified client
+    of the blind substrate under real CSP.</strong> Everything broader — full consumer GA, independent
+    operators, complete INBOX/CORE — is future work, and it says so on the label.</p>
+  </div>
+</section>
+
+<section id="evidence">
+  <h2><span class="num">06</span>Evidence</h2>
+  <table>
+    <thead><tr><th>Item</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Chromium gate (live two relays, seq 20)</td><td><span class="tag green">PASS</span> exit 0 on Chrome 145 / 149 / 151 — 40 verified CELL.GETs, 0 PUTs, zero violations, zero pageErrors</td></tr>
+      <tr><td>Node cold-recovery</td><td>39 verified CELL.GETs · 0 PUTs · 34/34 records byte-exact vs manifest (boxed bounty incl. blob)</td></tr>
+      <tr><td>Crypto equivalence</td><td><code>createGetCellRequest</code> 66 B, sha256 <code>1ef97899…fb925c</code> — identical across old-WASM Node, pure-JS Node, pure-JS Chromium+CSP</td></tr>
+      <tr><td>Canonical fix (hiverelay)</td><td>commit <code>b177e1f2</code> on <code>codex/blind-client-csp-safe-wasm-load-20260731</code></td></tr>
+      <tr><td>Launch bundle (bind)</td><td>commit <code>5cd6813</code> on <code>codex/peerit-seq20-launch-20260731</code> — sequence 20, LIVE bounded-public-test slot</td></tr>
+      <tr><td>Launch reader bootstrap</td><td>sha256 <code>0a386975…</code> — names all 39 live cells × 2 relays, authority <code>691d524a…</code></td></tr>
+      <tr><td>Ceremony</td><td>deterministic build == prediction · sealed signing key <code>d6633dea…</code> (MATCH) · pin-history head 20 · canary verify READY · blueprint PASS</td></tr>
+      <tr><td>Gate defect disclosure</td><td><code>disclosed-finding-seq19-browser-recovery-never-browser-proven-20260731.json</code></td></tr>
+      <tr><td>Full gate + ceremony evidence</td><td><code>peerit-launch-seq20-release-PASS-20260731t170000z.json</code> (+ 3 gate PASS JSONs, Node cold-recovery log)</td></tr>
+    </tbody>
+  </table>
+  <p class="small">Claim boundary: LIVE_PUBLIC_TEST_ONLY. Not GA. Every artifact above is reproducible
+    from the recorded evidence; nothing in this page asserts more than the linked proofs contain.</p>
+</section>
+
+</main>
+</body>
+</html>

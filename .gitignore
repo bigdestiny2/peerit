@@ -12,6 +12,7 @@ dist/
 .seed-personas-store.json
 
 # launch seed ops (private — never commit to the public repo)
+launch/.seed-readcap-vault.json
 launch/seed-identities.json
 launch/seed-identities.pubkey-map.example.json
 launch/seed-posts/
@@ -23,6 +24,7 @@ launch/reports/SEED-PUBLISH-BLIND-DRYRUN.md
 launch/reports/SEED-PUBLISH-DRYRUN.md
 launch/reports/seed-plan.md
 scripts/build-seed-manifest.mjs
+scripts/__raw-*.mjs
 scripts/publish-seed-waves.mjs
 scripts/publish-seed-waves-blind.mjs
 scripts/prove-*-cell-classes.mjs

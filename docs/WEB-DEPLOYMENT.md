@@ -352,8 +352,8 @@ Exact pins used by the browser DHT bundle:
 `random-access-memory@6.2.1`, `sodium-javascript@0.8.0`, `buffer@5.1.0`, and
 `esbuild@0.24.2`.
 
-Pin note (updated 2026-07-17): the repo's direct `corestore`/`hypercore` pins
-sit at the ecosystem baseline (`corestore@7.11.0`, `hypercore@11.33.5`). The
+Pin note (updated 2026-08-06): the repo's direct `corestore`/`hypercore` pins
+sit at the ecosystem baseline (`corestore@7.12.0`, `hypercore@11.35.1`). The
 browser DHT bundle still REQUIRES the random-access-storage era (corestore 6.x +
 hypercore 10.x) — newer file-storage-oriented releases pull Node
 `fs`/`path`/RocksDB code and will not browser-bundle — so `js/dht-transport.js`

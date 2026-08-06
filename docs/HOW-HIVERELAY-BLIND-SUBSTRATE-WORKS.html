@@ -1,0 +1,268 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="A plain-language visual explainer of HiveRelay atomic blind custody, PVSS bundles, blind cells, proofs, reconstruction, and honest limits."><meta name="color-scheme" content="dark"><title>How HiveRelay blind substrate works</title><style>
+:root {
+  --bg: #081019;
+  --surface: #0d1824;
+  --surface-2: #111f2d;
+  --border: #243344;
+  --border-strong: #385069;
+  --text: #f1f4f5;
+  --muted: #9dabb9;
+  --faint: #6f8090;
+  --accent: #ffae2b;
+  --accent-soft: #ffe0a1;
+  --accent-rgb: 255,174,43;
+  --good: #61d6a4;
+  --warn: #ffb66e;
+  --page: min(1180px, calc(100vw - 40px));
+  --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  min-width: 320px;
+  color: var(--text);
+  background: var(--bg);
+  font-family: var(--sans);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: .18;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='72' viewBox='0 0 72 72'%3E%3Cpath d='M0 71.5h72M71.5 0v72' fill='none' stroke='%237d91a6' stroke-opacity='.16'/%3E%3Ccircle cx='12' cy='12' r='1' fill='%237d91a6' fill-opacity='.22'/%3E%3C/svg%3E");
+}
+a { color: inherit; }
+button { color: inherit; font: inherit; }
+svg { display: block; }
+code, .mono { font-family: var(--mono); }
+::selection { color: var(--bg); background: var(--accent); }
+.skip-link {
+  position: fixed; z-index: 100; top: 10px; left: 10px; transform: translateY(-160%);
+  padding: 9px 13px; border-radius: 7px; color: var(--bg); background: var(--text);
+  font-weight: 800; transition: transform .15s ease;
+}
+.skip-link:focus { transform: translateY(0); }
+.site-header {
+  position: sticky; z-index: 50; top: 0; border-bottom: 1px solid rgba(56,80,105,.62);
+  background: rgba(8,16,25,.94); backdrop-filter: blur(16px);
+}
+.header-inner {
+  width: var(--page); min-height: 64px; margin: 0 auto; display: flex;
+  align-items: center; justify-content: space-between; gap: 22px;
+}
+.brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 850; letter-spacing: -.025em; }
+.brand-mark {
+  width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--accent);
+  border-radius: 9px; color: var(--accent); font: 850 15px var(--mono); background: rgba(var(--accent-rgb),.08);
+}
+.nav-list { display: flex; align-items: center; gap: clamp(12px,2.4vw,30px); margin: 0; padding: 0; list-style: none; }
+.nav-list a { color: var(--muted); font-size: 13px; font-weight: 700; text-decoration: none; white-space: nowrap; }
+.nav-list a:hover, .nav-list a:focus-visible { color: var(--accent); }
+main { overflow: hidden; }
+.hero, .section { width: var(--page); margin: 0 auto; scroll-margin-top: 64px; }
+.hero {
+  min-height: calc(100vh - 64px); padding: clamp(70px,8vw,112px) 0 84px;
+  display: grid; grid-template-columns: minmax(0,.86fr) minmax(500px,1.14fr);
+  align-items: center; gap: clamp(48px,6vw,88px);
+}
+.eyebrow { margin: 0 0 18px; color: var(--accent); font: 760 12px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+h1,h2,h3,p { margin-top: 0; }
+h1,h2,h3 { text-wrap: balance; }
+h1 { max-width: 650px; margin-bottom: 23px; font-size: clamp(50px,6.4vw,82px); line-height: 1; letter-spacing: -.058em; }
+h2 { margin-bottom: 14px; font-size: clamp(32px,4vw,50px); line-height: 1.08; letter-spacing: -.043em; }
+h3 { margin-bottom: 10px; font-size: 20px; line-height: 1.28; letter-spacing: -.02em; }
+.hero-copy > p:not(.eyebrow) { max-width: 590px; margin-bottom: 28px; color: var(--muted); font-size: clamp(19px,2vw,24px); line-height: 1.52; }
+.actions { display: flex; align-items: center; gap: 14px 22px; flex-wrap: wrap; }
+.button {
+  min-height: 47px; display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+  padding: 10px 19px; border: 1px solid var(--accent); border-radius: 9px;
+  color: var(--bg); background: var(--accent); text-decoration: none; font-weight: 800;
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.button:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(var(--accent-rgb),.16); }
+.text-link { color: var(--accent); text-decoration: none; font-weight: 760; }
+.text-link:hover { text-decoration: underline; text-underline-offset: 4px; }
+.hero-map { min-width: 0; }
+.map-frame {
+  position: relative; min-height: 470px; display: grid; grid-template-columns: 1fr 1.08fr 1fr;
+  align-items: center; gap: 26px; padding: 28px; border: 1px solid var(--border-strong);
+  background: rgba(13,24,36,.74);
+}
+.map-frame::before, .map-frame::after {
+  content: ""; position: absolute; top: 50%; width: 10%; height: 1px; background: var(--accent);
+}
+.map-frame::before { left: 28%; }
+.map-frame::after { right: 28%; }
+.map-column { position: relative; z-index: 1; display: grid; gap: 12px; }
+.map-label { color: var(--faint); font: 720 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.map-node {
+  min-height: 88px; display: grid; align-content: center; gap: 5px; padding: 15px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+}
+.map-node strong { font-size: 14px; }
+.map-node span { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.map-node.core { min-height: 160px; border-color: var(--accent); text-align: center; background: rgba(var(--accent-rgb),.06); }
+.map-node.core .core-mark {
+  width: 58px; height: 58px; margin: 0 auto 10px; display: grid; place-items: center;
+  border: 1px solid var(--accent); border-radius: 50%; color: var(--accent); font: 850 22px var(--mono);
+}
+.map-tags { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
+.tag { padding: 6px 9px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); background: var(--surface); font: 700 11px var(--mono); }
+.section { padding: clamp(82px,9vw,128px) 0; }
+.section + .section { border-top: 1px solid rgba(56,80,105,.45); }
+.section-head { max-width: 790px; margin-bottom: 46px; }
+.lead { color: var(--muted); font-size: clamp(17px,1.8vw,21px); }
+.journey-tabs {
+  display: grid; grid-template-columns: repeat(var(--step-count),1fr); gap: 0;
+  border: 1px solid var(--border-strong); background: var(--surface);
+}
+.journey-tab {
+  min-width: 0; min-height: 104px; padding: 17px 14px; border: 0; border-right: 1px solid var(--border);
+  color: var(--muted); background: transparent; text-align: left; cursor: pointer;
+}
+.journey-tab:last-child { border-right: 0; }
+.journey-tab:hover { color: var(--text); background: rgba(var(--accent-rgb),.04); }
+.journey-tab[aria-selected="true"] { color: var(--text); background: rgba(var(--accent-rgb),.11); box-shadow: inset 0 3px 0 var(--accent); }
+.tab-number { display: block; margin-bottom: 7px; color: var(--accent); font: 800 12px var(--mono); }
+.journey-tab strong { display: block; font-size: 14px; line-height: 1.3; }
+.journey-panel {
+  min-height: 280px; display: grid; grid-template-columns: .84fr 1.16fr; gap: 44px; align-items: center;
+  padding: clamp(26px,4vw,48px); border: 1px solid var(--border-strong); border-top: 0; background: rgba(13,24,36,.74);
+}
+.journey-panel[hidden], .atlas-panel[hidden] { display: none; }
+.stage-kicker { margin-bottom: 7px; color: var(--accent); font: 750 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.stage-copy p { color: var(--muted); }
+.stage-note { padding: 13px 15px; border-left: 2px solid var(--accent); background: rgba(var(--accent-rgb),.06); color: var(--accent-soft) !important; font-size: 13px; }
+.stage-visual { min-height: 180px; display: grid; grid-template-columns: repeat(3,1fr); align-items: center; gap: 16px; }
+.stage-box { min-height: 112px; display: grid; place-items: center; padding: 13px; border: 1px solid var(--border); border-radius: 9px; text-align: center; background: var(--surface-2); }
+.stage-box:nth-child(2) { border-color: var(--accent); color: var(--accent); }
+.stage-box strong { font-size: 13px; }
+.atlas-shell { border: 1px solid var(--border-strong); background: rgba(13,24,36,.72); }
+.atlas-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--border-strong); scrollbar-width: thin; }
+.atlas-tab {
+  min-height: 54px; flex: 1 0 auto; padding: 10px 18px; border: 0; border-right: 1px solid var(--border);
+  color: var(--muted); background: transparent; font-weight: 760; cursor: pointer;
+}
+.atlas-tab:last-child { border-right: 0; }
+.atlas-tab:hover { color: var(--text); }
+.atlas-tab[aria-selected="true"] { color: var(--bg); background: var(--accent); }
+.atlas-panel { min-height: 370px; padding: clamp(26px,4vw,46px); }
+.atlas-grid { display: grid; grid-template-columns: .86fr 1.14fr; gap: 46px; }
+.atlas-summary p { color: var(--muted); }
+.status-line { display: inline-flex; gap: 8px; align-items: center; color: var(--accent-soft); font: 700 12px var(--mono); }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.feature-list { margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; list-style: none; }
+.feature-list li { min-height: 74px; padding: 13px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 13px; line-height: 1.45; }
+.feature-list li::before { content: "✓"; margin-right: 8px; color: var(--accent); font-weight: 900; }
+.cap-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; }
+.cap-card { min-height: 190px; padding: 21px; border: 1px solid var(--border); background: rgba(13,24,36,.74); }
+.cap-top { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 26px; }
+.cap-index { color: var(--accent); font: 800 12px var(--mono); }
+.status-badge { padding: 4px 7px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); font: 680 10px var(--mono); white-space: nowrap; }
+.status-badge.live { border-color: rgba(97,214,164,.45); color: var(--good); }
+.status-badge.warn { border-color: rgba(255,182,110,.5); color: var(--warn); }
+.cap-card p { margin-bottom: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.truth-grid { display: grid; grid-template-columns: repeat(4,1fr); border: 1px solid var(--border-strong); }
+.truth-card { min-height: 220px; padding: 24px 20px; border-right: 1px solid var(--border); background: rgba(13,24,36,.72); }
+.truth-card:last-child { border-right: 0; }
+.truth-symbol { width: 38px; height: 38px; margin-bottom: 32px; display: grid; place-items: center; border: 1px solid var(--accent); border-radius: 50%; color: var(--accent); font: 800 14px var(--mono); }
+.truth-card p { color: var(--muted); font-size: 13px; }
+.glossary { display: grid; grid-template-columns: repeat(2,1fr); gap: 12px; }
+.glossary details { border: 1px solid var(--border); background: rgba(13,24,36,.72); }
+.glossary summary { padding: 17px 19px; cursor: pointer; font-weight: 760; list-style: none; }
+.glossary summary::-webkit-details-marker { display: none; }
+.glossary summary::after { content: "+"; float: right; color: var(--accent); font-family: var(--mono); }
+.glossary details[open] summary::after { content: "−"; }
+.glossary p { margin: 0; padding: 0 19px 18px; color: var(--muted); font-size: 14px; }
+.collection { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 42px; }
+.collection a { padding: 7px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); text-decoration: none; font: 680 11px var(--mono); }
+.collection a[aria-current="page"], .collection a:hover { border-color: var(--accent); color: var(--accent); }
+.footer { border-top: 1px solid var(--border); }
+.footer-inner { width: var(--page); margin: 0 auto; padding: 34px 0 44px; display: flex; justify-content: space-between; gap: 24px; color: var(--faint); font-size: 12px; }
+.source-note { max-width: 740px; }
+.reveal { opacity: 1; transform: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 980px) {
+  .hero { min-height: auto; grid-template-columns: 1fr; }
+  .hero-copy { max-width: 760px; }
+  .hero-map { max-width: 720px; }
+  .cap-grid { grid-template-columns: repeat(2,1fr); }
+  .truth-grid { grid-template-columns: repeat(2,1fr); }
+  .truth-card:nth-child(2) { border-right: 0; }
+  .truth-card:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
+}
+@media (max-width: 720px) {
+  :root { --page: min(100% - 28px, 1180px); }
+  .header-inner { min-height: 58px; }
+  .nav-list li:nth-child(-n+2) { display: none; }
+  .hero { padding-top: 58px; }
+  h1 { font-size: clamp(43px,14vw,64px); }
+  .map-frame { min-height: 0; grid-template-columns: 1fr; padding: 18px; gap: 14px; }
+  .map-frame::before, .map-frame::after { display: none; }
+  .map-node.core { min-height: 130px; }
+  .journey-tabs { grid-template-columns: 1fr 1fr; }
+  .journey-tab { min-height: 86px; border-bottom: 1px solid var(--border); }
+  .journey-panel, .atlas-grid { grid-template-columns: 1fr; }
+  .stage-visual { grid-template-columns: 1fr; }
+  .feature-list, .cap-grid, .glossary { grid-template-columns: 1fr; }
+  .truth-grid { grid-template-columns: 1fr; }
+  .truth-card { border-right: 0; border-bottom: 1px solid var(--border); }
+  .truth-card:last-child { border-bottom: 0; }
+  .footer-inner { flex-direction: column; }
+}
+@media (max-width: 520px) {
+  .nav-list { display: none; }
+  .brand { font-size: 15px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .reveal { opacity: 1; transform: none; }
+}
+@media print {
+  :root { --bg:#fff; --surface:#fff; --surface-2:#fff; --text:#111827; --muted:#46505d; --faint:#64748b; --border:#cbd5e1; --border-strong:#94a3b8; }
+  body::before, .site-header, .actions, .collection { display:none; }
+  .hero { min-height: auto; }
+  .section { padding: 46px 0; break-inside: avoid; }
+  .reveal { opacity:1; transform:none; }
+}
+:root{--accent:#b889ff;--accent-soft:#e5d0ff;--accent-rgb:184,137,255}</style></head><body><a class="skip-link" href="#main">Skip to explainer</a><header class="site-header"><div class="header-inner"><a class="brand" href="#top"><span class="brand-mark">BC</span>HiveRelay blind substrate</a><nav aria-label="Page sections"><ul class="nav-list"><li><a href="#journey">Journey</a></li><li><a href="#atlas">Features</a></li><li><a href="#truth">Status</a></li></ul></nav></div></header><main id="main"><section class="hero" id="top"><div class="hero-copy reveal"><p class="eyebrow">How the blind substrate works</p><h1>Relays can hold it without knowing it.</h1><p>Your app encrypts and splits the secret. HiveRelay stores verifiable blind cells. A reader who gathers the threshold rebuilds the key locally.</p><div class="actions"><a class="button" href="#journey">Explore the system →</a><a class="text-link" href="#glossary">Plain-English glossary</a></div></div><div class="hero-map reveal"><div class="map-frame"><div class="map-column"><span class="map-label">Input &amp; owner edge</span><div class="map-node"><strong>Publisher edge</strong><span>Encrypts before the network</span></div><div class="map-node"><strong>Signed intent</strong><span>Binds each cell to one relay</span></div></div><div class="map-column"><span class="map-label">Core</span><div class="map-node core"><span class="core-mark">BC</span><strong>Blind cells</strong><span>Opaque, addressed, independently placed</span></div></div><div class="map-column"><span class="map-label">Routes &amp; readers</span><div class="map-node"><strong>Independent relays</strong><span>Each holds one opaque cell</span></div><div class="map-node"><strong>Reader edge</strong><span>Verifies and reconstructs locally</span></div></div></div><div class="map-tags"><span class="tag">Ciphertext only</span><span class="tag">PVSS</span><span class="tag">k-of-n</span><span class="tag">Custody receipts</span><span class="tag">Expiry witnesses</span></div></div></section><section class="section" id="journey"><div class="section-head reveal"><p class="eyebrow">The journey</p><h2>The secret never crosses the relay boundary.</h2><p class="lead">This illustrative 3-of-5 flow shows the shape. HiveRelay's simulation-recommended production profile is 16 cells with a 10-cell reconstruction threshold.</p></div><div class="journey-tabs reveal" role="tablist" aria-label="Journey steps" style="--step-count:6"><button class="journey-tab" type="button" role="tab" id="journey-tab-0" aria-selected="true" aria-controls="journey-panel-0" tabindex="0"><span class="tab-number">01</span><strong>Encrypt</strong></button><button class="journey-tab" type="button" role="tab" id="journey-tab-1" aria-selected="false" aria-controls="journey-panel-1" tabindex="-1"><span class="tab-number">02</span><strong>Split</strong></button><button class="journey-tab" type="button" role="tab" id="journey-tab-2" aria-selected="false" aria-controls="journey-panel-2" tabindex="-1"><span class="tab-number">03</span><strong>Publish intent</strong></button><button class="journey-tab" type="button" role="tab" id="journey-tab-3" aria-selected="false" aria-controls="journey-panel-3" tabindex="-1"><span class="tab-number">04</span><strong>Place</strong></button><button class="journey-tab" type="button" role="tab" id="journey-tab-4" aria-selected="false" aria-controls="journey-panel-4" tabindex="-1"><span class="tab-number">05</span><strong>Prove &amp; expire</strong></button><button class="journey-tab" type="button" role="tab" id="journey-tab-5" aria-selected="false" aria-controls="journey-panel-5" tabindex="-1"><span class="tab-number">06</span><strong>Rebuild</strong></button></div><div class="journey-panel" role="tabpanel" id="journey-panel-0" aria-labelledby="journey-tab-0"><div class="stage-copy"><p class="stage-kicker">Step 1</p><h3>Encrypt</h3><p>The app creates a random data key and encrypts the content on the publisher's own device.</p><p class="stage-note">Relays never receive the plaintext or data key.</p></div><div class="stage-visual"><div class="stage-box"><strong>Plaintext local</strong></div><div class="stage-box"><strong>Ciphertext out</strong></div><div class="stage-box"><strong>Random key</strong></div></div></div><div class="journey-panel" role="tabpanel" id="journey-panel-1" aria-labelledby="journey-tab-1" hidden><div class="stage-copy"><p class="stage-kicker">Step 2</p><h3>Split</h3><p>PVSS turns the key into n opaque shares. Any k can reconstruct; fewer than k cannot.</p><p class="stage-note">Public proofs let anyone check that shares are well formed.</p></div><div class="stage-visual"><div class="stage-box"><strong>n shares</strong></div><div class="stage-box"><strong>k threshold</strong></div><div class="stage-box"><strong>DLEQ proofs</strong></div></div></div><div class="journey-panel" role="tabpanel" id="journey-panel-2" aria-labelledby="journey-tab-2" hidden><div class="stage-copy"><p class="stage-kicker">Step 3</p><h3>Publish intent</h3><p>A signed custody intent names the roster, cell hashes, threshold, commitments, and retention window.</p><p class="stage-note">Every relay must see the intent before any cell upload.</p></div><div class="stage-visual"><div class="stage-box"><strong>Roster</strong></div><div class="stage-box"><strong>Manifest</strong></div><div class="stage-box"><strong>Retain until</strong></div></div></div><div class="journey-panel" role="tabpanel" id="journey-panel-3" aria-labelledby="journey-tab-3" hidden><div class="stage-copy"><p class="stage-kicker">Step 4</p><h3>Place</h3><p>Exactly one content-addressed cell is uploaded to each assigned relay with a signed pin.</p><p class="stage-note">An orphan or roster mismatch is rejected.</p></div><div class="stage-visual"><div class="stage-box"><strong>One cell</strong></div><div class="stage-box"><strong>One relay</strong></div><div class="stage-box"><strong>Hash-bound</strong></div></div></div><div class="journey-panel" role="tabpanel" id="journey-panel-4" aria-labelledby="journey-tab-4" hidden><div class="stage-copy"><p class="stage-kicker">Step 5</p><h3>Prove &amp; expire</h3><p>Relays sign receipts and possession proofs. After retention, they stop serving and sign non-serving proofs; witnesses can sign tombstones.</p><p class="stage-note">This proves observed protocol state, not physical disk erasure.</p></div><div class="stage-visual"><div class="stage-box"><strong>Receipt</strong></div><div class="stage-box"><strong>Proof</strong></div><div class="stage-box"><strong>Tombstone</strong></div></div></div><div class="journey-panel" role="tabpanel" id="journey-panel-5" aria-labelledby="journey-tab-5" hidden><div class="stage-copy"><p class="stage-kicker">Step 6</p><h3>Rebuild</h3><p>A reader fetches cells, re-hashes and verifies every proof, then reconstructs the key and decrypts locally.</p><p class="stage-note">Below the threshold, reconstruction fails closed.</p></div><div class="stage-visual"><div class="stage-box"><strong>Fetch k</strong></div><div class="stage-box"><strong>Verify</strong></div><div class="stage-box"><strong>Decrypt local</strong></div></div></div></section><section class="section" id="atlas"><div class="section-head reveal"><p class="eyebrow">Feature atlas</p><h2>Three generations, one custody state machine.</h2><p class="lead">The blind substrate grew in layers. They coexist, but what the relay stores changes.</p></div><div class="atlas-shell reveal"><div class="atlas-tabs" role="tablist" aria-label="Capability families"><button class="atlas-tab" type="button" role="tab" id="atlas-tab-0" aria-selected="true" aria-controls="atlas-panel-0" tabindex="0">Atomic custody</button><button class="atlas-tab" type="button" role="tab" id="atlas-tab-1" aria-selected="false" aria-controls="atlas-panel-1" tabindex="-1">PVSS bundles</button><button class="atlas-tab" type="button" role="tab" id="atlas-tab-2" aria-selected="false" aria-controls="atlas-panel-2" tabindex="-1">Blind cells</button><button class="atlas-tab" type="button" role="tab" id="atlas-tab-3" aria-selected="false" aria-controls="atlas-panel-3" tabindex="-1">Expiry &amp; burn</button></div><div class="atlas-panel" role="tabpanel" id="atlas-panel-0" aria-labelledby="atlas-tab-0"><div class="atlas-grid"><div class="atlas-summary"><p class="stage-kicker">Atomic custody</p><h3>Encrypted content handoff</h3><p>Explore the concrete capabilities in this family. The status line describes the current evidence boundary, not a marketing tier.</p><span class="status-line"><span class="status-dot"></span>Shipped since v0.8.0</span></div><ul class="feature-list"><li>Signed intent, receipts, commit</li><li>Logical source-authority retirement</li><li>Ciphertext possession challenges</li><li>Post-expiry non-serving proofs</li><li>Independent witness tombstones</li><li>Append-only custody registry</li></ul></div></div><div class="atlas-panel" role="tabpanel" id="atlas-panel-1" aria-labelledby="atlas-tab-1" hidden><div class="atlas-grid"><div class="atlas-summary"><p class="stage-kicker">PVSS bundles</p><h3>Threshold custody of key shares</h3><p>Explore the concrete capabilities in this family. The status line describes the current evidence boundary, not a marketing tier.</p><span class="status-line"><span class="status-dot"></span>Shipped v0.9.x line</span></div><ul class="feature-list"><li>Publicly verifiable encrypted shares</li><li>Whole bundle stored in a Hypercore</li><li>Relays verify without decrypting</li><li>Threshold reconstruction client-side</li><li>Feldman commitments and DLEQ</li><li>Social-recovery-grade primitive</li></ul></div></div><div class="atlas-panel" role="tabpanel" id="atlas-panel-2" aria-labelledby="atlas-tab-2" hidden><div class="atlas-grid"><div class="atlas-summary"><p class="stage-kicker">Blind cells</p><h3>One independently placeable shard blob</h3><p>Explore the concrete capabilities in this family. The status line describes the current evidence boundary, not a marketing tier.</p><span class="status-line"><span class="status-dot"></span>Shipped v0.22–0.24.x line</span></div><ul class="feature-list"><li>Content address per cell</li><li>Exactly one assigned relay per cell</li><li>4 MiB maximum per cell</li><li>Pin authorization bound to roster</li><li>Deduplicated blob storage</li><li>Client-side recovery helpers</li></ul></div></div><div class="atlas-panel" role="tabpanel" id="atlas-panel-3" aria-labelledby="atlas-tab-3" hidden><div class="atlas-grid"><div class="atlas-summary"><p class="stage-kicker">Expiry &amp; burn</p><h3>Stop serving at the protocol boundary</h3><p>Explore the concrete capabilities in this family. The status line describes the current evidence boundary, not a marketing tier.</p><span class="status-line"><span class="status-dot"></span>Implemented with explicit limits</span></div><ul class="feature-list"><li>60-second custody expiry monitor</li><li>Unseed and non-serving proof</li><li>Immediate burn after source-retired</li><li>Independent witness attestation</li><li>Disk-pressure shedding policy</li><li>No claim of physical deletion</li></ul></div></div></div></section><section class="section" id="capabilities"><div class="section-head reveal"><p class="eyebrow">Capability map</p><h2>What the relay sees — and never sees.</h2></div><div class="cap-grid"><article class="cap-card reveal"><div class="cap-top"><span class="cap-index">01</span><span class="status-badge live">sees</span></div><h3>Opaque cell bytes</h3><p>A content-addressed blob that is meaningless on its own.</p></article><article class="cap-card reveal"><div class="cap-top"><span class="cap-index">02</span><span class="status-badge live">sees</span></div><h3>Hashes &amp; commitments</h3><p>Enough public material to verify shape and possession.</p></article><article class="cap-card reveal"><div class="cap-top"><span class="cap-index">03</span><span class="status-badge live">sees</span></div><h3>Roster &amp; timing</h3><p>Relay pubkeys, cell index, size, retention, and operational metadata.</p></article><article class="cap-card reveal"><div class="cap-top"><span class="cap-index">04</span><span class="status-badge live">sees</span></div><h3>Signed lifecycle</h3><p>Intent, receipt, commit, proof, and witnessed expiry events.</p></article><article class="cap-card reveal"><div class="cap-top"><span class="cap-index">05</span><span class="status-badge warn">never sees</span></div><h3>Plaintext</h3><p>The application encrypts content before it reaches a relay.</p></article><article class="cap-card reveal"><div class="cap-top"><span class="cap-index">06</span><span class="status-badge warn">never sees</span></div><h3>Data key</h3><p>Key-material field names are rejected at the schema boundary.</p></article><article class="cap-card reveal"><div class="cap-top"><span class="cap-index">07</span><span class="status-badge warn">never sees</span></div><h3>Share scalars</h3><p>PVSS verification works without revealing the underlying scalar.</p></article><article class="cap-card reveal"><div class="cap-top"><span class="cap-index">08</span><span class="status-badge">by design</span></div><h3>Complete threshold</h3><p>Independent placement is meant to keep one relay below reconstruction power.</p></article><article class="cap-card reveal"><div class="cap-top"><span class="cap-index">09</span><span class="status-badge warn">never sees</span></div><h3>Decrypted reads</h3><p>Readers reconstruct and decrypt at their own edge.</p></article><article class="cap-card reveal"><div class="cap-top"><span class="cap-index">10</span><span class="status-badge">limited</span></div><h3>Authorisation truth</h3><p>A valid pin proves assignment; it does not prove the publisher was honest.</p></article><article class="cap-card reveal"><div class="cap-top"><span class="cap-index">11</span><span class="status-badge warn">cannot prove</span></div><h3>Physical deletion</h3><p>Commodity cryptography cannot prove a remote disk forgot every copy.</p></article><article class="cap-card reveal"><div class="cap-top"><span class="cap-index">12</span><span class="status-badge">needs evidence</span></div><h3>Operator independence</h3><p>Different relay keys do not by themselves prove different owners.</p></article></div></section><section class="section" id="truth"><div class="section-head reveal"><p class="eyebrow">Evidence boundary</p><h2>Honest limits are part of the protocol.</h2><p class="lead">Blind means no plaintext or key material at the relay. It does not mean no metadata, magical deletion, or automatic repair of every cell.</p></div><div class="truth-grid reveal"><article class="truth-card"><div class="truth-symbol">META</div><h3>Metadata still exists</h3><p>Cell hashes, public keys, timing, sizes, retention, and access patterns can be visible.</p></article><article class="truth-card"><div class="truth-symbol">DEL</div><h3>Deletion is observed</h3><p>Non-serving proofs and witnesses make continued serving detectable; they do not prove forensic erasure.</p></article><article class="truth-card"><div class="truth-symbol">REP</div><h3>Cell repair is not live</h3><p>Client recovery helpers ship, but relay-side DHT announce and AutoHeal integration for cells remain spec-only.</p></article><article class="truth-card"><div class="truth-symbol">COL</div><h3>Collusion matters</h3><p>A malicious dealer knows the secret, and colluding witnesses or a threshold of cell holders weaken the intended privacy boundary.</p></article></div></section><section class="section" id="glossary"><div class="section-head reveal"><p class="eyebrow">Glossary</p><h2>Words that carry the system.</h2><p class="lead">Open a term for the short version.</p></div><div class="glossary reveal"><details><summary>Blind cell</summary><p>Team shorthand for one content-addressed blind-shard blob. The code uses shard terminology.</p></details><details><summary>PVSS</summary><p>Publicly verifiable secret sharing: shares can be checked without revealing the secret.</p></details><details><summary>k-of-n</summary><p>Any k shares out of n can reconstruct; fewer than k cannot.</p></details><details><summary>Custody receipt</summary><p>A relay's signature saying it accepted the exact encrypted item named by the intent.</p></details><details><summary>Source retirement</summary><p>A signed lifecycle checkpoint that retires future authority; it is not proof the source erased local bytes.</p></details><details><summary>Tombstone</summary><p>A witness-signed observation that a relay was not serving the item after expiry.</p></details></div><nav class="collection" aria-label="Explainer collection"><a href="HOW-PEERIT-WORKS.html">Peerit</a><a href="HOW-HIVERELAY-WORKS.html">HiveRelay</a><a href="HOW-HIVERELAY-BLIND-SUBSTRATE-WORKS.html" aria-current="page">Blind substrate</a><a href="HOW-PEARBROWSER-WORKS.html">PearBrowser</a><a href="HOW-AGENT-HARBOUR-WORKS.html">Agent Harbour</a></nav></section></main><footer class="footer"><div class="footer-inner"><span class="source-note">Repository-grounded snapshot: HiveRelay BLIND-CELLS, ATOMIC-BLIND-CUSTODY, dealer-contract, crypto-guarantees, and v0.25 capability-audit documents; reviewed 6 August 2026.</span><span>Self-contained HTML · no network required</span></div></footer><script>
+(function () {
+  function wire(groupSelector, tabSelector, panelPrefix) {
+    document.querySelectorAll(groupSelector).forEach(function (group) {
+      var tabs = Array.from(group.querySelectorAll(tabSelector))
+      function select(index, focus) {
+        tabs.forEach(function (tab, i) {
+          var active = i === index
+          tab.setAttribute("aria-selected", active ? "true" : "false")
+          tab.tabIndex = active ? 0 : -1
+          var panel = document.getElementById(panelPrefix + i)
+          if (panel) panel.hidden = !active
+        })
+        if (focus) tabs[index].focus()
+      }
+      tabs.forEach(function (tab, index) {
+        tab.addEventListener("click", function () { select(index, false) })
+        tab.addEventListener("keydown", function (event) {
+          var next = index
+          if (event.key === "ArrowRight" || event.key === "ArrowDown") next = (index + 1) % tabs.length
+          else if (event.key === "ArrowLeft" || event.key === "ArrowUp") next = (index - 1 + tabs.length) % tabs.length
+          else if (event.key === "Home") next = 0
+          else if (event.key === "End") next = tabs.length - 1
+          else return
+          event.preventDefault()
+          select(next, true)
+        })
+      })
+    })
+  }
+  wire(".journey-tabs", ".journey-tab", "journey-panel-")
+  wire(".atlas-tabs", ".atlas-tab", "atlas-panel-")
+})()
+</script></body></html>

@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The vNext Cutover — Report · peerit.site on the Blind Substrate · 2026-07-31</title>
+<style>
+  :root{
+    --bg:#0a0e14; --bg-2:#0f1620; --panel:#111821; --panel-2:#0d141d;
+    --ink:#e8eef6; --dim:#8b9bb0; --faint:#5b6b80;
+    --line:#1f2a3a; --line-2:#152028;
+    --accent:#4fd1c5; --accent-2:#5b9fd4; --gold:#e0a54b; --rose:#e0533d; --violet:#9b7ed9; --green:#3ecf8e;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--accent-2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{background:#0a0f16;border:1px solid var(--line);padding:.05em .4em;border-radius:4px;
+    font:.88em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cfe3ff}
+  pre{background:#0a0f16;border:1px solid var(--line);border-radius:10px;padding:1em 1.2em;overflow:auto}
+  pre code{background:none;border:0;padding:0;color:#cfe3ff}
+  .wrap{max-width:920px;margin:0 auto;padding:0 1.4em}
+  main{padding-bottom:6em}
+  header.hero{padding:4.5em 0 3em;border-bottom:1px solid var(--line);
+    background:radial-gradient(ellipse at top,rgba(79,209,197,.07),transparent 60%)}
+  .eyebrow{color:var(--accent);font-size:.8em;font-weight:700;letter-spacing:.18em;text-transform:uppercase;margin:0 0 .8em}
+  h1{font-size:2.5em;line-height:1.12;margin:.1em 0 .3em;letter-spacing:-.025em;font-weight:800}
+  h1 .grad{background:linear-gradient(120deg,var(--accent),var(--accent-2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:1.18em;color:var(--dim);max-width:64ch;margin:1em 0 0}
+  .meta{margin-top:2em;display:flex;flex-wrap:wrap;gap:.6em;font-size:.82em;color:var(--faint)}
+  .meta span{padding:.3em .7em;border:1px solid var(--line);border-radius:999px;background:var(--panel)}
+  section{padding:2.8em 0;border-bottom:1px solid var(--line-2)}
+  section:last-of-type{border-bottom:0}
+  h2{font-size:1.65em;letter-spacing:-.015em;margin:0 0 .6em;font-weight:700}
+  h2 .num{color:var(--accent);font-variant-numeric:tabular-nums;margin-right:.5em;font-weight:800}
+  h3{font-size:1.18em;margin:1.6em 0 .5em;font-weight:700;letter-spacing:-.01em}
+  h4{font-size:1.02em;margin:1.4em 0 .4em;color:var(--accent-2);font-weight:700}
+  p{margin:.7em 0}
+  ul,ol{margin:.7em 0;padding-left:1.5em}
+  li{margin:.35em 0}
+  .lead{font-size:1.08em;color:#cdd6e3}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.2em 1.4em;margin:1.1em 0}
+  .callout{border-left:3px solid var(--accent);background:var(--panel-2);padding:.9em 1.2em;border-radius:0 8px 8px 0;margin:1.2em 0}
+  .callout.warn{border-left-color:var(--gold)}
+  .callout.bad{border-left-color:var(--rose)}
+  .callout.good{border-left-color:var(--green)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:1em;margin:1.2em 0}
+  @media (max-width:720px){.grid2{grid-template-columns:1fr}}
+  .stat{text-align:center;padding:1.05em .6em;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+  .stat b{display:block;font-size:1.8em;color:var(--accent);font-variant-numeric:tabular-nums}
+  .stat span{font-size:.84em;color:var(--dim)}
+  table{width:100%;border-collapse:collapse;margin:1.2em 0;font-size:.92em}
+  th,td{text-align:left;padding:.55em .7em;border-bottom:1px solid var(--line-2);vertical-align:top}
+  th{color:var(--accent-2);font-weight:700;border-bottom:1px solid var(--line)}
+  .small{font-size:.85em;color:var(--dim)}
+  .tag{display:inline-block;padding:.1em .55em;border-radius:999px;font-size:.78em;font-weight:700;letter-spacing:.03em}
+  .tag.green{background:rgba(62,207,142,.12);color:var(--green);border:1px solid rgba(62,207,142,.35)}
+  .tag.gold{background:rgba(224,165,75,.1);color:var(--gold);border:1px solid rgba(224,165,75,.35)}
+  .tag.rose{background:rgba(224,83,61,.1);color:var(--rose);border:1px solid rgba(224,83,61,.35)}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Pear ecosystem · vNext cutover report · 2026-07-31</p>
+    <h1>peerit.site is live on the <span class="grad">blind substrate</span></h1>
+    <p class="lede">The vNext blind-cell cutover is shipped and independently verified: a signed web
+      bundle on a hardened static host, two blind relays that cannot read what they store, a seeded
+      launch forum, and — for the first time — stock browsers acting as zero-trust clients of a P2P
+      substrate under a strict production CSP. Everything below is evidence-backed; every claim has a
+      receipt.</p>
+    <div class="meta">
+      <span>peerit.site → seq-20 bundle</span>
+      <span>2 blind relays · self-maintaining</span>
+      <span>34 seed records · byte-exact verified</span>
+      <span>Chromium gate PASS ×3</span>
+      <span>claim boundary: LIVE_PUBLIC_TEST_ONLY</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<div class="callout warn">
+  <strong>Historical cutover snapshot:</strong> this report preserves the seq-20 cutover evidence.
+  Repository <code>main</code> now carries accepted release sequence 26; current release truth lives in
+  <code>deploy/web-release.json</code> and the matching decision/bootstrap artifacts.
+</div>
+
+<section id="summary">
+  <h2><span class="num">01</span>Executive summary</h2>
+  <p class="lead">On 2026-07-31 the Peerit cutover to the vNext blind-cell architecture went live at
+    <strong>peerit.site</strong>. A visitor today loads a signed, CSP-safe bundle that bootstraps itself
+    against two blind relays and cold-recovers the seeded boards — every community, post, and reply
+    verified client-side against author signatures. The relays hold only opaque cells they cannot read;
+    the site is static files on a hardened host; the reader needs no account, no server trust, and no
+    install.</p>
+  <div class="grid2">
+    <div class="stat"><b>34/34</b><span>seed records live, byte-exact vs manifest</span></div>
+    <div class="stat"><b>11</b><span>communities claimed (2 content boards + 9 ready containers)</span></div>
+    <div class="stat"><b>39/39</b><span>verified CELL.GETs · 0 PUTs on cold start</span></div>
+    <div class="stat"><b>0</b><span>WASM bytes · CSP violations · fake claims</span></div>
+  </div>
+  <div class="callout good">
+    <p><strong>Independent post-launch verification (read-only, GET-only, zero prior state):</strong>
+    all 11 communities enumerated, all 34 records byte-exact against the launch manifest, feeds
+    assembled — reproducible any time with <code>scripts/verify-live-readonly.mjs</code>.</p>
+  </div>
+</section>
+
+<section id="achieved">
+  <h2><span class="num">02</span>What was achieved</h2>
+
+  <h3>The substrate, live and self-maintaining</h3>
+  <ul>
+    <li><strong>Two blind relays in production</strong> (Sydney + Dallas, <code>p2phiverelay.xyz</code>):
+      blind daemon + blind edge serving signed opaque cells. They cannot read, index, or forge
+      application content — proven by boundary captures showing zero app vocabulary in relay-visible bytes.</li>
+    <li><strong>Descriptor rotation automated</strong> — hourly, on both boxes, fail-closed by
+      construction. The recurring ~24 h expiry cliffs that caused three outages are eliminated as a class.</li>
+    <li><strong>Admission v5 landed</strong> — pricing matches what the wire advertises: sizeClass-2
+      cells (the bounty post was previously unpriceable) and lease classes 1 / 7 / 30 / 90 days.
+      The daily-expiry trap is dead at the policy level.</li>
+    <li><strong>Operations hardened</strong> — a 100 %-full disk on syd (47 GB of legacy hypercore
+      accumulation) was archived byte-verified and cleared to 24 %; the hourly rotation, admission,
+      and storage budgets are now evidence-logged fleet facts, not tribal knowledge.</li>
+  </ul>
+
+  <h3>The launch seed, live and honest</h3>
+  <ul>
+    <li><strong>34 records on both relays</strong>: 11 community claims (r/ai_local + r/p2pbuilders
+      with content; nostr, selfhosted, privacy, homelab, localfirst, hiverelay, fediverse, cypherpunk,
+      osint as ready containers), 17 posts, 6 replies — published as opaque cells with per-relay signed
+      receipts and byte-exact readback on every record.</li>
+    <li><strong>10 minted personas</strong>, one keypair each, aged per plan; OP-share caps held on both
+      boards; every claim in the corpus grounded in real benchmarks or verified source — the one
+      overclaim found ("atomic quorum") was rewritten to the literal truth before publish.</li>
+    <li><strong>A $200 launch bounty, paid in BTC</strong>, with concrete anti-scam mechanics:
+      5 × $40 to the winning board's top five distinct contributors, public adjudication with
+      recomputable metrics, 48 h comment window, signed claims, and a hash-committed seed-key list
+      that proves no house key can win.</li>
+    <li><strong>90-day leases</strong> on all seed cells, with an automated renewal checkpoint and a
+      bootstrap-expiry checkpoint scheduled ahead of it — nothing lapses silently.</li>
+  </ul>
+
+  <h3>The browser breakthrough</h3>
+  <ul>
+    <li><strong>A stock Chrome is now a zero-trust client of the blind substrate.</strong> Fresh
+      browser + signed bootstrap + relay URLs → descriptor chains verified to pinned genesis → all
+      communities enumerated → feeds assembled — <strong>40 verified CELL.GETs, 0 PUTs</strong>,
+      byte-exact, on Chromium 145 / 149 / 151 identically.</li>
+    <li><strong>Under a strict production CSP</strong> (<code>script-src 'self'</code>), zero
+      violations, zero page errors — the environment real users actually have, not a lab browser.</li>
+    <li><strong>Found and fixed properly, not around:</strong> the vendored crypto eagerly compiled
+      WebAssembly at import (a hard <code>CompileError</code> under CSP). The defect was latent in an
+      <em>accepted</em> bundle because every prior proof ran in Node. The fix kept the CSP intact and
+      removed the WASM packages from the build — pure-JS fallbacks, protocol <strong>byte-identical</strong>
+      across old-WASM Node, pure-JS Node, and pure-JS Chromium.</li>
+    <li><strong>Signed seed bootstrap as cold-start discovery:</strong> the reader needs no account and
+      no prior state. A signed artifact names the live cells per relay with capabilities; the client
+      verifies it against a pinned discovery authority and recovers everything GET-only.</li>
+  </ul>
+</section>
+
+<section id="meaning">
+  <h2><span class="num">03</span>What the vNext cutover means</h2>
+  <p class="lead">The meaning is architectural, and it is precise — not slogans:</p>
+  <ul>
+    <li><strong>The relay became a utility, not an authority.</strong> HiveRelay stores and forwards
+      signed opaque cells. It can withhold data but never forge it. Availability is its only job;
+      authenticity belongs to signatures, verified by every client.</li>
+    <li><strong>App-agnostic substrate, for real.</strong> The same blind fabric now carries Peerit's
+      records and can carry any other app's — the Ultimate Sports engine already builds on the same
+      primitives. The relay never learns which app a cell belongs to.</li>
+    <li><strong>The dual-ship story is honest at last.</strong> "Same signed data, native P2P or a
+      normal browser" was aspirational for the blind path until the CSP-safe rebuild made the normal
+      browser actually work. Now it is demonstrated: native PearBrowser is swarm; a stock browser is a
+      zero-trust client. One protocol, two transports, no fork.</li>
+    <li><strong>The transport barrier was not broken — it was made irrelevant for integrity.</strong>
+      A browser still cannot open raw sockets or join a swarm. What changed: it no longer needs to.
+      Because authenticity is math, not transport, a browser gets P2P-grade integrity over plain HTTPS.
+      That is the exact scope of the breakthrough — and it is not claimed as more.</li>
+    <li><strong>No fake claims, as a method.</strong> Every statement in the seed and in this launch is
+      either drill-proven on the live fleet or labelled as deferred. Four separate times, the chain
+      stopped instead of shipping something that would pass CI but fail in reality — the atomic-ingress
+      deployability gap, the probe-purge ambiguity, the inert seq-20 candidate, and the WASM/CSP
+      browser defect. That discipline is why the result can be trusted.</li>
+  </ul>
+</section>
+
+<section id="next-peerit">
+  <h2><span class="num">04</span>What's next for Peerit</h2>
+  <table>
+    <thead><tr><th>Item</th><th>State</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Telegram launch campaign</strong></td><td><span class="tag gold">ready to start</span></td><td>UTM-tracked creatives exist (<code>launch/reports/utm-links.*</code>); lead with the BTC bounty + the anti-scam mechanics; the 9 empty boards are the landing zones</td></tr>
+      <tr><td><strong>Bootstrap expiry rotation</strong></td><td><span class="tag green">scheduled</span></td><td>Deployed bootstrap expires 2026-08-29; successor + bundle re-issue + redeploy checkpoint armed for Aug 25</td></tr>
+      <tr><td><strong>Seed-cell renewal</strong></td><td><span class="tag green">scheduled</span></td><td>90-day leases with a renewal checkpoint Sep 23; <code>--renew</code> re-composes as LWW with fresh leases</td></tr>
+      <tr><td><strong>Browser write path (posting)</strong></td><td><span class="tag gold">next milestone</span></td><td>Reads are browser-proven; posting today is via PearBrowser (native) per the welcome pin. Public browser-based posting is the next client milestone</td></tr>
+      <tr><td><strong>INBOX/CORE client composition</strong></td><td><span class="tag gold">open</span></td><td>The vendored surface lacks constructors — deferred, not faked; bind-lane work</td></tr>
+      <tr><td><strong>Seeder/mirror durability tier</strong></td><td><span class="tag gold">roadmap</span></td><td>Author-outbox replication as system of record; relays as availability; goal: no single expiry anywhere can kill the forum</td></tr>
+      <tr><td><strong>More apps on the substrate</strong></td><td><span class="tag green">underway</span></td><td>Ultimate Sports (live preview at ultimate-sports.pages.dev) is the showcase consumer app on the same primitives</td></tr>
+      <tr><td><strong>GA product gate</strong></td><td><span class="tag rose">closed</span></td><td>22 blockers disclosed-open in the release evidence; the canary boundary is explicit</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="next-hiverelay">
+  <h2><span class="num">05</span>What's next for HiveRelay</h2>
+  <table>
+    <thead><tr><th>Item</th><th>State</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Descriptor rotation cadence</strong></td><td><span class="tag green">done</span></td><td>Hourly automated timer on both boxes, fail-closed, evidence-logged</td></tr>
+      <tr><td><strong>sizeClass-2 + long leases</strong></td><td><span class="tag green">done</span></td><td>admission-v5 on both relays: sizeClass-2 priced; leaseClass 1/7/30/90-day priced</td></tr>
+      <tr><td><strong>Storage budget enforcement</strong></td><td><span class="tag gold">ops lesson</span></td><td>The syd 100 %-disk incident (47 GB legacy cores) drove archival + caps + monitoring; a full cap/disk policy review follows</td></tr>
+      <tr><td><strong>Placeholder profile-hash rotation</strong></td><td><span class="tag gold">open</span></td><td>Descriptors carry placeholder build tuples (finding DAL1-IAR-P2-1) — rotate to real profile hashes, then fresh re-probe</td></tr>
+      <tr><td><strong>Atomic-ingress productization</strong></td><td><span class="tag rose">blocked, documented</span></td><td>The atomic-only outboxlog mode has no production entry point (structural conflict, evidence-recorded). The blind CELL path is the serving write path meanwhile; a proper ingress launcher is upstream work</td></tr>
+      <tr><td><strong>Tor transport (Track B)</strong></td><td><span class="tag gold">parallel lane</span></td><td>Tor hosts online, Tor not yet installed — separate transport track, not launch-blocking</td></tr>
+      <tr><td><strong>Independent operators → GA</strong></td><td><span class="tag rose">gate</span></td><td>Today: two owner-operated failure domains (canary). GA requires independent operators and the 22 disclosed blockers cleared</td></tr>
+      <tr><td><strong>Seeder/mirror durability tier</strong></td><td><span class="tag gold">roadmap</span></td><td>Shared with the Peerit roadmap: replication as system of record, relays as availability</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="boundaries">
+  <h2><span class="num">06</span>Honest boundaries</h2>
+  <ul>
+    <li><strong>Claim boundary:</strong> LIVE_PUBLIC_TEST_ONLY. Two owner-operated relays, not GA, not
+      independent operators.</li>
+    <li><strong>Proven:</strong> blind storage + transport on the live relays; publisher writes with
+      receipts and byte-exact readback; browser cold-recovery of all seed content under strict CSP;
+      automated rotation; priced long leases; honest bounty mechanics.</li>
+    <li><strong>Not yet proven / deferred:</strong> INBOX/CORE composition; public browser-based
+      posting; independent operators; the GA gate (22 blockers disclosed-open); the seq-19 accepted
+      bundle carries the now-disclosed WASM/CSP defect and is queued for reassessment.</li>
+    <li><strong>The one-line story, calibrated:</strong> "Stock browsers are zero-trust clients of the
+      blind substrate — they verify everything and trust no server." True and proven. Not claimed:
+      "we broke the browser transport barrier" — that stands, and beating it is the WebRTC/WSS-bridge
+      work ahead.</li>
+  </ul>
+</section>
+
+<section id="evidence">
+  <h2><span class="num">07</span>Key evidence</h2>
+  <table>
+    <thead><tr><th>Artifact</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Live site</td><td><code>peerit.site</code> — bundle asset-manifest sha256 <code>a0978b9f…</code>, strict CSP, <code>/peerit-seed-bootstrap-v1.json</code> sha256 <code>0a386975…</code></td></tr>
+      <tr><td>Launch bundle</td><td>commit <code>5cd6813</code> (sequence 20, LIVE bounded-public-test slot) on main @ <code>399b848</code></td></tr>
+      <tr><td>CSP-safe client fix</td><td>commit <code>b177e1f2</code> — WASM aliased out; protocol byte-identical (66 B, sha256 <code>1ef97899…</code>) across old-WASM Node, pure-JS Node, pure-JS Chromium</td></tr>
+      <tr><td>Chromium gate</td><td>PASS ×3 (Chrome 145/149/151) — 40 verified CELL.GETs, 0 PUTs, zero violations, zero pageErrors</td></tr>
+      <tr><td>Independent live verify</td><td><code>scripts/verify-live-readonly.mjs</code> — 34/34 records byte-exact vs manifest, 11/11 communities, 39 GETs / 0 PUTs</td></tr>
+      <tr><td>Relays</td><td>relay-syd + relay-dal .p2phiverelay.xyz — hourly rotation logging <code>ok_head_fresh</code>; admission-v5; heads rotating on schedule</td></tr>
+      <tr><td>Disclosure ledger</td><td><code>disclosed-finding-seq19-browser-recovery-never-browser-proven-20260731.json</code></td></tr>
+      <tr><td>Cutover explainers</td><td><code>docs/BROWSER-ZERO-TRUST-PROOF-EXPLAINER.html</code> · this report</td></tr>
+    </tbody>
+  </table>
+  <p class="small">Everything in this report is reproducible from the recorded evidence in the run
+    archive; nothing asserts more than the linked proofs contain.</p>
+</section>
+
+</main>
+</body>
+</html>

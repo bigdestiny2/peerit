@@ -258,8 +258,10 @@ async function expectAuthoringSuccess (page, text, context, testTopology = 'ship
     const state = await authoringFailureState(page)
     throw new Error(`${context} failed before ${JSON.stringify(text)} appeared: ${outcome.message}\nTest topology: ${testTopology}\nAuthoring state:\n${JSON.stringify(state, null, 2)}`)
   }
-  // Preserve the existing locator assertion after the early error detector.
-  await expectText(page, text, 5000)
+  // Preserve the locator assertion after the early error detector, but keep it
+  // on the same configurable budget. WebKit can commit the app state before
+  // its final visibility/layout pass completes on a loaded CI runner.
+  await expectText(page, text, DEFAULT_TIMEOUT_MS)
 }
 
 async function fillFirst (page, selector, value) {

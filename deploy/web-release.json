@@ -5,8 +5,8 @@
     "https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe"
   ],
   "productionPinHistoryBundle": "peerit-production-pin-history-v1.cenc",
-  "releaseSequence": 26,
+  "releaseSequence": 27,
   "pinnedReleaseKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
-  "peeritSeedBootstrapBundle": "deploy/peerit-seed-bootstrap-v1-seq26.json",
+  "peeritSeedBootstrapBundle": "deploy/peerit-seed-bootstrap-v1-seq27.json",
   "peeritSeedDiscoveryAuthorityPublicKey": "691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec"
 }

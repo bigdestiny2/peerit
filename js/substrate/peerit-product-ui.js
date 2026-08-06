@@ -172,7 +172,7 @@ async function homeView (runtime, route, ui) {
   const posts = await preparePeeritPostsForRenderV1(data,
     await data.listAllPosts(communities.map(row => row.slug)), sort, ui.moderationView)
   const me = runtime.identity.me().pubkey
-  const welcome = '<section class="welcome-panel"><div class="welcome-copy"><span class="tag">blind substrate</span><h2>Local-first communities, without a relay permission gate</h2><p>Browse as a lurker. Your first explicit post creates one durable device identity; every event is signed and visible locally before delivery.</p></div><div class="welcome-actions"><a class="btn btn-primary" href="#/create">Create a community</a></div></section>'
+  const welcome = '<section class="welcome-panel"><div class="welcome-copy"><span class="tag">blind substrate</span><h2>Local-first communities, without a relay permission gate</h2><p>Browse as a lurker. Your first explicit post creates one durable device identity; every event is signed and visible locally before delivery.</p></div><div class="welcome-actions"><a class="btn btn-primary" href="#/create">Create a community</a><a class="btn btn-ghost" href="how-it-works.html">How it works</a></div></section>'
   const feed = posts.length
     ? `<div class="feed">${posts.map(post => postCard(post, { mine: post.author === me, revealed: ui.revealed })).join('')}</div>`
     : empty('Recovering the verified seed…', 'First visit: the browser verifies two signed relay chains and the 39-record launch seed from scratch — about a minute, no server does it for you. Later visits load instantly. Still empty after two minutes? The relays may be unreachable — refresh to retry.', '<div class="empty-actions"><a class="btn btn-primary" href="#/create">Create community</a></div>')

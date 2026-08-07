@@ -59,6 +59,17 @@ const VI_ROOT = process.env.HIVERELAY_V1_INTEGRATION_ROOT ||
   path.resolve(ROOT, '..', '..', '00-core', 'hiverelay')
 const vi = (...parts) => pathToFileURL(path.join(VI_ROOT, ...parts)).href
 
+// The full-stack drill needs the relay source tree (00-core/hiverelay). It runs
+// wherever that checkout exists (fleet dev machines); where it is absent (CI)
+// skip loudly — portable codec coverage there is carried by
+// test/peerit-pow-issuance-codec-vectors.mjs.
+const VI_TREE_PRESENT = await fs.stat(path.join(VI_ROOT, 'packages', 'blind-protocol', 'index.js'))
+  .then(() => true, () => false)
+if (!VI_TREE_PRESENT) {
+  console.log('    [spend-drill] SKIP: hiverelay source tree absent — full-stack drill runs where 00-core/hiverelay is checked out; codec vectors covered by test/peerit-pow-issuance-codec-vectors.mjs')
+  process.exit(0)
+}
+
 const protocol = await import(vi('packages', 'blind-protocol', 'index.js'))
 const {
   CELL_RECEIPT_RESULT,

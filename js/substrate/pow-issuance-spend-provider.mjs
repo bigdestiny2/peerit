@@ -447,6 +447,31 @@ function issuerRow (value, index, allowInsecureLoopback) {
 // key — syd-1 on the current fleet), and hands each relay the presentation for
 // its own slot. The shared issuer key lets the single token redeem on both
 // relays; the binding root makes each spend authorize exactly one request.
+// Per-relay operation records (T2 INBOX-discovery half): one authored record
+// spans the CELL.PUT and the board INBOX.APPEND on the SAME relay, so one
+// operation record collects the two request commitments in DECLARED order
+// (slot 0 = 'put', slot 1 = 'append' — never relay-key-sorted; this is the
+// per-relay shape, not the cross-relay [PUT_syd, PUT_dal] shape beginRecord
+// covers) and mints ONE token whose binding root commits to that slot list.
+// INBOX.CREATE is a separate one-slot operation record (kind 'create'), opened
+// only when the board topic is absent.
+//
+// Kind is inferred from the artifact's frozen admission context
+// (familyId/operationId): CELL.PUT (2/1) → 'put', INBOX.APPEND (3/4) →
+// 'append', INBOX.CREATE (3/1) → 'create'. Anything else fails closed.
+const OPERATION_RECORD_KINDS = Object.freeze({
+  put: Object.freeze({ familyId: 2, operationId: 1 }),
+  append: Object.freeze({ familyId: 3, operationId: 4 }),
+  create: Object.freeze({ familyId: 3, operationId: 1 })
+})
+
+function operationRecordKind (familyId, operationId) {
+  for (const [kind, pair] of Object.entries(OPERATION_RECORD_KINDS)) {
+    if (pair.familyId === familyId && pair.operationId === operationId) return kind
+  }
+  return null
+}
+
 export function createPowIssuanceV1AdmissionProviderFactory (options = {}) {
   const profileId = integer(options.profileId, 'profileId', 1, 0xffff)
   const schemeId = integer(options.schemeId, 'schemeId', 1, 0xffff)
@@ -607,6 +632,188 @@ export function createPowIssuanceV1AdmissionProviderFactory (options = {}) {
     return session
   }
 
+  // The T2 INBOX-discovery session type: slots are the DECLARED operations in
+  // declaration order (slot 0 = first entry), each `{relayPublicKey, kind}`
+  // with kind 'put' | 'append' | 'create' and an optional pre-declared
+  // `requestCommitment` (a slot whose commitment is already known — e.g. the
+  // completed CELL.PUT the pointer publish binds). At most
+  // POW_ISSUANCE_V1_FLEET_ISSUER_ALLOWANCE_CAP slots (the fleet issuer cap);
+  // (relayPublicKey, kind) pairs must be distinct. Providers drive
+  // `session.spend(context)` with the artifact's frozen admission context; the
+  // kind is inferred from familyId/operationId, the slot from (relay, kind).
+  // The single shared mint resolves every slot's presentation at once, exactly
+  // like beginRecord — ONE token per relay per record.
+  function beginOperationRecord (input = {}) {
+    if (openRecord) {
+      fail('PEERIT_POW_ISSUANCE_RECORD_BUSY',
+        'a pow-issuance record is already spending; writes are serialized explicit user actions')
+    }
+    if (!Array.isArray(input.operations) || input.operations.length < 1 ||
+        input.operations.length > POW_ISSUANCE_V1_FLEET_ISSUER_ALLOWANCE_CAP) {
+      fail('PEERIT_POW_ISSUANCE_INVALID',
+        `an operation record expects 1..${POW_ISSUANCE_V1_FLEET_ISSUER_ALLOWANCE_CAP} operation slots (the fleet issuer cap)`)
+    }
+    const seen = new Set()
+    const slots = input.operations.map((operation, index) => {
+      if (!operation || typeof operation !== 'object') {
+        fail('PEERIT_POW_ISSUANCE_INVALID', `operations[${index}] is required`)
+      }
+      const kind = typeof operation.kind === 'string' && Object.hasOwn(OPERATION_RECORD_KINDS, operation.kind)
+        ? operation.kind
+        : fail('PEERIT_POW_ISSUANCE_OPERATION_INVALID',
+            `operations[${index}].kind must be one of ${Object.keys(OPERATION_RECORD_KINDS).join('/')}`)
+      const relayPublicKey = fixedBytesValue(operation.relayPublicKey, 32, `operations[${index}].relayPublicKey`)
+      const issuer = issuers.find(row => bytesEqual(row.relayPublicKey, relayPublicKey))
+      if (!issuer) {
+        fail('PEERIT_POW_ISSUANCE_UNEXPECTED_RELAY',
+          'an operation record relay is not one of the signed profile issuer pins')
+      }
+      const identity = `${bytesToHex(relayPublicKey)}:${kind}`
+      if (seen.has(identity)) {
+        fail('PEERIT_POW_ISSUANCE_INVALID', 'an operation record lists the same relay operation twice')
+      }
+      seen.add(identity)
+      return Object.freeze({
+        kind,
+        issuer,
+        relayPublicKey,
+        identity,
+        requestCommitment: operation.requestCommitment == null
+          ? null
+          : fixedBytesValue(operation.requestCommitment, 32, `operations[${index}].requestCommitment`)
+      })
+    })
+    const orderedCommitments = slots.map(slot => slot.requestCommitment)
+    const pending = new Map() // slot identity -> {slotIndex, requestCommitment, resolve, reject}
+    let mintPromise = null
+    let settled = false
+    let resolveComplete
+    let rejectComplete
+    const complete = new Promise((resolve, reject) => {
+      resolveComplete = resolve
+      rejectComplete = reject
+    })
+    // The session owner decides when to await completion; never surface an
+    // unhandled rejection from a record nobody watched to the end.
+    complete.catch(() => {})
+
+    function ensureMint (signal) {
+      if (!mintPromise) {
+        if (orderedCommitments.some(commitment => commitment == null)) {
+          fail('PEERIT_POW_ISSUANCE_SESSION_INVALID', 'pow-issuance record mint started before every slot registered')
+        }
+        const provider = createPowIssuanceV1SpendProvider({
+          issuanceUrl: slots[0].issuer.issuanceUrl,
+          fetch: fetchValue,
+          subtle,
+          allowInsecureLoopback,
+          signal
+        })
+        mintPromise = provider.mint({ commitments: orderedCommitments, signal, onProgress })
+        mintPromise.then(
+          minted => {
+            for (const entry of pending.values()) {
+              entry.resolve(Object.freeze({
+                minted,
+                presentation: buildPowIssuanceV1Presentation(
+                  minted.token, entry.slotIndex, orderedCommitments)
+              }))
+            }
+            resolveComplete(minted)
+          },
+          error => {
+            for (const entry of pending.values()) entry.reject(error)
+            rejectComplete(error)
+          })
+      }
+      return mintPromise
+    }
+
+    // One admission context → this (relay, kind) slot's presentation. The
+    // commitment registers against the slot (a pre-declared slot must match
+    // byte-exactly); when every slot has registered, the single shared mint
+    // resolves all of them at once.
+    async function spend (context, signal) {
+      throwIfAborted(signal)
+      if (settled || openRecord !== session) {
+        fail('PEERIT_POW_ISSUANCE_NO_OPEN_RECORD',
+          'no open pow-issuance record covers this operation; writes begin with an explicit user action')
+      }
+      if (!context || typeof context !== 'object') {
+        fail('PEERIT_POW_ISSUANCE_OPERATION_INVALID', 'an operation admission context is required')
+      }
+      const kind = operationRecordKind(context.familyId, context.operationId)
+      if (kind == null) {
+        fail('PEERIT_POW_ISSUANCE_OPERATION_INVALID',
+          `pow-issuance operation records only admit CELL.PUT (2/1), INBOX.APPEND (3/4), and INBOX.CREATE (3/1), got ${context.familyId}/${context.operationId}`)
+      }
+      const relayPublicKey = fixedBytesValue(context.relayPublicKey, 32, 'relayPublicKey')
+      const requestCommitment = fixedBytesValue(context.requestCommitment, 32, 'requestCommitment')
+      const slotIndex = slots.findIndex(row => row.kind === kind && bytesEqual(row.relayPublicKey, relayPublicKey))
+      if (slotIndex < 0) {
+        fail('PEERIT_POW_ISSUANCE_UNEXPECTED_RELAY',
+          'an admission context arrived outside the open operation record slot list')
+      }
+      const slot = slots[slotIndex]
+      if (slot.requestCommitment && !bytesEqual(slot.requestCommitment, requestCommitment)) {
+        fail('PEERIT_POW_ISSUANCE_COMMITMENT_DRIFT',
+          'the admission context commitment contradicts the slot\'s pre-declared commitment')
+      }
+      const existing = pending.get(slot.identity)
+      if (existing && mintPromise) {
+        fail('PEERIT_POW_ISSUANCE_RECORD_SEALED',
+          'the record token is already minted; a fresh request commitment needs a new record')
+      }
+      if (existing) {
+        // A delivery retry that failed before the prepared replica persisted may
+        // replace its commitment until the mint has started.
+        existing.reject(Object.assign(
+          new Error('pow-issuance slot commitment was replaced before mint'),
+          { code: 'PEERIT_POW_ISSUANCE_SLOT_REPLACED' }))
+        pending.delete(slot.identity)
+      }
+      const ready = new Promise((resolve, reject) => {
+        pending.set(slot.identity, { slotIndex, requestCommitment, resolve, reject })
+      })
+      orderedCommitments[slotIndex] = requestCommitment
+      if (pending.size === slots.length) ensureMint(signal)
+      return ready
+    }
+
+    const session = Object.freeze({
+      allowance: slots.length,
+      slotIndexOf (kind, relayPublicKey) {
+        const key = asBytes(relayPublicKey, 'relayPublicKey')
+        return slots.findIndex(row => row.kind === kind && bytesEqual(row.relayPublicKey, key))
+      },
+      // The commitment registered against a (kind, relay) slot — declared or
+      // captured — or null before registration. Survives mint/close so a later
+      // publish step can bind its evidence to the exact admitted requests.
+      slotCommitment (kind, relayPublicKey) {
+        const index = session.slotIndexOf(kind, relayPublicKey)
+        if (index < 0) fail('PEERIT_POW_ISSUANCE_UNEXPECTED_RELAY', 'no operation slot covers that relay operation')
+        const commitment = orderedCommitments[index]
+        return commitment == null ? null : commitment
+      },
+      complete,
+      spend,
+      close () {
+        if (settled) return
+        settled = true
+        if (openRecord === session) openRecord = null
+        const error = Object.assign(
+          new Error('pow-issuance record closed before its token was spent'),
+          { code: 'PEERIT_POW_ISSUANCE_RECORD_CLOSED' })
+        for (const entry of pending.values()) entry.reject(error)
+        pending.clear()
+        rejectComplete(error)
+      }
+    })
+
+    openRecord = session
+    return session
+  }
+
   // The seam contract: relay-consumer admissionProviderFor invokes this once
   // per PUT-qualified relay and wraps the returned provider with its own
   // profileId/schemeId/parameterHash drift checks. The parameterHash is
@@ -663,6 +870,7 @@ export function createPowIssuanceV1AdmissionProviderFactory (options = {}) {
     issuers,
     createAdmissionProvider,
     beginRecord,
+    beginOperationRecord,
     closeOpenRecord () {
       if (openRecord) openRecord.close()
     }

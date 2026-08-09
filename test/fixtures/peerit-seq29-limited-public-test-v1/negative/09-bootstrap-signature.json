@@ -1,0 +1,12 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "bootstrap",
+  "mutation": {
+    "op": "xor-hex",
+    "path": "/signature",
+    "byteIndex": -1,
+    "mask": 1
+  },
+  "expectedError": "BAD_BOOTSTRAP_SIGNATURE"
+}

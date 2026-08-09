@@ -1,0 +1,11 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "vector",
+  "mutation": {
+    "op": "add",
+    "path": "/cells/0/capabilityBoundGet/decryptedInnerCanonicalHex",
+    "value": "00"
+  },
+  "expectedError": "READBACK_SHORTCUT"
+}

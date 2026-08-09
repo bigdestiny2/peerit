@@ -1,0 +1,11 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "vector",
+  "mutation": {
+    "op": "copy",
+    "from": "/frames/0/frameCanonicalHex",
+    "path": "/frames/1/frameCanonicalHex"
+  },
+  "expectedError": "FRAME_REUSE"
+}

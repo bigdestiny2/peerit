@@ -1,0 +1,11 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "vector",
+  "mutation": {
+    "op": "replace",
+    "path": "/consent/boot",
+    "value": "IDENTITY_CREATED"
+  },
+  "expectedError": "CONSENT_LURKER"
+}

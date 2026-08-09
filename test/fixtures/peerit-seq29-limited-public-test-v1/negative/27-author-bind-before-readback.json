@@ -1,0 +1,17 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "vector",
+  "mutation": {
+    "op": "replace",
+    "path": "/consent/propagationOrder",
+    "value": [
+      "CELL_ACK",
+      "AUTHOR_BIND_SIGN",
+      "CELL_GET_DECRYPT",
+      "INLINE_ANNOUNCEMENT_SIGN",
+      "INBOX_APPEND"
+    ]
+  },
+  "expectedError": "CONSENT_PROPAGATION"
+}

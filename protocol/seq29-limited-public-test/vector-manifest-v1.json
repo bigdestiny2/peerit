@@ -1,0 +1,289 @@
+{
+  "schema": "peerit-seq29-limited-public-test-vector-manifest-v1",
+  "version": 1,
+  "status": "FIXTURE_ONLY_NOT_RELEASE_AUTHORITY",
+  "source": {
+    "preservedCommit": "4ada838b372360c9b0a7675c0ef190a62edef22f",
+    "profileSpecSha256": "74d3b65dff1bbf2a4630791fd1a770e8dcdfac415bf693ff313d38d0262619fd",
+    "hiverelayCodecProvenanceCommit": "fa53fb22e5ecd606bf7816575bb723f5a9e87766"
+  },
+  "generator": "protocol/seq29-limited-public-test/generate-fixtures.mjs",
+  "generatorCommand": "node protocol/seq29-limited-public-test/generate-fixtures.mjs",
+  "checker": "protocol/seq29-limited-public-test/check.mjs",
+  "positiveFixtureCount": 2,
+  "negativeFixtureCount": 45,
+  "aggregateRecipe": "SHA-256(path || NUL || decimalByteLength || NUL || lowercaseSha256 || LF), paths sorted lexicographically; vector-manifest-v1.json is excluded",
+  "artifactAggregateSha256": "f00f97d5826e300759fbdd54628897cf82591aeb1bc5baaf94ef697024bfc104",
+  "artifacts": [
+    {
+      "path": "config/peerit-limited-availability-bootstrap-v1.schema.json",
+      "byteLength": 6115,
+      "sha256": "bb1e7b4f3d5c17707ddb266015ddf3ddaa9a01ec653ef67f1afa0dca0b6ecad3"
+    },
+    {
+      "path": "docs/SEQ29-LIMITED-PUBLIC-TEST-CONTRACT.md",
+      "byteLength": 20025,
+      "sha256": "e5c632fdb6a513389ebaaba3d986122333a9cfe9afae58ea5b994709a4cda24c"
+    },
+    {
+      "path": "protocol/seq29-limited-public-test/check.mjs",
+      "byteLength": 74603,
+      "sha256": "7c33838e2ab833c911a7c33adf3a158213abe88338ccf26089e9e68f4c31f7e1"
+    },
+    {
+      "path": "protocol/seq29-limited-public-test/codec-registry-v1.json",
+      "byteLength": 7404,
+      "sha256": "f16837fc45ef21ac301423bbf3a85959cf2d8d62af0a672a9593d62268e91de2"
+    },
+    {
+      "path": "protocol/seq29-limited-public-test/compatibility-v1.json",
+      "byteLength": 3901,
+      "sha256": "b8edaceb762331a4e753827250c3db7002528fbe226b612412790594cb52c193"
+    },
+    {
+      "path": "protocol/seq29-limited-public-test/generate-fixtures.mjs",
+      "byteLength": 52809,
+      "sha256": "1bca3457bd3badd960e6107aaf2fb8d0c592af54f4d45d415a9f9cf5fa17f051"
+    },
+    {
+      "path": "protocol/seq29-limited-public-test/limited-management-custody-v1.json",
+      "byteLength": 3493,
+      "sha256": "983710d7e458a0a76c02fee6348309765c1b6a5d9729777ed9180b9354695db5"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/01-private-management-seed.json",
+      "byteLength": 330,
+      "sha256": "b3dba477e0551efcc1461a7e261d15e0abc4128eaa244919cecc07fd0e00af3e"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/02-public-management-derivation.json",
+      "byteLength": 281,
+      "sha256": "81e688153a45a1691e5c7d01a46e724599b8220b7a57debcda5dd821b7b60ddc"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/03-per-board-topic-scope.json",
+      "byteLength": 279,
+      "sha256": "1c39e4b77485336fd3265043e1e2e948a29ea621247c28d3196246702153e2e1"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/04-topic-formula-mismatch.json",
+      "byteLength": 322,
+      "sha256": "a174712a21a996cfa4f70c6407b0ba3d5406da36635bec26c6f589b602e45f96"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/05-signed-append-mode.json",
+      "byteLength": 301,
+      "sha256": "e74ebce14a29fc1645898e68d68840467bd048fdc313451ce61b30efa8fcf886"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/06-production-stripe-count.json",
+      "byteLength": 292,
+      "sha256": "b71219a01860291746097daf40c87ee4a9419d3f1f4a8d0ddb40a2d9d7cc719c"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/07-duplicate-relay-key.json",
+      "byteLength": 315,
+      "sha256": "7bdf6413e4d6932fafca1b5591585dee65c8b56626b81eb8bcdb84c1cfaf60f4"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/08-create-receipt-signature.json",
+      "byteLength": 342,
+      "sha256": "47f1e51711ad262540b26c99970e728be9fc3b3cac604a0d91d5e832938fbdb6"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/09-bootstrap-signature.json",
+      "byteLength": 253,
+      "sha256": "d2ece55981c81d939cf48596067299a10369f7a5c00e330c6fb2bf049c6864ae"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/10-receipt-cross-binding.json",
+      "byteLength": 379,
+      "sha256": "98019fbf1552d9bdc7543969f75ef576a9e691513ac2aa8a7ab4a9ed4c18b256"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/11-bootstrap-sequence-gap.json",
+      "byteLength": 285,
+      "sha256": "3e6361ba65bf3031a5b21393fd8cd23ced59da40bec11298c4774d58d2150b8c"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/12-receipt-only-author-bind.json",
+      "byteLength": 246,
+      "sha256": "fb5c80182f5eeb08e3451c2f2c809ee047713b63354b800ddd7431c04b1dd4d8"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/13-author-chain-gap.json",
+      "byteLength": 237,
+      "sha256": "8bc318c25a26dd481b806f82568dae252a4bb658d6fa5665f13a682538477b2c"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/14-cell-reference-emission.json",
+      "byteLength": 240,
+      "sha256": "4508535b7dfc3a7aee72d8e48a5226d50f07aaa0a364ea81cf1fea6908271644"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/15-inline-read-cap.json",
+      "byteLength": 261,
+      "sha256": "9bd4bfc6e022086792f8758c68419ccf977d7e0cf90c65669bc4dda5bac31890"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/16-manifest-id-substitution.json",
+      "byteLength": 303,
+      "sha256": "e87964f85569e338f560580b3733aa23fc3db2b9990063d4ea3fedaafdd41c9f"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/17-wrong-author-manifest-tag.json",
+      "byteLength": 235,
+      "sha256": "ddf9c5b2664a4f67d2a560a70c2cbc43568a13273d952162c38a761bc18e3d96"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/18-frame-reuse-across-relays.json",
+      "byteLength": 259,
+      "sha256": "75f31eda1c4f21776d37b78e5a958b9b08e32bada63474599f9a7d696aeebcd1"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/19-frame-aad-substitution.json",
+      "byteLength": 242,
+      "sha256": "4ccb24d9cb08bf29f0c7834c05f56146d1355e390233401e409ad91545cb2d0e"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/20-frame-key-cross-relay.json",
+      "byteLength": 239,
+      "sha256": "2e8d72577bd65c83442a02478ed6e43ea52baae32053431301d8853a3e92ad42"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/21-cursor-cross-binding.json",
+      "byteLength": 278,
+      "sha256": "562c6efbb35ce6087936271d61bedaae569b999db637c1b5817bda48ad429443"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/22-cursor-ordering-claim.json",
+      "byteLength": 233,
+      "sha256": "05e0265b3782cf3feaadfc00d556e5cb26a49113e902d7ab72c3f85dd87e6181"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/23-retry-frame-reuse.json",
+      "byteLength": 241,
+      "sha256": "55936c077d473e1babaff2f871642ee6d077b962a6a99ba43fb4963840ef8f8b"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/24-ambiguous-auto-ack.json",
+      "byteLength": 248,
+      "sha256": "6e204bf92f369c19082097a73513617d654576f69d0756407dd6167f50b468b0"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/25-lurker-creates-identity.json",
+      "byteLength": 241,
+      "sha256": "9ef4e5bf3d724ddce8b6a050f6a7bb8d270e7af9c7167ed24d21fceec9b6a72f"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/26-sign-before-identity-commit.json",
+      "byteLength": 270,
+      "sha256": "9c637adbb53f3e4ee4a6f7740686a2f677d7b570aa19fd7a6425dfb35b988c22"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/27-author-bind-before-readback.json",
+      "byteLength": 372,
+      "sha256": "f0efa712dadebea69a9885b0bd72a5b98e7d6c46957af355a1c5ea7725794fd3"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/28-cell-logical-hash-substitution.json",
+      "byteLength": 249,
+      "sha256": "e8e9b0d436bf2633ef7fda16f4a0fadb4a89e7152cc88a013fea187f9316b9eb"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/29-cell-receipt-signature.json",
+      "byteLength": 276,
+      "sha256": "42353eb0dc089b8440f3a43ad9736830101fe0fd9a57dc081e20b9a9ba9c00c8"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/30-publisher-decrypted-shortcut.json",
+      "byteLength": 267,
+      "sha256": "3a18fa213f6d94c48d8c3fdd6bd5e830f48f5ba2f5231279eadedb34704cc07a"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/31-cell-get-blob-tamper.json",
+      "byteLength": 280,
+      "sha256": "98afd810a8ae1d278be22d4af9604bbe5e1524316830cdcff6c9c4ea0da51971"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/32-forged-inbox-read-page.json",
+      "byteLength": 267,
+      "sha256": "f8f46588d4db2eba136f33cc2a05a571d99a5df282e970f40e5ec3fac5bbb728"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/33-inbox-read-result-cross-binding.json",
+      "byteLength": 275,
+      "sha256": "0e4ba18f4cfeb040f5f81abf3a22acb402f38b6ca6790063d8dc516458ac325c"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/34-cursor-chain-rollback.json",
+      "byteLength": 250,
+      "sha256": "65ecbc4796a29309dcc9d060e2dce002f9febabdc4a536cc72cbce51c0945888"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/35-bootstrap-expiry-over-31-days.json",
+      "byteLength": 297,
+      "sha256": "835dd4f17c2c4e4dd4d6edf0f4a97040886c9a0a77a7dc6cf3119994230e90a5"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/36-bootstrap-floor-rollback.json",
+      "byteLength": 265,
+      "sha256": "7f3293f250e94230bcece2c8bfecbcdf068ee5df981c290c6f6b17f631acb478"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/37-bootstrap-floor-same-sequence-fork.json",
+      "byteLength": 271,
+      "sha256": "21fc3efcdcc011d80def340d5d96d2212899c30d9d5bbac02c0df5d261219ed4"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/38-custody-bundle-cardinality.json",
+      "byteLength": 252,
+      "sha256": "db9b4ed4a2262f6f128fedd7cd8c80b98dedca76e63fd56337388fa0aa1a09ac"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/39-custody-append-seed.json",
+      "byteLength": 311,
+      "sha256": "cc03b491d37796c730d643f7631674b140c544a00230dac284e564946c0638b2"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/40-custody-threshold.json",
+      "byteLength": 242,
+      "sha256": "b9a9906cc784bcfe95b1006ff0c0a30a4cb33f7089c89fc454c0ab012e5fef3f"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/41-custody-envelope-tamper.json",
+      "byteLength": 279,
+      "sha256": "fc893985728f3dde91382df0ee6db7cbd2daa750f2e6745423ade9a17d9f37b3"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/42-custody-one-share-only.json",
+      "byteLength": 268,
+      "sha256": "7286227b988abea0f976ba147ca10bc1ca88e892c89f9f77f2b2c85bc56eabd7"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/43-cursor-result-page-cross-topic.json",
+      "byteLength": 278,
+      "sha256": "09d8f8427fa0f6a8409b32e89a60f43831f15de20a22af6a33abb04ac8931cb7"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/44-custody-entry-binding.json",
+      "byteLength": 7930,
+      "sha256": "563f96830bf64d1d801b2b99ebe160d287ec59de53b23156c77544ecb17e9815"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/45-read-signature-payload-drift.json",
+      "byteLength": 9361,
+      "sha256": "92fed1d65910ee203edc4acce86e9b7b29d925c5a696df1802506a6fe9de119d"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/positive-bootstrap.json",
+      "byteLength": 5099,
+      "sha256": "2d4222a48b82750d09be371f6aa1474df4c2d58982d73c64bdf4ab16b145f15e"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/positive-protocol-vector.json",
+      "byteLength": 93052,
+      "sha256": "55bdd4fa209828269dd283aaf883257377951c6a5f59072bc200e59cc93a4441"
+    }
+  ]
+}

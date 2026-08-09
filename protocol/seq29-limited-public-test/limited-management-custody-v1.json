@@ -1,0 +1,65 @@
+{
+  "schema": "peerit-seq29-limited-public-inbox-management-custody-v1",
+  "version": 1,
+  "status": "CONTRACT_ONLY_NOT_RELEASE_AUTHORITY",
+  "bundle": {
+    "name": "PeeritLimitedPublicInboxManagementBundleV1",
+    "domain": "peerit.hiverelay.limited-public-inbox-management-bundle.v1",
+    "encoding": [
+      "version:u8=1",
+      "releaseSequence:u64be=29",
+      "profilePinHash:bytes32",
+      "signedBootstrapHash:bytes32=SHA-256(canonicalCompleteSignedWrapper)",
+      "bootstrapSequence:u64be",
+      "currentInboxEpoch:u32be",
+      "entryCount:u8=2|4",
+      "entries:entryCount*(u16be(byteLength)||canonicalInboxManagementEntryV1Bytes)",
+      "createdUnixMillis:u64be",
+      "bundleCommitment:bytes32"
+    ],
+    "entryCodec": {
+      "name": "InboxManagementEntryV1",
+      "authority": "@peerit/hiverelay-profile-v1",
+      "sourceSha256": "898162c532d73c70c873ec5000b3390deb768f0cd21716c8e009aa3a62aa74cc",
+      "reuse": "BYTE_IDENTICAL_CANONICAL_ENTRY_ONLY"
+    },
+    "entryOrder": "TWO_CURRENT_SORTED_BY_RELAY_PUBLIC_KEY_THEN_PHYSICAL_TOPIC_THEN_OPTIONAL_TWO_PREVIOUS_WITH_SAME_SORT",
+    "cardinality": {
+      "current": 2,
+      "previous": [0, 2],
+      "previousCondition": "SEPARATELY_AUTHORIZED_READ_ONLY_ROTATION_OVERLAP_ONLY",
+      "initialReleaseTotal": 2,
+      "rotationTotal": 4
+    },
+    "seedRoles": ["CREATE", "RENEW", "CLOSE"],
+    "appendSeed": "FORBIDDEN_OPEN_APPEND_HAS_NO_APPEND_CAPABILITY",
+    "commitment": "BLAKE2b-256(ASCII('peerit.hiverelay.limited-public-inbox-management-bundle.v1') || u64be(prefixLength) || canonicalFieldsThroughCreatedUnixMillis)"
+  },
+  "envelope": {
+    "name": "PeeritLimitedPublicInboxCustodyEnvelopeV1",
+    "encryptedShareName": "PeeritCustodyEncryptedShareV1",
+    "encryptedShareReuse": "BYTE_IDENTICAL_CANONICAL_LAYOUT_WITH_INBOX_MANAGEMENT_BUNDLE_KIND_2",
+    "bundleKind": 2,
+    "plaintextCodec": 3,
+    "threshold": 2,
+    "totalShares": 3,
+    "payloadCipher": "XChaCha20-Poly1305-IETF",
+    "shareExchange": "X25519",
+    "shareKdf": "HKDF-SHA-256",
+    "sharing": "SHAMIR_GF_2_8_POLYNOMIAL_0x11b_COORDINATES_1_2_3",
+    "payloadAad": "canonical limited envelope fields version through keyCommitment plus u32be(sealedPayloadLength)",
+    "shareAad": "canonical limited share fields version through nonce",
+    "keyCommitment": "BLAKE2b-256(ASCII('peerit.hiverelay.custody-key.v1') || custodySetId || dataEncryptionKey)",
+    "plaintextHash": "BLAKE2b-256(ASCII('peerit.hiverelay.custody-plaintext.v1') || u8(bundleKind=2) || u16be(plaintextCodec=3) || u64be(plaintextLength) || plaintext)",
+    "sealedPayloadHash": "BLAKE2b-256(ASCII('peerit.hiverelay.custody-sealed-payload.v1') || u64be(sealedPayloadLength) || sealedPayload)",
+    "shareKeyInfo": "ASCII('peerit.hiverelay.custody-share-key.v1') || u8(bundleKind=2) || u8(shareIndex) || custodianPublicKey || ephemeralPublicKey",
+    "acceptance": "authenticate two shares, reconstruct candidate key, match keyCommitment, authenticate payload, match length/hash/codec, then validate the complete limited bundle",
+    "tamperBoundary": "any recipient, share AAD, share ciphertext, envelope AAD, payload ciphertext, hash, codec, cardinality, entry, or commitment mismatch fails reconstruction"
+  },
+  "nonAliases": [
+    "PeeritInboxManagementBundleV1_REQUIRES_24_OR_48_AND_IS_NOT_THIS_CODEC",
+    "PeeritCustodyEnvelopeV1_BUNDLE_KIND_2_CODEC_2_IS_NOT_THIS_CODEC_3_ENVELOPE",
+    "NO_PADDING_TO_24",
+    "NO_PUBLIC_OR_BROWSER_PRIVATE_SEED_MATERIAL"
+  ]
+}

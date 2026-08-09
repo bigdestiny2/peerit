@@ -1,0 +1,12 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "bootstrap",
+  "validationStage": "POST_SIGNATURE",
+  "mutation": {
+    "op": "replace",
+    "path": "/payload/inboxEpochSets/0/bindings/0/appendAuthMode",
+    "value": 1
+  },
+  "expectedError": "INBOX_SHAPE"
+}

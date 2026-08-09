@@ -1,0 +1,142 @@
+{
+  "schema": "peerit-seq29-limited-public-test-codec-registry-v1",
+  "version": 1,
+  "status": "CONTRACT_ONLY_NOT_RELEASE_AUTHORITY",
+  "bootstrap": {
+    "schemaName": "PeeritLimitedPublicInboxBootstrapV1",
+    "schemaId": "peerit-limited-public-inbox-bootstrap-v1",
+    "jsonSchemaPath": "config/peerit-limited-availability-bootstrap-v1.schema.json",
+    "canonicalEncoding": "RFC8785_STYLE_JSON_RECURSIVE_LEXICOGRAPHIC_KEYS_UTF8_NO_WHITESPACE",
+    "signatureDomain": "peerit.limited-public-test.inbox-bootstrap.v1",
+    "signaturePayload": "ASCII(domain) || 0x00 || canonical(payload)",
+    "hash": "SHA-256(canonical(complete signed wrapper))",
+    "maximumLifetimeMillis": 2678400000,
+    "floor": {
+      "schemaName": "PeeritLimitedPublicInboxBootstrapFloorV1",
+      "fields": ["highestAcceptedBootstrapSequence:u64", "completeSignedWrapperHash:bytes32"],
+      "rollback": "candidate sequence below floor fails",
+      "fork": "same sequence with a different complete signed wrapper hash fails"
+    }
+  },
+  "peeritProfileAuthority": {
+    "source": "docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md",
+    "sourceSha256": "74d3b65dff1bbf2a4630791fd1a770e8dcdfac415bf693ff313d38d0262619fd",
+    "schemas": {
+      "PeeritAnnouncementV1": {
+        "signatureDomain": "peerit.hiverelay.announcement.v1",
+        "maximumCompleteBytes": 12288,
+        "modes": {
+          "1": "INLINE",
+          "2": "CELL_REFERENCE"
+        }
+      },
+      "CellReplicaBindingV1": {
+        "replicaTag": 1,
+        "externalCodecs": ["ReadCellCapV1", "BlindReceiptV1"]
+      },
+      "AuthorBindV1": {
+        "manifestTag": 3,
+        "signatureDomain": "peerit.hiverelay.author-bind.v1",
+        "innerCodec": 334,
+        "minimumInnerBytes": 8,
+        "maximumInnerBytes": 1048519,
+        "replicaKind": "CELL_ONLY_V1"
+      }
+    },
+    "identifiers": {
+      "manifestRecordId": "BLAKE2b-256(ASCII('peerit.hiverelay.manifest-record-id.v1') || u16be(manifestTag) || u64be(recordLength) || canonicalCompleteSignedRecord)",
+      "logicalHash": "BLAKE2b-256(ASCII('peerit.hiverelay.logical-hash.v1') || u16be(innerCodec) || u64be(innerLength) || exactCanonicalInnerBytes)",
+      "signedAnnouncementId": "BLAKE2b-256(ASCII('peerit.hiverelay.signed-announcement-id.v1') || u64be(announcementLength) || canonicalCompleteSignedAnnouncement)"
+    }
+  },
+  "hiverelayAuthority": {
+    "status": "REGENERATED_TARGET_TUPLE_REQUIRED_BEFORE_RELEASE",
+    "provenanceCommit": "fa53fb22e5ecd606bf7816575bb723f5a9e87766",
+    "wireTypes": {
+      "InboxReceiptV1": {
+        "resultSignatureDomainId": 106,
+        "resultSignatureDomain": "hiverelay.blind.inbox-receipt.v1",
+        "resultSignaturePayload": "ASCII(domain) || u64be(unsignedCanonicalLength) || unsignedCanonicalBytes",
+        "createResult": 1,
+        "createStateRevision": "0"
+      },
+      "InboxAppendAckV1": {
+        "resultSignatureDomainId": 107,
+        "resultSignatureDomain": "hiverelay.blind.inbox-append-ack.v1"
+      },
+      "InboxReadResultV1": {
+        "resultSignatureDomainId": 108,
+        "resultSignatureDomain": "hiverelay.blind.inbox-read-result.v1",
+        "resultSignaturePayloadCodec": "InboxReadSignaturePayloadV1",
+        "resultSignaturePayload": "version || complete RelayResultBindingV1 || requestNonce || requestCommitment || snapshotRevision || entriesCommitment || exact optional nextCursor; raw entries are represented only by entriesCommitment",
+        "requestCommitment": "BLAKE2b-256(ASCII('hiverelay.blind.request.v1inbox-read') || relayPublicKey || physicalTopic || BLAKE2b-256(exactCursorBytes) || u16be(limit) || clientNonce)",
+        "cursorMaximumBytes": 128,
+        "pageLimit": { "minimum": 1, "maximum": 64 },
+        "targetIntegrationDrift": "CURRENT_48E_CLIENT_AND_DAEMON_SIGN_FULL_RESULT_INCLUDING_RAW_ENTRIES_MUST_BE_RECONCILED_BEFORE_ACCEPTED_TARGET_TUPLE"
+      },
+      "ReadCellCapV1": {
+        "consumer": "FRESH_READER",
+        "privateMaterial": false,
+        "getRequestCommitment": "BLAKE2b-256(ASCII('hiverelay.blind.request.v1cell-get') || relayPublicKey || storageSlot || clientNonce)",
+        "cellBlob": "class1 exact 4096 bytes: version1 || nonce12 || AES-256-GCM(ciphertext||tag16), AAD=ASCII('hiverelay.blind.cell.v1')||u8(1)||u8(sizeClass)||storageSlot, plaintext=u32be(contentLength)||inner||padding",
+        "blobHash": "BLAKE2b-256(exact complete Cell blob)"
+      }
+    },
+    "topic": {
+      "formula": "BLAKE2b-256(ASCII('hiverelay.blind.inbox-topic.v1') || u32be(allocationEpoch) || createPublicKey)",
+      "receiptTopicCommitment": "BLAKE2b-256(physicalTopic)"
+    },
+    "inboxConstants": {
+      "OPEN_APPEND": 0,
+      "FRAME_CLASS_1_BYTES": 4096,
+      "FRAME_CLASS_2_BYTES": 16384,
+      "FRAME_CLASS_BITS_1_AND_2": 3,
+      "R30": 3,
+      "L90": 4
+    }
+  },
+  "frame": {
+    "stripeSelection": "first_s_most_significant_bits(HMAC-SHA-256(stripeSelectionKey, signedAnnouncementId)); s=0 returns 0",
+    "key": "HKDF-SHA-256(ikm=announcementMasterKey,salt=physicalTopic,info=ASCII('peerit.hiverelay.inbox-frame-key.v1') || u32be(inboxEpoch) || u8(stripeIndex) || relayPublicKey,L=32)",
+    "aad": "ASCII('peerit.hiverelay.inbox-frame-aad.v1') || u32be(inboxEpoch) || u8(stripeIndex) || relayPublicKey || physicalTopic || u8(frameClass)",
+    "plaintext": "u32be(announcementLength) || canonicalCompleteSignedAnnouncement || independentRandomPadding",
+    "sealed": "nonce24 || XChaCha20-Poly1305-IETF(key,nonce24,aad,fixedPlaintext)",
+    "selection": "SMALLEST_ENABLED_FRAME_CLASS_THAT_FITS",
+    "reuse": "FORBIDDEN_ACROSS_BINDINGS_OR_ATTEMPTS"
+  },
+  "cursor": {
+    "scopeKey": ["inboxEpoch", "stripeIndex", "relayPublicKey", "physicalTopic"],
+    "serverCursor": "OPAQUE_MAX_128_BYTES_BOUND_TO_15_MINUTE_SNAPSHOT",
+    "persistence": "AUTHENTICATED_ATOMIC_ACCEPTED_RECORDS_PLUS_CURSOR",
+    "dedupe": "manifestRecordId",
+    "orderingClaim": false,
+    "completenessClaim": false,
+    "invalidFrameRule": "ADVANCE_ONLY_AFTER_SIGNED_PAGE_AND_BOUNDED_FRAME_VALIDATION"
+  },
+  "managementCustody": {
+    "registry": "protocol/seq29-limited-public-test/limited-management-custody-v1.json",
+    "bundleName": "PeeritLimitedPublicInboxManagementBundleV1",
+    "envelopeName": "PeeritLimitedPublicInboxCustodyEnvelopeV1",
+    "bundleKind": 2,
+    "plaintextCodec": 3,
+    "currentEntries": 2,
+    "previousEntries": "0_OR_2_ROTATION_ONLY",
+    "seedRoles": ["CREATE", "RENEW", "CLOSE"],
+    "appendSeed": "FORBIDDEN"
+  },
+  "retry": {
+    "persistBeforeSend": ["exactRequestBytes", "requestCommitment", "spendAdmission", "ciphertextOrFrame", "targetIdentity"],
+    "ambiguousOutcome": "PENDING_UNKNOWN",
+    "reconcile": "CELL.GET_OR_INBOX.READ_AGAINST_EXACT_EXPECTED_HASH",
+    "automaticFreshContextRetry": "ONLY_POSITIVE_NON_PROCESSING_TRANSPORT_SIGNAL",
+    "changedTarget": "NEW_ATTEMPT_WITH_FRESH_ALL_MATERIAL"
+  },
+  "consent": {
+    "default": "LURKER",
+    "beforeConfirmation": "NO_IDENTITY_NO_ADMISSION_NO_SIGNATURE_NO_WRITE",
+    "identityCommit": "AUTHENTICATED_ENCRYPTED_DURABLE_BEFORE_EVENT_SIGNATURE",
+    "localVisible": "AFTER_SIGNED_INTENT_JOURNAL_NO_NETWORK_REQUIRED",
+    "propagationOrder": ["CELL_ACK", "CAPABILITY_BOUND_CELL_GET_AND_DECRYPT", "AUTHOR_BIND_SIGN", "INLINE_ANNOUNCEMENT_SIGN", "INBOX_APPEND"],
+    "forgetFence": "REFUSE_WHILE_SENT_PENDING_OR_UNKNOWN_UNLESS_RECONCILED_OR_RECOVERY_EXPORT_IS_FRESH_AND_COMPLETE"
+  }
+}

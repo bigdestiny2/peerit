@@ -1,0 +1,12 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "vector",
+  "mutation": {
+    "op": "xor-hex",
+    "path": "/managementCustody/envelopeCanonicalHex",
+    "byteIndex": 140,
+    "mask": 1
+  },
+  "expectedError": "CUSTODY_RECONSTRUCTION"
+}

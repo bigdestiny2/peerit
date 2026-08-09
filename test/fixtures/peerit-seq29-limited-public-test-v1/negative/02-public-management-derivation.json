@@ -1,0 +1,11 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "bootstrap",
+  "mutation": {
+    "op": "add",
+    "path": "/payload/managementKeyDerivation",
+    "value": "SHA256(boardSlug || relayPublicKey)"
+  },
+  "expectedError": "PUBLIC_DERIVATION"
+}

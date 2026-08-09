@@ -1,0 +1,13 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "bootstrap",
+  "validationStage": "POST_SIGNATURE",
+  "mutation": {
+    "op": "xor-hex",
+    "path": "/payload/inboxEpochSets/0/bindings/0/createReceiptCanonicalHex",
+    "byteIndex": -1,
+    "mask": 1
+  },
+  "expectedError": "BAD_RECEIPT_SIGNATURE"
+}

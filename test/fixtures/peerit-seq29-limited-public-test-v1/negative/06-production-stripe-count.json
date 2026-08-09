@@ -1,0 +1,12 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "bootstrap",
+  "validationStage": "POST_SIGNATURE",
+  "mutation": {
+    "op": "replace",
+    "path": "/payload/inboxEpochSets/0/stripeCountLog2",
+    "value": 3
+  },
+  "expectedError": "STRIPE_SHAPE"
+}

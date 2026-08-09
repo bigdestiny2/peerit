@@ -1,0 +1,11 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "vector",
+  "mutation": {
+    "op": "replace",
+    "path": "/authorBind/manifestTag",
+    "value": 4
+  },
+  "expectedError": "AUTHOR_BIND_TAG"
+}

@@ -1,0 +1,12 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "vector",
+  "mutation": {
+    "op": "xor-hex",
+    "path": "/bootstrapFloor/completeSignedWrapperHash",
+    "byteIndex": 0,
+    "mask": 1
+  },
+  "expectedError": "BOOTSTRAP_FORK"
+}

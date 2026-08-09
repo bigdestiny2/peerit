@@ -1,0 +1,11 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "vector",
+  "mutation": {
+    "op": "copy",
+    "from": "/readPages/0/requestCanonicalHex",
+    "path": "/readPages/2/requestCanonicalHex"
+  },
+  "expectedError": "READ_REQUEST_BINDING"
+}

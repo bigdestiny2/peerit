@@ -1,0 +1,12 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "bootstrap",
+  "validationStage": "POST_SIGNATURE",
+  "mutation": {
+    "op": "copy",
+    "from": "/payload/relays/0/relayPublicKey",
+    "path": "/payload/relays/1/relayPublicKey"
+  },
+  "expectedError": "DUPLICATE_RELAY"
+}

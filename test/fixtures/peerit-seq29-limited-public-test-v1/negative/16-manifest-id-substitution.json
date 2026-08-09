@@ -1,0 +1,11 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "vector",
+  "mutation": {
+    "op": "replace",
+    "path": "/announcement/manifestRecordId",
+    "value": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "expectedError": "MANIFEST_ID"
+}

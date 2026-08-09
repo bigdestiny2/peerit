@@ -1,0 +1,10 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "vector",
+  "mutation": {
+    "op": "remove",
+    "path": "/cells/0/capabilityBoundGet/getResultCanonicalHex"
+  },
+  "expectedError": "READBACK_REQUIRED"
+}

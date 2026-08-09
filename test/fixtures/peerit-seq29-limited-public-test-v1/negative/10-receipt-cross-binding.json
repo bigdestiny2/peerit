@@ -1,0 +1,12 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "bootstrap",
+  "validationStage": "POST_SIGNATURE",
+  "mutation": {
+    "op": "copy",
+    "from": "/payload/inboxEpochSets/0/bindings/0/createReceiptCanonicalHex",
+    "path": "/payload/inboxEpochSets/0/bindings/1/createReceiptCanonicalHex"
+  },
+  "expectedError": "BAD_RECEIPT_BINDING"
+}

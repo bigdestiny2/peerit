@@ -1,0 +1,11 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "bootstrap",
+  "mutation": {
+    "op": "add",
+    "path": "/payload/inboxEpochSets/0/bindings/0/createPrivateSeed",
+    "value": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "expectedError": "SECRET_MATERIAL"
+}

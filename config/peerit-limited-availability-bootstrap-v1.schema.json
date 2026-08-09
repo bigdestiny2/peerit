@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://peerit.site/schemas/peerit-limited-public-inbox-bootstrap-v1.schema.json",
+  "title": "PeeritLimitedPublicInboxBootstrapV1",
+  "description": "A separately named, signed bootstrap for the bounded Sequence 29 public INBOX test. The assignment-fixed legacy filename carries no production availability claim.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["payload", "signature"],
+  "properties": {
+    "payload": { "$ref": "#/$defs/payload" },
+    "signature": { "$ref": "#/$defs/hex64" }
+  },
+  "$defs": {
+    "hex32": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hex64": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{128}$"
+    },
+    "u64": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "relay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "relayId",
+        "canonicalDescribeUrl",
+        "relayPublicKey",
+        "storeId",
+        "durabilityContinuityHash",
+        "descriptorFloor"
+      ],
+      "properties": {
+        "relayId": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,31}$"
+        },
+        "canonicalDescribeUrl": {
+          "type": "string",
+          "pattern": "^https://[^/?#]+/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$",
+          "maxLength": 512
+        },
+        "relayPublicKey": { "$ref": "#/$defs/hex32" },
+        "storeId": { "$ref": "#/$defs/hex32" },
+        "durabilityContinuityHash": { "$ref": "#/$defs/hex32" },
+        "descriptorFloor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sequence", "hash"],
+          "properties": {
+            "sequence": { "$ref": "#/$defs/u64" },
+            "hash": { "$ref": "#/$defs/hex32" }
+          }
+        }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inboxEpoch",
+        "stripeIndex",
+        "relayId",
+        "relayPublicKey",
+        "allocationEpoch",
+        "createPublicKey",
+        "physicalTopic",
+        "frameClassBits",
+        "appendAuthMode",
+        "retentionClass",
+        "leaseClass",
+        "createReceiptCanonicalHex"
+      ],
+      "properties": {
+        "inboxEpoch": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "stripeIndex": { "const": 0 },
+        "relayId": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,31}$"
+        },
+        "relayPublicKey": { "$ref": "#/$defs/hex32" },
+        "allocationEpoch": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "createPublicKey": { "$ref": "#/$defs/hex32" },
+        "physicalTopic": { "$ref": "#/$defs/hex32" },
+        "frameClassBits": { "const": 3 },
+        "appendAuthMode": { "const": 0 },
+        "retentionClass": { "const": 3 },
+        "leaseClass": { "const": 4 },
+        "createReceiptCanonicalHex": {
+          "type": "string",
+          "pattern": "^[0-9a-f]+$",
+          "minLength": 2,
+          "maxLength": 32768
+        }
+      }
+    },
+    "epochSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inboxEpoch",
+        "stripeCountLog2",
+        "stripeSelectionKey",
+        "announcementMasterKey",
+        "bindings"
+      ],
+      "properties": {
+        "inboxEpoch": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "stripeCountLog2": { "const": 0 },
+        "stripeSelectionKey": { "$ref": "#/$defs/hex32" },
+        "announcementMasterKey": { "$ref": "#/$defs/hex32" },
+        "bindings": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/binding" }
+        }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "version",
+        "artifactClass",
+        "claimBoundary",
+        "operatorBoundary",
+        "topicScope",
+        "profileId",
+        "releaseSequence",
+        "bootstrapSequence",
+        "previousBootstrapHash",
+        "issuedUnixMillis",
+        "expiresUnixMillis",
+        "authorityPublicKey",
+        "relays",
+        "inboxEpochSets"
+      ],
+      "properties": {
+        "schema": { "const": "peerit-limited-public-inbox-bootstrap-v1" },
+        "version": { "const": 1 },
+        "artifactClass": {
+          "enum": ["FIXTURE_ONLY", "LIMITED_PUBLIC_TEST_RELEASE"]
+        },
+        "claimBoundary": { "const": "LIVE_PUBLIC_TEST_ONLY" },
+        "operatorBoundary": { "const": "TWO_OWNER_OPERATED_RELAYS_NOT_INDEPENDENT_OPERATORS" },
+        "topicScope": { "const": "GLOBAL_PUBLIC_DISCOVERY" },
+        "profileId": { "const": "@peerit/hiverelay-profile-v1" },
+        "releaseSequence": { "const": 29 },
+        "bootstrapSequence": { "$ref": "#/$defs/u64" },
+        "previousBootstrapHash": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/hex32" }
+          ]
+        },
+        "issuedUnixMillis": {
+          "$ref": "#/$defs/u64",
+          "description": "Issue time in Unix milliseconds. The semantic checker requires expiresUnixMillis to be later."
+        },
+        "expiresUnixMillis": {
+          "$ref": "#/$defs/u64",
+          "description": "Expiry in Unix milliseconds, strictly after issue and no more than 2,678,400,000 ms later."
+        },
+        "authorityPublicKey": { "$ref": "#/$defs/hex32" },
+        "relays": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/relay" }
+        },
+        "inboxEpochSets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "description": "Index 0 is the active current set. Initial Sequence 29 has one set. Optional index 1 is immediately previous, read-only, separately authorized rotation overlap and never widens the two current append targets.",
+          "items": { "$ref": "#/$defs/epochSet" }
+        }
+      }
+    }
+  }
+}

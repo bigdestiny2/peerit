@@ -1,0 +1,13 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "vector",
+  "mutation": {
+    "op": "replace",
+    "path": "/announcement/manifestReadCaps",
+    "value": [
+      "00"
+    ]
+  },
+  "expectedError": "ANNOUNCEMENT_MODE"
+}

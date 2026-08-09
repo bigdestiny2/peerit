@@ -1,0 +1,99 @@
+{
+  "schema": "peerit-seq29-limited-public-test-compatibility-v1",
+  "version": 1,
+  "status": "CONTRACT_ONLY_NOT_RELEASE_AUTHORITY",
+  "releaseSequence": 29,
+  "consumerProfile": {
+    "id": "@peerit/hiverelay-profile-v1",
+    "specPath": "docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md",
+    "specSha256": "74d3b65dff1bbf2a4630791fd1a770e8dcdfac415bf693ff313d38d0262619fd",
+    "authorBindInnerCodec": 334,
+    "announcementManifestTag": 3
+  },
+  "sourceProvenanceOnly": {
+    "preservedPeeritCommit": "4ada838b372360c9b0a7675c0ef190a62edef22f",
+    "preservedSourceDigest": "d5fc9e20f09fd4c4f3ba5370c3c463f975fa9ae09b7b7aa23c0535d8f0ce2990",
+    "hiverelayBrowserArtifactSourceCommit": "fa53fb22e5ecd606bf7816575bb723f5a9e87766",
+    "hiverelayLimitedCellGetSourceCommit": "1012ca12792df662b4f812f20d0165de63071cc8",
+    "hiverelayCleanIntegrationBase": "48e596afed2e53fd39129033d4983bb8ae82bc34"
+  },
+  "releaseAuthorityRequirements": {
+    "acceptedRegeneratedSubstrateTupleRequired": true,
+    "acceptedRegeneratedBrowserArtifactHashRequired": true,
+    "acceptedRegeneratedBrowserManifestHashRequired": true,
+    "acceptedLimitedCellGetArtifactHashRequired": true,
+    "acceptedInboxArtifactExportRequired": true,
+    "inboxReadCompressedSignaturePayloadReconciliationRequired": true,
+    "provenanceInputsAreNotTargetPins": true,
+    "fixtureHashesAreNotTargetPins": true
+  },
+  "requiredHiveRelayOperations": [
+    { "familyId": 2, "operationId": 1, "name": "CELL.PUT" },
+    { "familyId": 2, "operationId": 2, "name": "CELL.GET" },
+    { "familyId": 3, "operationId": 1, "name": "INBOX.CREATE", "offlineReleaseCeremonyOnly": true },
+    { "familyId": 3, "operationId": 4, "name": "INBOX.APPEND" },
+    { "familyId": 3, "operationId": 5, "name": "INBOX.READ" }
+  ],
+  "boundedIssuance": {
+    "cellPutCount": 2,
+    "cellGetReadbackCount": 2,
+    "inboxAppendCount": 2,
+    "announcementEmitterMode": "INLINE_ONLY",
+    "maximumInlineAuthorBindBytes": 10000,
+    "cellReferenceEmission": "REJECT_IN_SEQUENCE_29",
+    "cellReferenceReader": "CANONICAL_OPTIONAL_MODE_ONLY_WHEN_PINNED_AUTHORITY_SUPPORTS_IT"
+  },
+  "inboxShape": {
+    "stripeCountLog2": 0,
+    "bindingsPerEpochSet": 2,
+    "frameClassBits": 3,
+    "appendAuthMode": 0,
+    "retentionClass": 3,
+    "leaseClass": 4,
+    "topicScope": "GLOBAL_PUBLIC_DISCOVERY",
+    "operatorBoundary": "TWO_OWNER_OPERATED_RELAYS_NOT_INDEPENDENT_OPERATORS",
+    "initialEpochSetCount": 1,
+    "optionalPreviousEpochSet": "READ_ONLY_SEPARATELY_AUTHORIZED_ROTATION_OVERLAP",
+    "appendTargetsRemainCurrentSetOnly": 2
+  },
+  "managementCapabilityInvariant": {
+    "generation": "INDEPENDENT_CSPRNG_ED25519_KEYPAIRS_OFFLINE_PER_BINDING",
+    "privateMaterialLocation": "ENCRYPTED_OFFLINE_RELEASE_MAINTAINER_RECOVERY_ONLY",
+    "servedArtifactAllows": ["createPublicKey"],
+    "servedArtifactForbids": [
+      "createPrivateSeed",
+      "renewPrivateSeed",
+      "closePrivateSeed",
+      "deterministicPublicInputDerivation"
+    ],
+    "publicInputDerivationSecurityConsequence": "THIRD_PARTY_CAN_DERIVE_CLOSE_CAPABILITY_AND_TERMINALLY_CLOSE_TOPIC"
+  },
+  "managementCustody": {
+    "policyId": "peerit-seq29-limited-public-inbox-management-custody-v1",
+    "bundleName": "PeeritLimitedPublicInboxManagementBundleV1",
+    "envelopeName": "PeeritLimitedPublicInboxCustodyEnvelopeV1",
+    "bundleKind": 2,
+    "plaintextCodec": 3,
+    "currentEntries": 2,
+    "previousEntries": [0, 2],
+    "threshold": 2,
+    "totalShares": 3,
+    "canonicalFullBundleAlias": false,
+    "canonicalFullEnvelopeAlias": false
+  },
+  "nonClaims": [
+    "AvailabilityBootstrapV1",
+    "production availability bootstrap",
+    "independent relay operators",
+    "24-binding production topology",
+    "completeness",
+    "censorship resistance",
+    "G3",
+    "G4-I",
+    "anonymous append",
+    "spam resistance",
+    "production readiness",
+    "deployment",
+    "publish"
+  ]
+}

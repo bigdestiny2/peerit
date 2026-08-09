@@ -11,6 +11,10 @@
     "signaturePayload": "ASCII(domain) || 0x00 || canonical(payload)",
     "hash": "SHA-256(canonical(complete signed wrapper))",
     "maximumLifetimeMillis": 2678400000,
+    "decimalU64Range": "0..18446744073709551615",
+    "trustedTimeRule": "issuedUnixMillis <= trustedReferenceUnixMillis < expiresUnixMillis",
+    "initialEpochSetCount": 1,
+    "successorRule": "bootstrapSequence=previous+1; previousBootstrapHash=SHA-256(complete canonical signed predecessor); exactly one next-current set with fresh selection/master/create/topic material",
     "floor": {
       "schemaName": "PeeritLimitedPublicInboxBootstrapFloorV1",
       "fields": ["highestAcceptedBootstrapSequence:u64", "completeSignedWrapperHash:bytes32"],
@@ -21,6 +25,13 @@
   "peeritProfileAuthority": {
     "source": "docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md",
     "sourceSha256": "74d3b65dff1bbf2a4630791fd1a770e8dcdfac415bf693ff313d38d0262619fd",
+    "fixtureReplayAuthority": {
+      "module": "protocol/validator/peerit-validator-v1.bare.mjs",
+      "moduleSha256": "e69bf4554720c853e340f212eda4fe7760ae119594f5f136701a71c1b214a809",
+      "scope": "FIXTURE_ONLY_ARCHIVE_REPLAY",
+      "canonicalParityCommand": "PEERIT_CANONICAL_SOURCE_ROOT=/absolute/populated/peerit node protocol/seq29-limited-public-test/canonical-cross-check.mjs",
+      "releaseAuthority": false
+    },
     "schemas": {
       "PeeritAnnouncementV1": {
         "signatureDomain": "peerit.hiverelay.announcement.v1",
@@ -40,7 +51,8 @@
         "innerCodec": 334,
         "minimumInnerBytes": 8,
         "maximumInnerBytes": 1048519,
-        "replicaKind": "CELL_ONLY_V1"
+        "replicaKind": "CELL_ONLY_V1",
+        "canonicalAuthority": "PINNED_PROFILE_DECODE_REENCODE_NAMED_SORT_AND_SIGNATURE_VALIDATION_PLUS_INTRINSIC_CODEC_334_OPERATION_AUTHORITY"
       }
     },
     "identifiers": {
@@ -53,6 +65,14 @@
     "status": "REGENERATED_TARGET_TUPLE_REQUIRED_BEFORE_RELEASE",
     "provenanceCommit": "fa53fb22e5ecd606bf7816575bb723f5a9e87766",
     "wireTypes": {
+      "PutCellV1": {
+        "familyId": 2,
+        "operationId": 1,
+        "allocationCommitment": "BLAKE2b-256(ASCII('hiverelay.blind.allocate.v1') || relayPublicKey || storageSlot || u32be(allocationEpoch) || u8(sizeClass) || u8(leaseClass) || declaredBlobHash || createPublicKey || renewPublicKey || dropPublicKey)",
+        "requestCommitment": "BLAKE2b-256(ASCII('hiverelay.blind.request.v1cell-put') || allocationCommitment || clientNonce)",
+        "createSignature": "Ed25519(createPrivateKey, allocationCommitment)",
+        "receiptCorrelation": "exact relay binding, slot commitment, blob hash, allocation commitment, request commitment, request nonce, size/allocation/lease, STORED result and revision zero"
+      },
       "InboxReceiptV1": {
         "resultSignatureDomainId": 106,
         "resultSignatureDomain": "hiverelay.blind.inbox-receipt.v1",
@@ -122,7 +142,8 @@
     "currentEntries": 2,
     "previousEntries": "0_OR_2_ROTATION_ONLY",
     "seedRoles": ["CREATE", "RENEW", "CLOSE"],
-    "appendSeed": "FORBIDDEN"
+    "appendSeed": "FORBIDDEN",
+    "recovery": "PIN_ALL_THREE_REJECT_LOW_ORDER_AND_DUPLICATE_MATERIAL_TRY_EVERY_AUTHENTICATED_PAIR_FULLY_VALIDATE_EVERY_PASS_REQUIRE_BYTE_IDENTICAL"
   },
   "retry": {
     "persistBeforeSend": ["exactRequestBytes", "requestCommitment", "spendAdmission", "ciphertextOrFrame", "targetIdentity"],

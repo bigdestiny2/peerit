@@ -1,0 +1,13 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "successor",
+  "validationStage": "POST_SIGNATURE",
+  "mutation": {
+    "op": "xor-hex",
+    "path": "/payload/previousBootstrapHash",
+    "byteIndex": 0,
+    "mask": 1
+  },
+  "expectedError": "BOOTSTRAP_PREDECESSOR"
+}

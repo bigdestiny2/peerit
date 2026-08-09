@@ -1,0 +1,12 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "successor",
+  "validationStage": "POST_SIGNATURE",
+  "mutation": {
+    "op": "replace",
+    "path": "/payload/inboxEpochSets/0/stripeSelectionKey",
+    "value": "13f2a82953c2c4fdbee9c5d30a0f7b6e7971864b91fceba346bb2f998780ce6d"
+  },
+  "expectedError": "EPOCH_REUSE"
+}

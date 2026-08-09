@@ -53,7 +53,14 @@
     "plaintextHash": "BLAKE2b-256(ASCII('peerit.hiverelay.custody-plaintext.v1') || u8(bundleKind=2) || u16be(plaintextCodec=3) || u64be(plaintextLength) || plaintext)",
     "sealedPayloadHash": "BLAKE2b-256(ASCII('peerit.hiverelay.custody-sealed-payload.v1') || u64be(sealedPayloadLength) || sealedPayload)",
     "shareKeyInfo": "ASCII('peerit.hiverelay.custody-share-key.v1') || u8(bundleKind=2) || u8(shareIndex) || custodianPublicKey || ephemeralPublicKey",
-    "acceptance": "authenticate two shares, reconstruct candidate key, match keyCommitment, authenticate payload, match length/hash/codec, then validate the complete limited bundle",
+    "recipientPins": "EXACTLY_THREE_ORDERED_CUSTODIAN_PUBLIC_KEYS_ALL_AUTHENTICATED_BEFORE_RECOVERY",
+    "publicKeyPreflight": "REJECT_ALL_ZERO_AND_COMPLETE_KNOWN_LOW_ORDER_X25519_SET_FOR_CUSTODIAN_AND_EPHEMERAL_KEYS",
+    "uniqueness": "PAIRWISE_DISTINCT_CUSTODIAN_KEYS_EPHEMERAL_KEYS_SHARE_NONCES_AND_SEALED_SHARES",
+    "pairEnumeration": ["1+2", "1+3", "2+3"],
+    "acceptance": "authenticate every supplied share; try every available pair; reconstruct candidate key; match keyCommitment; authenticate payload; match length/hash/codec; then validate every complete limited bundle candidate",
+    "passingCandidateEquality": "EVERY_FULLY_VALIDATED_PASSING_PLAINTEXT_MUST_BE_BYTE_IDENTICAL",
+    "threeShareFaultTolerance": "WITH_ALL_THREE_AVAILABLE_ONE_AUTHENTICATED_MALICIOUS_SHARE_IS_TOLERATED",
+    "maliciousPlusUnavailable": "OUTSIDE_GUARANTEE_FAIL_CLOSED",
     "tamperBoundary": "any recipient, share AAD, share ciphertext, envelope AAD, payload ciphertext, hash, codec, cardinality, entry, or commitment mismatch fails reconstruction"
   },
   "nonAliases": [

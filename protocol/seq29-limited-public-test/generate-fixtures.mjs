@@ -48,6 +48,12 @@ const LIMITED_MANAGEMENT_BUNDLE_KIND = 2
 const LIMITED_MANAGEMENT_PLAINTEXT_CODEC = 3
 const PROFILE_SPEC_SHA256 = '74d3b65dff1bbf2a4630791fd1a770e8dcdfac415bf693ff313d38d0262619fd'
 const HIVERELAY_PROVENANCE = 'fa53fb22e5ecd606bf7816575bb723f5a9e87766'
+const FIXTURE_REFERENCE_UNIX_MILLIS = 1780000001000n
+const FIXTURE_EFFECTIVE_LEASE_EPOCH = Number(FIXTURE_REFERENCE_UNIX_MILLIS / 21600000n)
+const FIXTURE_CURRENT_INBOX_EPOCH = Math.floor(FIXTURE_EFFECTIVE_LEASE_EPOCH / 28)
+const FIXTURE_L90_EXPIRY_EPOCH = FIXTURE_EFFECTIVE_LEASE_EPOCH + 360
+const FIXTURE_SUCCESSOR_EFFECTIVE_LEASE_EPOCH = (FIXTURE_CURRENT_INBOX_EPOCH + 1) * 28
+const FIXTURE_SUCCESSOR_REFERENCE_UNIX_MILLIS = BigInt(FIXTURE_SUCCESSOR_EFFECTIVE_LEASE_EPOCH) * 21600000n + 1000n
 
 if (process.env.PEERIT_SEQ29_ARTIFACT_CLASS && process.env.PEERIT_SEQ29_ARTIFACT_CLASS !== 'FIXTURE_ONLY') {
   throw new Error('fixture generator refuses every non-FIXTURE_ONLY artifact class')
@@ -64,6 +70,26 @@ function stable (value) {
   return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + stable(value[key])).join(',') + '}'
 }
 function canonicalJson (value) { return Buffer.from(stable(value), 'utf8') }
+
+const PEERIT_SIGNATURE_FIELDS = new Set(['_sig', '_k', '_dk', '_ns', '_alg'])
+function stablePeeritRecordValue (value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value === undefined ? null : value)
+  if (Array.isArray(value)) return '[' + value.map(stablePeeritRecordValue).join(',') + ']'
+  const keys = Object.keys(value).filter(key => !PEERIT_SIGNATURE_FIELDS.has(key) && value[key] !== undefined).sort()
+  return '{' + keys.map(key => JSON.stringify(key) + ':' + stablePeeritRecordValue(value[key])).join(',') + '}'
+}
+function canonicalPeeritRecordFixture (type, data) {
+  return type + '|' + stablePeeritRecordValue(data)
+}
+function createBoundedPeeritInnerOperationBatchFixtureV1 (operations) {
+  const canonicalOperationBatch = stable({ version: 1, operations })
+  const payload = Buffer.from(canonicalOperationBatch, 'utf8')
+  if (payload.byteLength < 1 || payload.byteLength > 1048512) throw new Error('fixture operation batch payload is out of bounds')
+  return {
+    innerBytes: concatBytes(u16Bytes(334), u8(1), u32Bytes(payload.byteLength), payload),
+    canonicalOperationBatch
+  }
+}
 
 function fixtureBytes (label, length) {
   const chunks = []
@@ -107,6 +133,27 @@ function cellGetRequestCommitment (relayPublicKey, storageSlot, clientNonce) {
   return blake2b256(concatBytes(
     asciiBytes('hiverelay.blind.request.v1cell-get'), relayPublicKey, storageSlot, clientNonce
   ))
+}
+function cellAllocationCommitment (value) {
+  return blake2b256(concatBytes(
+    asciiBytes('hiverelay.blind.allocate.v1'), value.relayPublicKey, value.storageSlot,
+    u32Bytes(value.allocationEpoch), u8(value.sizeClass), u8(value.leaseClass),
+    value.declaredBlobHash, value.createPublicKey, value.renewPublicKey, value.dropPublicKey
+  ))
+}
+function cellPutRequestCommitment (allocationCommitment, clientNonce) {
+  return blake2b256(concatBytes(
+    asciiBytes('hiverelay.blind.request.v1cell-put'), allocationCommitment, clientNonce
+  ))
+}
+function putCellRequestBytes (value) {
+  return concatBytes(
+    u8(1), value.storageSlot, u32Bytes(value.allocationEpoch), u8(value.sizeClass), u8(value.leaseClass),
+    value.clientNonce, value.createPublicKey, value.renewPublicKey, value.dropPublicKey,
+    value.declaredBlobHash, value.createSignature,
+    u16Bytes(value.admission.profileId), u16Bytes(value.admission.schemeId),
+    value.admission.parameterHash, compactBytes(value.admission.token), value.cellBlob
+  )
 }
 function inboxReadRequestCommitment (relayPublicKey, physicalTopic, cursor, limit, clientNonce) {
   return blake2b256(concatBytes(
@@ -221,7 +268,7 @@ function limitedCustodySharePrefix (value) {
   )
 }
 
-function makeLimitedManagementCustody (plaintext) {
+function makeLimitedManagementCustody (plaintext, options = {}) {
   const custodySetId = fixtureBytes('limited-custody:set-id', 32)
   const dataKey = fixtureBytes('limited-custody:data-key', 32)
   const coefficient = fixtureBytes('limited-custody:shamir-coefficient', 32)
@@ -254,6 +301,7 @@ function makeLimitedManagementCustody (plaintext) {
     for (let byte = 0; byte < 32; byte++) {
       sharePlaintext[byte] = dataKey[byte] ^ gfMultiply(coefficient[byte], shareIndex)
     }
+    if (options.maliciousShareIndex === shareIndex) sharePlaintext[0] ^= 1
     const shared = new Uint8Array(diffieHellman({
       privateKey: ephemerals[index].privateKey,
       publicKey: createPublicKey({
@@ -266,7 +314,8 @@ function makeLimitedManagementCustody (plaintext) {
       u8(shareIndex), custodian.publicKey, ephemerals[index].publicKey
     )
     const shareKey = new Uint8Array(hkdfSync('sha256', shared, custodySetId, info, 32))
-    const nonce = fixtureBytes(`limited-custody:share-${shareIndex}:nonce`, 24)
+    const nonceLabel = options.duplicateNonceAt === shareIndex ? 1 : shareIndex
+    const nonce = fixtureBytes(`limited-custody:share-${nonceLabel}:nonce`, 24)
     const value = {
       custodySetId,
       shareIndex,
@@ -279,6 +328,20 @@ function makeLimitedManagementCustody (plaintext) {
     const sealedShare = xchachaSeal(shareKey, nonce, limitedCustodySharePrefix(value), sharePlaintext)
     return { ...value, sealedShare }
   })
+  if (options.tamperShareIndex != null) {
+    const share = shares[options.tamperShareIndex - 1]
+    share.sealedShare = new Uint8Array(share.sealedShare)
+    share.sealedShare[share.sealedShare.byteLength - 1] ^= 1
+  }
+  if (options.duplicateCiphertextAt != null) {
+    shares[options.duplicateCiphertextAt - 1].sealedShare = new Uint8Array(shares[0].sealedShare)
+  }
+  if (options.duplicateEphemeralAt != null) {
+    shares[options.duplicateEphemeralAt - 1].ephemeralPublicKey = new Uint8Array(shares[0].ephemeralPublicKey)
+  }
+  if (options.lowOrderEphemeralAt != null) {
+    shares[options.lowOrderEphemeralAt - 1].ephemeralPublicKey = concatBytes(Uint8Array.of(1), new Uint8Array(31))
+  }
   const canonical = concatBytes(
     limitedCustodyEnvelopePrefix(envelope), payloadNonce, sealedPayload, u8(3),
     ...shares.map(share => concatBytes(limitedCustodySharePrefix(share), share.sealedShare))
@@ -286,6 +349,7 @@ function makeLimitedManagementCustody (plaintext) {
   return {
     canonical,
     custodians: custodians.map(value => ({ privateKey: value.privateBytes, publicKey: value.publicKey })),
+    shares,
     plaintextHash,
     keyCommitment
   }
@@ -331,6 +395,82 @@ function blindReceiptBytes (value, pair) {
   return signedResultBytes('hiverelay.blind.cell-receipt.v1', unsigned, pair)
 }
 
+function signedAuthorBindFixture (value, pair, compiled, runtimeOptions, catalog) {
+  const record = { ...value, signature: new Uint8Array(64) }
+  const prefix = encodePeeritProfileRecordPrefixFromIr(
+    compiled, PEERIT_PROFILE_INVENTORY, 'AuthorBindV1', record, 'signature', runtimeOptions
+  )
+  record.signature = new Uint8Array(sign(null, concatBytes(
+    asciiBytes('peerit.hiverelay.author-bind.v1'), prefix
+  ), pair.privateKey))
+  const bytes = catalog.AuthorBindV1.encode(record)
+  const manifestRecordId = blake2b256(concatBytes(
+    asciiBytes('peerit.hiverelay.manifest-record-id.v1'), u16Bytes(3), u64Bytes(bytes.byteLength), bytes
+  ))
+  return { record, prefix, bytes, manifestRecordId }
+}
+
+function signedAnnouncementFixture (authorBytes, manifestRecordId, publishedLeaseEpoch, pair, compiled, runtimeOptions, catalog) {
+  const record = {
+    version: 1,
+    manifestTag: 3,
+    manifestRecordId: new Uint8Array(manifestRecordId),
+    manifestMode: 1,
+    manifestRecord: new Uint8Array(authorBytes),
+    manifestReadCaps: [],
+    publishedLeaseEpoch,
+    publisherPublicKey: new Uint8Array(pair.publicKey),
+    signature: new Uint8Array(64)
+  }
+  const prefix = encodePeeritProfileRecordPrefixFromIr(
+    compiled, PEERIT_PROFILE_INVENTORY, 'PeeritAnnouncementV1', record, 'signature', runtimeOptions
+  )
+  record.signature = new Uint8Array(sign(null, concatBytes(
+    asciiBytes('peerit.hiverelay.announcement.v1'), prefix
+  ), pair.privateKey))
+  const bytes = catalog.PeeritAnnouncementV1.encode(record)
+  const signedAnnouncementId = blake2b256(concatBytes(
+    asciiBytes('peerit.hiverelay.signed-announcement-id.v1'), u64Bytes(bytes.byteLength), bytes
+  ))
+  return { record, prefix, bytes, signedAnnouncementId }
+}
+
+function authorBindVectorValue (signed) {
+  return {
+    manifestTag: 3,
+    authorSequence: String(signed.record.authorSequence),
+    previousAuthorRecordId: signed.record.previousAuthorRecordId == null
+      ? null
+      : hex(signed.record.previousAuthorRecordId),
+    authorPublicKey: hex(signed.record.authorPublicKey),
+    signature: hex(signed.record.signature),
+    signingPrefixHex: hex(signed.prefix),
+    canonicalHex: hex(signed.bytes),
+    byteLength: signed.bytes.byteLength,
+    canonicalSha256: sha256Hex(signed.bytes),
+    manifestRecordId: hex(signed.manifestRecordId)
+  }
+}
+
+function announcementVectorValue (signed) {
+  return {
+    version: 1,
+    manifestTag: 3,
+    manifestRecordId: hex(signed.record.manifestRecordId),
+    manifestMode: 1,
+    manifestRecordCanonicalHex: hex(signed.record.manifestRecord),
+    manifestReadCaps: [],
+    publishedLeaseEpoch: signed.record.publishedLeaseEpoch,
+    publisherPublicKey: hex(signed.record.publisherPublicKey),
+    signature: hex(signed.record.signature),
+    signingPrefixHex: hex(signed.prefix),
+    canonicalHex: hex(signed.bytes),
+    byteLength: signed.bytes.byteLength,
+    canonicalSha256: sha256Hex(signed.bytes),
+    signedAnnouncementId: hex(signed.signedAnnouncementId)
+  }
+}
+
 function relayBinding (pair, label, sequence) {
   return {
     version: 1,
@@ -348,13 +488,18 @@ function relayBinding (pair, label, sequence) {
 }
 
 function cellReplicaProjection (value) {
-  return concatBytes(
+  const projection = concatBytes(
     value.logicalHash, value.encodingCommitment, value.relayPublicKey, value.readCapability,
     value.cellBlobHash, u8(value.sizeClass), u32Bytes(value.allocationEpoch)
   )
+  return blake2b256(concatBytes(
+    asciiBytes('peerit.hiverelay.replica-id.v1'), Uint8Array.of(1),
+    u64Bytes(projection.byteLength), projection
+  ))
 }
-function sortProjection (owner, type, value, encoded) {
-  if (owner.includes('initialReplicas')) return cellReplicaProjection(value)
+
+function boundedProfileSortProjection (owner, type, value, encoded) {
+  if (String(owner).includes('initialReplicas')) return cellReplicaProjection(value)
   return encoded
 }
 
@@ -381,6 +526,7 @@ async function externalAuthorities () {
         if (!(value instanceof Uint8Array) || value.byteLength === 0 || name !== row.name) {
           throw new Error(`invalid fixture external value for ${row.name}`)
         }
+        decodeBlindExternalProfileValueV1(name, value)
       }
     })
     object[row.name] = authority
@@ -482,8 +628,8 @@ async function generate () {
   const relayPairs = [keyPair('relay-a'), keyPair('relay-b')]
   const relayBindings = relayPairs.map((pair, index) => relayBinding(pair, `relay-${index}`, 7 + index))
   const relayIds = ['fixture-relay-a', 'fixture-relay-b']
-  const allocationEpoch = 123456
-  const inboxEpoch = 4410
+  const allocationEpoch = FIXTURE_EFFECTIVE_LEASE_EPOCH
+  const inboxEpoch = FIXTURE_CURRENT_INBOX_EPOCH
   const relays = []
   const bootstrapBindings = []
   const inboxManagementPairs = []
@@ -500,7 +646,7 @@ async function generate () {
       topicCommitment: blake2b256(topic),
       stateRevision: 0n,
       leaseClass: 4,
-      leaseEpoch: 123816,
+      leaseEpoch: FIXTURE_L90_EXPIRY_EPOCH,
       requestNonce: fixtureBytes(`inbox-${index}:request-nonce`, 32),
       requestCommitment: fixtureBytes(`inbox-${index}:request-commitment`, 32),
       result: 1
@@ -567,36 +713,96 @@ async function generate () {
   const bootstrapWrapperBytes = canonicalJson(bootstrap)
   const bootstrapWrapperHash = new Uint8Array(sha256(bootstrapWrapperBytes))
 
+  const successorBindings = []
+  for (let index = 0; index < 2; index++) {
+    const create = keyPair(`fixture-only-successor-inbox-create-${index}`)
+    const successorTopic = blake2b256(concatBytes(
+      asciiBytes('hiverelay.blind.inbox-topic.v1'),
+      u32Bytes(FIXTURE_SUCCESSOR_EFFECTIVE_LEASE_EPOCH), create.publicKey
+    ))
+    const receiptBytes = inboxReceiptBytes({
+      relayBinding: relayBindings[index],
+      topicCommitment: blake2b256(successorTopic),
+      stateRevision: 0n,
+      leaseClass: 4,
+      leaseEpoch: FIXTURE_SUCCESSOR_EFFECTIVE_LEASE_EPOCH + 360,
+      requestNonce: fixtureBytes(`successor-inbox-${index}:request-nonce`, 32),
+      requestCommitment: fixtureBytes(`successor-inbox-${index}:request-commitment`, 32),
+      result: 1
+    }, relayPairs[index])
+    decodeBlindExternalProfileValueV1('InboxReceiptV1', receiptBytes)
+    successorBindings.push({
+      inboxEpoch: FIXTURE_CURRENT_INBOX_EPOCH + 1,
+      stripeIndex: 0,
+      relayId: relayIds[index],
+      relayPublicKey: hex(relayPairs[index].publicKey),
+      allocationEpoch: FIXTURE_SUCCESSOR_EFFECTIVE_LEASE_EPOCH,
+      createPublicKey: hex(create.publicKey),
+      physicalTopic: hex(successorTopic),
+      frameClassBits: 3,
+      appendAuthMode: 0,
+      retentionClass: 3,
+      leaseClass: 4,
+      createReceiptCanonicalHex: hex(receiptBytes)
+    })
+  }
+  const successorPayload = {
+    ...bootstrapPayload,
+    bootstrapSequence: '1',
+    previousBootstrapHash: hex(bootstrapWrapperHash),
+    issuedUnixMillis: String(FIXTURE_SUCCESSOR_REFERENCE_UNIX_MILLIS - 1000n),
+    expiresUnixMillis: String(FIXTURE_SUCCESSOR_REFERENCE_UNIX_MILLIS + 604800000n),
+    inboxEpochSets: [{
+      inboxEpoch: FIXTURE_CURRENT_INBOX_EPOCH + 1,
+      stripeCountLog2: 0,
+      stripeSelectionKey: hex(fixtureBytes('successor-stripe-selection-key', 32)),
+      announcementMasterKey: hex(fixtureBytes('successor-announcement-master-key', 32)),
+      bindings: successorBindings
+    }]
+  }
+  const successorBootstrap = {
+    payload: successorPayload,
+    signature: hex(new Uint8Array(sign(null, concatBytes(
+      asciiBytes(BOOTSTRAP_DOMAIN), u8(0), canonicalJson(successorPayload)
+    ), bootstrapAuthority.privateKey)))
+  }
+
   const authorPair = keyPair('author')
   const publisherPair = keyPair('publisher')
-  const innerPayload = stable({
-    version: 1,
-    operations: [{
-      key: 'v2!fixture-only-seq29',
-      value: {
-        _k: hex(authorPair.publicKey),
-        _sig: hex(fixtureBytes('fixture-application-signature', 64)),
-        _t: 'post',
-        body: 'fixture-only',
-        cid: 'fixture-only-seq29',
-        community: 'fixture',
-        createdAt: 1780000000000
-      }
-    }]
-  })
-  const innerPayloadBytes = Buffer.from(innerPayload, 'utf8')
-  const innerBytes = concatBytes(u16Bytes(334), u8(1), u32Bytes(innerPayloadBytes.byteLength), innerPayloadBytes)
+  const authorPublicKeyHex = hex(authorPair.publicKey)
+  const operationData = {
+    id: 'fixture!fixture-only-seq29',
+    author: authorPublicKeyHex,
+    body: 'fixture-only',
+    cid: 'fixture-only-seq29',
+    community: 'fixture',
+    createdAt: 1780000000000,
+    _k: authorPublicKeyHex,
+    _dk: hex(fixtureBytes('fixture-operation-drive-key', 32)),
+    _ns: 'peerit',
+    _alg: 'ed25519'
+  }
+  operationData._sig = hex(new Uint8Array(sign(null, Buffer.from(
+    `pear.app.${operationData._dk}:peerit:${canonicalPeeritRecordFixture('post', operationData)}`,
+    'utf8'
+  ), authorPair.privateKey)))
+  const innerEnvelope = createBoundedPeeritInnerOperationBatchFixtureV1([{
+    type: 'post',
+    data: operationData
+  }])
+  const innerBytes = innerEnvelope.innerBytes
   const logical = logicalHash(innerBytes)
   const sizeClass = 1
   const encoding = encodingCommitment(innerBytes, logical, sizeClass)
   const cellBindings = []
   const cellReadbackByRelay = new Map()
+  const cellPutByRelay = new Map()
 
   for (let index = 0; index < 2; index++) {
     const create = keyPair(`fixture-only-cell-create-${index}`)
     const renew = keyPair(`fixture-only-cell-renew-${index}`)
     const drop = keyPair(`fixture-only-cell-drop-${index}`)
-    const cellAllocationEpoch = allocationEpoch + 10 + index
+    const cellAllocationEpoch = allocationEpoch
     const slot = blake2b256(concatBytes(
       asciiBytes('hiverelay.blind.slot.v1'), u32Bytes(cellAllocationEpoch), create.publicKey
     ))
@@ -613,20 +819,51 @@ async function generate () {
       expectedCellBlobHash: cellBlobHash
     })
     decodeBlindExternalProfileValueV1('ReadCellCapV1', readCapability)
-    const allocationCommitment = fixtureBytes(`cell-${index}:allocation-commitment`, 32)
+    const putClientNonce = fixtureBytes(`cell-${index}:put-client-nonce`, 32)
+    const allocationCommitment = cellAllocationCommitment({
+      relayPublicKey: relayPairs[index].publicKey,
+      storageSlot: slot,
+      allocationEpoch: cellAllocationEpoch,
+      sizeClass,
+      leaseClass: 4,
+      declaredBlobHash: cellBlobHash,
+      createPublicKey: create.publicKey,
+      renewPublicKey: renew.publicKey,
+      dropPublicKey: drop.publicKey
+    })
+    const putRequestCommitment = cellPutRequestCommitment(allocationCommitment, putClientNonce)
+    const putRequest = putCellRequestBytes({
+      storageSlot: slot,
+      allocationEpoch: cellAllocationEpoch,
+      sizeClass,
+      leaseClass: 4,
+      clientNonce: putClientNonce,
+      createPublicKey: create.publicKey,
+      renewPublicKey: renew.publicKey,
+      dropPublicKey: drop.publicKey,
+      declaredBlobHash: cellBlobHash,
+      createSignature: new Uint8Array(sign(null, allocationCommitment, create.privateKey)),
+      admission: {
+        profileId: 8,
+        schemeId: 1,
+        parameterHash: fixtureBytes(`cell-${index}:put-admission-parameter-hash`, 32),
+        token: fixtureBytes(`cell-${index}:put-admission-token`, 32)
+      },
+      cellBlob: sealedCell.cellBlob
+    })
     const receiptBytes = blindReceiptBytes({
       relayBinding: relayBindings[index],
       slotCommitment: blake2b256(slot),
       cellBlobHash,
       allocationCommitment,
-      requestCommitment: fixtureBytes(`cell-${index}:request-commitment`, 32),
+      requestCommitment: putRequestCommitment,
       sizeClass,
       allocationEpoch: cellAllocationEpoch,
       leaseClass: 4,
-      leaseEpoch: 123816,
+      leaseEpoch: FIXTURE_L90_EXPIRY_EPOCH,
       stateRevision: 0n,
-      receiptEpoch: 123456,
-      requestNonce: fixtureBytes(`cell-${index}:request-nonce`, 32),
+      receiptEpoch: FIXTURE_EFFECTIVE_LEASE_EPOCH,
+      requestNonce: putClientNonce,
       result: 1
     }, relayPairs[index])
     decodeBlindExternalProfileValueV1('BlindReceiptV1', receiptBytes)
@@ -639,7 +876,7 @@ async function generate () {
       cellBlobHash,
       sizeClass,
       allocationEpoch: cellAllocationEpoch,
-      leaseEpoch: 123816,
+      leaseEpoch: FIXTURE_L90_EXPIRY_EPOCH,
       createPublicKey: create.publicKey,
       renewPublicKey: renew.publicKey,
       dropPublicKey: drop.publicKey,
@@ -651,6 +888,12 @@ async function generate () {
       getRequestCommitment,
       getResult: getCellResultBytes(sizeClass, sealedCell.cellBlob)
     })
+    cellPutByRelay.set(hex(relayPairs[index].publicKey), {
+      putRequest,
+      allocationCommitment,
+      putRequestCommitment,
+      putClientNonce
+    })
   }
   cellBindings.sort((left, right) => compareBytes(cellReplicaProjection(left), cellReplicaProjection(right)))
 
@@ -658,10 +901,13 @@ async function generate () {
   if (sha256Hex(Buffer.from(profileText, 'utf8')) !== PROFILE_SPEC_SHA256) throw new Error('profile source drift')
   const compiled = compilePeeritProfileCodecIr(profileText, PEERIT_PROFILE_INVENTORY)
   const authorities = await externalAuthorities()
-  const runtimeOptions = Object.freeze({ externalAuthorityByName: authorities.map, sortProjection })
+  const runtimeOptions = Object.freeze({
+    externalAuthorityByName: authorities.map,
+    sortProjection: boundedProfileSortProjection
+  })
   const catalog = createPeeritProfileCodecCatalogFromIr(compiled, PEERIT_PROFILE_INVENTORY, {
     externalAuthorities: authorities.object,
-    sortProjection
+    sortProjection: boundedProfileSortProjection
   })
 
   const managementEntryBytes = bootstrapBindings.map((binding, index) => {
@@ -698,7 +944,7 @@ async function generate () {
       closePublicKey: new Uint8Array(roles.close.publicKey),
       latestReceipt: new Uint8Array(roles.receiptBytes),
       latestRevision: 0n,
-      leaseEpoch: 123816
+      leaseEpoch: FIXTURE_L90_EXPIRY_EPOCH
     }
     return catalog.InboxManagementEntryV1.encode(entry)
   })
@@ -722,6 +968,11 @@ async function generate () {
     createdUnixMillis: 1780000000000n
   })
   const managementCustody = makeLimitedManagementCustody(managementPlaintext)
+  const thirdShareTamperedCustody = makeLimitedManagementCustody(managementPlaintext, { maliciousShareIndex: 3 })
+  const duplicateNonceCustody = makeLimitedManagementCustody(managementPlaintext, { duplicateNonceAt: 2 })
+  const duplicateCiphertextCustody = makeLimitedManagementCustody(managementPlaintext, { duplicateCiphertextAt: 2 })
+  const duplicateEphemeralCustody = makeLimitedManagementCustody(managementPlaintext, { duplicateEphemeralAt: 2 })
+  const lowOrderEphemeralCustody = makeLimitedManagementCustody(managementPlaintext, { lowOrderEphemeralAt: 2 })
   const invalidManagementEntry = catalog.InboxManagementEntryV1.decode(managementEntryBytes[0])
   const invalidManagementEntryBytes = catalog.InboxManagementEntryV1.encode({
     ...invalidManagementEntry,
@@ -738,7 +989,7 @@ async function generate () {
   })
   const invalidManagementCustody = makeLimitedManagementCustody(invalidManagementPlaintext)
 
-  const authorBind = {
+  const authorBindBase = {
     version: 1,
     authorSequence: 0n,
     previousAuthorRecordId: null,
@@ -746,44 +997,22 @@ async function generate () {
     innerCodec: 334,
     innerLength: BigInt(innerBytes.byteLength),
     initialReplicas: cellBindings,
-    authorPublicKey: new Uint8Array(authorPair.publicKey),
-    signature: new Uint8Array(64)
+    authorPublicKey: new Uint8Array(authorPair.publicKey)
   }
-  const authorPrefix = encodePeeritProfileRecordPrefixFromIr(
-    compiled, PEERIT_PROFILE_INVENTORY, 'AuthorBindV1', authorBind, 'signature', runtimeOptions
-  )
-  authorBind.signature = new Uint8Array(sign(null, concatBytes(
-    asciiBytes('peerit.hiverelay.author-bind.v1'), authorPrefix
-  ), authorPair.privateKey))
-  const authorBindBytes = catalog.AuthorBindV1.encode(authorBind)
+  const signedAuthor = signedAuthorBindFixture(authorBindBase, authorPair, compiled, runtimeOptions, catalog)
+  const authorBind = signedAuthor.record
+  const authorPrefix = signedAuthor.prefix
+  const authorBindBytes = signedAuthor.bytes
+  const manifestRecordId = signedAuthor.manifestRecordId
   if (authorBindBytes.byteLength > 10000) throw new Error('fixture AuthorBind exceeds INLINE cap')
-  const manifestRecordId = blake2b256(concatBytes(
-    asciiBytes('peerit.hiverelay.manifest-record-id.v1'), u16Bytes(3),
-    u64Bytes(authorBindBytes.byteLength), authorBindBytes
-  ))
-
-  const announcement = {
-    version: 1,
-    manifestTag: 3,
-    manifestRecordId: new Uint8Array(manifestRecordId),
-    manifestMode: 1,
-    manifestRecord: new Uint8Array(authorBindBytes),
-    manifestReadCaps: [],
-    publishedLeaseEpoch: 123456,
-    publisherPublicKey: new Uint8Array(publisherPair.publicKey),
-    signature: new Uint8Array(64)
-  }
-  const announcementPrefix = encodePeeritProfileRecordPrefixFromIr(
-    compiled, PEERIT_PROFILE_INVENTORY, 'PeeritAnnouncementV1', announcement, 'signature', runtimeOptions
+  const signedAnnouncement = signedAnnouncementFixture(
+    authorBindBytes, manifestRecordId, FIXTURE_EFFECTIVE_LEASE_EPOCH,
+    publisherPair, compiled, runtimeOptions, catalog
   )
-  announcement.signature = new Uint8Array(sign(null, concatBytes(
-    asciiBytes('peerit.hiverelay.announcement.v1'), announcementPrefix
-  ), publisherPair.privateKey))
-  const announcementBytes = catalog.PeeritAnnouncementV1.encode(announcement)
-  const signedAnnouncementId = blake2b256(concatBytes(
-    asciiBytes('peerit.hiverelay.signed-announcement-id.v1'),
-    u64Bytes(announcementBytes.byteLength), announcementBytes
-  ))
+  const announcement = signedAnnouncement.record
+  const announcementPrefix = signedAnnouncement.prefix
+  const announcementBytes = signedAnnouncement.bytes
+  const signedAnnouncementId = signedAnnouncement.signedAnnouncementId
 
   const epochSet = bootstrap.payload.inboxEpochSets[0]
   const frames = []
@@ -902,10 +1131,12 @@ async function generate () {
     },
     cells: cellBindings.map(binding => {
       const readback = cellReadbackByRelay.get(hex(binding.relayPublicKey))
+      const put = cellPutByRelay.get(hex(binding.relayPublicKey))
       return ({
       relayPublicKey: hex(binding.relayPublicKey),
       logicalHash: hex(binding.logicalHash),
       encodingCommitment: hex(binding.encodingCommitment),
+      cellReplicaBindingCanonicalHex: hex(catalog.CellReplicaBindingV1.encode(binding)),
       readCapabilityCanonicalHex: hex(binding.readCapability),
       cellBlobHash: hex(binding.cellBlobHash),
       sizeClass: binding.sizeClass,
@@ -916,6 +1147,14 @@ async function generate () {
       dropPublicKey: hex(binding.dropPublicKey),
       allocationCommitment: hex(binding.allocationCommitment),
       relayReceiptCanonicalHex: hex(binding.relayReceipt),
+      capabilityBoundPut: {
+        familyId: 2,
+        operationId: 1,
+        requestCanonicalHex: hex(put.putRequest),
+        allocationCommitment: hex(put.allocationCommitment),
+        requestCommitment: hex(put.putRequestCommitment),
+        clientNonce: hex(put.putClientNonce)
+      },
       capabilityBoundGet: {
         familyId: 2,
         operationId: 2,
@@ -925,34 +1164,8 @@ async function generate () {
       }
       })
     }),
-    authorBind: {
-      manifestTag: 3,
-      authorSequence: '0',
-      previousAuthorRecordId: null,
-      authorPublicKey: hex(authorPair.publicKey),
-      signature: hex(authorBind.signature),
-      signingPrefixHex: hex(authorPrefix),
-      canonicalHex: hex(authorBindBytes),
-      byteLength: authorBindBytes.byteLength,
-      canonicalSha256: sha256Hex(authorBindBytes),
-      manifestRecordId: hex(manifestRecordId)
-    },
-    announcement: {
-      version: 1,
-      manifestTag: 3,
-      manifestRecordId: hex(manifestRecordId),
-      manifestMode: 1,
-      manifestRecordCanonicalHex: hex(authorBindBytes),
-      manifestReadCaps: [],
-      publishedLeaseEpoch: 123456,
-      publisherPublicKey: hex(publisherPair.publicKey),
-      signature: hex(announcement.signature),
-      signingPrefixHex: hex(announcementPrefix),
-      canonicalHex: hex(announcementBytes),
-      byteLength: announcementBytes.byteLength,
-      canonicalSha256: sha256Hex(announcementBytes),
-      signedAnnouncementId: hex(signedAnnouncementId)
-    },
+    authorBind: authorBindVectorValue(signedAuthor),
+    announcement: announcementVectorValue(signedAnnouncement),
     frames,
     readPages,
     managementCustody: {
@@ -971,7 +1184,37 @@ async function generate () {
       envelopeCanonicalHex: hex(managementCustody.canonical),
       plaintextSha256: sha256Hex(managementPlaintext),
       fixtureCustodianPrivateKeys: managementCustody.custodians.map(value => hex(value.privateKey)),
-      fixtureCustodianPublicKeys: managementCustody.custodians.map(value => hex(value.publicKey))
+      fixtureCustodianPublicKeys: managementCustody.custodians.map(value => hex(value.publicKey)),
+      fixtureRecoveryCases: [
+        {
+          name: 'PAIR_1_2',
+          envelopeCanonicalHex: hex(managementCustody.canonical),
+          fixtureCustodianPrivateKeys: [0, 1].map(index => hex(managementCustody.custodians[index].privateKey)),
+          expectedPassingPairs: ['1+2'],
+          expectedRejectedShares: []
+        },
+        {
+          name: 'PAIR_1_3',
+          envelopeCanonicalHex: hex(managementCustody.canonical),
+          fixtureCustodianPrivateKeys: [0, 2].map(index => hex(managementCustody.custodians[index].privateKey)),
+          expectedPassingPairs: ['1+3'],
+          expectedRejectedShares: []
+        },
+        {
+          name: 'PAIR_2_3',
+          envelopeCanonicalHex: hex(managementCustody.canonical),
+          fixtureCustodianPrivateKeys: [1, 2].map(index => hex(managementCustody.custodians[index].privateKey)),
+          expectedPassingPairs: ['2+3'],
+          expectedRejectedShares: []
+        },
+        {
+          name: 'THIRD_SHARE_TAMPER_RECOVERY',
+          envelopeCanonicalHex: hex(thirdShareTamperedCustody.canonical),
+          fixtureCustodianPrivateKeys: managementCustody.custodians.map(value => hex(value.privateKey)),
+          expectedPassingPairs: ['1+2'],
+          expectedRejectedShares: []
+        }
+      ]
     },
     cursor: {
       scopeFields: ['inboxEpoch', 'stripeIndex', 'relayPublicKey', 'physicalTopic'],
@@ -1007,6 +1250,56 @@ async function generate () {
     }
   }
 
+  const wrongAuthorSigned = signedAuthorBindFixture({
+    ...authorBindBase,
+    authorPublicKey: new Uint8Array(publisherPair.publicKey)
+  }, publisherPair, compiled, runtimeOptions, catalog)
+  const logicalMismatch = new Uint8Array(logical)
+  logicalMismatch[0] ^= 1
+  const logicalMismatchSigned = signedAuthorBindFixture({
+    ...authorBindBase,
+    logicalHash: logicalMismatch
+  }, authorPair, compiled, runtimeOptions, catalog)
+  const sequenceGapSigned = signedAuthorBindFixture({
+    ...authorBindBase,
+    authorSequence: 2n,
+    previousAuthorRecordId: fixtureBytes('fixture-author-predecessor-gap', 32)
+  }, authorPair, compiled, runtimeOptions, catalog)
+  const changedAllocation = new Uint8Array(cellBindings[0].allocationCommitment)
+  changedAllocation[0] ^= 1
+  const mismatchedReplicas = [
+    { ...cellBindings[0], allocationCommitment: changedAllocation },
+    cellBindings[1]
+  ].sort((left, right) => compareBytes(cellReplicaProjection(left), cellReplicaProjection(right)))
+  const replicaMismatchSigned = signedAuthorBindFixture({
+    ...authorBindBase,
+    initialReplicas: mismatchedReplicas
+  }, authorPair, compiled, runtimeOptions, catalog)
+  const futureAnnouncementSigned = signedAnnouncementFixture(
+    authorBindBytes, manifestRecordId, FIXTURE_EFFECTIVE_LEASE_EPOCH + 2,
+    publisherPair, compiled, runtimeOptions, catalog
+  )
+  const firstCell = cellBindings[0]
+  const firstRelayIndex = relayPairs.findIndex(value => hex(value.publicKey) === hex(firstCell.relayPublicKey))
+  const firstCap = decodeBlindExternalProfileValueV1('ReadCellCapV1', firstCell.readCapability)
+  const firstPut = cellPutByRelay.get(hex(firstCell.relayPublicKey))
+  const wrongReceiptRequestCommitment = fixtureBytes('cell-signed-wrong-request-commitment', 32)
+  const wrongRequestReceipt = blindReceiptBytes({
+    relayBinding: relayBindings[firstRelayIndex],
+    slotCommitment: blake2b256(firstCap.storageSlot),
+    cellBlobHash: firstCell.cellBlobHash,
+    allocationCommitment: firstCell.allocationCommitment,
+    requestCommitment: wrongReceiptRequestCommitment,
+    sizeClass: firstCell.sizeClass,
+    allocationEpoch: firstCell.allocationEpoch,
+    leaseClass: 4,
+    leaseEpoch: firstCell.leaseEpoch,
+    stateRevision: 0n,
+    receiptEpoch: FIXTURE_EFFECTIVE_LEASE_EPOCH,
+    requestNonce: firstPut.putClientNonce,
+    result: 1
+  }, relayPairs[firstRelayIndex])
+
   const invalidManagementCustodyVector = {
     ...vector.managementCustody,
     envelopeCanonicalHex: hex(invalidManagementCustody.canonical),
@@ -1018,6 +1311,7 @@ async function generate () {
   const driftUnsigned = driftResult.subarray(0, driftResult.byteLength - 64)
   const fullResultDriftBytes = concatBytes(driftUnsigned, new Uint8Array(sign(null,
     resultSignaturePayload('hiverelay.blind.inbox-read-result.v1', driftUnsigned), relayPairs[0].privateKey)))
+  const wrongRecipient = x25519Pair('limited-custody-wrong-recipient')
   const negativeFixtures = Object.freeze([
     ...staticNegativeFixtures,
     ['44-custody-entry-binding.json', 'vector', null, {
@@ -1029,10 +1323,108 @@ async function generate () {
       op: 'replace',
       path: '/readPages/0/resultCanonicalHex',
       value: hex(fullResultDriftBytes)
-    }, 'READ_SIGNATURE_PAYLOAD_DRIFT']
+    }, 'READ_SIGNATURE_PAYLOAD_DRIFT'],
+    ['46-custody-malicious-plus-unavailable.json', 'vector', null, {
+      op: 'replace',
+      path: '/managementCustody/fixtureRecoveryCases/3/fixtureCustodianPrivateKeys',
+      value: [
+        hex(managementCustody.custodians[0].privateKey),
+        hex(managementCustody.custodians[2].privateKey)
+      ]
+    }, 'CUSTODY_RECONSTRUCTION'],
+    ['47-custody-wrong-recipient.json', 'vector', null, {
+      op: 'replace',
+      path: '/managementCustody/fixtureRecoveryCases/0/fixtureCustodianPrivateKeys/1',
+      value: hex(wrongRecipient.privateBytes)
+    }, 'CUSTODY_WRONG_RECIPIENT'],
+    ['48-custody-duplicate-public-pin.json', 'vector', null, {
+      op: 'copy',
+      from: '/managementCustody/fixtureCustodianPublicKeys/0',
+      path: '/managementCustody/fixtureCustodianPublicKeys/1'
+    }, 'CUSTODY_DUPLICATE'],
+    ['49-custody-low-order-public-pin.json', 'vector', null, {
+      op: 'replace',
+      path: '/managementCustody/fixtureCustodianPublicKeys/0',
+      value: '00'.repeat(32)
+    }, 'CUSTODY_LOW_ORDER_PUBLIC_KEY'],
+    ['50-custody-duplicate-share-nonce.json', 'vector', null, {
+      op: 'replace',
+      path: '/managementCustody/envelopeCanonicalHex',
+      value: hex(duplicateNonceCustody.canonical)
+    }, 'CUSTODY_DUPLICATE'],
+    ['51-custody-duplicate-share-ciphertext.json', 'vector', null, {
+      op: 'replace',
+      path: '/managementCustody/envelopeCanonicalHex',
+      value: hex(duplicateCiphertextCustody.canonical)
+    }, 'CUSTODY_DUPLICATE'],
+    ['52-bootstrap-u64-overflow.json', 'bootstrap', 'POST_SIGNATURE', {
+      op: 'replace', path: '/payload/bootstrapSequence', value: '18446744073709551616'
+    }, 'U64_RANGE'],
+    ['53-bootstrap-not-yet-valid.json', 'bootstrap', 'POST_SIGNATURE', {
+      op: 'replace', path: '/payload/issuedUnixMillis', value: '1780000002000'
+    }, 'BOOTSTRAP_NOT_YET_VALID'],
+    ['54-bootstrap-expired.json', 'bootstrap', 'POST_SIGNATURE', {
+      op: 'replace', path: '/payload/expiresUnixMillis', value: '1780000001000'
+    }, 'BOOTSTRAP_EXPIRED'],
+    ['55-initial-second-epoch-set.json', 'bootstrap', 'POST_SIGNATURE', {
+      op: 'copy', from: '/payload/inboxEpochSets/0', path: '/payload/inboxEpochSets/1'
+    }, 'INITIAL_EPOCH_SET'],
+    ['56-bootstrap-noncurrent-epoch.json', 'bootstrap', 'POST_SIGNATURE', {
+      op: 'replace', path: '/payload/inboxEpochSets/0/inboxEpoch', value: FIXTURE_CURRENT_INBOX_EPOCH + 1
+    }, 'EPOCH_CURRENT'],
+    ['57-successor-sequence-gap.json', 'successor', 'POST_SIGNATURE', {
+      op: 'replace', path: '/payload/bootstrapSequence', value: '3'
+    }, 'BOOTSTRAP_SEQUENCE'],
+    ['58-successor-predecessor-fork.json', 'successor', 'POST_SIGNATURE', {
+      op: 'xor-hex', path: '/payload/previousBootstrapHash', byteIndex: 0, mask: 1
+    }, 'BOOTSTRAP_PREDECESSOR'],
+    ['59-successor-epoch-key-reuse.json', 'successor', 'POST_SIGNATURE', {
+      op: 'replace', path: '/payload/inboxEpochSets/0/stripeSelectionKey',
+      value: bootstrap.payload.inboxEpochSets[0].stripeSelectionKey
+    }, 'EPOCH_REUSE'],
+    ['60-successor-u64-overflow.json', 'successor', 'POST_SIGNATURE', {
+      op: 'replace', path: '/payload/bootstrapSequence', value: '18446744073709551616'
+    }, 'U64_RANGE'],
+    ['61-valid-signature-wrong-inner-authority.json', 'vector', null, {
+      op: 'replace', path: '/authorBind', value: authorBindVectorValue(wrongAuthorSigned)
+    }, 'INNER_AUTHORITY'],
+    ['62-valid-signature-logical-mismatch.json', 'vector', null, {
+      op: 'replace', path: '/authorBind', value: authorBindVectorValue(logicalMismatchSigned)
+    }, 'AUTHOR_BIND_SEMANTICS'],
+    ['63-valid-signature-author-sequence-gap.json', 'vector', null, {
+      op: 'replace', path: '/authorBind', value: authorBindVectorValue(sequenceGapSigned)
+    }, 'AUTHOR_CHAIN'],
+    ['64-valid-signature-replica-allocation-mismatch.json', 'vector', null, {
+      op: 'replace', path: '/authorBind', value: authorBindVectorValue(replicaMismatchSigned)
+    }, 'AUTHOR_BIND_SEMANTICS'],
+    ['65-valid-signature-future-announcement.json', 'vector', null, {
+      op: 'replace', path: '/announcement', value: announcementVectorValue(futureAnnouncementSigned)
+    }, 'ANNOUNCEMENT_TIME'],
+    ['66-cell-put-allocation-commitment.json', 'vector', null, {
+      op: 'xor-hex', path: '/cells/0/capabilityBoundPut/allocationCommitment', byteIndex: 0, mask: 1
+    }, 'CELL_PUT_BINDING'],
+    ['67-cell-put-request-commitment.json', 'vector', null, {
+      op: 'xor-hex', path: '/cells/0/capabilityBoundPut/requestCommitment', byteIndex: 0, mask: 1
+    }, 'CELL_PUT_BINDING'],
+    ['68-valid-signature-cell-receipt-request-mismatch.json', 'vector', null, {
+      op: 'replace', path: '/cells/0/relayReceiptCanonicalHex', value: hex(wrongRequestReceipt)
+    }, 'CELL_PUT_BINDING'],
+    ['69-cross-relay-create-key-reuse.json', 'vector', null, {
+      op: 'copy', from: '/cells/0/createPublicKey', path: '/cells/1/createPublicKey'
+    }, 'CELL_EQUALITY'],
+    ['70-custody-duplicate-ephemeral-key.json', 'vector', null, {
+      op: 'replace', path: '/managementCustody/envelopeCanonicalHex', value: hex(duplicateEphemeralCustody.canonical)
+    }, 'CUSTODY_DUPLICATE'],
+    ['71-custody-nonzero-low-order-ephemeral.json', 'vector', null, {
+      op: 'replace', path: '/managementCustody/envelopeCanonicalHex', value: hex(lowOrderEphemeralCustody.canonical)
+    }, 'CUSTODY_LOW_ORDER_PUBLIC_KEY'],
+    ['72-cell-put-blob-tamper.json', 'vector', null, {
+      op: 'xor-hex', path: '/cells/0/capabilityBoundPut/requestCanonicalHex', byteIndex: -1, mask: 1
+    }, 'CELL_PUT_BINDING']
   ])
 
   await fs.writeFile(path.join(FIXTURES, 'positive-bootstrap.json'), jsonBytes(bootstrap))
+  await fs.writeFile(path.join(FIXTURES, 'positive-bootstrap-successor.json'), jsonBytes(successorBootstrap))
   await fs.writeFile(path.join(FIXTURES, 'positive-protocol-vector.json'), jsonBytes(vector))
   for (const [name, target, validationStage, mutation, expectedError] of negativeFixtures) {
     const value = { schema: 'peerit-seq29-limited-public-test-negative-v1', version: 1, target }
@@ -1050,12 +1442,15 @@ async function generate () {
   const artifacts = [
     'config/peerit-limited-availability-bootstrap-v1.schema.json',
     'docs/SEQ29-LIMITED-PUBLIC-TEST-CONTRACT.md',
+    'protocol/seq29-limited-public-test/canonical-cross-check.mjs',
     'protocol/seq29-limited-public-test/check.mjs',
     'protocol/seq29-limited-public-test/codec-registry-v1.json',
     'protocol/seq29-limited-public-test/compatibility-v1.json',
     'protocol/seq29-limited-public-test/generate-fixtures.mjs',
     'protocol/seq29-limited-public-test/limited-management-custody-v1.json',
+    'protocol/validator/peerit-validator-v1.bare.mjs',
     'test/fixtures/peerit-seq29-limited-public-test-v1/positive-bootstrap.json',
+    'test/fixtures/peerit-seq29-limited-public-test-v1/positive-bootstrap-successor.json',
     'test/fixtures/peerit-seq29-limited-public-test-v1/positive-protocol-vector.json',
     ...expectedNegative.map(name => `test/fixtures/peerit-seq29-limited-public-test-v1/negative/${name}`)
   ].sort()
@@ -1078,7 +1473,7 @@ async function generate () {
     generator: 'protocol/seq29-limited-public-test/generate-fixtures.mjs',
     generatorCommand: 'node protocol/seq29-limited-public-test/generate-fixtures.mjs',
     checker: 'protocol/seq29-limited-public-test/check.mjs',
-    positiveFixtureCount: 2,
+    positiveFixtureCount: 3,
     negativeFixtureCount: expectedNegative.length,
     aggregateRecipe: 'SHA-256(path || NUL || decimalByteLength || NUL || lowercaseSha256 || LF), paths sorted lexicographically; vector-manifest-v1.json is excluded',
     artifactAggregateSha256: aggregate.digest('hex'),
@@ -1088,7 +1483,7 @@ async function generate () {
   console.log(JSON.stringify({
     status: 'GENERATED',
     artifactClass: 'FIXTURE_ONLY',
-    positiveFixtures: 2,
+    positiveFixtures: 3,
     negativeFixtures: expectedNegative.length,
     artifactAggregateSha256: manifest.artifactAggregateSha256
   }))

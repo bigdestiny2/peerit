@@ -1,0 +1,11 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "vector",
+  "mutation": {
+    "op": "replace",
+    "path": "/managementCustody/fixtureRecoveryCases/0/fixtureCustodianPrivateKeys/1",
+    "value": "fbcad0084d5513713e8f1d577bf9f55293cb743efee00c88e07d4751c8eb9f7c"
+  },
+  "expectedError": "CUSTODY_WRONG_RECIPIENT"
+}

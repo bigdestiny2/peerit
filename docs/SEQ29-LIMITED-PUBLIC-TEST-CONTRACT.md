@@ -106,16 +106,22 @@ and requires CREATED result `1`, state revision `0`, lease class `4`, topic
 commitment `BLAKE2b-256(physicalTopic)`, and exact relay/store/continuity and
 descriptor-floor equality.
 
-Sequence zero has `previousBootstrapHash = null`. Any later artifact is exactly
-one greater and names SHA-256 of the preceding complete canonical signed
-wrapper. Epoch sets sort newest first; if two are present the second epoch is
-exactly one less. Each binding epoch equals its set.
+Sequence zero has `previousBootstrapHash = null`. Every later artifact is
+exactly one greater and names SHA-256 of the preceding complete canonical signed
+wrapper. The bounded initial artifact and every separately signed rotation
+successor each contain exactly one active current epoch set. A successor uses
+the next inbox epoch and fresh selection/master keys, CREATE keys, and physical
+topics; none may be reused. It replaces the two append targets rather than
+silently creating four. A future read-only overlap contract would require a
+separately reviewed schema and ceremony and is not admitted by this checker.
 
-Index zero is always the active current epoch set. A second set is admitted only
-by a separately authorized rotation ceremony, is the immediately previous
-epoch, and is read-only overlap. It does not add append targets or widen the
-two-active-topic claim: the bounded publisher still appends only to the two
-current bindings. The initial Sequence 29 release has exactly one set.
+All decimal `u64` fields are canonical strings in `0..2^64-1`; the JSON shape's
+decimal regex is not sufficient authority by itself. Acceptance uses a trusted
+local reference time, never a time supplied by the bootstrap or vector:
+`issuedUnixMillis <= reference < expiresUnixMillis`. The effective lease epoch
+is `floor(reference / 21,600,000)` and the sole current inbox epoch is
+`floor(effectiveLeaseEpoch / 28)`. Allocation epochs must be no more than one
+ahead and must remain inside the generic 1,460-epoch acceptance window.
 
 `expiresUnixMillis` is strictly after `issuedUnixMillis` and the difference is
 at most `2,678,400,000` milliseconds (31 days). A reader persists a separately
@@ -176,11 +182,17 @@ data key; XChaCha20-Poly1305-IETF payload encryption; independent ephemeral
 X25519/HKDF-SHA-256/XChaCha share encryption; and the established
 `custody-key`, `custody-plaintext`, `custody-sealed-payload`, and
 `custody-share-key` domain recipes with kind 2 and codec 3.
-Reconstruction authenticates recipients and two shares, matches the data-key
-commitment, authenticates the payload, matches length/hash/codec, and validates
-the complete limited bundle. Any envelope, AAD, recipient, share, ciphertext,
-hash, codec, cardinality, entry, or bundle-commitment tamper fails. The exact
-layout is frozen in
+Reconstruction preflights and pins all three recipient and ephemeral X25519
+public keys, rejects the complete known low-order set, and requires pairwise
+distinct recipients, ephemerals, share nonces, and sealed shares. It
+authenticates every supplied share, tries `1+2`, `1+3`, and `2+3` whenever those
+pairs are available, and subjects every commitment-matching candidate to the
+complete plaintext and entry validation above. Every passing candidate must be
+byte-identical. With all three recipients available, one authenticated malicious
+share is tolerated because the honest pair still passes; one malicious share
+plus one unavailable share is outside the guarantee and fails reconstruction.
+Any envelope, AAD, recipient, share, ciphertext, hash, codec, cardinality,
+entry, or bundle-commitment tamper fails. The exact layout is frozen in
 `protocol/seq29-limited-public-test/limited-management-custody-v1.json`; none of
 its private bytes enter the served bootstrap or browser bundle.
 
@@ -188,7 +200,18 @@ its private bytes enter the served bootstrap or browser bundle.
 
 One Sequence 29 post has two independently randomized CELL.PUT attempts, one
 per relay, and later two independently randomized INBOX.APPEND attempts. It does
-not reuse a Cell ciphertext/slot or INBOX frame between relays.
+not reuse a Cell ciphertext, blob hash, slot, read key, CREATE/RENEW/DROP key,
+client nonce, request, commitment, receipt, or INBOX frame between relays.
+
+For each Cell the checker decodes the exact canonical `PutCellV1`, derives the
+self-certifying slot and `allocationCommitment`, verifies the CREATE signature
+directly over that commitment, hashes the exact class-sized blob, derives the
+`cell-put` request commitment, and correlates both request nonce and commitment
+to the signed `BlindReceiptV1`. The Cell receipt's complete
+`RelayResultBindingV1` must equal the current bootstrap binding's signed INBOX
+create-receipt identity, including relay key, store, descriptor sequence/hash,
+durability profile/continuity, and restore head. Counts never substitute for
+this wire evidence.
 
 The complete inner envelope is `PeeritInnerOperationBatchV1`, codec `334`, with
 length `8..1,048,519`. Before an AuthorBind is signed:
@@ -200,6 +223,21 @@ length `8..1,048,519`. Before an AuthorBind is signed:
 5. the envelope reproduces `logicalHash`, `encodingCommitment`, inner codec,
    length, and the smallest Cell size class; and
 6. the canonical operation batch contains one intrinsically valid author key.
+
+The checker compiles the pinned profile catalog with its normative named sort
+projection, canonically decodes and byte-identically re-encodes the signed
+`AuthorBindV1` and `PeeritAnnouncementV1`, and runs their profile validators.
+The archive-runnable gate pins the self-contained generated validator at
+`protocol/validator/peerit-validator-v1.bare.mjs` SHA-256
+`e69bf4554720c853e340f212eda4fe7760ae119594f5f136701a71c1b214a809`.
+That module is fixture replay authority only, never release authority. A populated
+checkout MUST also run `canonical-cross-check.mjs`; it requires byte-identical
+encode/decode and accept/reject parity with the pinned canonical source profile
+validator and codec-334 signed-operation authority before this fixture evidence is
+admissible.
+After capability-bound Cell decrypt it independently runs the intrinsic Peerit
+operation authority for codec 334 and binds that author to the outer AuthorBind.
+A structurally plausible or publisher-supplied inner value is never authority.
 
 Every claimed `CellReplicaBindingV1` MUST pass those equalities. At least one
 claimed initial replica MUST independently reconstruct the exact inner bytes.

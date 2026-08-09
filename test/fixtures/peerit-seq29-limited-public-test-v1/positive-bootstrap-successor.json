@@ -1,0 +1,80 @@
+{
+  "payload": {
+    "schema": "peerit-limited-public-inbox-bootstrap-v1",
+    "version": 1,
+    "artifactClass": "FIXTURE_ONLY",
+    "claimBoundary": "LIVE_PUBLIC_TEST_ONLY",
+    "operatorBoundary": "TWO_OWNER_OPERATED_RELAYS_NOT_INDEPENDENT_OPERATORS",
+    "topicScope": "GLOBAL_PUBLIC_DISCOVERY",
+    "profileId": "@peerit/hiverelay-profile-v1",
+    "releaseSequence": 29,
+    "bootstrapSequence": "1",
+    "previousBootstrapHash": "6991805600eb7db6517f1b67fa5b562947e6a44d4784a51772841e621be8c240",
+    "issuedUnixMillis": "1780531200000",
+    "expiresUnixMillis": "1781136001000",
+    "authorityPublicKey": "b418d8eac73751dd042d4a40cfa84a80e842a28aa0ee910e009eb5154f85d745",
+    "relays": [
+      {
+        "relayId": "fixture-relay-a",
+        "canonicalDescribeUrl": "https://fixture-relay-a.invalid:443/blind/v1/describe",
+        "relayPublicKey": "6a6430ed4907279e66f0038f061513e0b710956e5189f0b4767112ba11c88a23",
+        "storeId": "862205faed3e122112fcaadf719dfce073985c1fed20cfd42146254eb19a1e5e",
+        "durabilityContinuityHash": "fa4c54e97d6016a0d19444464d4fa1e7576b6e8e83d2edb476bc28db0219e736",
+        "descriptorFloor": {
+          "sequence": "7",
+          "hash": "41a76e30687ce5b820939eb3a44f6a57744a57c5b64f6867e8960988a3e01b2b"
+        }
+      },
+      {
+        "relayId": "fixture-relay-b",
+        "canonicalDescribeUrl": "https://fixture-relay-b.invalid:443/blind/v1/describe",
+        "relayPublicKey": "448160845f9b82431af1ef858c112c419f4481e22f38c95a87be32eddf15d0b5",
+        "storeId": "7ef0e4ded40aae15129d5c8340a72b62d051f0766cb7dba9b12f760eab54365e",
+        "durabilityContinuityHash": "b29a7c23aaef2c680902fc7e5a5c90fd8e378b4d21072b53836080ca620a67b1",
+        "descriptorFloor": {
+          "sequence": "8",
+          "hash": "e29717de0aaa7f5faa49d26f2aba90e5e10cdd214e165f362c944b503d76546e"
+        }
+      }
+    ],
+    "inboxEpochSets": [
+      {
+        "inboxEpoch": 2944,
+        "stripeCountLog2": 0,
+        "stripeSelectionKey": "7c101f98c3811f7891aff8e4083d042523964f195e3cba28aeb3ddf9f4cc9ab9",
+        "announcementMasterKey": "69976991976848a5c782114b39ba13783fe28c9ffc91f3bfb461774684b193cf",
+        "bindings": [
+          {
+            "inboxEpoch": 2944,
+            "stripeIndex": 0,
+            "relayId": "fixture-relay-a",
+            "relayPublicKey": "6a6430ed4907279e66f0038f061513e0b710956e5189f0b4767112ba11c88a23",
+            "allocationEpoch": 82432,
+            "createPublicKey": "bee44cf83cbc7fd924934797d96be133a7fc03aafd947799a0aa48df6674674b",
+            "physicalTopic": "a3023a381e4910a3b8be4b45399d9b8a3f9344492849fef26be5671ebe1fecbe",
+            "frameClassBits": 3,
+            "appendAuthMode": 0,
+            "retentionClass": 3,
+            "leaseClass": 4,
+            "createReceiptCanonicalHex": "01016a6430ed4907279e66f0038f061513e0b710956e5189f0b4767112ba11c88a23862205faed3e122112fcaadf719dfce073985c1fed20cfd42146254eb19a1e5e000000000000000741a76e30687ce5b820939eb3a44f6a57744a57c5b64f6867e8960988a3e01b2b01fa4c54e97d6016a0d19444464d4fa1e7576b6e8e83d2edb476bc28db0219e7364de3fce3f465189efddd3bc368ae26f078d3a0aa1282face00474ea8ff2024d100000000000000000000000000000000000000000000000000000000000000000000000000000000006392d322dc87d0f7028e86ea90e3e176753f93e82b18d33247f074cd9d5a0b6400000000000000000400014368143044aacc3b76681b47aabc0d9d188e852752ef7dad59a28e14cf4d03c397576d7967841271b8fc86c65f9a1567ad7c5f112ff5a79f4405192e23a6395592ee01a2220cf5864b825b2d8417b869c65be71b48b62ceafa59a300397d135db021089ca39a366a450db7b2ac7d2c8c98d785d714a8b234d9996cee7969cb16a82a09"
+          },
+          {
+            "inboxEpoch": 2944,
+            "stripeIndex": 0,
+            "relayId": "fixture-relay-b",
+            "relayPublicKey": "448160845f9b82431af1ef858c112c419f4481e22f38c95a87be32eddf15d0b5",
+            "allocationEpoch": 82432,
+            "createPublicKey": "ccf2bba3e2a8b6abaa9612cee6620bad86450b65d5d596620f6917b1238ce25d",
+            "physicalTopic": "ea80e4516fb55979f9fa99d321c2d247c8b26d000c2a723031d5ce8ef113102d",
+            "frameClassBits": 3,
+            "appendAuthMode": 0,
+            "retentionClass": 3,
+            "leaseClass": 4,
+            "createReceiptCanonicalHex": "0101448160845f9b82431af1ef858c112c419f4481e22f38c95a87be32eddf15d0b57ef0e4ded40aae15129d5c8340a72b62d051f0766cb7dba9b12f760eab54365e0000000000000008e29717de0aaa7f5faa49d26f2aba90e5e10cdd214e165f362c944b503d76546e01b29a7c23aaef2c680902fc7e5a5c90fd8e378b4d21072b53836080ca620a67b1d085d2343a25871e18ecc592b3d1722424409cb6782a9780a3b3368d65f5fb6a000000000000000000000000000000000000000000000000000000000000000000000000000000000019d731cda3ea3b353f9a6ccdd0d047543bfa3fa3ef3908f5cda6ba6e991a5790000000000000000004000143686468165eb917ef9c76e099d90a0553bd83ce1e811a7f48bb7f8594d95e2f24e8e5e76e69ec6e04adcd6ad3ec49841516649a776de78203178c059af93ec2c9fb01c9d68e3820e779afe6ac8f6fd650c0d44c724007ff86aeab1d01de8434054ab4bbca55925b56b06f9f557d07024f89a0331281fc979a34374bb7b26bbb78f500"
+          }
+        ]
+      }
+    ]
+  },
+  "signature": "f27909120c57cd787b11e83c7c01eced0a5459617e867a6257424474e44bd45dbd708a226ec1587f976d154be34822379d88d47ac5646febf34e0c1e77567e06"
+}

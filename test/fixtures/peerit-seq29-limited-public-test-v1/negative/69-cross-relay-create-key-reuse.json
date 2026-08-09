@@ -1,0 +1,11 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "vector",
+  "mutation": {
+    "op": "copy",
+    "from": "/cells/0/createPublicKey",
+    "path": "/cells/1/createPublicKey"
+  },
+  "expectedError": "CELL_EQUALITY"
+}

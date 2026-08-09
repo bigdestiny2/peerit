@@ -53,7 +53,9 @@
     "topicScope": "GLOBAL_PUBLIC_DISCOVERY",
     "operatorBoundary": "TWO_OWNER_OPERATED_RELAYS_NOT_INDEPENDENT_OPERATORS",
     "initialEpochSetCount": 1,
-    "optionalPreviousEpochSet": "READ_ONLY_SEPARATELY_AUTHORIZED_ROTATION_OVERLAP",
+    "successorEpochSetCount": 1,
+    "rotation": "SEPARATELY_SIGNED_SUCCESSOR_PLUS_ONE_WITH_COMPLETE_WRAPPER_PREDECESSOR_HASH_AND_FRESH_KEYS_TOPICS",
+    "optionalPreviousEpochSet": "NOT_ADMITTED_BY_BOUNDED_SEQUENCE_29_CHECKER",
     "appendTargetsRemainCurrentSetOnly": 2
   },
   "managementCapabilityInvariant": {
@@ -78,6 +80,11 @@
     "previousEntries": [0, 2],
     "threshold": 2,
     "totalShares": 3,
+    "allRecipientsPinnedAndLowOrderPreflighted": true,
+    "allAuthenticatedPairsTried": true,
+    "allPassingCandidatesFullyValidatedAndByteIdentical": true,
+    "threeShareFaultTolerance": "ONE_AUTHENTICATED_MALICIOUS_SHARE",
+    "maliciousPlusUnavailable": "FAIL_CLOSED",
     "canonicalFullBundleAlias": false,
     "canonicalFullEnvelopeAlias": false
   },

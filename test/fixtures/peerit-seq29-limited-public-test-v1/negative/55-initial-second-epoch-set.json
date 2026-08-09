@@ -1,0 +1,12 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "bootstrap",
+  "validationStage": "POST_SIGNATURE",
+  "mutation": {
+    "op": "copy",
+    "from": "/payload/inboxEpochSets/0",
+    "path": "/payload/inboxEpochSets/1"
+  },
+  "expectedError": "INITIAL_EPOCH_SET"
+}

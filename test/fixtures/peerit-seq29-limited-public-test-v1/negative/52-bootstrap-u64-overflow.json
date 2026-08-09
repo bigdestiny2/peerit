@@ -1,0 +1,12 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "bootstrap",
+  "validationStage": "POST_SIGNATURE",
+  "mutation": {
+    "op": "replace",
+    "path": "/payload/bootstrapSequence",
+    "value": "18446744073709551616"
+  },
+  "expectedError": "U64_RANGE"
+}

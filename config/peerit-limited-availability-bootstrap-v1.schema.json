@@ -177,8 +177,8 @@
         "inboxEpochSets": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 2,
-          "description": "Index 0 is the active current set. Initial Sequence 29 has one set. Optional index 1 is immediately previous, read-only, separately authorized rotation overlap and never widens the two current append targets.",
+          "maxItems": 1,
+          "description": "The bounded Sequence 29 artifact contains exactly one active current set. Rotation is a separately signed successor artifact with fresh keys/topics, not a second append-target set in this bootstrap.",
           "items": { "$ref": "#/$defs/epochSet" }
         }
       }

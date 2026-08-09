@@ -31,12 +31,17 @@ import {
 } from '../../js/substrate/profile-codec-ir.mjs'
 import { PEERIT_PROFILE_INVENTORY } from '../../js/substrate/profile-inventory.mjs'
 import { authenticatePeeritProfileExternalCodecAuthorityV1 } from '../../js/substrate/profile-external-authority.mjs'
+import {
+  authenticatePeeritProfileExternalCodecAuthorityV1 as authenticateBundledProfileAuthorityV1,
+  createPeeritValidatorV1 as createBundledPeeritValidatorV1
+} from '../validator/peerit-validator-v1.bare.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, '../..')
 const FIXTURES = path.join(ROOT, 'test/fixtures/peerit-seq29-limited-public-test-v1')
 const NEGATIVE = path.join(FIXTURES, 'negative')
 const PROFILE_SHA256 = '74d3b65dff1bbf2a4630791fd1a770e8dcdfac415bf693ff313d38d0262619fd'
+const BARE_VALIDATOR_SHA256 = 'e69bf4554720c853e340f212eda4fe7760ae119594f5f136701a71c1b214a809'
 const BOOTSTRAP_DOMAIN = 'peerit.limited-public-test.inbox-bootstrap.v1'
 const MAX_BOOTSTRAP_LIFETIME_MILLIS = 2678400000n
 const LIMITED_MANAGEMENT_BUNDLE_DOMAIN = 'peerit.hiverelay.limited-public-inbox-management-bundle.v1'
@@ -45,6 +50,19 @@ const LIMITED_MANAGEMENT_PLAINTEXT_CODEC = 3
 const HEX32 = /^[0-9a-f]{64}$/
 const HEX64 = /^[0-9a-f]{128}$/
 const U64 = /^(0|[1-9][0-9]{0,19})$/
+const MAX_U64 = (1n << 64n) - 1n
+const FIXTURE_REFERENCE_UNIX_MILLIS = 1780000001000n
+const LEASE_EPOCH_MILLIS = 21600000n
+const FIXTURE_SUCCESSOR_REFERENCE_UNIX_MILLIS = 1780531201000n
+const LOW_ORDER_X25519_PUBLIC_KEYS = new Set([
+  '0000000000000000000000000000000000000000000000000000000000000000',
+  '0100000000000000000000000000000000000000000000000000000000000000',
+  'e0eb7a7c3b41b8ae1656e3fa1f6f7f3c0a37f7d5b4f47f170bcfdc728d63333f',
+  '5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224e8b01f22f4f',
+  'ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
+  'edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
+  'eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f'
+])
 
 let assertions = 0
 function ok (condition, code, message) {
@@ -70,6 +88,13 @@ function sha256Hex (value) { return createHash('sha256').update(value).digest('h
 function json (value) { return JSON.parse(value) }
 async function readJson (file) { return json(await fs.readFile(file, 'utf8')) }
 
+function decimalU64 (value, code, field) {
+  ok(typeof value === 'string' && U64.test(value), code, `${field} is not canonical u64 decimal`)
+  const parsed = BigInt(value)
+  ok(parsed <= MAX_U64, 'U64_RANGE', `${field} exceeds 2^64-1`)
+  return parsed
+}
+
 function stable (value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value)
   if (Array.isArray(value)) return '[' + value.map(stable).join(',') + ']'
@@ -85,6 +110,100 @@ function publicKey (raw) {
 }
 function verifyEd25519 (rawPublicKey, payload, signature) {
   try { return verify(null, payload, publicKey(rawPublicKey), signature) } catch { return false }
+}
+
+const PEERIT_SIGNATURE_FIELDS = new Set(['_sig', '_k', '_dk', '_ns', '_alg'])
+function stablePeeritRecordValue (value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value === undefined ? null : value)
+  if (Array.isArray(value)) return '[' + value.map(stablePeeritRecordValue).join(',') + ']'
+  const keys = Object.keys(value).filter(key => !PEERIT_SIGNATURE_FIELDS.has(key) && value[key] !== undefined).sort()
+  return '{' + keys.map(key => JSON.stringify(key) + ':' + stablePeeritRecordValue(value[key])).join(',') + '}'
+}
+function canonicalPeeritRecordFixture (type, data) {
+  return type + '|' + stablePeeritRecordValue(data)
+}
+
+export function decodeBoundedPeeritInnerOperationBatchFixtureV1 (inner, expectedAuthorPublicKey) {
+  ok(inner instanceof Uint8Array && inner.byteLength >= 8 && inner.byteLength <= 1048519,
+    'INNER_AUTHORITY', 'inner operation envelope length')
+  same((inner[0] << 8) | inner[1], 334, 'INNER_AUTHORITY', 'inner operation codec')
+  same(inner[2], 1, 'INNER_AUTHORITY', 'inner operation version')
+  const payloadLength = inner[3] * 0x1000000 + inner[4] * 0x10000 + inner[5] * 0x100 + inner[6]
+  same(payloadLength + 7, inner.byteLength, 'INNER_AUTHORITY', 'inner operation framing')
+  let canonicalOperationBatch
+  let parsed
+  try {
+    canonicalOperationBatch = new TextDecoder('utf-8', { fatal: true }).decode(inner.subarray(7))
+    parsed = JSON.parse(canonicalOperationBatch)
+  } catch (cause) {
+    const error = new Error(`invalid inner operation payload: ${cause.message}`)
+    error.code = 'INNER_AUTHORITY'
+    throw error
+  }
+  exactKeys(parsed, ['version', 'operations'], 'INNER_AUTHORITY', 'inner operation batch')
+  same(parsed.version, 1, 'INNER_AUTHORITY', 'inner operation batch version')
+  ok(Array.isArray(parsed.operations) && parsed.operations.length === 1,
+    'INNER_AUTHORITY', 'bounded fixture must contain exactly one operation')
+  same(stable(parsed), canonicalOperationBatch, 'INNER_AUTHORITY', 'inner operation canonical JSON')
+  const operation = parsed.operations[0]
+  exactKeys(operation, ['type', 'data'], 'INNER_AUTHORITY', 'inner operation')
+  same(operation.type, 'post', 'INNER_AUTHORITY', 'bounded fixture operation type')
+  const data = operation.data
+  exactKeys(data, ['id', 'author', 'body', 'cid', 'community', 'createdAt', '_k', '_dk', '_ns', '_alg', '_sig'],
+    'INNER_AUTHORITY', 'bounded fixture post')
+  ok(typeof data.id === 'string' && data.id.length > 0 && typeof data.body === 'string' &&
+    typeof data.cid === 'string' && data.cid.length > 0 && typeof data.community === 'string' && data.community.length > 0 &&
+    Number.isSafeInteger(data.createdAt), 'INNER_AUTHORITY', 'bounded fixture post fields')
+  ok(HEX32.test(data.author || '') && HEX32.test(data._k || '') && HEX32.test(data._dk || '') &&
+    HEX64.test(data._sig || '') && data._ns === 'peerit' && data._alg === 'ed25519',
+  'INNER_AUTHORITY', 'bounded fixture signature metadata')
+  same(data._k, data.author, 'INNER_AUTHORITY', 'post owner binding')
+  same(data._k, expectedAuthorPublicKey, 'INNER_AUTHORITY', 'expected post author')
+  same(data.id, `${data.community}!${data.cid}`, 'INNER_AUTHORITY', 'post semantic id')
+  same(`post!${data.id}`, `post!${data.community}!${data.cid}`, 'INNER_AUTHORITY', 'post wire key binding')
+  const message = Buffer.from(
+    `pear.app.${data._dk}:peerit:${canonicalPeeritRecordFixture('post', data)}`,
+    'utf8'
+  )
+  ok(verifyEd25519(hex(data._k, 32, 'INNER_AUTHORITY', 'post author'), message,
+    hex(data._sig, 64, 'INNER_AUTHORITY', 'post signature')),
+  'INNER_AUTHORITY', 'post intrinsic signature')
+  const innerLength = BigInt(inner.byteLength)
+  const innerLogicalHash = logicalHash(inner)
+  const innerEncodingCommitment = encodingCommitment(inner, innerLogicalHash, 1)
+  return Object.freeze({
+    innerLength,
+    sizeClass: 1,
+    logicalHash: innerLogicalHash,
+    encodingCommitment: innerEncodingCommitment,
+    authorPublicKey: data._k,
+    canonicalOperationBatch
+  })
+}
+
+function replicaIdentityProjection (binding) {
+  const variant = binding && Number.isSafeInteger(binding.variant)
+    ? binding.variant
+    : binding && Object.prototype.hasOwnProperty.call(binding, 'cellBlobHash') ? 1 : 2
+  const value = binding && Number.isSafeInteger(binding.variant) ? binding.value : binding
+  const projection = variant === 1
+    ? concatBytes(
+        value.logicalHash, value.encodingCommitment, value.relayPublicKey, value.readCapability,
+        value.cellBlobHash, Uint8Array.of(value.sizeClass), u32Bytes(value.allocationEpoch)
+      )
+    : concatBytes(
+        value.logicalHash, value.encodingCommitment, value.relayPublicKey, value.corePublicKey,
+        u64Bytes(value.firstBlockIndex), u32Bytes(value.blockCount), value.coreSliceCommitment
+      )
+  return blake2b256(concatBytes(
+    asciiBytes('peerit.hiverelay.replica-id.v1'), Uint8Array.of(variant),
+    u64Bytes(projection.byteLength), projection
+  ))
+}
+
+function boundedProfileSortProjection (owner, type, value, encoded) {
+  if (String(owner).includes('initialReplicas')) return replicaIdentityProjection(value)
+  return encoded
 }
 
 function ed25519PublicFromSeed (rawSeed) {
@@ -108,8 +227,9 @@ async function createPinnedProfileCatalog (profileText) {
     vectorManifestBytes: await read('protocol/external-authority/hiverelay-blind-client-composition-vector-manifest-v1.cenc')
   }
   const externalAuthorities = {}
+  const bundledExternalAuthorities = {}
   for (const row of PEERIT_PROFILE_INVENTORY.externalCodecImports) {
-    externalAuthorities[row.name] = authenticatePeeritProfileExternalCodecAuthorityV1({
+    const authorityInput = {
       name: row.name,
       authorityKind: row.authorityKind,
       authorityBinding: row.tupleBinding,
@@ -118,13 +238,22 @@ async function createPinnedProfileCatalog (profileText) {
         if (!(value instanceof Uint8Array) || value.byteLength === 0 || name !== row.name) {
           throw new Error(`invalid checker external value for ${row.name}`)
         }
+        decodeBlindExternalProfileValueV1(name, value)
       }
-    })
+    }
+    externalAuthorities[row.name] = authenticatePeeritProfileExternalCodecAuthorityV1(authorityInput)
+    bundledExternalAuthorities[row.name] = authenticateBundledProfileAuthorityV1(authorityInput)
   }
   const compiled = compilePeeritProfileCodecIr(profileText, PEERIT_PROFILE_INVENTORY)
-  return createPeeritProfileCodecCatalogFromIr(compiled, PEERIT_PROFILE_INVENTORY, {
-    externalAuthorities: Object.freeze(externalAuthorities)
+  const frozenAuthorities = Object.freeze(externalAuthorities)
+  const catalog = createPeeritProfileCodecCatalogFromIr(compiled, PEERIT_PROFILE_INVENTORY, {
+    externalAuthorities: frozenAuthorities,
+    sortProjection: boundedProfileSortProjection
   })
+  const validator = createBundledPeeritValidatorV1({
+    externalAuthorities: Object.freeze(bundledExternalAuthorities)
+  })
+  return Object.freeze({ catalog, validator })
 }
 
 class Reader {
@@ -225,6 +354,8 @@ function validateSchemaAuthority (schema) {
   same(schema.$defs.epochSet.properties.stripeCountLog2.const, 0, 'BAD_JSON_SCHEMA', 'stripe count constant')
   same(schema.$defs.binding.properties.appendAuthMode.const, 0, 'BAD_JSON_SCHEMA', 'OPEN_APPEND constant')
   same(schema.$defs.binding.properties.frameClassBits.const, 3, 'BAD_JSON_SCHEMA', 'frame bits constant')
+  same(schema.$defs.payload.properties.inboxEpochSets.minItems, 1, 'BAD_JSON_SCHEMA', 'initial epoch minimum')
+  same(schema.$defs.payload.properties.inboxEpochSets.maxItems, 1, 'BAD_JSON_SCHEMA', 'bounded epoch set count')
 }
 
 function validateBootstrap (wrapper, options = {}) {
@@ -244,14 +375,23 @@ function validateBootstrap (wrapper, options = {}) {
   same(payload.topicScope, 'GLOBAL_PUBLIC_DISCOVERY', 'TOPIC_SCOPE', 'topic scope')
   same(payload.profileId, '@peerit/hiverelay-profile-v1', 'BAD_PROFILE_ID', 'profile id')
   same(payload.releaseSequence, 29, 'BAD_RELEASE_SEQUENCE', 'release sequence')
-  ok(U64.test(payload.bootstrapSequence), 'BOOTSTRAP_SEQUENCE', 'bootstrap sequence is not u64 decimal')
-  const sequence = BigInt(payload.bootstrapSequence)
+  const sequence = decimalU64(payload.bootstrapSequence, 'BOOTSTRAP_SEQUENCE', 'bootstrap sequence')
   ok((sequence === 0n) === (payload.previousBootstrapHash === null), 'BOOTSTRAP_SEQUENCE', 'sequence/predecessor presence differs')
+  if (options.allowSuccessor !== true) same(sequence, 0n, 'BOOTSTRAP_SEQUENCE', 'initial bootstrap sequence')
   if (payload.previousBootstrapHash !== null) hex(payload.previousBootstrapHash, 32, 'BOOTSTRAP_SEQUENCE', 'previousBootstrapHash')
-  ok(U64.test(payload.issuedUnixMillis) && U64.test(payload.expiresUnixMillis) &&
-    BigInt(payload.expiresUnixMillis) > BigInt(payload.issuedUnixMillis), 'BOOTSTRAP_TIME', 'bootstrap time bounds are invalid')
-  ok(BigInt(payload.expiresUnixMillis) - BigInt(payload.issuedUnixMillis) <= MAX_BOOTSTRAP_LIFETIME_MILLIS,
+  const issued = decimalU64(payload.issuedUnixMillis, 'BOOTSTRAP_TIME', 'bootstrap issued time')
+  const expires = decimalU64(payload.expiresUnixMillis, 'BOOTSTRAP_TIME', 'bootstrap expiry time')
+  ok(expires > issued, 'BOOTSTRAP_TIME', 'bootstrap time bounds are invalid')
+  ok(expires - issued <= MAX_BOOTSTRAP_LIFETIME_MILLIS,
     'BOOTSTRAP_LIFETIME', 'bootstrap lifetime exceeds 31 days')
+  const referenceUnixMillis = options.referenceUnixMillis == null
+    ? FIXTURE_REFERENCE_UNIX_MILLIS
+    : BigInt(options.referenceUnixMillis)
+  ok(issued <= referenceUnixMillis && referenceUnixMillis < expires,
+    referenceUnixMillis < issued ? 'BOOTSTRAP_NOT_YET_VALID' : 'BOOTSTRAP_EXPIRED',
+    'trusted reference time is outside bootstrap validity')
+  const effectiveLeaseEpoch = Number(referenceUnixMillis / LEASE_EPOCH_MILLIS)
+  const currentInboxEpoch = Math.floor(effectiveLeaseEpoch / 28)
   const authorityKey = hex(payload.authorityPublicKey, 32, 'BAD_BOOTSTRAP_KEY', 'authorityPublicKey')
   const signature = hex(wrapper.signature, 64, 'BAD_BOOTSTRAP_SIGNATURE', 'signature')
   const signingPayload = concatBytes(asciiBytes(BOOTSTRAP_DOMAIN), Uint8Array.of(0), canonicalJson(payload))
@@ -270,7 +410,7 @@ function validateBootstrap (wrapper, options = {}) {
     hex(relay.storeId, 32, 'BAD_RELAY', 'storeId')
     hex(relay.durabilityContinuityHash, 32, 'BAD_RELAY', 'durabilityContinuityHash')
     exactKeys(relay.descriptorFloor, ['sequence', 'hash'], 'BAD_RELAY', 'descriptorFloor')
-    ok(U64.test(relay.descriptorFloor.sequence), 'BAD_RELAY', 'descriptor sequence')
+    decimalU64(relay.descriptorFloor.sequence, 'BAD_RELAY', 'descriptor sequence')
     hex(relay.descriptorFloor.hash, 32, 'BAD_RELAY', 'descriptor hash')
     relayById.set(relay.relayId, relay)
   }
@@ -279,11 +419,9 @@ function validateBootstrap (wrapper, options = {}) {
   unique(payload.relays.map(value => value.storeId), 'DUPLICATE_RELAY', 'store IDs')
   unique(payload.relays.map(value => value.durabilityContinuityHash), 'DUPLICATE_RELAY', 'continuity hashes')
 
-  ok(Array.isArray(payload.inboxEpochSets) && payload.inboxEpochSets.length >= 1 && payload.inboxEpochSets.length <= 2,
-    'EPOCH_SET_COUNT', 'epoch set count')
-  if (payload.inboxEpochSets.length === 2) {
-    same(payload.inboxEpochSets[1].inboxEpoch + 1, payload.inboxEpochSets[0].inboxEpoch, 'EPOCH_ORDER', 'epoch overlap')
-  }
+  ok(Array.isArray(payload.inboxEpochSets) && payload.inboxEpochSets.length === 1,
+    'INITIAL_EPOCH_SET', 'Sequence 29 bootstrap carries exactly one current epoch set')
+  same(payload.inboxEpochSets[0].inboxEpoch, currentInboxEpoch, 'EPOCH_CURRENT', 'trusted current inbox epoch')
   for (const set of payload.inboxEpochSets) {
     exactKeys(set, ['inboxEpoch', 'stripeCountLog2', 'stripeSelectionKey', 'announcementMasterKey', 'bindings'],
       'BAD_EPOCH_SET', 'epoch set')
@@ -306,6 +444,8 @@ function validateBootstrap (wrapper, options = {}) {
       same(binding.appendAuthMode, 0, 'INBOX_SHAPE', 'append auth mode')
       same(binding.retentionClass, 3, 'INBOX_SHAPE', 'retention class')
       same(binding.leaseClass, 4, 'INBOX_SHAPE', 'lease class')
+      ok(binding.allocationEpoch <= effectiveLeaseEpoch + 1 && effectiveLeaseEpoch < binding.allocationEpoch + 1460,
+        'EPOCH_CURRENT', 'inbox allocation epoch is outside the accepted relay window')
       const relay = relayById.get(binding.relayId)
       ok(relay != null, 'BAD_BINDING', 'binding references unknown relay')
       same(binding.relayPublicKey, relay.relayPublicKey, 'BAD_BINDING', 'binding relay public key')
@@ -360,14 +500,41 @@ function validateBootstrapFloor (floor, bootstrap) {
   ], 'BAD_BOOTSTRAP_FLOOR', 'bootstrap floor')
   same(floor.schema, 'PeeritLimitedPublicInboxBootstrapFloorV1', 'BAD_BOOTSTRAP_FLOOR', 'floor schema')
   same(floor.version, 1, 'BAD_BOOTSTRAP_FLOOR', 'floor version')
-  ok(U64.test(floor.highestAcceptedBootstrapSequence), 'BAD_BOOTSTRAP_FLOOR', 'floor sequence')
-  const candidateSequence = BigInt(bootstrap.payload.bootstrapSequence)
-  const acceptedSequence = BigInt(floor.highestAcceptedBootstrapSequence)
+  const candidateSequence = decimalU64(bootstrap.payload.bootstrapSequence, 'BAD_BOOTSTRAP_FLOOR', 'candidate bootstrap sequence')
+  const acceptedSequence = decimalU64(floor.highestAcceptedBootstrapSequence, 'BAD_BOOTSTRAP_FLOOR', 'floor sequence')
   ok(candidateSequence >= acceptedSequence, 'BOOTSTRAP_ROLLBACK', 'candidate bootstrap is below the persisted floor')
   if (candidateSequence === acceptedSequence) {
     bytesSame(hex(floor.completeSignedWrapperHash, 32, 'BAD_BOOTSTRAP_FLOOR', 'floor wrapper hash'),
       bootstrapWrapperHash(bootstrap), 'BOOTSTRAP_FORK', 'same-sequence bootstrap fork')
   }
+}
+
+function validateBootstrapTransition (previous, successor) {
+  const previousSequence = decimalU64(previous.payload.bootstrapSequence, 'BOOTSTRAP_SEQUENCE', 'previous sequence')
+  const successorSequence = decimalU64(successor.payload.bootstrapSequence, 'BOOTSTRAP_SEQUENCE', 'successor sequence')
+  same(successorSequence, previousSequence + 1n, 'BOOTSTRAP_SEQUENCE', 'successor sequence increment')
+  bytesSame(hex(successor.payload.previousBootstrapHash, 32, 'BOOTSTRAP_PREDECESSOR', 'successor predecessor'),
+    bootstrapWrapperHash(previous), 'BOOTSTRAP_PREDECESSOR', 'successor complete signed-wrapper predecessor hash')
+  same(successor.payload.authorityPublicKey, previous.payload.authorityPublicKey,
+    'BOOTSTRAP_PREDECESSOR', 'successor authority continuity')
+  same(stable(successor.payload.relays), stable(previous.payload.relays),
+    'BOOTSTRAP_PREDECESSOR', 'successor relay identity continuity')
+  const previousSet = previous.payload.inboxEpochSets[0]
+  const successorSet = successor.payload.inboxEpochSets[0]
+  same(successorSet.inboxEpoch, previousSet.inboxEpoch + 1, 'EPOCH_CURRENT', 'successor epoch increment')
+  const priorSecrets = [
+    previousSet.stripeSelectionKey,
+    previousSet.announcementMasterKey,
+    ...previousSet.bindings.flatMap(value => [value.createPublicKey, value.physicalTopic])
+  ]
+  const successorSecrets = [
+    successorSet.stripeSelectionKey,
+    successorSet.announcementMasterKey,
+    ...successorSet.bindings.flatMap(value => [value.createPublicKey, value.physicalTopic])
+  ]
+  unique(successorSecrets, 'EPOCH_REUSE', 'successor epoch keys/topics')
+  ok(successorSecrets.every(value => !priorSecrets.includes(value)),
+    'EPOCH_REUSE', 'successor reuses prior epoch keys/topics')
 }
 
 function decodeRelayBinding (reader) {
@@ -577,7 +744,60 @@ function openCellResult (cell, cap, inner) {
   return reconstructed
 }
 
-function validateProtocolVector (vector, bootstrap, profileCatalog) {
+function decodePutCellFixture (bytes) {
+  const reader = new Reader(bytes, 'CELL_PUT_BINDING')
+  same(reader.u8('PutCellV1 version'), 1, reader.code, 'PutCellV1 version')
+  const value = {
+    storageSlot: reader.take(32, 'storage slot'),
+    allocationEpoch: reader.u32('allocation epoch'),
+    sizeClass: reader.u8('size class'),
+    leaseClass: reader.u8('lease class'),
+    clientNonce: reader.take(32, 'client nonce'),
+    createPublicKey: reader.take(32, 'create public key'),
+    renewPublicKey: reader.take(32, 'renew public key'),
+    dropPublicKey: reader.take(32, 'drop public key'),
+    declaredBlobHash: reader.take(32, 'declared blob hash'),
+    createSignature: reader.take(64, 'create signature'),
+    admissionProfileId: reader.u16('admission profile id'),
+    admissionSchemeId: reader.u16('admission scheme id'),
+    admissionParameterHash: reader.take(32, 'admission parameter hash')
+  }
+  const tokenLength = reader.compact('admission token length')
+  ok(tokenLength >= 1 && tokenLength <= 0xfc, reader.code, 'bounded fixture admission token length')
+  value.admissionToken = reader.take(tokenLength, 'admission token')
+  const blobLength = ({ 1: 4096, 2: 16384, 3: 65536, 4: 262144, 5: 1048576 })[value.sizeClass]
+  ok(blobLength != null, reader.code, 'PutCellV1 size class')
+  value.cellBlob = reader.take(blobLength, 'cell blob')
+  reader.end('PutCellV1')
+  ok(value.leaseClass >= 1 && value.leaseClass <= 4, reader.code, 'PutCellV1 lease class')
+  ok(value.admissionProfileId >= 1 && value.admissionSchemeId >= 1, reader.code, 'PutCellV1 admission ids')
+  ok(value.admissionParameterHash.some(byte => byte !== 0) && value.admissionToken.some(byte => byte !== 0),
+    reader.code, 'PutCellV1 admission material')
+  return value
+}
+
+function cellAllocationCommitment (relayPublicKey, value) {
+  return blake2b256(concatBytes(
+    asciiBytes('hiverelay.blind.allocate.v1'), relayPublicKey, value.storageSlot,
+    u32Bytes(value.allocationEpoch), Uint8Array.of(value.sizeClass, value.leaseClass),
+    value.declaredBlobHash, value.createPublicKey, value.renewPublicKey, value.dropPublicKey
+  ))
+}
+
+function assertRelayBindingSame (actual, expected, code, field) {
+  bytesSame(actual.relayPublicKey, expected.relayPublicKey, code, `${field} relay public key`)
+  bytesSame(actual.storeId, expected.storeId, code, `${field} store id`)
+  same(actual.descriptorSequence, expected.descriptorSequence, code, `${field} descriptor sequence`)
+  bytesSame(actual.descriptorHash, expected.descriptorHash, code, `${field} descriptor hash`)
+  same(actual.durabilityProfileId, expected.durabilityProfileId, code, `${field} durability profile id`)
+  bytesSame(actual.durabilityContinuityHash, expected.durabilityContinuityHash, code, `${field} continuity hash`)
+  bytesSame(actual.durabilityProfileHash, expected.durabilityProfileHash, code, `${field} durability profile hash`)
+  same(actual.restoreEvidenceHeadSequence, expected.restoreEvidenceHeadSequence, code, `${field} restore head sequence`)
+  bytesSame(actual.restoreEvidenceHeadHash, expected.restoreEvidenceHeadHash, code, `${field} restore head hash`)
+  same(actual.externalCommitWitness, expected.externalCommitWitness, code, `${field} external witness`)
+}
+
+async function validateProtocolVector (vector, bootstrap, profileCatalog, profileValidator) {
   same(vector.schema, 'peerit-seq29-limited-public-test-positive-vector-v1', 'BAD_VECTOR_SCHEMA', 'vector schema')
   same(vector.version, 1, 'BAD_VECTOR_SCHEMA', 'vector version')
   same(vector.fixtureOnly, true, 'BAD_VECTOR_SCHEMA', 'fixture-only marker')
@@ -599,13 +819,29 @@ function validateProtocolVector (vector, bootstrap, profileCatalog) {
   bytesSame(expectedLogical, hex(vector.inner.logicalHash, 32), 'BAD_INNER', 'logical hash')
   const expectedEncoding = encodingCommitment(inner, expectedLogical, 1)
   bytesSame(expectedEncoding, hex(vector.inner.encodingCommitment, 32), 'BAD_INNER', 'encoding commitment')
+  const decodedInner = decodeBoundedPeeritInnerOperationBatchFixtureV1(inner, vector.inner.oneAuthorPublicKey)
+  same(decodedInner.innerLength, BigInt(inner.byteLength), 'INNER_AUTHORITY', 'intrinsic inner length')
+  same(decodedInner.sizeClass, 1, 'INNER_AUTHORITY', 'intrinsic size class')
+  bytesSame(decodedInner.logicalHash, expectedLogical, 'INNER_AUTHORITY', 'intrinsic logical hash')
+  bytesSame(decodedInner.encodingCommitment, expectedEncoding, 'INNER_AUTHORITY', 'intrinsic encoding commitment')
 
   ok(Array.isArray(vector.cells) && vector.cells.length === 2, 'CELL_BINDING_COUNT', 'two Cell bindings required')
   let reconstructed = 0
+  const slotKeys = []
+  const createKeys = []
+  const renewKeys = []
+  const dropKeys = []
+  const readKeys = []
+  const blobHashes = []
+  const putNonces = []
   for (const cell of vector.cells) {
+    const expectedBlobHash = hex(cell.cellBlobHash, 32, 'CELL_EQUALITY', 'Cell blob hash')
     bytesSame(hex(cell.logicalHash, 32), expectedLogical, 'CELL_EQUALITY', 'Cell logical hash')
     bytesSame(hex(cell.encodingCommitment, 32), expectedEncoding, 'CELL_EQUALITY', 'Cell encoding commitment')
     same(cell.sizeClass, 1, 'CELL_EQUALITY', 'smallest Cell class')
+    const effectiveLeaseEpoch = Number(FIXTURE_REFERENCE_UNIX_MILLIS / LEASE_EPOCH_MILLIS)
+    ok(cell.allocationEpoch <= effectiveLeaseEpoch + 1 && effectiveLeaseEpoch < cell.allocationEpoch + 1460,
+      'EPOCH_CURRENT', 'Cell allocation epoch is outside the trusted acceptance window')
     const capBytes = hex(cell.readCapabilityCanonicalHex, null, 'BAD_READ_CAP', 'ReadCellCapV1')
     let cap
     try { cap = decodeBlindExternalProfileValueV1('ReadCellCapV1', capBytes) } catch (cause) {
@@ -626,6 +862,12 @@ function validateProtocolVector (vector, bootstrap, profileCatalog) {
     verifyTrailingResultSignature(receiptBytes, receipt.relayBinding.relayPublicKey,
       'hiverelay.blind.cell-receipt.v1', 'BAD_CELL_RECEIPT_SIGNATURE')
     bytesSame(receipt.relayBinding.relayPublicKey, cap.relayPublicKey, 'CELL_EQUALITY', 'receipt relay')
+    const bootstrapBinding = bootstrap.payload.inboxEpochSets[0].bindings.find(value => value.relayPublicKey === cell.relayPublicKey)
+    ok(bootstrapBinding != null, 'CELL_RELAY_CONTINUITY', 'Cell relay is absent from bootstrap')
+    const bootstrapReceipt = decodeBlindExternalProfileValueV1('InboxReceiptV1',
+      hex(bootstrapBinding.createReceiptCanonicalHex, null, 'CELL_RELAY_CONTINUITY', 'bootstrap create receipt'))
+    assertRelayBindingSame(receipt.relayBinding, bootstrapReceipt.relayBinding,
+      'CELL_RELAY_CONTINUITY', 'Cell/Inbox relay binding')
     bytesSame(receipt.slotCommitment, blake2b256(cap.storageSlot), 'CELL_EQUALITY', 'receipt slot commitment')
     bytesSame(receipt.cellBlobHash, hex(cell.cellBlobHash, 32), 'CELL_EQUALITY', 'receipt blob hash')
     bytesSame(receipt.allocationCommitment, hex(cell.allocationCommitment, 32), 'CELL_EQUALITY', 'allocation commitment')
@@ -633,16 +875,61 @@ function validateProtocolVector (vector, bootstrap, profileCatalog) {
     same(receipt.allocationEpoch, cell.allocationEpoch, 'CELL_EQUALITY', 'receipt allocation epoch')
     same(receipt.leaseEpoch, cell.leaseEpoch, 'CELL_EQUALITY', 'receipt lease epoch')
     same(receipt.result, 1, 'CELL_EQUALITY', 'receipt STORED result')
+    exactKeys(cell.capabilityBoundPut, [
+      'familyId', 'operationId', 'requestCanonicalHex', 'allocationCommitment', 'requestCommitment', 'clientNonce'
+    ], 'CELL_PUT_BINDING', 'capabilityBoundPut')
+    same(cell.capabilityBoundPut.familyId, 2, 'CELL_PUT_BINDING', 'CELL family')
+    same(cell.capabilityBoundPut.operationId, 1, 'CELL_PUT_BINDING', 'CELL.PUT operation')
+    const putBytes = hex(cell.capabilityBoundPut.requestCanonicalHex, null, 'CELL_PUT_BINDING', 'PutCellV1 bytes')
+    const put = decodePutCellFixture(putBytes)
+    bytesSame(put.storageSlot, cap.storageSlot, 'CELL_PUT_BINDING', 'PUT/read-cap slot')
+    same(put.allocationEpoch, cell.allocationEpoch, 'CELL_PUT_BINDING', 'PUT allocation epoch')
+    same(put.sizeClass, cell.sizeClass, 'CELL_PUT_BINDING', 'PUT size class')
+    same(put.leaseClass, 4, 'CELL_PUT_BINDING', 'PUT lease class')
+    bytesSame(put.createPublicKey, hex(cell.createPublicKey, 32), 'CELL_PUT_BINDING', 'PUT create key')
+    bytesSame(put.renewPublicKey, hex(cell.renewPublicKey, 32), 'CELL_PUT_BINDING', 'PUT renew key')
+    bytesSame(put.dropPublicKey, hex(cell.dropPublicKey, 32), 'CELL_PUT_BINDING', 'PUT drop key')
+    bytesSame(put.declaredBlobHash, expectedBlobHash, 'CELL_PUT_BINDING', 'PUT declared blob hash')
+    bytesSame(blake2b256(put.cellBlob), expectedBlobHash, 'CELL_PUT_BINDING', 'PUT exact blob hash')
+    const expectedAllocation = cellAllocationCommitment(cap.relayPublicKey, put)
+    bytesSame(expectedAllocation, hex(cell.allocationCommitment, 32), 'CELL_PUT_BINDING', 'derived allocation commitment')
+    bytesSame(expectedAllocation, hex(cell.capabilityBoundPut.allocationCommitment, 32),
+      'CELL_PUT_BINDING', 'PUT evidence allocation commitment')
+    ok(verifyEd25519(put.createPublicKey, expectedAllocation, put.createSignature),
+      'CELL_PUT_SIGNATURE', 'PUT create signature')
+    const expectedPutCommitment = blake2b256(concatBytes(
+      asciiBytes('hiverelay.blind.request.v1cell-put'), expectedAllocation, put.clientNonce
+    ))
+    bytesSame(expectedPutCommitment, hex(cell.capabilityBoundPut.requestCommitment, 32),
+      'CELL_PUT_BINDING', 'PUT request commitment')
+    bytesSame(expectedPutCommitment, receipt.requestCommitment, 'CELL_PUT_BINDING', 'PUT/receipt request commitment')
+    bytesSame(put.clientNonce, hex(cell.capabilityBoundPut.clientNonce, 32), 'CELL_PUT_BINDING', 'PUT evidence nonce')
+    bytesSame(put.clientNonce, receipt.requestNonce, 'CELL_PUT_BINDING', 'PUT/receipt nonce')
     openCellResult(cell, cap, inner)
     reconstructed++
+    slotKeys.push(bytesToHex(cap.storageSlot))
+    createKeys.push(cell.createPublicKey)
+    renewKeys.push(cell.renewPublicKey)
+    dropKeys.push(cell.dropPublicKey)
+    readKeys.push(bytesToHex(cap.cellKey))
+    blobHashes.push(cell.cellBlobHash)
+    putNonces.push(cell.capabilityBoundPut.clientNonce)
   }
   ok(reconstructed >= 1, 'READBACK_REQUIRED', 'at least one replica must reconstruct')
   unique(vector.cells.map(value => value.relayPublicKey), 'DUPLICATE_CELL_RELAY', 'Cell relay keys')
+  unique(slotKeys, 'CELL_REPLICA_REUSE', 'Cell storage slots')
+  unique(createKeys, 'CELL_REPLICA_REUSE', 'Cell create keys')
+  unique(renewKeys, 'CELL_REPLICA_REUSE', 'Cell renew keys')
+  unique(dropKeys, 'CELL_REPLICA_REUSE', 'Cell drop keys')
+  unique(readKeys, 'CELL_REPLICA_REUSE', 'Cell read keys')
+  unique(blobHashes, 'CELL_REPLICA_REUSE', 'Cell blob hashes')
+  unique(putNonces, 'CELL_REPLICA_REUSE', 'Cell PUT nonces')
 
   const author = vector.authorBind
   same(author.manifestTag, 3, 'AUTHOR_BIND_TAG', 'AuthorBind manifest tag')
-  ok(U64.test(author.authorSequence), 'AUTHOR_CHAIN', 'author sequence')
-  ok((BigInt(author.authorSequence) === 0n) === (author.previousAuthorRecordId === null), 'AUTHOR_CHAIN', 'author predecessor')
+  const authorSequence = decimalU64(author.authorSequence, 'AUTHOR_CHAIN', 'author sequence')
+  same(authorSequence, 0n, 'AUTHOR_CHAIN', 'Sequence 29 initial AuthorBind sequence')
+  same(author.previousAuthorRecordId, null, 'AUTHOR_CHAIN', 'Sequence 29 initial AuthorBind predecessor')
   const authorPrefix = hex(author.signingPrefixHex, null, 'BAD_AUTHOR_BIND_BYTES', 'AuthorBind prefix')
   const authorSignature = hex(author.signature, 64, 'BAD_AUTHOR_BIND_SIGNATURE', 'AuthorBind signature')
   const authorBytes = hex(author.canonicalHex, null, 'BAD_AUTHOR_BIND_BYTES', 'AuthorBind canonical')
@@ -652,6 +939,27 @@ function validateProtocolVector (vector, bootstrap, profileCatalog) {
   same(sha256Hex(authorBytes), author.canonicalSha256, 'BAD_AUTHOR_BIND_BYTES', 'AuthorBind SHA-256')
   ok(verifyEd25519(hex(author.authorPublicKey, 32), concatBytes(asciiBytes('peerit.hiverelay.author-bind.v1'), authorPrefix), authorSignature),
     'BAD_AUTHOR_BIND_SIGNATURE', 'AuthorBind signature')
+  let decodedAuthor
+  try {
+    decodedAuthor = profileValidator.validate('AuthorBindV1', authorBytes).value
+  } catch (cause) {
+    const error = new Error(`invalid canonical AuthorBindV1: ${cause.message}`)
+    error.code = 'AUTHOR_BIND_SEMANTICS'
+    throw error
+  }
+  bytesSame(decodedAuthor.authorPublicKey, hex(author.authorPublicKey, 32), 'AUTHOR_BIND_SEMANTICS', 'AuthorBind author key')
+  bytesSame(decodedAuthor.authorPublicKey, hex(vector.inner.oneAuthorPublicKey, 32), 'INNER_AUTHORITY', 'AuthorBind intrinsic author authority')
+  same(decodedAuthor.authorSequence, BigInt(author.authorSequence), 'AUTHOR_BIND_SEMANTICS', 'AuthorBind author sequence')
+  same(decodedAuthor.previousAuthorRecordId, author.previousAuthorRecordId, 'AUTHOR_BIND_SEMANTICS', 'AuthorBind predecessor')
+  bytesSame(decodedAuthor.logicalHash, expectedLogical, 'AUTHOR_BIND_SEMANTICS', 'AuthorBind logical hash')
+  same(decodedAuthor.innerCodec, 334, 'AUTHOR_BIND_SEMANTICS', 'AuthorBind codec')
+  same(decodedAuthor.innerLength, BigInt(inner.byteLength), 'AUTHOR_BIND_SEMANTICS', 'AuthorBind inner length')
+  same(decodedAuthor.initialReplicas.length, 2, 'AUTHOR_BIND_SEMANTICS', 'AuthorBind replica count')
+  for (let index = 0; index < decodedAuthor.initialReplicas.length; index++) {
+    bytesSame(profileCatalog.CellReplicaBindingV1.encode(decodedAuthor.initialReplicas[index]),
+      hex(vector.cells[index].cellReplicaBindingCanonicalHex, null, 'AUTHOR_BIND_SEMANTICS', 'CellReplicaBindingV1'),
+      'AUTHOR_BIND_SEMANTICS', `AuthorBind Cell replica ${index}`)
+  }
   const manifestId = blake2b256(concatBytes(
     asciiBytes('peerit.hiverelay.manifest-record-id.v1'), u16Bytes(3), u64Bytes(authorBytes.byteLength), authorBytes
   ))
@@ -676,6 +984,24 @@ function validateProtocolVector (vector, bootstrap, profileCatalog) {
   ok(verifyEd25519(hex(announcement.publisherPublicKey, 32),
     concatBytes(asciiBytes('peerit.hiverelay.announcement.v1'), announcementPrefix), announcementSignature),
   'BAD_ANNOUNCEMENT_SIGNATURE', 'announcement signature')
+  let decodedAnnouncement
+  try {
+    decodedAnnouncement = profileValidator.validate('PeeritAnnouncementV1', announcementBytes).value
+  } catch (cause) {
+    const error = new Error(`invalid canonical PeeritAnnouncementV1: ${cause.message}`)
+    error.code = 'ANNOUNCEMENT_SEMANTICS'
+    throw error
+  }
+  same(decodedAnnouncement.version, 1, 'ANNOUNCEMENT_SEMANTICS', 'announcement decoded version')
+  same(decodedAnnouncement.manifestTag, 3, 'ANNOUNCEMENT_SEMANTICS', 'announcement decoded manifest tag')
+  bytesSame(decodedAnnouncement.manifestRecordId, manifestId, 'ANNOUNCEMENT_SEMANTICS', 'announcement decoded record id')
+  same(decodedAnnouncement.manifestMode, 1, 'ANNOUNCEMENT_SEMANTICS', 'announcement decoded INLINE mode')
+  bytesSame(decodedAnnouncement.manifestRecord, authorBytes, 'ANNOUNCEMENT_SEMANTICS', 'announcement decoded INLINE record')
+  same(decodedAnnouncement.manifestReadCaps.length, 0, 'ANNOUNCEMENT_SEMANTICS', 'announcement decoded manifest caps')
+  bytesSame(decodedAnnouncement.publisherPublicKey, hex(announcement.publisherPublicKey, 32), 'ANNOUNCEMENT_SEMANTICS', 'announcement decoded publisher')
+  same(decodedAnnouncement.publishedLeaseEpoch, announcement.publishedLeaseEpoch, 'ANNOUNCEMENT_SEMANTICS', 'announcement decoded lease epoch')
+  ok(announcement.publishedLeaseEpoch <= Number(FIXTURE_REFERENCE_UNIX_MILLIS / LEASE_EPOCH_MILLIS) + 1,
+    'ANNOUNCEMENT_TIME', 'announcement published lease epoch is in the future')
   const signedId = blake2b256(concatBytes(
     asciiBytes('peerit.hiverelay.signed-announcement-id.v1'), u64Bytes(announcementBytes.byteLength), announcementBytes
   ))
@@ -888,36 +1214,19 @@ function validateLimitedManagementPlaintext (plaintext, vector, bootstrap, profi
   reader.end('PeeritLimitedPublicInboxManagementBundleV1')
 }
 
-function validateManagementCustody (vector, bootstrap, profileCatalog) {
-  exactKeys(vector, [
-    'schema', 'version', 'bundleName', 'envelopeName', 'bundleKind', 'plaintextCodec',
-    'currentEntryCount', 'previousEntryCount', 'seedRoles', 'appendAuthMode', 'threshold',
-    'totalShares', 'envelopeCanonicalHex', 'plaintextSha256', 'fixtureCustodianPrivateKeys',
-    'fixtureCustodianPublicKeys'
-  ], 'BAD_CUSTODY_CONTRACT', 'management custody vector')
-  same(vector.schema, 'PeeritLimitedPublicInboxManagementCustodyV1', 'BAD_CUSTODY_CONTRACT', 'custody schema')
-  same(vector.version, 1, 'BAD_CUSTODY_CONTRACT', 'custody version')
-  same(vector.bundleName, 'PeeritLimitedPublicInboxManagementBundleV1', 'BAD_CUSTODY_CONTRACT', 'limited bundle name')
-  same(vector.envelopeName, 'PeeritLimitedPublicInboxCustodyEnvelopeV1', 'BAD_CUSTODY_CONTRACT', 'limited envelope name')
-  same(vector.bundleKind, LIMITED_MANAGEMENT_BUNDLE_KIND, 'BAD_CUSTODY_CONTRACT', 'limited bundle kind')
-  same(vector.plaintextCodec, LIMITED_MANAGEMENT_PLAINTEXT_CODEC, 'BAD_CUSTODY_CONTRACT', 'limited plaintext codec')
-  same(vector.currentEntryCount, 2, 'CUSTODY_CARDINALITY', 'current management entries')
-  ok(vector.previousEntryCount === 0 || vector.previousEntryCount === 2,
-    'CUSTODY_CARDINALITY', 'previous management entries')
-  same(vector.seedRoles.join(','), 'CREATE,RENEW,CLOSE', 'CUSTODY_APPEND_SEED', 'management seed roles')
-  same(vector.appendAuthMode, 'OPEN_APPEND', 'CUSTODY_APPEND_SEED', 'OPEN_APPEND has no append seed')
-  same(vector.threshold, 2, 'CUSTODY_THRESHOLD', 'custody threshold')
-  same(vector.totalShares, 3, 'CUSTODY_THRESHOLD', 'custody share count')
-  ok(Array.isArray(vector.fixtureCustodianPrivateKeys) && vector.fixtureCustodianPrivateKeys.length >= 2,
-    'CUSTODY_THRESHOLD', 'two fixture custodian keys are required for reconstruction')
-  ok(Array.isArray(vector.fixtureCustodianPublicKeys) && vector.fixtureCustodianPublicKeys.length === 3,
-    'CUSTODY_THRESHOLD', 'three custodian public keys are required')
+function assertX25519PublicKey (value, field) {
+  ok(value.byteLength === 32 && !LOW_ORDER_X25519_PUBLIC_KEYS.has(bytesToHex(value)),
+    'CUSTODY_LOW_ORDER_PUBLIC_KEY', `${field} must not be a known low-order X25519 point`)
+  return value
+}
 
-  const bytes = hex(vector.envelopeCanonicalHex, null, 'CUSTODY_RECONSTRUCTION', 'limited custody envelope')
+function parseLimitedCustodyEnvelope (canonicalHex, fixturePublicKeys) {
+  const bytes = hex(canonicalHex, null, 'CUSTODY_RECONSTRUCTION', 'limited custody envelope')
   const reader = new Reader(bytes, 'CUSTODY_RECONSTRUCTION')
   const envelopePrefixStart = reader.offset
   same(reader.u8('envelope version'), 1, reader.code, 'limited envelope version')
   const custodySetId = reader.take(32, 'custody set id')
+  ok(custodySetId.some(value => value !== 0), reader.code, 'custody set id must be nonzero')
   same(reader.u8('bundle kind'), LIMITED_MANAGEMENT_BUNDLE_KIND, reader.code, 'limited bundle kind')
   same(reader.u16('plaintext codec'), LIMITED_MANAGEMENT_PLAINTEXT_CODEC, reader.code, 'limited plaintext codec')
   const plaintextLength = reader.u64('plaintext length')
@@ -928,7 +1237,9 @@ function validateManagementCustody (vector, bootstrap, profileCatalog) {
   same(BigInt(sealedPayloadLength), plaintextLength + 16n, reader.code, 'sealed payload length')
   const payloadAad = bytes.subarray(envelopePrefixStart, reader.offset)
   const payloadNonce = reader.take(24, 'payload nonce')
+  ok(payloadNonce.some(value => value !== 0), 'CUSTODY_NONCE', 'payload nonce must be nonzero')
   const sealedPayload = reader.take(sealedPayloadLength, 'sealed payload')
+  ok(sealedPayload.some(value => value !== 0), reader.code, 'sealed payload must be nonzero')
   const sealedPayloadHash = blake2b256(concatBytes(
     asciiBytes('peerit.hiverelay.custody-sealed-payload.v1'), u64Bytes(sealedPayload.byteLength), sealedPayload
   ))
@@ -948,62 +1259,161 @@ function validateManagementCustody (vector, bootstrap, profileCatalog) {
     const custodianPublicKey = reader.take(32, 'custodian public key')
     const ephemeralPublicKey = reader.take(32, 'ephemeral public key')
     const nonce = reader.take(24, 'share nonce')
+    assertX25519PublicKey(custodianPublicKey, 'custodian public key')
+    assertX25519PublicKey(ephemeralPublicKey, 'ephemeral public key')
+    ok(nonce.some(value => value !== 0), 'CUSTODY_NONCE', 'share nonce must be nonzero')
     const shareAad = bytes.subarray(sharePrefixStart, reader.offset)
     const sealedShare = reader.take(48, 'sealed share')
+    ok(sealedShare.some(value => value !== 0), reader.code, 'sealed share must be nonzero')
     shares.push({ shareIndex, custodianPublicKey, ephemeralPublicKey, nonce, shareAad, sealedShare })
   }
   reader.end('PeeritLimitedPublicInboxCustodyEnvelopeV1')
-  unique(shares.map(value => bytesToHex(value.custodianPublicKey)), reader.code, 'custodian keys')
-  unique(shares.map(value => bytesToHex(value.ephemeralPublicKey)), reader.code, 'ephemeral keys')
+  unique(shares.map(value => bytesToHex(value.custodianPublicKey)), 'CUSTODY_DUPLICATE', 'custodian keys')
+  unique(shares.map(value => bytesToHex(value.ephemeralPublicKey)), 'CUSTODY_DUPLICATE', 'ephemeral keys')
+  unique(shares.map(value => bytesToHex(value.nonce)), 'CUSTODY_DUPLICATE', 'share nonces')
+  unique(shares.map(value => bytesToHex(value.sealedShare)), 'CUSTODY_DUPLICATE', 'sealed shares')
+  ok(Array.isArray(fixturePublicKeys) && fixturePublicKeys.length === 3,
+    'CUSTODY_THRESHOLD', 'three fixture custodian public pins are required')
+  const publicPins = fixturePublicKeys.map((value, index) =>
+    assertX25519PublicKey(hex(value, 32, 'CUSTODY_LOW_ORDER_PUBLIC_KEY', `custodian public pin ${index + 1}`),
+      `custodian public pin ${index + 1}`))
+  unique(publicPins.map(bytesToHex), 'CUSTODY_DUPLICATE', 'fixture custodian public pins')
+  for (let index = 0; index < 3; index++) {
+    bytesSame(publicPins[index], shares[index].custodianPublicKey,
+      'CUSTODY_WRONG_RECIPIENT', `share ${index + 1} public pin`)
+  }
+  return {
+    custodySetId, plaintextLength, plaintextHash, keyCommitment, payloadAad, payloadNonce,
+    sealedPayload, shares
+  }
+}
 
+function recoverLimitedCustodyCase (parsed, privateKeyHexes, vector, bootstrap, profileCatalog) {
+  ok(Array.isArray(privateKeyHexes) && privateKeyHexes.length >= 2 && privateKeyHexes.length <= 3,
+    'CUSTODY_THRESHOLD', 'custody recovery requires two or three supplied private keys')
+  unique(privateKeyHexes, 'CUSTODY_DUPLICATE', 'supplied custodian private keys')
   const openedShares = []
-  for (let index = 0; index < 2; index++) {
-    const privateRaw = hex(vector.fixtureCustodianPrivateKeys[index], 32, 'CUSTODY_THRESHOLD', 'custodian private key')
+  const rejectedShares = []
+  for (const privateKeyHex of privateKeyHexes) {
+    const privateRaw = hex(privateKeyHex, 32, 'CUSTODY_THRESHOLD', 'custodian private key')
+    ok(privateRaw.some(value => value !== 0), 'CUSTODY_THRESHOLD', 'custodian private key must be nonzero')
     const privateKey = x25519PrivateKey(privateRaw)
     const derivedPublic = new Uint8Array(createPublicKey(privateKey)
       .export({ format: 'der', type: 'spki' }).subarray(-32))
-    bytesSame(derivedPublic, shares[index].custodianPublicKey, 'CUSTODY_RECONSTRUCTION', 'custodian recipient')
-    bytesSame(derivedPublic, hex(vector.fixtureCustodianPublicKeys[index], 32),
-      'CUSTODY_RECONSTRUCTION', 'fixture custodian pin')
-    const shared = new Uint8Array(diffieHellman({
-      privateKey,
-      publicKey: x25519PublicKey(shares[index].ephemeralPublicKey)
-    }))
-    const shareKey = new Uint8Array(hkdfSync('sha256', shared, custodySetId, concatBytes(
+    const share = parsed.shares.find(value => bytesEqual(value.custodianPublicKey, derivedPublic))
+    ok(share != null, 'CUSTODY_WRONG_RECIPIENT', 'supplied custodian key does not match any pinned recipient')
+    let shared
+    try {
+      shared = new Uint8Array(diffieHellman({
+        privateKey,
+        publicKey: x25519PublicKey(assertX25519PublicKey(share.ephemeralPublicKey, 'ephemeral public key'))
+      }))
+    } catch (cause) {
+      const error = new Error(`X25519 failed: ${cause.message}`)
+      error.code = 'CUSTODY_LOW_ORDER_PUBLIC_KEY'
+      throw error
+    }
+    ok(shared.some(value => value !== 0), 'CUSTODY_LOW_ORDER_PUBLIC_KEY', 'X25519 shared secret must be nonzero')
+    const shareKey = new Uint8Array(hkdfSync('sha256', shared, parsed.custodySetId, concatBytes(
       asciiBytes('peerit.hiverelay.custody-share-key.v1'), Uint8Array.of(LIMITED_MANAGEMENT_BUNDLE_KIND),
-      Uint8Array.of(shares[index].shareIndex), shares[index].custodianPublicKey,
-      shares[index].ephemeralPublicKey
+      Uint8Array.of(share.shareIndex), share.custodianPublicKey, share.ephemeralPublicKey
     ), 32))
     let opened
     try {
-      opened = xchachaOpen(shareKey, shares[index].nonce, shares[index].shareAad, shares[index].sealedShare)
-    } catch (cause) {
-      const error = new Error(`custody share authentication failed: ${cause.message}`)
-      error.code = 'CUSTODY_RECONSTRUCTION'
-      throw error
+      opened = xchachaOpen(shareKey, share.nonce, share.shareAad, share.sealedShare)
+    } catch {
+      rejectedShares.push(share.shareIndex)
+      continue
     }
     same(opened.byteLength, 32, 'CUSTODY_RECONSTRUCTION', 'opened share length')
-    openedShares.push({ index: shares[index].shareIndex, bytes: opened })
+    openedShares.push({ index: share.shareIndex, bytes: opened })
   }
-  const dataKey = reconstructTwoShares(openedShares[0], openedShares[1])
-  bytesSame(blake2b256(concatBytes(
-    asciiBytes('peerit.hiverelay.custody-key.v1'), custodySetId, dataKey
-  )), keyCommitment, 'CUSTODY_RECONSTRUCTION', 'reconstructed custody key commitment')
-  let plaintext
-  try {
-    plaintext = xchachaOpen(dataKey, payloadNonce, payloadAad, sealedPayload)
-  } catch (cause) {
-    const error = new Error(`custody payload authentication failed: ${cause.message}`)
-    error.code = 'CUSTODY_RECONSTRUCTION'
-    throw error
+  ok(openedShares.length >= 2, 'CUSTODY_THRESHOLD', 'fewer than two supplied shares authenticated')
+  const candidates = []
+  for (let left = 0; left < openedShares.length; left++) {
+    for (let right = left + 1; right < openedShares.length; right++) {
+      const dataKey = reconstructTwoShares(openedShares[left], openedShares[right])
+      if (!bytesEqual(blake2b256(concatBytes(
+        asciiBytes('peerit.hiverelay.custody-key.v1'), parsed.custodySetId, dataKey
+      )), parsed.keyCommitment)) continue
+      let plaintext
+      try {
+        plaintext = xchachaOpen(dataKey, parsed.payloadNonce, parsed.payloadAad, parsed.sealedPayload)
+      } catch {
+        continue
+      }
+      same(BigInt(plaintext.byteLength), parsed.plaintextLength,
+        'CUSTODY_RECONSTRUCTION', 'opened plaintext length')
+      bytesSame(blake2b256(concatBytes(
+        asciiBytes('peerit.hiverelay.custody-plaintext.v1'), Uint8Array.of(LIMITED_MANAGEMENT_BUNDLE_KIND),
+        u16Bytes(LIMITED_MANAGEMENT_PLAINTEXT_CODEC), u64Bytes(plaintext.byteLength), plaintext
+      )), parsed.plaintextHash, 'CUSTODY_RECONSTRUCTION', 'opened plaintext hash')
+      same(sha256Hex(plaintext), vector.plaintextSha256,
+        'CUSTODY_RECONSTRUCTION', 'opened plaintext SHA-256')
+      validateLimitedManagementPlaintext(plaintext, vector, bootstrap, profileCatalog)
+      candidates.push({
+        pair: `${openedShares[left].index}+${openedShares[right].index}`,
+        plaintext
+      })
+    }
   }
-  same(BigInt(plaintext.byteLength), plaintextLength, 'CUSTODY_RECONSTRUCTION', 'opened plaintext length')
-  bytesSame(blake2b256(concatBytes(
-    asciiBytes('peerit.hiverelay.custody-plaintext.v1'), Uint8Array.of(LIMITED_MANAGEMENT_BUNDLE_KIND),
-    u16Bytes(LIMITED_MANAGEMENT_PLAINTEXT_CODEC), u64Bytes(plaintext.byteLength), plaintext
-  )), plaintextHash, 'CUSTODY_RECONSTRUCTION', 'opened plaintext hash')
-  same(sha256Hex(plaintext), vector.plaintextSha256, 'CUSTODY_RECONSTRUCTION', 'opened plaintext SHA-256')
-  validateLimitedManagementPlaintext(plaintext, vector, bootstrap, profileCatalog)
+  ok(candidates.length >= 1, 'CUSTODY_RECONSTRUCTION', 'no supplied two-share pair reconstructed the custody plaintext')
+  for (const candidate of candidates.slice(1)) {
+    bytesSame(candidate.plaintext, candidates[0].plaintext,
+      'CUSTODY_RECONSTRUCTION_AMBIGUOUS', 'passing custody pairs must reconstruct byte-identical plaintext')
+  }
+  return {
+    passingPairs: candidates.map(value => value.pair).sort(),
+    rejectedShares: rejectedShares.sort((left, right) => left - right)
+  }
+}
+
+function validateManagementCustody (vector, bootstrap, profileCatalog) {
+  exactKeys(vector, [
+    'schema', 'version', 'bundleName', 'envelopeName', 'bundleKind', 'plaintextCodec',
+    'currentEntryCount', 'previousEntryCount', 'seedRoles', 'appendAuthMode', 'threshold',
+    'totalShares', 'envelopeCanonicalHex', 'plaintextSha256', 'fixtureCustodianPrivateKeys',
+    'fixtureCustodianPublicKeys', 'fixtureRecoveryCases'
+  ], 'BAD_CUSTODY_CONTRACT', 'management custody vector')
+  same(vector.schema, 'PeeritLimitedPublicInboxManagementCustodyV1', 'BAD_CUSTODY_CONTRACT', 'custody schema')
+  same(vector.version, 1, 'BAD_CUSTODY_CONTRACT', 'custody version')
+  same(vector.bundleName, 'PeeritLimitedPublicInboxManagementBundleV1', 'BAD_CUSTODY_CONTRACT', 'limited bundle name')
+  same(vector.envelopeName, 'PeeritLimitedPublicInboxCustodyEnvelopeV1', 'BAD_CUSTODY_CONTRACT', 'limited envelope name')
+  same(vector.bundleKind, LIMITED_MANAGEMENT_BUNDLE_KIND, 'BAD_CUSTODY_CONTRACT', 'limited bundle kind')
+  same(vector.plaintextCodec, LIMITED_MANAGEMENT_PLAINTEXT_CODEC, 'BAD_CUSTODY_CONTRACT', 'limited plaintext codec')
+  same(vector.currentEntryCount, 2, 'CUSTODY_CARDINALITY', 'current management entries')
+  same(vector.previousEntryCount, 0, 'CUSTODY_CARDINALITY', 'initial release has no previous management entries')
+  same(vector.seedRoles.join(','), 'CREATE,RENEW,CLOSE', 'CUSTODY_APPEND_SEED', 'management seed roles')
+  same(vector.appendAuthMode, 'OPEN_APPEND', 'CUSTODY_APPEND_SEED', 'OPEN_APPEND has no append seed')
+  same(vector.threshold, 2, 'CUSTODY_THRESHOLD', 'custody threshold')
+  same(vector.totalShares, 3, 'CUSTODY_THRESHOLD', 'custody share count')
+  const primary = parseLimitedCustodyEnvelope(vector.envelopeCanonicalHex, vector.fixtureCustodianPublicKeys)
+  const primaryRecovery = recoverLimitedCustodyCase(
+    primary, vector.fixtureCustodianPrivateKeys, vector, bootstrap, profileCatalog
+  )
+  same(primaryRecovery.passingPairs.join(','), '1+2,1+3,2+3',
+    'CUSTODY_PAIR_COVERAGE', 'all three primary recovery pairs')
+  same(primaryRecovery.rejectedShares.length, 0, 'CUSTODY_PAIR_COVERAGE', 'primary rejected shares')
+
+  ok(Array.isArray(vector.fixtureRecoveryCases) && vector.fixtureRecoveryCases.length === 4,
+    'CUSTODY_PAIR_COVERAGE', 'three pair cases plus one tamper-recovery case are required')
+  const expectedNames = ['PAIR_1_2', 'PAIR_1_3', 'PAIR_2_3', 'THIRD_SHARE_TAMPER_RECOVERY']
+  for (let index = 0; index < vector.fixtureRecoveryCases.length; index++) {
+    const fixtureCase = vector.fixtureRecoveryCases[index]
+    exactKeys(fixtureCase, [
+      'name', 'envelopeCanonicalHex', 'fixtureCustodianPrivateKeys',
+      'expectedPassingPairs', 'expectedRejectedShares'
+    ], 'BAD_CUSTODY_CONTRACT', 'custody recovery case')
+    same(fixtureCase.name, expectedNames[index], 'CUSTODY_PAIR_COVERAGE', 'custody recovery case order')
+    const parsed = parseLimitedCustodyEnvelope(fixtureCase.envelopeCanonicalHex, vector.fixtureCustodianPublicKeys)
+    const recovered = recoverLimitedCustodyCase(
+      parsed, fixtureCase.fixtureCustodianPrivateKeys, vector, bootstrap, profileCatalog
+    )
+    same(recovered.passingPairs.join(','), fixtureCase.expectedPassingPairs.join(','),
+      'CUSTODY_PAIR_COVERAGE', `${fixtureCase.name} passing pairs`)
+    same(recovered.rejectedShares.join(','), fixtureCase.expectedRejectedShares.join(','),
+      'CUSTODY_PAIR_COVERAGE', `${fixtureCase.name} rejected shares`)
+  }
 }
 
 function validateFrames (frames, bootstrap, announcementBytes, authenticatedFrames) {
@@ -1140,7 +1550,16 @@ async function validateRegistries () {
   same(compatibility.releaseAuthorityRequirements.inboxReadCompressedSignaturePayloadReconciliationRequired, true,
     'BAD_COMPATIBILITY', 'Inbox READ signature drift gate')
   same(compatibility.inboxShape.initialEpochSetCount, 1, 'BAD_COMPATIBILITY', 'initial epoch set count')
+  same(compatibility.inboxShape.successorEpochSetCount, 1, 'BAD_COMPATIBILITY', 'successor epoch set count')
+  ok(compatibility.inboxShape.rotation.includes('COMPLETE_WRAPPER_PREDECESSOR_HASH'),
+    'BAD_COMPATIBILITY', 'successor predecessor binding')
   same(compatibility.inboxShape.appendTargetsRemainCurrentSetOnly, 2, 'BAD_COMPATIBILITY', 'current append targets')
+  same(compatibility.managementCustody.allRecipientsPinnedAndLowOrderPreflighted, true,
+    'BAD_COMPATIBILITY', 'custody recipient preflight')
+  same(compatibility.managementCustody.allAuthenticatedPairsTried, true,
+    'BAD_COMPATIBILITY', 'custody all-pair recovery')
+  same(compatibility.managementCustody.allPassingCandidatesFullyValidatedAndByteIdentical, true,
+    'BAD_COMPATIBILITY', 'custody candidate equality')
   const encoded = stable(compatibility)
   for (const value of Object.values(compatibility.sourceProvenanceOnly)) {
     ok(encoded.indexOf(`\"target`) === -1 || !encoded.includes(`\"target\":\"${value}\"`), 'STALE_TARGET_PIN', 'provenance promoted to target')
@@ -1149,6 +1568,14 @@ async function validateRegistries () {
   same(registry.bootstrap.schemaName, 'PeeritLimitedPublicInboxBootstrapV1', 'BAD_SCHEMA_NAME', 'registry bootstrap name')
   same(registry.bootstrap.schemaId, 'peerit-limited-public-inbox-bootstrap-v1', 'BAD_SCHEMA_NAME', 'registry bootstrap id')
   same(registry.peeritProfileAuthority.sourceSha256, PROFILE_SHA256, 'BAD_REGISTRY', 'registry profile hash')
+  same(registry.peeritProfileAuthority.fixtureReplayAuthority.module,
+    'protocol/validator/peerit-validator-v1.bare.mjs', 'BAD_REGISTRY', 'fixture replay authority module')
+  same(registry.peeritProfileAuthority.fixtureReplayAuthority.moduleSha256,
+    BARE_VALIDATOR_SHA256, 'BAD_REGISTRY', 'fixture replay authority hash')
+  same(registry.peeritProfileAuthority.fixtureReplayAuthority.scope,
+    'FIXTURE_ONLY_ARCHIVE_REPLAY', 'BAD_REGISTRY', 'fixture replay authority scope')
+  same(registry.peeritProfileAuthority.fixtureReplayAuthority.releaseAuthority,
+    false, 'BAD_REGISTRY', 'fixture replay authority is not release authority')
   same(registry.peeritProfileAuthority.schemas.AuthorBindV1.innerCodec, 334, 'BAD_REGISTRY', 'AuthorBind codec')
   same(registry.peeritProfileAuthority.schemas.AuthorBindV1.manifestTag, 3, 'BAD_REGISTRY', 'AuthorBind tag')
   same(registry.hiverelayAuthority.inboxConstants.OPEN_APPEND, 0, 'BAD_REGISTRY', 'OPEN_APPEND')
@@ -1158,6 +1585,10 @@ async function validateRegistries () {
     'InboxReadSignaturePayloadV1', 'BAD_REGISTRY', 'Inbox READ signature payload codec')
   ok(registry.hiverelayAuthority.wireTypes.InboxReadResultV1.targetIntegrationDrift.includes('MUST_BE_RECONCILED'),
     'BAD_REGISTRY', 'Inbox READ implementation drift must remain release blocking')
+  same(registry.hiverelayAuthority.wireTypes.PutCellV1.familyId, 2, 'BAD_REGISTRY', 'CELL.PUT family')
+  same(registry.hiverelayAuthority.wireTypes.PutCellV1.operationId, 1, 'BAD_REGISTRY', 'CELL.PUT operation')
+  ok(registry.hiverelayAuthority.wireTypes.PutCellV1.receiptCorrelation.includes('request commitment'),
+    'BAD_REGISTRY', 'CELL.PUT receipt correlation')
   same(registry.managementCustody.bundleKind, 2, 'BAD_REGISTRY', 'Inbox management custody bundle kind')
   same(registry.managementCustody.plaintextCodec, 3, 'BAD_REGISTRY', 'limited custody codec')
   const custody = await readJson(path.join(HERE, 'limited-management-custody-v1.json'))
@@ -1174,6 +1605,15 @@ async function validateRegistries () {
   same(custody.envelope.name, 'PeeritLimitedPublicInboxCustodyEnvelopeV1', 'BAD_REGISTRY', 'custody envelope name')
   same(custody.envelope.threshold, 2, 'BAD_REGISTRY', 'custody threshold')
   same(custody.envelope.totalShares, 3, 'BAD_REGISTRY', 'custody total shares')
+  same(custody.envelope.pairEnumeration.join(','), '1+2,1+3,2+3', 'BAD_REGISTRY', 'custody pair enumeration')
+  ok(custody.envelope.publicKeyPreflight.includes('LOW_ORDER'), 'BAD_REGISTRY', 'custody low-order preflight')
+  ok(custody.envelope.uniqueness.includes('SEALED_SHARES'), 'BAD_REGISTRY', 'custody duplicate preflight')
+  ok(custody.envelope.passingCandidateEquality.includes('BYTE_IDENTICAL'),
+    'BAD_REGISTRY', 'custody passing-candidate equality')
+  ok(custody.envelope.threeShareFaultTolerance.includes('AUTHENTICATED_MALICIOUS_SHARE'),
+    'BAD_REGISTRY', 'custody three-share fault tolerance')
+  same(custody.envelope.maliciousPlusUnavailable, 'OUTSIDE_GUARANTEE_FAIL_CLOSED',
+    'BAD_REGISTRY', 'custody malicious plus unavailable boundary')
   ok(custody.nonAliases.includes('NO_PADDING_TO_24'), 'BAD_REGISTRY', 'custody no-padding boundary')
   return { compatibility, registry, custody }
 }
@@ -1202,23 +1642,44 @@ async function validateManifest () {
 async function main () {
   const profileBytes = await fs.readFile(path.join(ROOT, 'docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md'))
   same(sha256Hex(profileBytes), PROFILE_SHA256, 'PROFILE_INPUT_DRIFT', 'canonical profile input')
-  const profileCatalog = await createPinnedProfileCatalog(profileBytes.toString('utf8'))
+  same(sha256Hex(await fs.readFile(path.join(ROOT, 'protocol/validator/peerit-validator-v1.bare.mjs'))),
+    BARE_VALIDATOR_SHA256, 'PROFILE_INPUT_DRIFT', 'bare fixture replay authority')
+  const profileAuthority = await createPinnedProfileCatalog(profileBytes.toString('utf8'))
+  const profileCatalog = profileAuthority.catalog
   validateSchemaAuthority(await readJson(path.join(ROOT, 'config/peerit-limited-availability-bootstrap-v1.schema.json')))
   await validateRegistries()
   const bootstrap = validateBootstrap(await readJson(path.join(FIXTURES, 'positive-bootstrap.json')))
-  const vector = validateProtocolVector(await readJson(path.join(FIXTURES, 'positive-protocol-vector.json')), bootstrap, profileCatalog)
+  const successorBootstrap = validateBootstrap(
+    await readJson(path.join(FIXTURES, 'positive-bootstrap-successor.json')),
+    { allowSuccessor: true, referenceUnixMillis: FIXTURE_SUCCESSOR_REFERENCE_UNIX_MILLIS }
+  )
+  validateBootstrapTransition(bootstrap, successorBootstrap)
+  const vector = await validateProtocolVector(await readJson(path.join(FIXTURES, 'positive-protocol-vector.json')), bootstrap,
+    profileCatalog, profileAuthority.validator)
   const manifest = await validateManifest()
   const negativeFiles = (await fs.readdir(NEGATIVE)).filter(name => name.endsWith('.json')).sort()
   same(negativeFiles.length, manifest.negativeFixtureCount, 'BAD_MANIFEST', 'negative fixture count')
   for (const name of negativeFiles) {
     const fixture = await readJson(path.join(NEGATIVE, name))
     same(fixture.schema, 'peerit-seq29-limited-public-test-negative-v1', 'BAD_NEGATIVE_FIXTURE', `${name} schema`)
-    const base = fixture.target === 'bootstrap' ? bootstrap : vector
+    const base = fixture.target === 'bootstrap'
+      ? bootstrap
+      : fixture.target === 'successor'
+        ? successorBootstrap
+        : vector
     const mutated = applyMutation(base, fixture.mutation)
     let rejected = null
     try {
       if (fixture.target === 'bootstrap') validateBootstrap(mutated, { skipSignature: fixture.validationStage === 'POST_SIGNATURE' })
-      else validateProtocolVector(mutated, bootstrap, profileCatalog)
+      else if (fixture.target === 'successor') {
+        validateBootstrap(mutated, {
+          allowSuccessor: true,
+          referenceUnixMillis: FIXTURE_SUCCESSOR_REFERENCE_UNIX_MILLIS,
+          skipSignature: fixture.validationStage === 'POST_SIGNATURE'
+        })
+        validateBootstrapTransition(bootstrap, mutated)
+      }
+      else await validateProtocolVector(mutated, bootstrap, profileCatalog, profileAuthority.validator)
     } catch (error) {
       rejected = error
     }
@@ -1229,10 +1690,10 @@ async function main () {
     status: 'PASS',
     contract: 'PeeritLimitedPublicInboxBootstrapV1',
     claimBoundary: 'LIVE_PUBLIC_TEST_ONLY',
-    positiveFixtures: 2,
+    positiveFixtures: 3,
     negativeFixtures: negativeFiles.length,
     assertions
   }))
 }
 
-await main()
+if (process.argv[1] != null && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main()

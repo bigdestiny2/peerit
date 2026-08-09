@@ -1,0 +1,12 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "successor",
+  "validationStage": "POST_SIGNATURE",
+  "mutation": {
+    "op": "replace",
+    "path": "/payload/bootstrapSequence",
+    "value": "3"
+  },
+  "expectedError": "BOOTSTRAP_SEQUENCE"
+}

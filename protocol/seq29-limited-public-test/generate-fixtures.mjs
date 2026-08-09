@@ -269,10 +269,14 @@ function limitedCustodySharePrefix (value) {
 }
 
 function makeLimitedManagementCustody (plaintext, options = {}) {
-  const custodySetId = fixtureBytes('limited-custody:set-id', 32)
-  const dataKey = fixtureBytes('limited-custody:data-key', 32)
-  const coefficient = fixtureBytes('limited-custody:shamir-coefficient', 32)
-  const payloadNonce = fixtureBytes('limited-custody:payload-nonce', 24)
+  const fixtureLabel = options.fixtureLabel ?? 'base'
+  const custodyLabel = suffix => fixtureLabel === 'base'
+    ? `limited-custody:${suffix}`
+    : `limited-custody:${fixtureLabel}:${suffix}`
+  const custodySetId = fixtureBytes(custodyLabel('set-id'), 32)
+  const dataKey = fixtureBytes(custodyLabel('data-key'), 32)
+  const coefficient = fixtureBytes(custodyLabel('shamir-coefficient'), 32)
+  const payloadNonce = fixtureBytes(custodyLabel('payload-nonce'), 24)
   const keyCommitment = blake2b256(concatBytes(
     asciiBytes('peerit.hiverelay.custody-key.v1'), custodySetId, dataKey
   ))
@@ -293,8 +297,12 @@ function makeLimitedManagementCustody (plaintext, options = {}) {
     asciiBytes('peerit.hiverelay.custody-sealed-payload.v1'),
     u64Bytes(sealedPayload.byteLength), sealedPayload
   ))
-  const custodians = [0, 1, 2].map(index => x25519Pair(`limited-custodian-${index}`))
-  const ephemerals = [0, 1, 2].map(index => x25519Pair(`limited-ephemeral-${index}`))
+  const custodians = [0, 1, 2].map(index => x25519Pair(
+    fixtureLabel === 'base' ? `limited-custodian-${index}` : custodyLabel(`custodian-${index}`)
+  ))
+  const ephemerals = [0, 1, 2].map(index => x25519Pair(
+    fixtureLabel === 'base' ? `limited-ephemeral-${index}` : custodyLabel(`ephemeral-${index}`)
+  ))
   const shares = custodians.map((custodian, index) => {
     const shareIndex = index + 1
     const sharePlaintext = new Uint8Array(32)
@@ -315,7 +323,7 @@ function makeLimitedManagementCustody (plaintext, options = {}) {
     )
     const shareKey = new Uint8Array(hkdfSync('sha256', shared, custodySetId, info, 32))
     const nonceLabel = options.duplicateNonceAt === shareIndex ? 1 : shareIndex
-    const nonce = fixtureBytes(`limited-custody:share-${nonceLabel}:nonce`, 24)
+    const nonce = fixtureBytes(custodyLabel(`share-${nonceLabel}:nonce`), 24)
     const value = {
       custodySetId,
       shareIndex,
@@ -352,6 +360,57 @@ function makeLimitedManagementCustody (plaintext, options = {}) {
     shares,
     plaintextHash,
     keyCommitment
+  }
+}
+
+function managementCustodyVectorValue (plaintext, custody, thirdShareTamperedCustody) {
+  return {
+    schema: 'PeeritLimitedPublicInboxManagementCustodyV1',
+    version: 1,
+    bundleName: 'PeeritLimitedPublicInboxManagementBundleV1',
+    envelopeName: 'PeeritLimitedPublicInboxCustodyEnvelopeV1',
+    bundleKind: LIMITED_MANAGEMENT_BUNDLE_KIND,
+    plaintextCodec: LIMITED_MANAGEMENT_PLAINTEXT_CODEC,
+    currentEntryCount: 2,
+    previousEntryCount: 0,
+    seedRoles: ['CREATE', 'RENEW', 'CLOSE'],
+    appendAuthMode: 'OPEN_APPEND',
+    threshold: 2,
+    totalShares: 3,
+    envelopeCanonicalHex: hex(custody.canonical),
+    plaintextSha256: sha256Hex(plaintext),
+    fixtureCustodianPrivateKeys: custody.custodians.map(value => hex(value.privateKey)),
+    fixtureCustodianPublicKeys: custody.custodians.map(value => hex(value.publicKey)),
+    fixtureRecoveryCases: [
+      {
+        name: 'PAIR_1_2',
+        envelopeCanonicalHex: hex(custody.canonical),
+        fixtureCustodianPrivateKeys: [0, 1].map(index => hex(custody.custodians[index].privateKey)),
+        expectedPassingPairs: ['1+2'],
+        expectedRejectedShares: []
+      },
+      {
+        name: 'PAIR_1_3',
+        envelopeCanonicalHex: hex(custody.canonical),
+        fixtureCustodianPrivateKeys: [0, 2].map(index => hex(custody.custodians[index].privateKey)),
+        expectedPassingPairs: ['1+3'],
+        expectedRejectedShares: []
+      },
+      {
+        name: 'PAIR_2_3',
+        envelopeCanonicalHex: hex(custody.canonical),
+        fixtureCustodianPrivateKeys: [1, 2].map(index => hex(custody.custodians[index].privateKey)),
+        expectedPassingPairs: ['2+3'],
+        expectedRejectedShares: []
+      },
+      {
+        name: 'THIRD_SHARE_TAMPER_RECOVERY',
+        envelopeCanonicalHex: hex(thirdShareTamperedCustody.canonical),
+        fixtureCustodianPrivateKeys: custody.custodians.map(value => hex(value.privateKey)),
+        expectedPassingPairs: ['1+2'],
+        expectedRejectedShares: []
+      }
+    ]
   }
 }
 
@@ -469,6 +528,149 @@ function announcementVectorValue (signed) {
     canonicalSha256: sha256Hex(signed.bytes),
     signedAnnouncementId: hex(signed.signedAnnouncementId)
   }
+}
+
+function cellVectorValues (cellBindings, cellReadbackByRelay, cellPutByRelay, catalog) {
+  return cellBindings.map(binding => {
+    const relayKey = hex(binding.relayPublicKey)
+    const readback = cellReadbackByRelay.get(relayKey)
+    const put = cellPutByRelay.get(relayKey)
+    if (readback == null || put == null) throw new Error(`missing Cell evidence for relay ${relayKey}`)
+    return {
+      relayPublicKey: relayKey,
+      logicalHash: hex(binding.logicalHash),
+      encodingCommitment: hex(binding.encodingCommitment),
+      cellReplicaBindingCanonicalHex: hex(catalog.CellReplicaBindingV1.encode(binding)),
+      readCapabilityCanonicalHex: hex(binding.readCapability),
+      cellBlobHash: hex(binding.cellBlobHash),
+      sizeClass: binding.sizeClass,
+      allocationEpoch: binding.allocationEpoch,
+      leaseEpoch: binding.leaseEpoch,
+      createPublicKey: hex(binding.createPublicKey),
+      renewPublicKey: hex(binding.renewPublicKey),
+      dropPublicKey: hex(binding.dropPublicKey),
+      allocationCommitment: hex(binding.allocationCommitment),
+      relayReceiptCanonicalHex: hex(binding.relayReceipt),
+      capabilityBoundPut: {
+        familyId: 2,
+        operationId: 1,
+        requestCanonicalHex: hex(put.putRequest),
+        allocationCommitment: hex(put.allocationCommitment),
+        requestCommitment: hex(put.putRequestCommitment),
+        clientNonce: hex(put.putClientNonce)
+      },
+      capabilityBoundGet: {
+        familyId: 2,
+        operationId: 2,
+        requestCanonicalHex: hex(readback.getRequest),
+        requestCommitment: hex(readback.getRequestCommitment),
+        getResultCanonicalHex: hex(readback.getResult)
+      }
+    }
+  })
+}
+
+function announcementTransportFixture ({
+  signedAnnouncement,
+  bootstrap,
+  inboxEpoch,
+  relayBindings,
+  relayPairs,
+  label
+}) {
+  const epochSet = bootstrap.payload.inboxEpochSets[0]
+  const announcementBytes = signedAnnouncement.bytes
+  const transportLabel = suffix => label === 'base' ? suffix : `${label}:${suffix}`
+  const frames = []
+  for (let index = 0; index < epochSet.bindings.length; index++) {
+    const binding = epochSet.bindings[index]
+    const relayKey = Buffer.from(binding.relayPublicKey, 'hex')
+    const topic = Buffer.from(binding.physicalTopic, 'hex')
+    const info = concatBytes(
+      asciiBytes('peerit.hiverelay.inbox-frame-key.v1'), u32Bytes(inboxEpoch), u8(0), relayKey
+    )
+    const frameKey = Buffer.from(hkdfSync(
+      'sha256', Buffer.from(epochSet.announcementMasterKey, 'hex'), topic, info, 32
+    ))
+    const frameClass = 1
+    const aad = concatBytes(
+      asciiBytes('peerit.hiverelay.inbox-frame-aad.v1'), u32Bytes(inboxEpoch), u8(0),
+      relayKey, topic, u8(frameClass)
+    )
+    const nonce = fixtureBytes(transportLabel(`frame-${index}:nonce`), 24)
+    const plaintextLength = 4096 - 24 - 16
+    const padding = fixtureBytes(
+      transportLabel(`frame-${index}:padding`), plaintextLength - 4 - announcementBytes.byteLength
+    )
+    const plaintext = concatBytes(u32Bytes(announcementBytes.byteLength), announcementBytes, padding)
+    const frame = concatBytes(nonce, xchachaSeal(frameKey, nonce, aad, plaintext))
+    frames.push({
+      relayId: binding.relayId,
+      inboxEpoch,
+      stripeIndex: 0,
+      relayPublicKey: binding.relayPublicKey,
+      physicalTopic: binding.physicalTopic,
+      frameClass,
+      frameKey: frameKey.toString('hex'),
+      aadHex: hex(aad),
+      nonceHex: hex(nonce),
+      paddingSha256: sha256Hex(padding),
+      plaintextSha256: sha256Hex(plaintext),
+      frameCanonicalHex: hex(frame),
+      frameHash: hex(blake2b256(frame))
+    })
+  }
+
+  const readPages = []
+  for (let index = 0; index < frames.length; index++) {
+    const binding = epochSet.bindings[index]
+    const relayKey = new Uint8Array(Buffer.from(binding.relayPublicKey, 'hex'))
+    const topic = new Uint8Array(Buffer.from(binding.physicalTopic, 'hex'))
+    const continuation = fixtureBytes(transportLabel(`inbox-read-${index}:next-cursor`), 32)
+    const firstNonce = fixtureBytes(transportLabel(`inbox-read-${index}:page-0:nonce`), 32)
+    const firstCommitment = inboxReadRequestCommitment(relayKey, topic, new Uint8Array(0), 1, firstNonce)
+    const firstRequest = inboxReadRequestBytes(topic, new Uint8Array(0), 1, firstNonce)
+    const firstResult = inboxReadResultBytes({
+      relayBinding: relayBindings[index],
+      requestNonce: firstNonce,
+      requestCommitment: firstCommitment,
+      snapshotRevision: 1n,
+      entries: [{
+        appendRevision: 1n,
+        frameHash: new Uint8Array(Buffer.from(frames[index].frameHash, 'hex')),
+        frameClass: frames[index].frameClass,
+        frame: new Uint8Array(Buffer.from(frames[index].frameCanonicalHex, 'hex'))
+      }],
+      nextCursor: continuation
+    }, relayPairs[index])
+    readPages.push({
+      relayId: binding.relayId,
+      pageIndex: 0,
+      requestCanonicalHex: hex(firstRequest),
+      requestCommitment: hex(firstCommitment),
+      resultCanonicalHex: hex(firstResult)
+    })
+
+    const secondNonce = fixtureBytes(transportLabel(`inbox-read-${index}:page-1:nonce`), 32)
+    const secondCommitment = inboxReadRequestCommitment(relayKey, topic, continuation, 1, secondNonce)
+    const secondRequest = inboxReadRequestBytes(topic, continuation, 1, secondNonce)
+    const secondResult = inboxReadResultBytes({
+      relayBinding: relayBindings[index],
+      requestNonce: secondNonce,
+      requestCommitment: secondCommitment,
+      snapshotRevision: 1n,
+      entries: [],
+      nextCursor: null
+    }, relayPairs[index])
+    readPages.push({
+      relayId: binding.relayId,
+      pageIndex: 1,
+      requestCanonicalHex: hex(secondRequest),
+      requestCommitment: hex(secondCommitment),
+      resultCanonicalHex: hex(secondResult)
+    })
+  }
+  return { frames, readPages }
 }
 
 function relayBinding (pair, label, sequence) {
@@ -797,6 +999,7 @@ async function generate () {
   const cellBindings = []
   const cellReadbackByRelay = new Map()
   const cellPutByRelay = new Map()
+  const cellMaterialByRelay = new Map()
 
   for (let index = 0; index < 2; index++) {
     const create = keyPair(`fixture-only-cell-create-${index}`)
@@ -832,6 +1035,12 @@ async function generate () {
       dropPublicKey: drop.publicKey
     })
     const putRequestCommitment = cellPutRequestCommitment(allocationCommitment, putClientNonce)
+    const putAdmission = {
+      profileId: 8,
+      schemeId: 1,
+      parameterHash: fixtureBytes(`cell-${index}:put-admission-parameter-hash`, 32),
+      token: fixtureBytes(`cell-${index}:put-admission-token`, 32)
+    }
     const putRequest = putCellRequestBytes({
       storageSlot: slot,
       allocationEpoch: cellAllocationEpoch,
@@ -843,12 +1052,7 @@ async function generate () {
       dropPublicKey: drop.publicKey,
       declaredBlobHash: cellBlobHash,
       createSignature: new Uint8Array(sign(null, allocationCommitment, create.privateKey)),
-      admission: {
-        profileId: 8,
-        schemeId: 1,
-        parameterHash: fixtureBytes(`cell-${index}:put-admission-parameter-hash`, 32),
-        token: fixtureBytes(`cell-${index}:put-admission-token`, 32)
-      },
+      admission: putAdmission,
       cellBlob: sealedCell.cellBlob
     })
     const receiptBytes = blindReceiptBytes({
@@ -893,6 +1097,17 @@ async function generate () {
       allocationCommitment,
       putRequestCommitment,
       putClientNonce
+    })
+    cellMaterialByRelay.set(hex(relayPairs[index].publicKey), {
+      relayIndex: index,
+      create,
+      renew,
+      drop,
+      slot,
+      cellBlob: sealedCell.cellBlob,
+      putAdmission,
+      putClientNonce,
+      getClientNonce
     })
   }
   cellBindings.sort((left, right) => compareBytes(cellReplicaProjection(left), cellReplicaProjection(right)))
@@ -960,7 +1175,7 @@ async function generate () {
   })
   const managementPlaintext = encodeLimitedManagementBundle({
     releaseSequence: 29,
-    profilePinHash: fixtureBytes('limited-management:profile-pin-hash', 32),
+    profilePinHash: new Uint8Array(Buffer.from(PROFILE_SPEC_SHA256, 'hex')),
     bootstrapSequence: 0n,
     signedBootstrapHash: bootstrapWrapperHash,
     currentInboxEpoch: inboxEpoch,
@@ -980,14 +1195,32 @@ async function generate () {
   })
   const invalidManagementPlaintext = encodeLimitedManagementBundle({
     releaseSequence: 29,
-    profilePinHash: fixtureBytes('limited-management:profile-pin-hash', 32),
+    profilePinHash: new Uint8Array(Buffer.from(PROFILE_SPEC_SHA256, 'hex')),
     bootstrapSequence: 0n,
     signedBootstrapHash: bootstrapWrapperHash,
     currentInboxEpoch: inboxEpoch,
     entryBytes: [invalidManagementEntryBytes, managementEntryBytes[1]],
     createdUnixMillis: 1780000000000n
   })
-  const invalidManagementCustody = makeLimitedManagementCustody(invalidManagementPlaintext)
+  const invalidManagementCustody = makeLimitedManagementCustody(invalidManagementPlaintext, { fixtureLabel: 'invalid-entry' })
+  const invalidThirdShareTamperedCustody = makeLimitedManagementCustody(
+    invalidManagementPlaintext, { fixtureLabel: 'invalid-entry', maliciousShareIndex: 3 }
+  )
+  const wrongProfilePinPlaintext = encodeLimitedManagementBundle({
+    releaseSequence: 29,
+    profilePinHash: fixtureBytes('limited-management:wrong-profile-pin', 32),
+    bootstrapSequence: 0n,
+    signedBootstrapHash: bootstrapWrapperHash,
+    currentInboxEpoch: inboxEpoch,
+    entryBytes: managementEntryBytes,
+    createdUnixMillis: 1780000000000n
+  })
+  const wrongProfilePinCustody = makeLimitedManagementCustody(
+    wrongProfilePinPlaintext, { fixtureLabel: 'wrong-profile-pin' }
+  )
+  const wrongProfilePinThirdShareTamperedCustody = makeLimitedManagementCustody(
+    wrongProfilePinPlaintext, { fixtureLabel: 'wrong-profile-pin', maliciousShareIndex: 3 }
+  )
 
   const authorBindBase = {
     version: 1,
@@ -1009,99 +1242,14 @@ async function generate () {
     authorBindBytes, manifestRecordId, FIXTURE_EFFECTIVE_LEASE_EPOCH,
     publisherPair, compiled, runtimeOptions, catalog
   )
-  const announcement = signedAnnouncement.record
-  const announcementPrefix = signedAnnouncement.prefix
-  const announcementBytes = signedAnnouncement.bytes
-  const signedAnnouncementId = signedAnnouncement.signedAnnouncementId
-
-  const epochSet = bootstrap.payload.inboxEpochSets[0]
-  const frames = []
-  for (let index = 0; index < epochSet.bindings.length; index++) {
-    const binding = epochSet.bindings[index]
-    const relayKey = Buffer.from(binding.relayPublicKey, 'hex')
-    const topic = Buffer.from(binding.physicalTopic, 'hex')
-    const info = concatBytes(
-      asciiBytes('peerit.hiverelay.inbox-frame-key.v1'), u32Bytes(inboxEpoch), u8(0), relayKey
-    )
-    const frameKey = Buffer.from(hkdfSync(
-      'sha256', Buffer.from(epochSet.announcementMasterKey, 'hex'), topic, info, 32
-    ))
-    const frameClass = 1
-    const aad = concatBytes(
-      asciiBytes('peerit.hiverelay.inbox-frame-aad.v1'), u32Bytes(inboxEpoch), u8(0),
-      relayKey, topic, u8(frameClass)
-    )
-    const nonce = fixtureBytes(`frame-${index}:nonce`, 24)
-    const plaintextLength = 4096 - 24 - 16
-    const padding = fixtureBytes(`frame-${index}:padding`, plaintextLength - 4 - announcementBytes.byteLength)
-    const plaintext = concatBytes(u32Bytes(announcementBytes.byteLength), announcementBytes, padding)
-    const frame = concatBytes(nonce, xchachaSeal(frameKey, nonce, aad, plaintext))
-    frames.push({
-      relayId: binding.relayId,
-      inboxEpoch,
-      stripeIndex: 0,
-      relayPublicKey: binding.relayPublicKey,
-      physicalTopic: binding.physicalTopic,
-      frameClass,
-      frameKey: frameKey.toString('hex'),
-      aadHex: hex(aad),
-      nonceHex: hex(nonce),
-      paddingSha256: sha256Hex(padding),
-      plaintextSha256: sha256Hex(plaintext),
-      frameCanonicalHex: hex(frame),
-      frameHash: hex(blake2b256(frame))
-    })
-  }
-
-  const readPages = []
-  for (let index = 0; index < frames.length; index++) {
-    const binding = epochSet.bindings[index]
-    const relayKey = new Uint8Array(Buffer.from(binding.relayPublicKey, 'hex'))
-    const topic = new Uint8Array(Buffer.from(binding.physicalTopic, 'hex'))
-    const continuation = fixtureBytes(`inbox-read-${index}:next-cursor`, 32)
-    const firstNonce = fixtureBytes(`inbox-read-${index}:page-0:nonce`, 32)
-    const firstCommitment = inboxReadRequestCommitment(relayKey, topic, new Uint8Array(0), 1, firstNonce)
-    const firstRequest = inboxReadRequestBytes(topic, new Uint8Array(0), 1, firstNonce)
-    const firstResult = inboxReadResultBytes({
-      relayBinding: relayBindings[index],
-      requestNonce: firstNonce,
-      requestCommitment: firstCommitment,
-      snapshotRevision: 1n,
-      entries: [{
-        appendRevision: 1n,
-        frameHash: new Uint8Array(Buffer.from(frames[index].frameHash, 'hex')),
-        frameClass: frames[index].frameClass,
-        frame: new Uint8Array(Buffer.from(frames[index].frameCanonicalHex, 'hex'))
-      }],
-      nextCursor: continuation
-    }, relayPairs[index])
-    readPages.push({
-      relayId: binding.relayId,
-      pageIndex: 0,
-      requestCanonicalHex: hex(firstRequest),
-      requestCommitment: hex(firstCommitment),
-      resultCanonicalHex: hex(firstResult)
-    })
-
-    const secondNonce = fixtureBytes(`inbox-read-${index}:page-1:nonce`, 32)
-    const secondCommitment = inboxReadRequestCommitment(relayKey, topic, continuation, 1, secondNonce)
-    const secondRequest = inboxReadRequestBytes(topic, continuation, 1, secondNonce)
-    const secondResult = inboxReadResultBytes({
-      relayBinding: relayBindings[index],
-      requestNonce: secondNonce,
-      requestCommitment: secondCommitment,
-      snapshotRevision: 1n,
-      entries: [],
-      nextCursor: null
-    }, relayPairs[index])
-    readPages.push({
-      relayId: binding.relayId,
-      pageIndex: 1,
-      requestCanonicalHex: hex(secondRequest),
-      requestCommitment: hex(secondCommitment),
-      resultCanonicalHex: hex(secondResult)
-    })
-  }
+  const { frames, readPages } = announcementTransportFixture({
+    signedAnnouncement,
+    bootstrap,
+    inboxEpoch,
+    relayBindings,
+    relayPairs,
+    label: 'base'
+  })
 
   const vector = {
     schema: 'peerit-seq29-limited-public-test-positive-vector-v1',
@@ -1129,93 +1277,14 @@ async function generate () {
       oneAuthorPublicKey: hex(authorPair.publicKey),
       authorityNote: 'Fixture operation shape is not an application-validity claim; runtime gate must validate its real signed operation batch.'
     },
-    cells: cellBindings.map(binding => {
-      const readback = cellReadbackByRelay.get(hex(binding.relayPublicKey))
-      const put = cellPutByRelay.get(hex(binding.relayPublicKey))
-      return ({
-      relayPublicKey: hex(binding.relayPublicKey),
-      logicalHash: hex(binding.logicalHash),
-      encodingCommitment: hex(binding.encodingCommitment),
-      cellReplicaBindingCanonicalHex: hex(catalog.CellReplicaBindingV1.encode(binding)),
-      readCapabilityCanonicalHex: hex(binding.readCapability),
-      cellBlobHash: hex(binding.cellBlobHash),
-      sizeClass: binding.sizeClass,
-      allocationEpoch: binding.allocationEpoch,
-      leaseEpoch: binding.leaseEpoch,
-      createPublicKey: hex(binding.createPublicKey),
-      renewPublicKey: hex(binding.renewPublicKey),
-      dropPublicKey: hex(binding.dropPublicKey),
-      allocationCommitment: hex(binding.allocationCommitment),
-      relayReceiptCanonicalHex: hex(binding.relayReceipt),
-      capabilityBoundPut: {
-        familyId: 2,
-        operationId: 1,
-        requestCanonicalHex: hex(put.putRequest),
-        allocationCommitment: hex(put.allocationCommitment),
-        requestCommitment: hex(put.putRequestCommitment),
-        clientNonce: hex(put.putClientNonce)
-      },
-      capabilityBoundGet: {
-        familyId: 2,
-        operationId: 2,
-        requestCanonicalHex: hex(readback.getRequest),
-        requestCommitment: hex(readback.getRequestCommitment),
-        getResultCanonicalHex: hex(readback.getResult)
-      }
-      })
-    }),
+    cells: cellVectorValues(cellBindings, cellReadbackByRelay, cellPutByRelay, catalog),
     authorBind: authorBindVectorValue(signedAuthor),
     announcement: announcementVectorValue(signedAnnouncement),
     frames,
     readPages,
-    managementCustody: {
-      schema: 'PeeritLimitedPublicInboxManagementCustodyV1',
-      version: 1,
-      bundleName: 'PeeritLimitedPublicInboxManagementBundleV1',
-      envelopeName: 'PeeritLimitedPublicInboxCustodyEnvelopeV1',
-      bundleKind: LIMITED_MANAGEMENT_BUNDLE_KIND,
-      plaintextCodec: LIMITED_MANAGEMENT_PLAINTEXT_CODEC,
-      currentEntryCount: 2,
-      previousEntryCount: 0,
-      seedRoles: ['CREATE', 'RENEW', 'CLOSE'],
-      appendAuthMode: 'OPEN_APPEND',
-      threshold: 2,
-      totalShares: 3,
-      envelopeCanonicalHex: hex(managementCustody.canonical),
-      plaintextSha256: sha256Hex(managementPlaintext),
-      fixtureCustodianPrivateKeys: managementCustody.custodians.map(value => hex(value.privateKey)),
-      fixtureCustodianPublicKeys: managementCustody.custodians.map(value => hex(value.publicKey)),
-      fixtureRecoveryCases: [
-        {
-          name: 'PAIR_1_2',
-          envelopeCanonicalHex: hex(managementCustody.canonical),
-          fixtureCustodianPrivateKeys: [0, 1].map(index => hex(managementCustody.custodians[index].privateKey)),
-          expectedPassingPairs: ['1+2'],
-          expectedRejectedShares: []
-        },
-        {
-          name: 'PAIR_1_3',
-          envelopeCanonicalHex: hex(managementCustody.canonical),
-          fixtureCustodianPrivateKeys: [0, 2].map(index => hex(managementCustody.custodians[index].privateKey)),
-          expectedPassingPairs: ['1+3'],
-          expectedRejectedShares: []
-        },
-        {
-          name: 'PAIR_2_3',
-          envelopeCanonicalHex: hex(managementCustody.canonical),
-          fixtureCustodianPrivateKeys: [1, 2].map(index => hex(managementCustody.custodians[index].privateKey)),
-          expectedPassingPairs: ['2+3'],
-          expectedRejectedShares: []
-        },
-        {
-          name: 'THIRD_SHARE_TAMPER_RECOVERY',
-          envelopeCanonicalHex: hex(thirdShareTamperedCustody.canonical),
-          fixtureCustodianPrivateKeys: managementCustody.custodians.map(value => hex(value.privateKey)),
-          expectedPassingPairs: ['1+2'],
-          expectedRejectedShares: []
-        }
-      ]
-    },
+    managementCustody: managementCustodyVectorValue(
+      managementPlaintext, managementCustody, thirdShareTamperedCustody
+    ),
     cursor: {
       scopeFields: ['inboxEpoch', 'stripeIndex', 'relayPublicKey', 'physicalTopic'],
       snapshotLifetimeSeconds: 900,
@@ -1249,6 +1318,129 @@ async function generate () {
       forgetWhilePending: 'REFUSED_WITHOUT_RECONCILIATION_OR_COMPLETE_FRESH_RECOVERY_EXPORT'
     }
   }
+
+  // This negative is deliberately rebuilt from wire inputs instead of mutating a
+  // public-key field after the fact. Relay B's RENEW authority is Relay A's CREATE
+  // authority, while its allocation commitment, CREATE signature, PutCellV1,
+  // receipt, CellReplicaBindingV1, AuthorBind, announcement, frames, and signed
+  // READ pages are all regenerated consistently around that cross-role reuse.
+  const sourceRelayKey = hex(relayPairs[0].publicKey)
+  const targetRelayKey = hex(relayPairs[1].publicKey)
+  const sourceMaterial = cellMaterialByRelay.get(sourceRelayKey)
+  const targetMaterial = cellMaterialByRelay.get(targetRelayKey)
+  const targetBinding = cellBindings.find(value => hex(value.relayPublicKey) === targetRelayKey)
+  if (sourceMaterial == null || targetMaterial == null || targetBinding == null) {
+    throw new Error('missing deterministic Cell material for cross-role negative')
+  }
+  const reusedRenewPublicKey = new Uint8Array(sourceMaterial.create.publicKey)
+  const reusedAllocationCommitment = cellAllocationCommitment({
+    relayPublicKey: relayPairs[targetMaterial.relayIndex].publicKey,
+    storageSlot: targetMaterial.slot,
+    allocationEpoch: targetBinding.allocationEpoch,
+    sizeClass: targetBinding.sizeClass,
+    leaseClass: 4,
+    declaredBlobHash: targetBinding.cellBlobHash,
+    createPublicKey: targetMaterial.create.publicKey,
+    renewPublicKey: reusedRenewPublicKey,
+    dropPublicKey: targetMaterial.drop.publicKey
+  })
+  const reusedPutRequestCommitment = cellPutRequestCommitment(
+    reusedAllocationCommitment, targetMaterial.putClientNonce
+  )
+  const reusedPutRequest = putCellRequestBytes({
+    storageSlot: targetMaterial.slot,
+    allocationEpoch: targetBinding.allocationEpoch,
+    sizeClass: targetBinding.sizeClass,
+    leaseClass: 4,
+    clientNonce: targetMaterial.putClientNonce,
+    createPublicKey: targetMaterial.create.publicKey,
+    renewPublicKey: reusedRenewPublicKey,
+    dropPublicKey: targetMaterial.drop.publicKey,
+    declaredBlobHash: targetBinding.cellBlobHash,
+    createSignature: new Uint8Array(sign(
+      null, reusedAllocationCommitment, targetMaterial.create.privateKey
+    )),
+    admission: targetMaterial.putAdmission,
+    cellBlob: targetMaterial.cellBlob
+  })
+  const reusedRelayReceipt = blindReceiptBytes({
+    relayBinding: relayBindings[targetMaterial.relayIndex],
+    slotCommitment: blake2b256(targetMaterial.slot),
+    cellBlobHash: targetBinding.cellBlobHash,
+    allocationCommitment: reusedAllocationCommitment,
+    requestCommitment: reusedPutRequestCommitment,
+    sizeClass: targetBinding.sizeClass,
+    allocationEpoch: targetBinding.allocationEpoch,
+    leaseClass: 4,
+    leaseEpoch: targetBinding.leaseEpoch,
+    stateRevision: 0n,
+    receiptEpoch: FIXTURE_EFFECTIVE_LEASE_EPOCH,
+    requestNonce: targetMaterial.putClientNonce,
+    result: 1
+  }, relayPairs[targetMaterial.relayIndex])
+  decodeBlindExternalProfileValueV1('BlindReceiptV1', reusedRelayReceipt)
+  const reusedTargetBinding = {
+    ...targetBinding,
+    renewPublicKey: reusedRenewPublicKey,
+    allocationCommitment: reusedAllocationCommitment,
+    relayReceipt: reusedRelayReceipt
+  }
+  const crossRoleBindings = cellBindings
+    .map(value => hex(value.relayPublicKey) === targetRelayKey ? reusedTargetBinding : value)
+    .sort((left, right) => compareBytes(cellReplicaProjection(left), cellReplicaProjection(right)))
+  const crossRolePutByRelay = new Map(cellPutByRelay)
+  crossRolePutByRelay.set(targetRelayKey, {
+    putRequest: reusedPutRequest,
+    allocationCommitment: reusedAllocationCommitment,
+    putRequestCommitment: reusedPutRequestCommitment,
+    putClientNonce: targetMaterial.putClientNonce
+  })
+  const crossRoleSignedAuthor = signedAuthorBindFixture({
+    ...authorBindBase,
+    initialReplicas: crossRoleBindings
+  }, authorPair, compiled, runtimeOptions, catalog)
+  const crossRoleSignedAnnouncement = signedAnnouncementFixture(
+    crossRoleSignedAuthor.bytes,
+    crossRoleSignedAuthor.manifestRecordId,
+    FIXTURE_EFFECTIVE_LEASE_EPOCH,
+    publisherPair,
+    compiled,
+    runtimeOptions,
+    catalog
+  )
+  const crossRoleTransport = announcementTransportFixture({
+    signedAnnouncement: crossRoleSignedAnnouncement,
+    bootstrap,
+    inboxEpoch,
+    relayBindings,
+    relayPairs,
+    label: 'negative-cross-role-authority-reuse'
+  })
+  const crossRoleAuthorityReuseVector = structuredClone(vector)
+  crossRoleAuthorityReuseVector.cells = cellVectorValues(
+    crossRoleBindings, cellReadbackByRelay, crossRolePutByRelay, catalog
+  )
+  crossRoleAuthorityReuseVector.authorBind = authorBindVectorValue(crossRoleSignedAuthor)
+  crossRoleAuthorityReuseVector.announcement = announcementVectorValue(crossRoleSignedAnnouncement)
+  crossRoleAuthorityReuseVector.frames = crossRoleTransport.frames
+  crossRoleAuthorityReuseVector.readPages = crossRoleTransport.readPages
+
+  // CELL.GET request nonces are request-correlation material too. Rebuild the
+  // second request and commitment around the first relay's GET nonce so the
+  // fixture remains otherwise valid and reaches only the combined nonce fence.
+  const duplicateGetReadbackByRelay = new Map(cellReadbackByRelay)
+  const sourceGetNonce = sourceMaterial.getClientNonce
+  duplicateGetReadbackByRelay.set(targetRelayKey, {
+    ...duplicateGetReadbackByRelay.get(targetRelayKey),
+    getRequest: getCellRequestBytes(targetMaterial.slot, sourceGetNonce),
+    getRequestCommitment: cellGetRequestCommitment(
+      relayPairs[targetMaterial.relayIndex].publicKey, targetMaterial.slot, sourceGetNonce
+    )
+  })
+  const duplicateGetNonceVector = structuredClone(vector)
+  duplicateGetNonceVector.cells = cellVectorValues(
+    cellBindings, duplicateGetReadbackByRelay, cellPutByRelay, catalog
+  )
 
   const wrongAuthorSigned = signedAuthorBindFixture({
     ...authorBindBase,
@@ -1300,13 +1492,12 @@ async function generate () {
     result: 1
   }, relayPairs[firstRelayIndex])
 
-  const invalidManagementCustodyVector = {
-    ...vector.managementCustody,
-    envelopeCanonicalHex: hex(invalidManagementCustody.canonical),
-    plaintextSha256: sha256Hex(invalidManagementPlaintext),
-    fixtureCustodianPrivateKeys: invalidManagementCustody.custodians.map(value => hex(value.privateKey)),
-    fixtureCustodianPublicKeys: invalidManagementCustody.custodians.map(value => hex(value.publicKey))
-  }
+  const invalidManagementCustodyVector = managementCustodyVectorValue(
+    invalidManagementPlaintext, invalidManagementCustody, invalidThirdShareTamperedCustody
+  )
+  const wrongProfilePinCustodyVector = managementCustodyVectorValue(
+    wrongProfilePinPlaintext, wrongProfilePinCustody, wrongProfilePinThirdShareTamperedCustody
+  )
   const driftResult = Buffer.from(readPages[0].resultCanonicalHex, 'hex')
   const driftUnsigned = driftResult.subarray(0, driftResult.byteLength - 64)
   const fullResultDriftBytes = concatBytes(driftUnsigned, new Uint8Array(sign(null,
@@ -1409,9 +1600,9 @@ async function generate () {
     ['68-valid-signature-cell-receipt-request-mismatch.json', 'vector', null, {
       op: 'replace', path: '/cells/0/relayReceiptCanonicalHex', value: hex(wrongRequestReceipt)
     }, 'CELL_PUT_BINDING'],
-    ['69-cross-relay-create-key-reuse.json', 'vector', null, {
-      op: 'copy', from: '/cells/0/createPublicKey', path: '/cells/1/createPublicKey'
-    }, 'CELL_EQUALITY'],
+    ['69-cross-relay-cross-role-key-reuse.json', 'vector', null, {
+      op: 'replace-root', value: crossRoleAuthorityReuseVector
+    }, 'CELL_AUTHORITY_KEY_REUSE'],
     ['70-custody-duplicate-ephemeral-key.json', 'vector', null, {
       op: 'replace', path: '/managementCustody/envelopeCanonicalHex', value: hex(duplicateEphemeralCustody.canonical)
     }, 'CUSTODY_DUPLICATE'],
@@ -1420,7 +1611,13 @@ async function generate () {
     }, 'CUSTODY_LOW_ORDER_PUBLIC_KEY'],
     ['72-cell-put-blob-tamper.json', 'vector', null, {
       op: 'xor-hex', path: '/cells/0/capabilityBoundPut/requestCanonicalHex', byteIndex: -1, mask: 1
-    }, 'CELL_PUT_BINDING']
+    }, 'CELL_PUT_BINDING'],
+    ['73-custody-wrong-profile-pin.json', 'vector', null, {
+      op: 'replace', path: '/managementCustody', value: wrongProfilePinCustodyVector
+    }, 'CUSTODY_PROFILE_PIN'],
+    ['74-cell-get-client-nonce-reuse.json', 'vector', null, {
+      op: 'replace-root', value: duplicateGetNonceVector
+    }, 'CELL_CLIENT_NONCE_REUSE']
   ])
 
   await fs.writeFile(path.join(FIXTURES, 'positive-bootstrap.json'), jsonBytes(bootstrap))

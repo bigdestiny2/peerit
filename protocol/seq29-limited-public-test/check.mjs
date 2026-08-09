@@ -41,6 +41,7 @@ const ROOT = path.resolve(HERE, '../..')
 const FIXTURES = path.join(ROOT, 'test/fixtures/peerit-seq29-limited-public-test-v1')
 const NEGATIVE = path.join(FIXTURES, 'negative')
 const PROFILE_SHA256 = '74d3b65dff1bbf2a4630791fd1a770e8dcdfac415bf693ff313d38d0262619fd'
+const PROFILE_PIN_HASH = hexToBytes(PROFILE_SHA256, 32, 'profile pin hash')
 const BARE_VALIDATOR_SHA256 = 'e69bf4554720c853e340f212eda4fe7760ae119594f5f136701a71c1b214a809'
 const BOOTSTRAP_DOMAIN = 'peerit.limited-public-test.inbox-bootstrap.v1'
 const MAX_BOOTSTRAP_LIFETIME_MILLIS = 2678400000n
@@ -741,7 +742,7 @@ function openCellResult (cell, cap, inner) {
   ok(contentLength <= plaintext.byteLength - 4, 'CELL_BLOB_FORMAT', 'Cell content length')
   const reconstructed = plaintext.subarray(4, 4 + contentLength)
   bytesSame(reconstructed, inner, 'READBACK_REQUIRED', 'authenticated Cell reconstruction')
-  return reconstructed
+  return clientNonce
 }
 
 function decodePutCellFixture (bytes) {
@@ -828,12 +829,10 @@ async function validateProtocolVector (vector, bootstrap, profileCatalog, profil
   ok(Array.isArray(vector.cells) && vector.cells.length === 2, 'CELL_BINDING_COUNT', 'two Cell bindings required')
   let reconstructed = 0
   const slotKeys = []
-  const createKeys = []
-  const renewKeys = []
-  const dropKeys = []
+  const cellAuthorityKeys = []
   const readKeys = []
   const blobHashes = []
-  const putNonces = []
+  const cellClientNonces = []
   for (const cell of vector.cells) {
     const expectedBlobHash = hex(cell.cellBlobHash, 32, 'CELL_EQUALITY', 'Cell blob hash')
     bytesSame(hex(cell.logicalHash, 32), expectedLogical, 'CELL_EQUALITY', 'Cell logical hash')
@@ -905,25 +904,21 @@ async function validateProtocolVector (vector, bootstrap, profileCatalog, profil
     bytesSame(expectedPutCommitment, receipt.requestCommitment, 'CELL_PUT_BINDING', 'PUT/receipt request commitment')
     bytesSame(put.clientNonce, hex(cell.capabilityBoundPut.clientNonce, 32), 'CELL_PUT_BINDING', 'PUT evidence nonce')
     bytesSame(put.clientNonce, receipt.requestNonce, 'CELL_PUT_BINDING', 'PUT/receipt nonce')
-    openCellResult(cell, cap, inner)
+    const getClientNonce = openCellResult(cell, cap, inner)
     reconstructed++
     slotKeys.push(bytesToHex(cap.storageSlot))
-    createKeys.push(cell.createPublicKey)
-    renewKeys.push(cell.renewPublicKey)
-    dropKeys.push(cell.dropPublicKey)
+    cellAuthorityKeys.push(cell.createPublicKey, cell.renewPublicKey, cell.dropPublicKey)
     readKeys.push(bytesToHex(cap.cellKey))
     blobHashes.push(cell.cellBlobHash)
-    putNonces.push(cell.capabilityBoundPut.clientNonce)
+    cellClientNonces.push(bytesToHex(put.clientNonce), bytesToHex(getClientNonce))
   }
   ok(reconstructed >= 1, 'READBACK_REQUIRED', 'at least one replica must reconstruct')
   unique(vector.cells.map(value => value.relayPublicKey), 'DUPLICATE_CELL_RELAY', 'Cell relay keys')
   unique(slotKeys, 'CELL_REPLICA_REUSE', 'Cell storage slots')
-  unique(createKeys, 'CELL_REPLICA_REUSE', 'Cell create keys')
-  unique(renewKeys, 'CELL_REPLICA_REUSE', 'Cell renew keys')
-  unique(dropKeys, 'CELL_REPLICA_REUSE', 'Cell drop keys')
+  unique(cellAuthorityKeys, 'CELL_AUTHORITY_KEY_REUSE', 'combined Cell CREATE/RENEW/DROP public keys')
   unique(readKeys, 'CELL_REPLICA_REUSE', 'Cell read keys')
   unique(blobHashes, 'CELL_REPLICA_REUSE', 'Cell blob hashes')
-  unique(putNonces, 'CELL_REPLICA_REUSE', 'Cell PUT nonces')
+  unique(cellClientNonces, 'CELL_CLIENT_NONCE_REUSE', 'combined Cell PUT/GET client nonces')
 
   const author = vector.authorBind
   same(author.manifestTag, 3, 'AUTHOR_BIND_TAG', 'AuthorBind manifest tag')
@@ -1101,7 +1096,8 @@ function validateLimitedManagementPlaintext (plaintext, vector, bootstrap, profi
   const prefixStart = reader.offset
   same(reader.u8('limited bundle version'), 1, reader.code, 'limited bundle version')
   same(reader.u64('release sequence'), 29n, reader.code, 'limited bundle release sequence')
-  reader.take(32, 'profile pin hash')
+  bytesSame(reader.take(32, 'profile pin hash'), PROFILE_PIN_HASH,
+    'CUSTODY_PROFILE_PIN', 'limited management admitted profile pin')
   bytesSame(reader.take(32, 'signed bootstrap hash'), bootstrapWrapperHash(bootstrap),
     reader.code, 'custody/signed bootstrap hash')
   same(reader.u64('bootstrap sequence'), BigInt(bootstrap.payload.bootstrapSequence),
@@ -1517,6 +1513,7 @@ function valueAt (root, pointer) {
   return value
 }
 function applyMutation (base, mutation) {
+  if (mutation.op === 'replace-root') return structuredClone(mutation.value)
   const output = structuredClone(base)
   const { parent, key } = parentAt(output, mutation.path)
   if (mutation.op === 'replace' || mutation.op === 'add') parent[key] = structuredClone(mutation.value)
@@ -1591,9 +1588,12 @@ async function validateRegistries () {
     'BAD_REGISTRY', 'CELL.PUT receipt correlation')
   same(registry.managementCustody.bundleKind, 2, 'BAD_REGISTRY', 'Inbox management custody bundle kind')
   same(registry.managementCustody.plaintextCodec, 3, 'BAD_REGISTRY', 'limited custody codec')
+  same(registry.managementCustody.profilePinSha256, PROFILE_SHA256,
+    'BAD_REGISTRY', 'limited custody admitted profile pin')
   const custody = await readJson(path.join(HERE, 'limited-management-custody-v1.json'))
   same(custody.schema, 'peerit-seq29-limited-public-inbox-management-custody-v1', 'BAD_REGISTRY', 'custody policy schema')
   same(custody.bundle.name, 'PeeritLimitedPublicInboxManagementBundleV1', 'BAD_REGISTRY', 'custody bundle name')
+  same(custody.bundle.profilePinSha256, PROFILE_SHA256, 'BAD_REGISTRY', 'custody bundle admitted profile pin')
   same(custody.bundle.cardinality.current, 2, 'BAD_REGISTRY', 'custody current count')
   same(custody.bundle.cardinality.previous.join(','), '0,2', 'BAD_REGISTRY', 'custody previous count')
   same(custody.bundle.entryOrder,

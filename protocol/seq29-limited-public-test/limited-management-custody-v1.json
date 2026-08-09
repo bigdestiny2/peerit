@@ -5,10 +5,11 @@
   "bundle": {
     "name": "PeeritLimitedPublicInboxManagementBundleV1",
     "domain": "peerit.hiverelay.limited-public-inbox-management-bundle.v1",
+    "profilePinSha256": "74d3b65dff1bbf2a4630791fd1a770e8dcdfac415bf693ff313d38d0262619fd",
     "encoding": [
       "version:u8=1",
       "releaseSequence:u64be=29",
-      "profilePinHash:bytes32",
+      "profilePinHash:bytes32=74d3b65dff1bbf2a4630791fd1a770e8dcdfac415bf693ff313d38d0262619fd",
       "signedBootstrapHash:bytes32=SHA-256(canonicalCompleteSignedWrapper)",
       "bootstrapSequence:u64be",
       "currentInboxEpoch:u32be",

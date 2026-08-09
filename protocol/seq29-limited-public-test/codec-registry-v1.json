@@ -139,6 +139,7 @@
     "envelopeName": "PeeritLimitedPublicInboxCustodyEnvelopeV1",
     "bundleKind": 2,
     "plaintextCodec": 3,
+    "profilePinSha256": "74d3b65dff1bbf2a4630791fd1a770e8dcdfac415bf693ff313d38d0262619fd",
     "currentEntries": 2,
     "previousEntries": "0_OR_2_ROTATION_ONLY",
     "seedRoles": ["CREATE", "RENEW", "CLOSE"],

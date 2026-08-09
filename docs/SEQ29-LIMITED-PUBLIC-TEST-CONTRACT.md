@@ -160,7 +160,10 @@ relay/topic/epoch/create receipt, derive its advertised CREATE, RENEW, and CLOSE
 public keys from its private seeds, and bind `latestReceipt`, `latestRevision`,
 and `leaseEpoch`. All role and binding seeds are independently random and
 pairwise distinct. No APPEND seed exists because the topic is `OPEN_APPEND`.
-The limited bundle binds release sequence 29, the profile pin, current epoch,
+The limited bundle binds release sequence 29 and the exact admitted canonical
+profile source SHA-256
+`74d3b65dff1bbf2a4630791fd1a770e8dcdfac415bf693ff313d38d0262619fd`,
+not a fixture-selected or caller-selected profile pin. It also binds current epoch,
 bootstrap sequence, SHA-256 of the complete signed bootstrap wrapper, creation
 time, and every complete child entry under:
 
@@ -202,6 +205,10 @@ One Sequence 29 post has two independently randomized CELL.PUT attempts, one
 per relay, and later two independently randomized INBOX.APPEND attempts. It does
 not reuse a Cell ciphertext, blob hash, slot, read key, CREATE/RENEW/DROP key,
 client nonce, request, commitment, receipt, or INBOX frame between relays.
+The six CELL authority public keys (CREATE, RENEW, and DROP for both relays)
+are pairwise distinct across the combined role set; role-local uniqueness is
+insufficient. All CELL request client nonces are likewise pairwise distinct
+across both PUT and GET operations and both relays.
 
 For each Cell the checker decodes the exact canonical `PutCellV1`, derives the
 self-certifying slot and `allocationCommitment`, verifies the CREATE signature

@@ -43,7 +43,10 @@
       },
       "CellReplicaBindingV1": {
         "replicaTag": 1,
-        "externalCodecs": ["ReadCellCapV1", "BlindReceiptV1"]
+        "externalCodecs": ["ReadCellCapV1", "BlindReceiptV1"],
+        "evidenceJoin": "RELAY_PUBLIC_KEY_BIJECTION_THEN_FIELD_FOR_FIELD_TO_DECODED_PUT_CELL_READ_CAP_BLIND_RECEIPT_AND_BOOTSTRAP_RELAY_CONTINUITY",
+        "mirrorAuthority": false,
+        "mismatchCode": "CELL_REPLICA_EVIDENCE_BINDING"
       },
       "AuthorBindV1": {
         "manifestTag": 3,

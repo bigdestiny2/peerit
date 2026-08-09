@@ -220,6 +220,18 @@ create-receipt identity, including relay key, store, descriptor sequence/hash,
 durability profile/continuity, and restore head. Counts never substitute for
 this wire evidence.
 
+After canonical `AuthorBindV1` decode, each signed `CellReplicaBindingV1` is
+joined by `relayPublicKey` to exactly one independently decoded Cell evidence
+row; array position is never authority. The join is a relay-key bijection and
+binds field-for-field the version, intrinsic logical hash and encoding
+commitment, exact `ReadCellCapV1`, blob hash, size class, allocation and lease
+epochs, CREATE/RENEW/DROP public keys, derived allocation commitment, exact
+`BlindReceiptV1`, and full bootstrap relay continuity. The generated
+`cellReplicaBindingCanonicalHex` mirror is checked for fixture drift but cannot
+substitute for that wire-evidence join. The signed-replica/clean-wire mixed-data
+fixture in this contract fails `CELL_REPLICA_EVIDENCE_BINDING` before its
+signed-replica key reuse can bypass the independently decoded Cell invariants.
+
 The complete inner envelope is `PeeritInnerOperationBatchV1`, codec `334`, with
 length `8..1,048,519`. Before an AuthorBind is signed:
 

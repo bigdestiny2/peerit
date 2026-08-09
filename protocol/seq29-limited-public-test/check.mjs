@@ -833,6 +833,7 @@ async function validateProtocolVector (vector, bootstrap, profileCatalog, profil
   const readKeys = []
   const blobHashes = []
   const cellClientNonces = []
+  const cellEvidenceByRelay = new Map()
   for (const cell of vector.cells) {
     const expectedBlobHash = hex(cell.cellBlobHash, 32, 'CELL_EQUALITY', 'Cell blob hash')
     bytesSame(hex(cell.logicalHash, 32), expectedLogical, 'CELL_EQUALITY', 'Cell logical hash')
@@ -905,9 +906,25 @@ async function validateProtocolVector (vector, bootstrap, profileCatalog, profil
     bytesSame(put.clientNonce, hex(cell.capabilityBoundPut.clientNonce, 32), 'CELL_PUT_BINDING', 'PUT evidence nonce')
     bytesSame(put.clientNonce, receipt.requestNonce, 'CELL_PUT_BINDING', 'PUT/receipt nonce')
     const getClientNonce = openCellResult(cell, cap, inner)
+    const relayKey = bytesToHex(cap.relayPublicKey)
+    ok(!cellEvidenceByRelay.has(relayKey), 'DUPLICATE_CELL_RELAY', 'duplicate decoded Cell relay evidence')
+    cellEvidenceByRelay.set(relayKey, {
+      cell,
+      capBytes,
+      cap,
+      receiptBytes,
+      receipt,
+      bootstrapBinding,
+      bootstrapReceipt,
+      put,
+      expectedAllocation,
+      expectedPutCommitment
+    })
     reconstructed++
     slotKeys.push(bytesToHex(cap.storageSlot))
-    cellAuthorityKeys.push(cell.createPublicKey, cell.renewPublicKey, cell.dropPublicKey)
+    cellAuthorityKeys.push(
+      bytesToHex(put.createPublicKey), bytesToHex(put.renewPublicKey), bytesToHex(put.dropPublicKey)
+    )
     readKeys.push(bytesToHex(cap.cellKey))
     blobHashes.push(cell.cellBlobHash)
     cellClientNonces.push(bytesToHex(put.clientNonce), bytesToHex(getClientNonce))
@@ -950,11 +967,68 @@ async function validateProtocolVector (vector, bootstrap, profileCatalog, profil
   same(decodedAuthor.innerCodec, 334, 'AUTHOR_BIND_SEMANTICS', 'AuthorBind codec')
   same(decodedAuthor.innerLength, BigInt(inner.byteLength), 'AUTHOR_BIND_SEMANTICS', 'AuthorBind inner length')
   same(decodedAuthor.initialReplicas.length, 2, 'AUTHOR_BIND_SEMANTICS', 'AuthorBind replica count')
-  for (let index = 0; index < decodedAuthor.initialReplicas.length; index++) {
-    bytesSame(profileCatalog.CellReplicaBindingV1.encode(decodedAuthor.initialReplicas[index]),
-      hex(vector.cells[index].cellReplicaBindingCanonicalHex, null, 'AUTHOR_BIND_SEMANTICS', 'CellReplicaBindingV1'),
-      'AUTHOR_BIND_SEMANTICS', `AuthorBind Cell replica ${index}`)
+  const joinedReplicaRelays = new Set()
+  for (const replica of decodedAuthor.initialReplicas) {
+    const relayKey = bytesToHex(replica.relayPublicKey)
+    const evidence = cellEvidenceByRelay.get(relayKey)
+    ok(evidence != null, 'CELL_REPLICA_EVIDENCE_BINDING', 'AuthorBind replica has no decoded Cell evidence relay')
+    ok(!joinedReplicaRelays.has(relayKey),
+      'CELL_REPLICA_EVIDENCE_BINDING', 'AuthorBind replicas repeat a decoded Cell evidence relay')
+    joinedReplicaRelays.add(relayKey)
+
+    // cellReplicaBindingCanonicalHex is a generated mirror, not authority. Keep
+    // checking it for fixture drift, then bind every signed replica field to the
+    // independently decoded wire evidence joined by relay identity.
+    const replicaBytes = profileCatalog.CellReplicaBindingV1.encode(replica)
+    bytesSame(replicaBytes,
+      hex(evidence.cell.cellReplicaBindingCanonicalHex, null, 'AUTHOR_BIND_SEMANTICS', 'CellReplicaBindingV1 mirror'),
+      'AUTHOR_BIND_SEMANTICS', `AuthorBind Cell replica mirror ${relayKey}`)
+    same(replica.version, 1, 'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica version')
+    bytesSame(replica.logicalHash, expectedLogical,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/intrinsic logical hash')
+    bytesSame(replica.encodingCommitment, expectedEncoding,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/intrinsic encoding commitment')
+    bytesSame(replica.relayPublicKey, evidence.cap.relayPublicKey,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/read capability relay')
+    bytesSame(replica.relayPublicKey, evidence.receipt.relayBinding.relayPublicKey,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/Cell receipt relay')
+    bytesSame(replica.relayPublicKey, hex(evidence.bootstrapBinding.relayPublicKey, 32),
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/bootstrap relay')
+    assertRelayBindingSame(evidence.receipt.relayBinding, evidence.bootstrapReceipt.relayBinding,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica joined Cell/Inbox relay continuity')
+    bytesSame(replica.readCapability, evidence.capBytes,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/canonical ReadCellCapV1')
+    bytesSame(replica.cellBlobHash, evidence.put.declaredBlobHash,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/PutCellV1 blob hash')
+    bytesSame(replica.cellBlobHash, evidence.receipt.cellBlobHash,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/BlindReceiptV1 blob hash')
+    same(replica.sizeClass, evidence.cap.sizeClass,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/read capability size class')
+    same(replica.sizeClass, evidence.put.sizeClass,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/PutCellV1 size class')
+    same(replica.sizeClass, evidence.receipt.sizeClass,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/BlindReceiptV1 size class')
+    same(replica.allocationEpoch, evidence.put.allocationEpoch,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/PutCellV1 allocation epoch')
+    same(replica.allocationEpoch, evidence.receipt.allocationEpoch,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/BlindReceiptV1 allocation epoch')
+    same(replica.leaseEpoch, evidence.receipt.leaseEpoch,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/BlindReceiptV1 lease epoch')
+    bytesSame(replica.createPublicKey, evidence.put.createPublicKey,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/PutCellV1 CREATE key')
+    bytesSame(replica.renewPublicKey, evidence.put.renewPublicKey,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/PutCellV1 RENEW key')
+    bytesSame(replica.dropPublicKey, evidence.put.dropPublicKey,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/PutCellV1 DROP key')
+    bytesSame(replica.allocationCommitment, evidence.expectedAllocation,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/derived allocation commitment')
+    bytesSame(replica.allocationCommitment, evidence.receipt.allocationCommitment,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/BlindReceiptV1 allocation commitment')
+    bytesSame(replica.relayReceipt, evidence.receiptBytes,
+      'CELL_REPLICA_EVIDENCE_BINDING', 'signed replica/canonical BlindReceiptV1')
   }
+  same(joinedReplicaRelays.size, cellEvidenceByRelay.size,
+    'CELL_REPLICA_EVIDENCE_BINDING', 'AuthorBind/decoded Cell evidence relay bijection')
   const manifestId = blake2b256(concatBytes(
     asciiBytes('peerit.hiverelay.manifest-record-id.v1'), u16Bytes(3), u64Bytes(authorBytes.byteLength), authorBytes
   ))
@@ -1542,6 +1616,11 @@ async function validateRegistries () {
   same(compatibility.boundedIssuance.announcementEmitterMode, 'INLINE_ONLY', 'BAD_COMPATIBILITY', 'emitter')
   same(compatibility.boundedIssuance.maximumInlineAuthorBindBytes, 10000, 'BAD_COMPATIBILITY', 'INLINE limit')
   same(compatibility.boundedIssuance.cellReferenceEmission, 'REJECT_IN_SEQUENCE_29', 'BAD_COMPATIBILITY', 'CELL_REFERENCE emission')
+  same(compatibility.boundedIssuance.authorReplicaEvidenceJoin,
+    'RELAY_PUBLIC_KEY_BIJECTION_FIELD_FOR_FIELD_TO_DECODED_CELL_WIRE_EVIDENCE',
+    'BAD_COMPATIBILITY', 'signed replica/decoded Cell evidence join')
+  same(compatibility.boundedIssuance.cellReplicaMirrorIsAuthority, false,
+    'BAD_COMPATIBILITY', 'Cell replica mirror authority boundary')
   same(compatibility.releaseAuthorityRequirements.provenanceInputsAreNotTargetPins, true, 'STALE_TARGET_PIN', 'provenance pin boundary')
   same(compatibility.releaseAuthorityRequirements.fixtureHashesAreNotTargetPins, true, 'STALE_TARGET_PIN', 'fixture pin boundary')
   same(compatibility.releaseAuthorityRequirements.inboxReadCompressedSignaturePayloadReconciliationRequired, true,
@@ -1575,6 +1654,12 @@ async function validateRegistries () {
     false, 'BAD_REGISTRY', 'fixture replay authority is not release authority')
   same(registry.peeritProfileAuthority.schemas.AuthorBindV1.innerCodec, 334, 'BAD_REGISTRY', 'AuthorBind codec')
   same(registry.peeritProfileAuthority.schemas.AuthorBindV1.manifestTag, 3, 'BAD_REGISTRY', 'AuthorBind tag')
+  ok(registry.peeritProfileAuthority.schemas.CellReplicaBindingV1.evidenceJoin.includes('RELAY_PUBLIC_KEY_BIJECTION'),
+    'BAD_REGISTRY', 'Cell replica relay-key evidence join')
+  same(registry.peeritProfileAuthority.schemas.CellReplicaBindingV1.mirrorAuthority, false,
+    'BAD_REGISTRY', 'Cell replica mirror authority boundary')
+  same(registry.peeritProfileAuthority.schemas.CellReplicaBindingV1.mismatchCode,
+    'CELL_REPLICA_EVIDENCE_BINDING', 'BAD_REGISTRY', 'Cell replica evidence mismatch code')
   same(registry.hiverelayAuthority.inboxConstants.OPEN_APPEND, 0, 'BAD_REGISTRY', 'OPEN_APPEND')
   same(registry.hiverelayAuthority.inboxConstants.FRAME_CLASS_BITS_1_AND_2, 3, 'BAD_REGISTRY', 'frame bits')
   same(registry.hiverelayAuthority.status, 'REGENERATED_TARGET_TUPLE_REQUIRED_BEFORE_RELEASE', 'BAD_REGISTRY', 'target tuple status')

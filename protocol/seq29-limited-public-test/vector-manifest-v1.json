@@ -11,9 +11,9 @@
   "generatorCommand": "node protocol/seq29-limited-public-test/generate-fixtures.mjs",
   "checker": "protocol/seq29-limited-public-test/check.mjs",
   "positiveFixtureCount": 3,
-  "negativeFixtureCount": 74,
+  "negativeFixtureCount": 75,
   "aggregateRecipe": "SHA-256(path || NUL || decimalByteLength || NUL || lowercaseSha256 || LF), paths sorted lexicographically; vector-manifest-v1.json is excluded",
-  "artifactAggregateSha256": "60cf54935330e1510b6975cb95066cf530214458a45928adf3e6efd44bc58fa5",
+  "artifactAggregateSha256": "83753f984708915a27f03ff92b9a4819400129c259f8209572ea63e0664c94bd",
   "artifacts": [
     {
       "path": "config/peerit-limited-availability-bootstrap-v1.schema.json",
@@ -22,8 +22,8 @@
     },
     {
       "path": "docs/SEQ29-LIMITED-PUBLIC-TEST-CONTRACT.md",
-      "byteLength": 23204,
-      "sha256": "0e8d35f3bb1594c3a427e57bcb2b00becb1d9f5cb43af28b1383a6df3088d46a"
+      "byteLength": 24047,
+      "sha256": "8513844036d0d17f023254f7fa6e2137c90fb2de6a8fc6843f9baa72489172a2"
     },
     {
       "path": "protocol/seq29-limited-public-test/canonical-cross-check.mjs",
@@ -32,23 +32,23 @@
     },
     {
       "path": "protocol/seq29-limited-public-test/check.mjs",
-      "byteLength": 104190,
-      "sha256": "afa7c19ee35e1a9f891c8e515e0938a984e4fe325d5306af8b8fe083650f8db9"
+      "byteLength": 109574,
+      "sha256": "715889edc948cfc12838b72cf74217621597aaf60ef0747dee0beabaed319e64"
     },
     {
       "path": "protocol/seq29-limited-public-test/codec-registry-v1.json",
-      "byteLength": 9332,
-      "sha256": "0c095f40594650fb8bd6430cc33d7e69328cfd3133e6b818a87d6b4f58a7ccee"
+      "byteLength": 9572,
+      "sha256": "78f9122c64dc449047e1fe89769571f376d9220059fb11ad3b577493476ae27e"
     },
     {
       "path": "protocol/seq29-limited-public-test/compatibility-v1.json",
-      "byteLength": 4321,
-      "sha256": "8e29f0dc0add80f4dcf9053dd1258b1a0d0eeec08e4d6f52dc3e16ea07b82e21"
+      "byteLength": 4473,
+      "sha256": "ddfd15eb79f495d54e65ea861d6104d95989bdced84c65782e3bb13ff8f163df"
     },
     {
       "path": "protocol/seq29-limited-public-test/generate-fixtures.mjs",
-      "byteLength": 80484,
-      "sha256": "de3b94c2f9d8befac1a330d3159b4784629f519748d48456beca09feea6f3392"
+      "byteLength": 81932,
+      "sha256": "49cd7f640b0db0ccc5fb5b924d7448daf7bbde3de9b18fbfe518b45766c1dcdb"
     },
     {
       "path": "protocol/seq29-limited-public-test/limited-management-custody-v1.json",
@@ -429,6 +429,11 @@
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/74-cell-get-client-nonce-reuse.json",
       "byteLength": 144755,
       "sha256": "6fce087bc3d205920f2784c6f12a656283ea11a3e6402ae84849bd918bc1e74c"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/75-signed-replica-mixed-cell-evidence.json",
+      "byteLength": 144761,
+      "sha256": "b64778a6fe4a24d656be493c093e25246ba01ff9214c1aa836297b8a1332fa5a"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/positive-bootstrap-successor.json",

@@ -41,7 +41,9 @@
     "announcementEmitterMode": "INLINE_ONLY",
     "maximumInlineAuthorBindBytes": 10000,
     "cellReferenceEmission": "REJECT_IN_SEQUENCE_29",
-    "cellReferenceReader": "CANONICAL_OPTIONAL_MODE_ONLY_WHEN_PINNED_AUTHORITY_SUPPORTS_IT"
+    "cellReferenceReader": "CANONICAL_OPTIONAL_MODE_ONLY_WHEN_PINNED_AUTHORITY_SUPPORTS_IT",
+    "authorReplicaEvidenceJoin": "RELAY_PUBLIC_KEY_BIJECTION_FIELD_FOR_FIELD_TO_DECODED_CELL_WIRE_EVIDENCE",
+    "cellReplicaMirrorIsAuthority": false
   },
   "inboxShape": {
     "stripeCountLog2": 0,

@@ -1425,6 +1425,26 @@ async function generate () {
   crossRoleAuthorityReuseVector.frames = crossRoleTransport.frames
   crossRoleAuthorityReuseVector.readPages = crossRoleTransport.readPages
 
+  // Preserve the clean, independently decoded CELL.PUT/GET/receipt evidence but
+  // substitute a separately coherent and signed replica-side data set. The
+  // replica mirror and AuthorBind both carry Relay A CREATE as Relay B RENEW,
+  // while every scalar Cell field and exact wire request remains the clean base
+  // value. A checker that trusts only the mirror can accept this mixed-data
+  // construction; the relay-keyed field-for-field evidence join must reject it.
+  const mixedReplicaEvidenceVector = structuredClone(vector)
+  mixedReplicaEvidenceVector.cells = vector.cells.map(cell => {
+    const signedReplica = crossRoleBindings.find(value => hex(value.relayPublicKey) === cell.relayPublicKey)
+    if (signedReplica == null) throw new Error(`missing signed mixed-data replica for relay ${cell.relayPublicKey}`)
+    return {
+      ...cell,
+      cellReplicaBindingCanonicalHex: hex(catalog.CellReplicaBindingV1.encode(signedReplica))
+    }
+  })
+  mixedReplicaEvidenceVector.authorBind = authorBindVectorValue(crossRoleSignedAuthor)
+  mixedReplicaEvidenceVector.announcement = announcementVectorValue(crossRoleSignedAnnouncement)
+  mixedReplicaEvidenceVector.frames = crossRoleTransport.frames
+  mixedReplicaEvidenceVector.readPages = crossRoleTransport.readPages
+
   // CELL.GET request nonces are request-correlation material too. Rebuild the
   // second request and commitment around the first relay's GET nonce so the
   // fixture remains otherwise valid and reaches only the combined nonce fence.
@@ -1617,7 +1637,10 @@ async function generate () {
     }, 'CUSTODY_PROFILE_PIN'],
     ['74-cell-get-client-nonce-reuse.json', 'vector', null, {
       op: 'replace-root', value: duplicateGetNonceVector
-    }, 'CELL_CLIENT_NONCE_REUSE']
+    }, 'CELL_CLIENT_NONCE_REUSE'],
+    ['75-signed-replica-mixed-cell-evidence.json', 'vector', null, {
+      op: 'replace-root', value: mixedReplicaEvidenceVector
+    }, 'CELL_REPLICA_EVIDENCE_BINDING']
   ])
 
   await fs.writeFile(path.join(FIXTURES, 'positive-bootstrap.json'), jsonBytes(bootstrap))

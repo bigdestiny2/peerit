@@ -1,6 +1,0 @@
-{
-  "alg": "Ed25519",
-  "key": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
-  "sig": "eb04fb86ec818b4513ad6d116be7d32bcf97d56993fca72d3f71a2150f5e5331a3c4ec3eb2fd080d6a81ef024c3487911d36619bde1b5422667b9212e31cd90c",
-  "msgVersion": "peerit-release-v2"
-}

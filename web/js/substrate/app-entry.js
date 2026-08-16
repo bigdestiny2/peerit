@@ -3,11 +3,15 @@
 // install zero relay targets but never turn a healthy local journal read-only.
 
 import {
+  getVerifiedPeeritBrowserRuntimeAssembly,
   loadPeeritBrowserRuntimeAuthorityV1
 } from './browser-runtime-authority.mjs'
 import { loadPeeritProductionPinHistoryTerminalV1 } from './pin-history-bootstrap.mjs'
 import { createPeeritProductRuntimeV1 } from './peerit-product-runtime.js'
 import { mountPeeritProductUiV1 } from './peerit-product-ui.js'
+import {
+  createPeeritSeq29PublicInboxBootCoordinatorV1
+} from './public-inbox-boot-coordinator.mjs'
 import {
   installPeeritBlindRelayConsumer,
   recoverPeeritSeedWithLimitedCellGetAuthorityV1,
@@ -17,6 +21,8 @@ import {
   renderPeeritReleaseCoherenceStatusV1,
   verifyPeeritReleaseCoherenceV1
 } from './release-coherence.js'
+
+const PUBLIC_INBOX_POLL_INTERVAL_MILLIS = 60 * 1000
 
 function blockedStatus (state, code, message = '') {
   return Object.freeze({
@@ -43,12 +49,26 @@ function immutableNetworkStatus (parts) {
   const authority = parts[2]
   const consumer = parts[3]
   const seedRecovery = parts[4]
+  const publicInbox = parts[5]
+  if (publicInbox) {
+    return Object.freeze({
+      state: publicInbox.state,
+      active: authority && authority.active === true &&
+        publicInbox.active === true,
+      mode: 'limited-public-inbox',
+      ordinaryDelivery: consumer && consumer.active === true ? 'active' : 'local-only',
+      publicInboxDelivery: publicInbox.active === true ? 'active' : 'blocked',
+      explicitUserPublication: publicInbox.explicitPublicationReady === true ? 'ready' : 'blocked',
+      releaseBlockers: Object.freeze(releaseBlockers)
+    })
+  }
   if (seedRecovery && seedRecovery.active === true) {
     return Object.freeze({
       state: seedRecovery.state,
       active: authority && authority.active === true,
       mode: 'limited-cell-get-seed-recovery',
       ordinaryDelivery: consumer && consumer.active === true ? 'active' : 'local-only',
+      explicitUserPublication: 'blocked',
       releaseBlockers: Object.freeze([])
     })
   }
@@ -65,8 +85,96 @@ function immutableNetworkStatus (parts) {
       (!seedRecovery || seedRecovery.active === true),
     mode: 'ordinary-relay-delivery',
     ordinaryDelivery: consumer && consumer.active === true ? 'active' : 'local-only',
+    explicitUserPublication: 'blocked',
     releaseBlockers: Object.freeze(releaseBlockers)
   })
+}
+
+function publishPublicInboxStatus (status, document) {
+  document.documentElement.setAttribute('data-peerit-public-inbox-state', status.state)
+  document.documentElement.setAttribute(
+    'data-peerit-public-inbox-active', status.active ? 'true' : 'false')
+  document.documentElement.setAttribute(
+    'data-peerit-explicit-publication-ready', status.explicitPublicationReady ? 'true' : 'false')
+}
+
+function createPublicInboxLifecycle (options) {
+  let coordinator = null
+  let timer = null
+  let stopped = false
+  let inFlight = null
+  let status = blockedStatus(
+    'starting-limited-public-inbox', 'PEERIT_PUBLIC_INBOX_STARTING')
+
+  const update = value => {
+    status = Object.freeze(value)
+    publishPublicInboxStatus(status, options.document)
+    return status
+  }
+  const poll = () => {
+    if (stopped || options.signal.aborted) return Promise.reject(lifecycleEnded())
+    if (inFlight) return inFlight
+    inFlight = (async () => {
+      try {
+        if (!coordinator) coordinator = await options.createCoordinator()
+        const result = await coordinator.pollAndIngest({ signal: options.signal })
+        if (stopped || options.signal.aborted) throw lifecycleEnded()
+        update({
+          state: 'limited-public-inbox-active',
+          active: true,
+          explicitPublicationReady: true,
+          releaseBlockers: Object.freeze([]),
+          lastPoll: Object.freeze({
+            completedUnixMillis: String(Date.now()),
+            ingestedBatchCount: result.ingestedBatchCount,
+            relayCount: result.relayResults.length
+          })
+        })
+        return result
+      } catch (error) {
+        if (stopped || options.signal.aborted) throw lifecycleEnded()
+        update({
+          state: coordinator
+            ? 'degraded-limited-public-inbox'
+            : 'blocked-limited-public-inbox',
+          active: false,
+          explicitPublicationReady: coordinator != null,
+          releaseBlockers: Object.freeze([
+            (error && (error.code || error.name)) || 'PEERIT_PUBLIC_INBOX_POLL_FAILED'
+          ]),
+          message: (error && error.message) || 'limited public INBOX activation failed'
+        })
+        throw error
+      } finally {
+        inFlight = null
+      }
+    })()
+    return inFlight
+  }
+  const schedule = () => {
+    if (stopped || options.signal.aborted || timer != null) return
+    timer = setTimeout(() => {
+      timer = null
+      poll().catch(() => {}).finally(schedule)
+    }, PUBLIC_INBOX_POLL_INTERVAL_MILLIS)
+  }
+  const controller = Object.freeze({
+    get state () { return status.state },
+    get active () { return status.active },
+    get releaseBlockers () { return status.releaseBlockers },
+    get message () { return status.message || '' },
+    get lastPoll () { return status.lastPoll || null },
+    get explicitPublicationReady () { return status.explicitPublicationReady === true },
+    pollNow: poll,
+    start: schedule,
+    destroy () {
+      stopped = true
+      if (timer != null) clearTimeout(timer)
+      timer = null
+    }
+  })
+  publishPublicInboxStatus(status, options.document)
+  return controller
 }
 
 function publishNetworkStatus (status, detail, document, window) {
@@ -99,6 +207,8 @@ export async function bootPeeritReplacementOnly (options = {}) {
 
   const product = options.product || createPeeritProductRuntimeV1()
   let productUi = null
+  let publicInbox = null
+  let publicInboxPublisher = null
   let destroyed = false
   const lifecycle = new AbortController()
   const assertLive = () => {
@@ -114,6 +224,8 @@ export async function bootPeeritReplacementOnly (options = {}) {
     destroyed = true
     if (!lifecycle.signal.aborted) lifecycle.abort(lifecycleEnded())
     if (!preservePageshow) window.removeEventListener('pageshow', pageshow)
+    if (publicInbox && typeof publicInbox.destroy === 'function') publicInbox.destroy()
+    publicInboxPublisher = null
     stopPeeritBlindRelayConsumer(product.sync)
     if (productUi && typeof productUi.destroy === 'function') productUi.destroy()
     product.destroy()
@@ -127,7 +239,31 @@ export async function bootPeeritReplacementOnly (options = {}) {
   try {
     await product.ready()
     assertLive()
-    productUi = (options.mountUi || mountPeeritProductUiV1)(product, { document, window })
+    productUi = (options.mountUi || mountPeeritProductUiV1)(product, {
+      document,
+      window,
+      publishAuthoredIntent: async intentId => {
+        assertLive()
+        if (!/^[0-9a-f]{64}$/.test(String(intentId || ''))) {
+          const error = new Error('The explicit user action has no exact local publication intent.')
+          error.code = 'PEERIT_SEQ29_EXPLICIT_PUBLICATION_RECEIPT_REQUIRED'
+          throw error
+        }
+        const localIntent = await product.sync.journal.getIntent(intentId)
+        assertLive()
+        if (!localIntent || localIntent.intentId !== intentId) {
+          const error = new Error('The explicit user action is not bound to a durable local publication.')
+          error.code = 'PEERIT_SEQ29_LOCAL_AUTHORED_INTENT_REQUIRED'
+          throw error
+        }
+        if (!publicInboxPublisher) {
+          const error = new Error('Authenticated Seq29 publication is not ready; retry this publication explicitly.')
+          error.code = 'PEERIT_SEQ29_EXPLICIT_PUBLICATION_NOT_READY'
+          throw error
+        }
+        return publicInboxPublisher.publishAuthoredIntent({ intentId })
+      }
+    })
     document.documentElement.setAttribute('data-peerit-local-authoring', 'ready')
 
     const release = await verifyPeeritReleaseCoherenceV1({ document, signal: lifecycle.signal })
@@ -196,11 +332,61 @@ export async function bootPeeritReplacementOnly (options = {}) {
       }
       assertLive()
     }
-    const networkStatus = immutableNetworkStatus([release, pinHistory, authority, consumer, seedRecovery])
+    if (release.publicInboxBootstrap) {
+      if (!authority.active) {
+        publicInbox = blockedStatus('blocked-limited-public-inbox',
+          'PEERIT_AUTHENTICATED_RELAY_RUNTIME_AUTHORITY_REQUIRED',
+          'Limited public INBOX activation requires the authenticated browser runtime.')
+        publishPublicInboxStatus(publicInbox, document)
+      } else {
+        publicInbox = createPublicInboxLifecycle({
+          document,
+          signal: lifecycle.signal,
+          createCoordinator: async () => {
+            const coordinator = await createPeeritSeq29PublicInboxBootCoordinatorV1({
+              runtimeAuthority: authority.authority,
+              runtimeAppBinding: getVerifiedPeeritBrowserRuntimeAssembly(authority.authority),
+              substrateSync: product.sync,
+              productRuntime: product,
+              signal: lifecycle.signal
+            })
+            assertLive()
+            publicInboxPublisher = coordinator
+            return coordinator
+          }
+        })
+        await publicInbox.pollNow().catch(error => {
+          if (lifecycle.signal.aborted) throw error
+        })
+        assertLive()
+        publicInbox.start()
+      }
+    } else {
+      publishPublicInboxStatus(Object.freeze({
+        state: 'limited-public-inbox-not-required',
+        active: false
+      }), document)
+    }
+    const networkStatus = immutableNetworkStatus([
+      release, pinHistory, authority, consumer, seedRecovery, publicInbox
+    ])
     product.setNetworkStatus(networkStatus)
-    publishNetworkStatus(networkStatus, { release, pinHistory, authority, consumer, seedRecovery }, document, window)
+    publishNetworkStatus(networkStatus, {
+      release, pinHistory, authority, consumer, seedRecovery, publicInbox
+    }, document, window)
 
-    return Object.freeze({ product, productUi, release, pinHistory, authority, consumer, seedRecovery, networkStatus, destroy })
+    return Object.freeze({
+      product,
+      productUi,
+      release,
+      pinHistory,
+      authority,
+      consumer,
+      seedRecovery,
+      publicInbox,
+      networkStatus,
+      destroy
+    })
   } catch (error) {
     if (!destroyed) destroy()
     throw error

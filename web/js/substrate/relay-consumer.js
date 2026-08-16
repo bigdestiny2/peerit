@@ -1248,6 +1248,320 @@ function exactLimitedCellGetControl (value) {
   return value
 }
 
+function exactLimitedDescriptorControl (value) {
+  const required = [
+    'BlindDescriptorBootstrapHttpClient',
+    'DescriptorTrustStore',
+    'createDescribeGetRequest',
+    'trustedAdmissionProfile',
+    'trustedDescriptorValidity',
+    'verifyDescriptorBytes'
+  ]
+  if (!value || typeof value !== 'object' ||
+      required.some(name => typeof value[name] !== 'function')) {
+    throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_CONTROL_INVALID',
+      'authenticated full control module cannot verify limited Cell-GET descriptor authority')
+  }
+  return value
+}
+
+const LIMITED_DESCRIBE_MEDIA_TYPE = 'application/vnd.hiverelay.blind-v1'
+const LIMITED_DESCRIBE_OUTER_CLASS = 3
+const LIMITED_DESCRIBE_OUTER_BYTES = 65_536
+const LIMITED_DESCRIBE_DISPATCH_HEADER_BYTES = 45
+const LIMITED_DESCRIBE_RESULT_BODY_LIMIT = 16_384
+const LIMITED_DESCRIBE_MAX_TIMEOUT_MILLIS = 15_000
+
+function readU32be (value, offset) {
+  return ((value[offset] * 0x1000000) +
+    (value[offset + 1] << 16) +
+    (value[offset + 2] << 8) +
+    value[offset + 3]) >>> 0
+}
+
+function writeU32be (value, offset, number) {
+  value[offset] = (number >>> 24) & 0xff
+  value[offset + 1] = (number >>> 16) & 0xff
+  value[offset + 2] = (number >>> 8) & 0xff
+  value[offset + 3] = number & 0xff
+}
+
+function readU64be (value, offset) {
+  let result = 0n
+  for (let index = 0; index < 8; index++) {
+    result = (result << 8n) | BigInt(value[offset + index])
+  }
+  return result
+}
+
+function allZero (value) {
+  for (const byte of value) if (byte !== 0) return false
+  return true
+}
+
+function limitedRandomBytes (runtime, length, field) {
+  if (!runtime || typeof runtime.randomBytes !== 'function') {
+    throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_RUNTIME_INVALID',
+      'authenticated descriptor discovery runtime has no random source')
+  }
+  const output = bytes(runtime.randomBytes(length), field)
+  if (output.byteLength !== length) {
+    throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_RUNTIME_INVALID',
+      `authenticated descriptor discovery runtime returned the wrong ${field} length`)
+  }
+  return output
+}
+
+function nonzeroLimitedRequestId (runtime) {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const requestId = limitedRandomBytes(runtime, 16, 'descriptor requestId')
+    if (!allZero(requestId)) return requestId
+  }
+  throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_RUNTIME_INVALID',
+    'authenticated descriptor discovery runtime returned only zero request IDs')
+}
+
+function currentDescriptorRequest (descriptorControl, runtime) {
+  const request = descriptorControl.createDescribeGetRequest({ runtime })
+  if (!request || !request.request || request.request.descriptorHash != null ||
+      !request.wire || request.wire.familyId !== 1 || request.wire.operationId !== 1 ||
+      request.wire.expectedResultBodyBytes !== LIMITED_DESCRIBE_RESULT_BODY_LIMIT) {
+    throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_REQUEST_INVALID',
+      'authenticated full control did not produce the fixed current DESCRIBE.GET request')
+  }
+  const body = bytes(request.requestBytes, 'current DESCRIBE.GET request bytes')
+  const requestId = nonzeroLimitedRequestId(runtime)
+  const dispatch = new Uint8Array(LIMITED_DESCRIBE_DISPATCH_HEADER_BYTES + body.byteLength)
+  writeU32be(dispatch, 0, dispatch.byteLength - 4)
+  dispatch[4] = 1
+  dispatch[5] = 1
+  dispatch[6] = 1
+  dispatch[7] = 1
+  dispatch.set(requestId, 9)
+  writeU32be(dispatch, 41, body.byteLength)
+  dispatch.set(body, LIMITED_DESCRIBE_DISPATCH_HEADER_BYTES)
+  if (dispatch.byteLength + 6 > LIMITED_DESCRIBE_OUTER_BYTES) {
+    throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_REQUEST_INVALID',
+      'current DESCRIBE.GET request exceeds its fixed outer class')
+  }
+  const envelope = new Uint8Array(LIMITED_DESCRIBE_OUTER_BYTES)
+  envelope[0] = 1
+  envelope[1] = LIMITED_DESCRIBE_OUTER_CLASS
+  writeU32be(envelope, 2, dispatch.byteLength)
+  envelope.set(dispatch, 6)
+  const padding = limitedRandomBytes(
+    runtime, envelope.byteLength - 6 - dispatch.byteLength, 'descriptor request padding')
+  envelope.set(padding, 6 + dispatch.byteLength)
+  return Object.freeze({ body: envelope, requestId })
+}
+
+function limitedDescribeTimeoutMillis (value) {
+  if (value == null) return LIMITED_DESCRIBE_MAX_TIMEOUT_MILLIS
+  if (!Number.isSafeInteger(value) || value < 1 ||
+      value > LIMITED_DESCRIBE_MAX_TIMEOUT_MILLIS) {
+    throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_TIMEOUT_INVALID',
+      `descriptor timeoutMillis must be within 1..${LIMITED_DESCRIBE_MAX_TIMEOUT_MILLIS}`)
+  }
+  return value
+}
+
+function limitedDescribeAbortScope (parent, timeoutMillis) {
+  if (typeof AbortController !== 'function') {
+    throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_ABORT_UNAVAILABLE',
+      'AbortController is required for bounded current descriptor discovery')
+  }
+  const controller = new AbortController()
+  const forward = () => controller.abort(parent && parent.reason)
+  if (parent) {
+    if (parent.aborted) forward()
+    else parent.addEventListener('abort', forward, { once: true })
+  }
+  const timer = setTimeout(() => controller.abort(qualificationError(
+    'PEERIT_LIMITED_DESCRIPTOR_DEADLINE', 'current descriptor discovery deadline elapsed')),
+  timeoutMillis)
+  return Object.freeze({
+    signal: controller.signal,
+    close () {
+      clearTimeout(timer)
+      if (parent) parent.removeEventListener('abort', forward)
+    }
+  })
+}
+
+async function readExactLimitedDescribeResponse (response, signal) {
+  const declared = response.headers && typeof response.headers.get === 'function'
+    ? response.headers.get('content-length')
+    : null
+  const contentEncoding = response.headers && typeof response.headers.get === 'function'
+    ? response.headers.get('content-encoding')
+    : null
+  const transferEncoding = response.headers && typeof response.headers.get === 'function'
+    ? response.headers.get('transfer-encoding')
+    : null
+  if (contentEncoding != null || transferEncoding != null) {
+    throw qualificationError('RELAY_PROTOCOL_VIOLATION',
+      'encoded or transfer-framed bootstrap responses are forbidden')
+  }
+  if (declared !== String(LIMITED_DESCRIBE_OUTER_BYTES)) {
+    throw qualificationError('RELAY_PROTOCOL_VIOLATION',
+      'bootstrap response must declare the exact selected class')
+  }
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    throw qualificationError('TRANSPORT_UNAVAILABLE',
+      'a bounded streaming bootstrap response is required')
+  }
+  const reader = response.body.getReader()
+  const output = new Uint8Array(LIMITED_DESCRIBE_OUTER_BYTES)
+  let total = 0
+  const onAbort = () => Promise.resolve(reader.cancel(signal.reason)).catch(() => {})
+  if (signal.aborted) onAbort()
+  else signal.addEventListener('abort', onAbort, { once: true })
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      const chunk = bytes(value, 'bootstrap response chunk')
+      total += chunk.byteLength
+      if (total > output.byteLength) {
+        throw qualificationError('RELAY_PROTOCOL_VIOLATION',
+          'bootstrap response exceeds the selected class')
+      }
+      output.set(chunk, total - chunk.byteLength)
+    }
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+    if (total > output.byteLength && typeof reader.cancel === 'function') {
+      await reader.cancel().catch(() => {})
+    }
+    if (typeof reader.releaseLock === 'function') reader.releaseLock()
+  }
+  if (total !== output.byteLength) {
+    throw qualificationError('RELAY_PROTOCOL_VIOLATION',
+      'bootstrap response is shorter than the selected class')
+  }
+  return output
+}
+
+function limitedDescribeResponseBody (input, requestId) {
+  const envelope = bytes(input, 'current descriptor response')
+  if (envelope.byteLength !== LIMITED_DESCRIBE_OUTER_BYTES ||
+      envelope[0] !== 1 || envelope[1] !== LIMITED_DESCRIBE_OUTER_CLASS) {
+    throw qualificationError('RELAY_PROTOCOL_VIOLATION',
+      'current descriptor response changed the fixed outer envelope')
+  }
+  const innerLength = readU32be(envelope, 2)
+  if (innerLength < LIMITED_DESCRIBE_DISPATCH_HEADER_BYTES ||
+      innerLength + 6 > envelope.byteLength) {
+    throw qualificationError('RELAY_PROTOCOL_VIOLATION',
+      'current descriptor response has an invalid inner length')
+  }
+  const dispatch = envelope.subarray(6, 6 + innerLength)
+  const bodyLength = readU32be(dispatch, 41)
+  if (readU32be(dispatch, 0) !== dispatch.byteLength - 4 ||
+      dispatch.byteLength !== LIMITED_DESCRIBE_DISPATCH_HEADER_BYTES + bodyLength ||
+      bodyLength > LIMITED_DESCRIBE_RESULT_BODY_LIMIT ||
+      dispatch[4] !== 1 || dispatch[6] !== 1 || dispatch[7] !== 1 ||
+      dispatch[8] !== 0 || readU64be(dispatch, 25) !== 0n ||
+      readU64be(dispatch, 33) !== 0n ||
+      !bytesEqual(dispatch.subarray(9, 25), requestId)) {
+    throw qualificationError('RELAY_PROTOCOL_VIOLATION',
+      'current descriptor response framing or correlation is invalid')
+  }
+  if (dispatch[5] === 3) {
+    throw qualificationError('TRANSPORT_FAILURE',
+      'descriptor bootstrap returned a canonical relay error')
+  }
+  if (dispatch[5] !== 2) {
+    throw qualificationError('RELAY_PROTOCOL_VIOLATION',
+      'current descriptor response is not a unary response')
+  }
+  return new Uint8Array(dispatch.subarray(LIMITED_DESCRIBE_DISPATCH_HEADER_BYTES))
+}
+
+async function fetchCurrentLimitedDescriptor ({
+  descriptorControl,
+  runtime,
+  canonicalUrl,
+  profile,
+  nowEpoch,
+  fetch,
+  signal,
+  timeoutMillis
+}) {
+  if (typeof fetch !== 'function') {
+    throw qualificationError('TRANSPORT_UNAVAILABLE',
+      'fetch implementation is required for current descriptor discovery')
+  }
+  const request = currentDescriptorRequest(descriptorControl, runtime)
+  const scope = limitedDescribeAbortScope(signal, limitedDescribeTimeoutMillis(timeoutMillis))
+  try {
+    const response = await fetch(new TextDecoder('utf-8', { fatal: true }).decode(canonicalUrl), {
+      method: 'POST',
+      headers: [['content-type', LIMITED_DESCRIBE_MEDIA_TYPE]],
+      body: request.body,
+      credentials: 'omit',
+      cache: 'no-store',
+      redirect: 'error',
+      referrerPolicy: 'no-referrer',
+      signal: scope.signal
+    })
+    if (!response || response.status !== 200) {
+      throw qualificationError('TRANSPORT_FAILURE',
+        'descriptor bootstrap returned a non-protocol status')
+    }
+    const contentType = response.headers && typeof response.headers.get === 'function'
+      ? response.headers.get('content-type')
+      : null
+    if (contentType !== LIMITED_DESCRIBE_MEDIA_TYPE) {
+      throw qualificationError('RELAY_PROTOCOL_VIOLATION',
+        'bootstrap response media type is not the blind protocol')
+    }
+    const envelope = await readExactLimitedDescribeResponse(response, scope.signal)
+    return descriptorControl.verifyDescriptorBytes(
+      limitedDescribeResponseBody(envelope, request.requestId), {
+        nowEpoch: nowEpoch(),
+        supportedProtocolProfiles: profile.supportedProtocolProfiles,
+        supportedTransportProfiles: profile.supportedTransportProfiles
+      })
+  } finally {
+    scope.close()
+  }
+}
+
+function limitedDescriptorLinkage (descriptor) {
+  if (!descriptor || typeof descriptor.snapshotBytes !== 'function') {
+    throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_CHAIN_INVALID',
+      'authenticated descriptor snapshot is unavailable')
+  }
+  const snapshot = bytes(descriptor.snapshotBytes(), 'authenticated descriptor snapshot')
+  const prefixLength = 1 + 32 + 32 + 8 + 1
+  if (snapshot.byteLength < prefixLength || snapshot[0] !== 1) {
+    throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_CHAIN_INVALID',
+      'authenticated descriptor linkage prefix is invalid')
+  }
+  const descriptorSequence = readU64be(snapshot, 65)
+  const previousTag = snapshot[73]
+  const previousDescriptorHash = previousTag === 0
+    ? null
+    : previousTag === 1 && snapshot.byteLength >= prefixLength + 32
+        ? new Uint8Array(snapshot.subarray(74, 106))
+        : undefined
+  if (previousDescriptorHash === undefined ||
+      descriptorSequence !== BigInt(descriptor.descriptorSequence) ||
+      !bytesEqual(snapshot.subarray(1, 33), descriptor.relayPublicKey) ||
+      !bytesEqual(snapshot.subarray(33, 65), descriptor.storeId)) {
+    throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_CHAIN_INVALID',
+      'authenticated descriptor linkage disagrees with its full control brand')
+  }
+  return Object.freeze({
+    descriptorHash: bytes(descriptor.descriptorHash, 'descriptor hash', 32),
+    descriptorSequence,
+    previousDescriptorHash,
+    relayPublicKey: bytes(descriptor.relayPublicKey, 'descriptor relay public key', 32),
+    storeId: bytes(descriptor.storeId, 'descriptor storeId', 32)
+  })
+}
+
 function sameLimitedAdmissionProfile (actual, expected) {
   const sameParameterUrl =
     ((actual?.parameterUrl == null && expected?.parameterUrl == null) ||
@@ -1267,33 +1581,41 @@ function sameLimitedAdmissionProfile (actual, expected) {
     sameParameterUrl
 }
 
-function assertLimitedRelayContext (context, relay, head, requirement) {
-  const expected = {
-    descriptorHash: fixedHex(head.descriptorHash),
-    continuityRoot: relay.continuityRootRelayPublicKey,
-    storeId: relay.storeId,
+function limitedRelayContext (relay, head, profile) {
+  const requirement = profile.requirement
+  const transport = profile.supportedTransportProfiles.find(value =>
+    value.transportId === relay.transportId)
+  const exact = {
+    familyId: relay.familyId,
+    operationId: relay.operationId,
+    endpointId: relay.endpointId,
+    transportSupportBit: relay.transportSupportBit,
+    privacyProfileBit: relay.privacyProfileBit
+  }
+  for (const field of Object.keys(exact)) {
+    if (exact[field] !== requirement[field]) {
+      throw qualificationError('PEERIT_LIMITED_CELL_GET_CONTEXT_DRIFT',
+        `signed seed relay changed the release-pinned ${field}`)
+    }
+  }
+  if (!transport || transport.transportSupportBit !== relay.transportSupportBit ||
+      fixedHex(head.storeId) !== relay.storeId) {
+    throw qualificationError('PEERIT_LIMITED_CELL_GET_CONTEXT_DRIFT',
+      'signed seed relay changed its release-pinned transport or store')
+  }
+  return Object.freeze({
+    descriptorHash: bytes(head.descriptorHash, 'qualified descriptor hash', 32),
+    descriptorSequence: BigInt(head.descriptorSequence),
+    continuityRoot: bytes(
+      relay.continuityRootRelayPublicKey, 'continuity root relay public key', 32),
+    storeId: bytes(head.storeId, 'qualified descriptor storeId', 32),
     familyId: requirement.familyId,
     operationId: requirement.operationId,
     endpointId: requirement.endpointId,
-    transportId: 1,
+    transportId: relay.transportId,
     transportSupportBit: requirement.transportSupportBit,
     privacyProfileBit: requirement.privacyProfileBit
-  }
-  for (const field of ['descriptorHash', 'continuityRoot', 'storeId']) {
-    if (fixedHex(context[field]) !== expected[field]) {
-      throw qualificationError('PEERIT_LIMITED_CELL_GET_CONTEXT_DRIFT',
-        `qualified relay changed ${field}`)
-    }
-  }
-  for (const field of [
-    'familyId', 'operationId', 'endpointId', 'transportId',
-    'transportSupportBit', 'privacyProfileBit'
-  ]) {
-    if (context[field] !== expected[field]) {
-      throw qualificationError('PEERIT_LIMITED_CELL_GET_CONTEXT_DRIFT',
-        `qualified relay changed ${field}`)
-    }
-  }
+  })
 }
 
 // A cold first visit re-walks the signed descriptor chain head→genesis with one
@@ -1374,7 +1696,10 @@ async function fetchDescriptorWithTransientRetry (fetchOnce, signal) {
 }
 
 async function qualifyLimitedSeedRelay ({
-  control,
+  readControl,
+  descriptorControl,
+  runtime,
+  fetch,
   relay,
   relayProfile,
   profile,
@@ -1384,12 +1709,18 @@ async function qualifyLimitedSeedRelay ({
   timeoutMillis
 }) {
   const canonicalUrl = new TextEncoder().encode(relay.canonicalDescribeUrl)
-  const headDescriptor = await fetchDescriptorWithTransientRetry(() => control.fetchDescriptorHead({
-    canonicalUrl,
-    signal,
-    timeoutMillis
-  }), signal)
-  const head = control.descriptorLinkage(headDescriptor)
+  const headDescriptor = await fetchDescriptorWithTransientRetry(() =>
+    fetchCurrentLimitedDescriptor({
+      descriptorControl,
+      runtime,
+      canonicalUrl,
+      profile,
+      nowEpoch,
+      fetch,
+      signal,
+      timeoutMillis
+    }), signal)
+  const head = limitedDescriptorLinkage(headDescriptor)
   if (head.descriptorSequence < BigInt(relay.minimumDescriptorSequence) ||
       fixedHex(head.storeId) !== relay.storeId) {
     throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_HEAD_INVALID',
@@ -1410,13 +1741,22 @@ async function qualifyLimitedSeedRelay ({
       throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_CHAIN_DUPLICATE',
         'descriptor history repeated a hash')
     }
-    const previousDescriptor = await fetchDescriptorWithTransientRetry(() => control.fetchDescriptorHistory({
-      canonicalUrl,
-      expectedDescriptorHash: current.previousDescriptorHash,
-      signal,
-      timeoutMillis
-    }), signal)
-    const previous = control.descriptorLinkage(previousDescriptor)
+    const bootstrapClient = new descriptorControl.BlindDescriptorBootstrapHttpClient({
+      runtime,
+      fetch
+    })
+    const previousDescriptor = await fetchDescriptorWithTransientRetry(() =>
+      bootstrapClient.fetchVerifiedDescriptor({
+        canonicalUrl,
+        expectedDescriptorHash: current.previousDescriptorHash,
+        nowEpoch: nowEpoch(),
+        history: true,
+        supportedProtocolProfiles: profile.supportedProtocolProfiles,
+        supportedTransportProfiles: profile.supportedTransportProfiles,
+        signal,
+        timeoutMillis
+      }), signal)
+    const previous = limitedDescriptorLinkage(previousDescriptor)
     if (previous.descriptorSequence + 1n !== current.descriptorSequence ||
         fixedHex(previous.descriptorHash) !== previousHash ||
         fixedHex(previous.storeId) !== relay.storeId) {
@@ -1436,13 +1776,14 @@ async function qualifyLimitedSeedRelay ({
   }
 
   const ascending = descending.reverse()
-  let trusted = await control.acceptDescriptor(ascending[0], {
+  const trustStore = new descriptorControl.DescriptorTrustStore()
+  let trusted = await trustStore.accept(ascending[0], {
     pinnedDescriptorHash: bytes(relay.descriptorGenesisHash, 'descriptor genesis hash', 32),
     continuityRootRelayPublicKey: bytes(
       relay.continuityRootRelayPublicKey, 'continuity root relay public key', 32)
   })
   for (let index = 1; index < ascending.length; index++) {
-    trusted = await control.acceptDescriptor(ascending[index], {
+    trusted = await trustStore.accept(ascending[index], {
       continuityRootRelayPublicKey: bytes(
         relay.continuityRootRelayPublicKey, 'continuity root relay public key', 32)
     })
@@ -1451,7 +1792,7 @@ async function qualifyLimitedSeedRelay ({
     throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_CHAIN_INVALID',
       'accepted descriptor chain did not terminate at the fetched head')
   }
-  const advertised = control.trustedAdmissionProfile(
+  const advertised = descriptorControl.trustedAdmissionProfile(
     trusted, relayProfile.admissionProfile.profileId)
   if (!sameLimitedAdmissionProfile(advertised, relayProfile.admissionProfile)) {
     throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_ADMISSION_PROFILE_DRIFT',
@@ -1462,26 +1803,41 @@ async function qualifyLimitedSeedRelay ({
   // remaining relay fetch in this qualification; a transient transport abort of
   // it is retried exactly like the chain-walk describes above. A genuine
   // not-qualified / health rejection is non-transient and still fails closed.
-  const qualified = await fetchDescriptorWithTransientRetry(() => control.qualifyCellGetCandidate({
-    canonicalUrl,
-    expectedDescriptorHash: head.descriptorHash,
-    continuityRootRelayPublicKey: bytes(
-      relay.continuityRootRelayPublicKey, 'continuity root relay public key', 32)
-  }, {
-    endpointId: profile.requirement.endpointId,
-    requiredRoleBits: profile.requirement.requiredRoleBits,
-    privacyProfileBit: profile.requirement.privacyProfileBit,
-    transportSupportBit: profile.requirement.transportSupportBit,
-    signal,
-    timeoutMillis
-  }), signal)
-  // The health proof was observed inside the qualifier before it returned.
-  // This post-return snapshot is therefore conservative; never restart that
-  // proof's local freshness window when adapters are assembled later.
-  const qualifiedAtMonotonicMillis = monotonicMillis()
-  const context = control.endpointContext(qualified.endpoint)
-  assertLimitedRelayContext(context, relay, head, profile.requirement)
-  const validity = control.trustedDescriptorValidity(qualified.trustedDescriptor)
+  const qualified = await fetchDescriptorWithTransientRetry(async () => {
+    const qualifiedAtMonotonicMillis = monotonicMillis()
+    try {
+      const endpoint = await readControl.qualifyCellGetCandidate({
+        canonicalUrl,
+        expectedDescriptorHash: head.descriptorHash,
+        continuityRootRelayPublicKey: bytes(
+          relay.continuityRootRelayPublicKey, 'continuity root relay public key', 32),
+        signal,
+        timeoutMillis
+      }, {
+        endpointId: profile.requirement.endpointId,
+        requiredRoleBits: profile.requirement.requiredRoleBits,
+        privacyProfileBit: profile.requirement.privacyProfileBit,
+        transportSupportBit: profile.requirement.transportSupportBit,
+        signal,
+        timeoutMillis
+      })
+      return Object.freeze({ endpoint, qualifiedAtMonotonicMillis })
+    } catch (error) {
+      if (error && (error.code === 'DESCRIPTOR_CHAIN_INVALID' ||
+          error.code === 'DESCRIPTOR_HISTORY_LIMIT' ||
+          error.code === 'UNTRUSTED_RELAY_IDENTITY')) {
+        throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_CHAIN_INVALID',
+          'limited Cell-GET control rejected the authenticated descriptor history')
+      }
+      throw error
+    }
+  }, signal)
+  // The limited control performed the health proof before returning its opaque
+  // endpoint. Retain the start of that successful attempt, not a later clock
+  // sample, so adapter freshness is conservative.
+  const qualifiedAtMonotonicMillis = qualified.qualifiedAtMonotonicMillis
+  const context = limitedRelayContext(relay, head, profile)
+  const validity = descriptorControl.trustedDescriptorValidity(trusted)
   const epoch = nowEpoch()
   if (!validity || epoch < validity.issuedEpoch || epoch >= validity.expiresEpoch) {
     throw qualificationError('PEERIT_LIMITED_DESCRIPTOR_EXPIRED',
@@ -1630,6 +1986,7 @@ export async function recoverPeeritSeedWithLimitedCellGetAuthorityV1 (options = 
   const seedBootstrap = getVerifiedPeeritBrowserSeedBootstrapV1(
     options.releaseAuthority)
   const namespace = exactLimitedCellGetControl(limited && limited.control)
+  const descriptorControl = exactLimitedDescriptorControl(runtimeAssembly.control)
   const profile = limited && typeof limited.profileSnapshot === 'function'
     ? limited.profileSnapshot()
     : null
@@ -1664,13 +2021,16 @@ export async function recoverPeeritSeedWithLimitedCellGetAuthorityV1 (options = 
   }
 
   const runtime = namespace.createBrowserCryptoRuntime(options.webCrypto || globalThis.crypto)
+  const fetch = options.fetch || (typeof globalThis.fetch === 'function'
+    ? globalThis.fetch.bind(globalThis)
+    : null)
   const control = namespace.createBlindCellGetControl({
     runtime,
     nowEpoch,
     monotonicMillis,
     supportedProtocolProfiles: profile.supportedProtocolProfiles,
     supportedTransportProfiles: profile.supportedTransportProfiles,
-    fetch: options.fetch || globalThis.fetch.bind(globalThis)
+    fetch
   })
   const profileRelays = new Map(profile.relays.map(relay => [relay.relayId, relay]))
   const qualifications = await Promise.all(seed.payload.relays.map(async relay => {
@@ -1680,7 +2040,10 @@ export async function recoverPeeritSeedWithLimitedCellGetAuthorityV1 (options = 
         'signed seed relay has no signed admission profile')
     }
     return qualifyLimitedSeedRelay({
-      control,
+      readControl: control,
+      descriptorControl,
+      runtime,
+      fetch,
       relay,
       relayProfile,
       profile,

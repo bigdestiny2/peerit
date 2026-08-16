@@ -14,6 +14,10 @@ export const PEERIT_LIMITED_CELL_PUT_DIFFICULTY_BITS_V1 = 20
 export const PEERIT_LIMITED_CELL_PUT_MAX_TOKEN_ALLOWANCE_V1 = 2 // fleet issuer cap
 export const PEERIT_LIMITED_CELL_PUT_MAX_SIZE_CLASS_V1 = 2
 export const PEERIT_LIMITED_CELL_PUT_MAX_LEASE_CLASS_V1 = 2
+export const PEERIT_LIMITED_CELL_PUT_ISSUER_ORIGINS_V1 = Object.freeze([
+  'https://relay-dal.p2phiverelay.xyz:8443',
+  'https://relay-syd.p2phiverelay.xyz:8443'
+])
 
 const HEX_32 = /^[0-9a-f]{64}$/
 const decoder = new TextDecoder('utf-8', { fatal: true })

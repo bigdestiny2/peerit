@@ -6,11 +6,13 @@ import { COMMENT_SORTS, POST_SORTS, sortComments } from '../ranking.js'
 import { feedAlgorithm, rankFeedWindow } from '../feed-algorithms.js'
 import { MODERATION_VIEW, VISIBILITY, cleanModerationView } from '../moderation.js'
 import { REPORT_REASONS, REPORT_VERDICT, TYPE } from '../model.js'
+import { getPeeritCommittedIntentIdV1 } from '../data.js'
 import { publicationNetSegments } from './publication-status.js'
 
 const DEFAULT_COMMUNITY = 'welcome'
 const MODERATION_VIEW_STORAGE_KEY = 'peerit.moderation-view.v1'
 const FEED_ALGORITHM_STORAGE_KEY = 'peerit.feed-algorithm.v1'
+const SEQ29_PENDING_EXPLICIT_PUBLICATION_KEY = 'peerit.seq29.pending-explicit-publication.v1'
 
 function esc (value) {
   return String(value == null ? '' : value)
@@ -69,12 +71,20 @@ function empty (title, copy, action = '') {
   return `<div class="empty"><h3>${esc(title)}</h3><p>${esc(copy)}</p>${action}</div>`
 }
 
-function axesHtml (status) {
-  const axes = publicationNetSegments(status.sync)
-  return `<div class="substrate-status" data-local-ready="${status.publication.authoringReady ? 'true' : 'false'}">
+function axesHtml (status, pendingIntentId = null) {
+  const discovery = status.inbox?.active
+    ? `discovery: verified${status.inbox.acceptedRecords
+        ? ` · ${status.inbox.acceptedRecords} accepted`
+        : ''}`
+    : 'discovery: waiting for signed bootstrap'
+  const axes = [...publicationNetSegments(status.sync), discovery]
+  const pending = pendingIntentId
+    ? `<button class="pa" data-action="retry-explicit-publication" data-intent-id="${esc(pendingIntentId)}">Retry this publication</button>`
+    : ''
+  return `<div class="substrate-status" data-local-ready="${status.publication.authoringReady ? 'true' : 'false'}" data-explicit-publication-pending="${pendingIntentId ? 'true' : 'false'}">
     <div class="substrate-copy">${esc(status.publication.copy)}</div>
     <div class="substrate-axes">${axes.map((axis, index) =>
-      `<span class="substrate-axis axis-${index}">${esc(axis)}</span>`).join('')}</div>
+      `<span class="substrate-axis axis-${index}">${esc(axis)}</span>`).join('')}${pending}</div>
   </div>`
 }
 
@@ -272,12 +282,22 @@ export function mountPeeritProductUiV1 (runtime, options = {}) {
   let busy = false
   let destroyed = false
   const storage = options.storage || window.localStorage
+  const publishAuthoredIntent = typeof options.publishAuthoredIntent === 'function'
+    ? options.publishAuthoredIntent
+    : null
+  const storedPendingIntentId = storage?.getItem(SEQ29_PENDING_EXPLICIT_PUBLICATION_KEY)
   const ui = {
     moderationView: cleanModerationView(storage?.getItem(MODERATION_VIEW_STORAGE_KEY)),
     feedAlgorithm: selectedFeedAlgorithm(storage?.getItem(FEED_ALGORITHM_STORAGE_KEY)),
     // Deliberately session-only: a new browser session respects the selected
     // policy again instead of silently remembering every reveal forever.
-    revealed: new Set()
+    revealed: new Set(),
+    pendingIntentId: /^[0-9a-f]{64}$/.test(String(storedPendingIntentId || ''))
+      ? storedPendingIntentId
+      : null
+  }
+  if (storedPendingIntentId && !ui.pendingIntentId) {
+    storage?.removeItem(SEQ29_PENDING_EXPLICIT_PUBLICATION_KEY)
   }
 
   document.body.innerHTML = '<header class="topbar"><a class="brand" href="#/"><span class="brand-mark">P</span><span class="brand-name">peerit</span></a><form class="search" data-form="search"><input name="q" type="search" maxlength="200" placeholder="Search your verified local view" aria-label="Search"><button class="search-submit" type="submit" aria-label="Run search">⌕</button></form><div class="topbar-right"><span class="mode-badge live">blind</span><a class="user-pill" href="#/profile" aria-label="Your identity"><span class="avatar" style="background:linear-gradient(135deg,var(--accent),var(--accent-2))"></span><span class="uname" data-user-label>lurking</span></a></div></header><div data-status></div><main class="layout"><section class="content" id="app"><div class="panel skel"><div class="sk-line w40"></div><div class="sk-line w80"></div></div></section><aside class="sidebar" id="sidebar"></aside></main><div class="toast" data-toast hidden></div>'
@@ -303,7 +323,7 @@ export function mountPeeritProductUiV1 (runtime, options = {}) {
       }
       const [main, sidebar] = await Promise.all([routeView(runtime, route, ui), sidebarView(runtime, ui)])
       if (destroyed || version !== renderVersion) return
-      document.querySelector('[data-status]').innerHTML = axesHtml(status)
+      document.querySelector('[data-status]').innerHTML = axesHtml(status, ui.pendingIntentId)
       document.querySelector('[data-user-label]').textContent = status.lurker ? 'lurking' : shortKey(status.identity.pubkey)
       document.querySelector('#app').innerHTML = main
       document.querySelector('#sidebar').innerHTML = sidebar
@@ -317,14 +337,45 @@ export function mountPeeritProductUiV1 (runtime, options = {}) {
     }
   }
 
-  const mutate = async operation => {
+  const publishExplicitly = async (authoredRecord = null, retryIntentId = null) => {
+    if (!publishAuthoredIntent) return null
+    const intentId = retryIntentId || getPeeritCommittedIntentIdV1(authoredRecord)
+    if (!/^[0-9a-f]{64}$/.test(String(intentId || ''))) {
+      const error = new Error('The exact locally committed publication intent is unavailable.')
+      error.code = 'PEERIT_SEQ29_EXPLICIT_PUBLICATION_RECEIPT_REQUIRED'
+      throw error
+    }
+    ui.pendingIntentId = intentId
+    storage?.setItem(SEQ29_PENDING_EXPLICIT_PUBLICATION_KEY, intentId)
+    const result = await publishAuthoredIntent(intentId)
+    if (ui.pendingIntentId === intentId) {
+      ui.pendingIntentId = null
+      storage?.removeItem(SEQ29_PENDING_EXPLICIT_PUBLICATION_KEY)
+    }
+    return result
+  }
+
+  const mutate = async (operation, { publish = false, retryIntentId = null } = {}) => {
     if (busy) return
     busy = true
     await render()
-    try { await operation() } catch (error) { showError(error) } finally {
+    try {
+      const authoredRecord = await operation()
+      if (publish && (authoredRecord || retryIntentId)) {
+        await publishExplicitly(authoredRecord, retryIntentId)
+      }
+    } catch (error) { showError(error) } finally {
       busy = false
       await render()
     }
+  }
+
+  const requireExplicitUserEvent = event => {
+    if (!publishAuthoredIntent || event?.isTrusted === true) return true
+    const error = new Error('Seq29 publication requires a direct user action.')
+    error.code = 'PEERIT_SEQ29_EXPLICIT_USER_ACTION_REQUIRED'
+    showError(error)
+    return false
   }
 
   const navigateSearch = value => {
@@ -342,12 +393,18 @@ export function mountPeeritProductUiV1 (runtime, options = {}) {
       navigateSearch(values.get('q'))
       return
     }
+    if (!requireExplicitUserEvent(event)) return
+    if (ui.pendingIntentId) {
+      showError(new Error('Retry the pending publication before starting another authored action.'))
+      return
+    }
     mutate(async () => {
       if (kind === 'community') {
         const community = await runtime.data.createCommunity({
           slug: values.get('slug'), title: values.get('title'), description: values.get('description')
         })
         window.location.hash = communityHref(community.slug)
+        return community
       } else if (kind === 'post') {
         const post = await runtime.data.submitPost({
           community: values.get('community'),
@@ -357,18 +414,21 @@ export function mountPeeritProductUiV1 (runtime, options = {}) {
           url: values.get('url')
         })
         window.location.hash = postHref(post)
+        return post
       } else if (kind === 'comment') {
-        await runtime.data.addComment({
+        const comment = await runtime.data.addComment({
           community: values.get('community'),
           postCid: values.get('postCid'),
           parentCid: values.get('parentCid') || null,
           body: values.get('body')
         })
         form.reset()
+        return comment
       } else if (kind === 'profile') {
-        await runtime.data.setProfile({ name: values.get('name'), bio: values.get('bio'), color: values.get('color') })
+        return runtime.data.setProfile({ name: values.get('name'), bio: values.get('bio'), color: values.get('color') })
       }
-    })
+      return null
+    }, { publish: true })
   }
 
   const onKeydown = event => {
@@ -382,10 +442,29 @@ export function mountPeeritProductUiV1 (runtime, options = {}) {
     if (!control) return
     const action = control.dataset.action
     event.preventDefault()
+    if (action === 'retry-explicit-publication') {
+      if (!requireExplicitUserEvent(event)) return
+      const intentId = ui.pendingIntentId
+      if (!intentId || control.dataset.intentId !== intentId) {
+        showError(new Error('The pending publication changed; reload the verified local view.'))
+        return
+      }
+      mutate(async () => null, { publish: true, retryIntentId: intentId })
+      return
+    }
+    const publishes = new Set([
+      'vote', 'report-content', 'keep-content', 'withdraw-report',
+      'edit-post', 'delete-post', 'edit-comment', 'delete-comment'
+    ]).has(action)
+    if (publishes && !requireExplicitUserEvent(event)) return
+    if (publishes && ui.pendingIntentId) {
+      showError(new Error('Retry the pending publication before starting another authored action.'))
+      return
+    }
     mutate(async () => {
       if (action === 'vote') {
         const current = control.classList.contains('on') ? 0 : Number(control.dataset.value)
-        await runtime.data.vote(control.dataset.cid, control.dataset.community, control.dataset.targetType, current,
+        return runtime.data.vote(control.dataset.cid, control.dataset.community, control.dataset.targetType, current,
           { postCid: control.dataset.postCid || undefined })
       } else if (action === 'report-content' || action === 'keep-content') {
         const verdict = action === 'keep-content' ? REPORT_VERDICT.KEEP : REPORT_VERDICT.BURY
@@ -397,7 +476,7 @@ export function mountPeeritProductUiV1 (runtime, options = {}) {
           reason = REPORT_REASONS.includes(answer) ? answer : 'other'
           note = window.prompt('Optional note (never shown to the relay)', '') || ''
         }
-        await runtime.data.reportContent(control.dataset.community, {
+        return runtime.data.reportContent(control.dataset.community, {
           targetCid: control.dataset.cid,
           targetType: control.dataset.targetType,
           postCid: control.dataset.postCid || undefined,
@@ -406,7 +485,7 @@ export function mountPeeritProductUiV1 (runtime, options = {}) {
           note
         })
       } else if (action === 'withdraw-report') {
-        await runtime.data.withdrawReport(control.dataset.community, control.dataset.cid,
+        return runtime.data.withdrawReport(control.dataset.community, control.dataset.cid,
           { postCid: control.dataset.postCid || undefined })
       } else if (action === 'reveal-content') {
         ui.revealed.add(control.dataset.cid)
@@ -419,17 +498,18 @@ export function mountPeeritProductUiV1 (runtime, options = {}) {
       } else if (action === 'edit-post') {
         const post = await runtime.data.getPost(control.dataset.community, control.dataset.cid)
         const body = window.prompt('Edit post body', post?.body || '')
-        if (body != null) await runtime.data.editPost(control.dataset.community, control.dataset.cid, body)
+        if (body != null) return runtime.data.editPost(control.dataset.community, control.dataset.cid, body)
       } else if (action === 'delete-post') {
-        if (window.confirm('Delete this post?')) await runtime.data.deletePost(control.dataset.community, control.dataset.cid)
+        if (window.confirm('Delete this post?')) return runtime.data.deletePost(control.dataset.community, control.dataset.cid)
       } else if (action === 'edit-comment') {
         const comment = await runtime.data.getComment(control.dataset.community, control.dataset.postCid, control.dataset.cid)
         const body = window.prompt('Edit comment', comment?.body || '')
-        if (body != null) await runtime.data.editComment(control.dataset.community, control.dataset.postCid, control.dataset.cid, body)
+        if (body != null) return runtime.data.editComment(control.dataset.community, control.dataset.postCid, control.dataset.cid, body)
       } else if (action === 'delete-comment') {
-        if (window.confirm('Delete this comment?')) await runtime.data.deleteComment(control.dataset.community, control.dataset.postCid, control.dataset.cid)
+        if (window.confirm('Delete this comment?')) return runtime.data.deleteComment(control.dataset.community, control.dataset.postCid, control.dataset.cid)
       }
-    })
+      return null
+    }, { publish: publishes })
   }
 
   const onChange = event => {

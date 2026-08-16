@@ -28,6 +28,16 @@ import { MaterializedIndex } from './materialized-index.js'
 // and never goes stale — a bounded FIFO is all it needs.
 const BODY_CACHE_MAX = 500
 const DISPERSAL_COMPATIBILITY_MODULE = './data-dispersal.js'
+const COMMITTED_INTENT_RECEIPTS = new WeakMap()
+
+// A browser-only, object-bound handoff from the local-first domain mutation to
+// the explicit Seq29 publication action. The receipt is never serialized,
+// enumerable, or caller-selectable: only the exact object returned by a
+// successfully committed Data mutation can reveal its journal intent.
+export function getPeeritCommittedIntentIdV1 (value) {
+  if (!value || typeof value !== 'object') return null
+  return COMMITTED_INTENT_RECEIPTS.get(value) || null
+}
 
 // Public methods that can eventually publish an owner-signed mutation. Tracking
 // the whole intent (not just the final network request) lets the app refuse an
@@ -385,8 +395,12 @@ export class Data {
     this._remoteChangeDuringLocalWrite = false
     this._localSyncWrites++
     for (const key of localWireKeys) this._localSyncKeys.add(key)
+    let committedIntentId = null
     try {
-      if (staged.length && typeof this.sync.appendBatch === 'function') await this.sync.appendBatch(ops, this._writerSession)
+      if (staged.length && typeof this.sync.appendBatch === 'function') {
+        const committed = await this.sync.appendBatch(ops, this._writerSession)
+        committedIntentId = committed && committed.intentId
+      }
       else {
         // DevSync and old PearBrowser transports retain their historical sequential
         // compatibility. Writable web exposes appendBatch and takes the atomic path.
@@ -395,7 +409,10 @@ export class Data {
           await this.sync.append(pending, this._writerSession)
         }
         this._assertCurrentOwner(expectedOwner, 'immediately before publication')
-        await this.sync.append(op, this._writerSession)
+        const committed = await this.sync.append(op, this._writerSession)
+        // A compatibility transport that cannot atomically append the staged
+        // batch has no single exact intrinsic publication to hand to Seq29.
+        if (!staged.length) committedIntentId = committed && committed.intentId
       }
     } finally {
       this._localSyncWrites--
@@ -436,6 +453,9 @@ export class Data {
       this._materializedIndex = null
       this._materializedEpoch = -1
       this._materializedSourceEpoch = null
+    }
+    if (/^[0-9a-f]{64}$/.test(String(committedIntentId || ''))) {
+      COMMITTED_INTENT_RECEIPTS.set(data, committedIntentId)
     }
     return data
   }
@@ -874,6 +894,7 @@ export class Data {
     delete data.dispersal
     await this._emit(TYPE.POST, data, { pow: true }) // re-mint: _toV2 strips the reconstructed record's pow (V2_DROP), so without this the re-emit hits the wire with NO proof and admit()→verify() drops it. (v2 powTarget is content-independent, so this restores a present proof; it does not re-bind to the edit.)
     this.invalidateViewCaches()
+    return data
   }
 
   // Aggregate posts across communities (for home/all feeds).
@@ -1031,6 +1052,7 @@ export class Data {
     delete data.dispersal
     await this._emit(TYPE.COMMENT, data, { pow: true }) // re-mint: _toV2 strips the reconstructed record's pow (V2_DROP), so without this the re-emit hits the wire with NO proof and admit()→verify() drops it. (v2 powTarget is content-independent, so this restores a present proof; it does not re-bind to the edit.)
     this.invalidateViewCaches()
+    return data
   }
 
   // ---- Votes ----------------------------------------------------------------

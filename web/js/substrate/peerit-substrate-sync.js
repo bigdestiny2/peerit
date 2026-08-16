@@ -34,6 +34,7 @@ const MAX_RELAY_TARGETS = 3
 const MAX_DELIVERY_INTENT_CONCURRENCY = 32
 const MAX_READBACK_FRESHNESS_TTL_MS = PEERIT_CELL_READBACK_FRESHNESS_TTL_MS
 const ACKNOWLEDGED = new Set(['acknowledged', 'readback-verified'])
+const PEERIT_SUBSTRATE_SYNC_INSTANCES = new WeakSet()
 
 function clone (value) {
   if (value == null) return value
@@ -458,6 +459,7 @@ export class PeeritSubstrateSync {
     this._readbackRevalidationRequired = new Set()
     this.viewEpoch = 0
     this.setRelays(options.relays || [])
+    PEERIT_SUBSTRATE_SYNC_INSTANCES.add(this)
   }
 
   async ready () {
@@ -488,7 +490,10 @@ export class PeeritSubstrateSync {
       if (this._channel.unref) this._channel.unref()
       this._channel.onmessage = event => {
         if (!event || !event.data || event.data.key !== 'peerit-journal-v2') return
-        this._reloadFromExternal(event.data.viewChanged === true).catch(error => {
+        this._reloadFromExternal(
+          event.data.viewChanged === true,
+          event.data.publicationWork !== false
+        ).catch(error => {
           this._localFailure = error
           console.error(error)
         })
@@ -496,14 +501,21 @@ export class PeeritSubstrateSync {
     } catch {}
   }
 
-  async _reloadFromExternal (viewChangedHint) {
+  async _reloadFromExternal (viewChangedHint, publicationWorkHint = true) {
     const previous = this._summary
     const next = await this.journal.summary()
-    if (previous && next.revision <= previous.revision) return
+    if (previous && next.revision <= previous.revision) {
+      // A remote-only notification can race ahead and observe an authored
+      // commit before its own BroadcastChannel message arrives. Preserve that
+      // later positive publication signal even when the journal revision is
+      // already adopted; negative signals never schedule outbound work.
+      if (publicationWorkHint) this._scheduleFlush()
+      return
+    }
     const viewChanged = viewChangedHint || !previous || next.viewRevision !== previous.viewRevision
     this._adoptSummary(next)
     this._emit(viewChanged ? undefined : [])
-    this._scheduleFlush()
+    if (publicationWorkHint) this._scheduleFlush()
   }
 
   _adoptSummary (summary) {
@@ -991,9 +1003,9 @@ export class PeeritSubstrateSync {
     }
   }
 
-  async _refreshAfterMutation (viewChanged, changedKeys) {
+  async _refreshAfterMutation (viewChanged, changedKeys, options = {}) {
     this._adoptSummary(await this.journal.summary())
-    this._broadcast(viewChanged)
+    this._broadcast(viewChanged, options.publicationWork !== false)
     this._emit(changedKeys)
   }
 
@@ -1086,14 +1098,15 @@ export class PeeritSubstrateSync {
     }
   }
 
-  _broadcast (viewChanged) {
+  _broadcast (viewChanged, publicationWork = true) {
     if (!this._channel) return
     try {
       this._channel.postMessage({
         key: 'peerit-journal-v2',
         revision: this._summary.revision,
         viewRevision: this._summary.viewRevision,
-        viewChanged
+        viewChanged,
+        publicationWork
       })
     } catch {}
   }
@@ -1135,4 +1148,13 @@ export function createPeeritSubstrateSync (options = {}) {
     })
   }
   return new PeeritSubstrateSync({ ...options, journal })
+}
+
+export function assertPeeritSubstrateSyncV1 (value) {
+  if (!value || typeof value !== 'object' || !PEERIT_SUBSTRATE_SYNC_INSTANCES.has(value)) {
+    const error = new TypeError('The exact Peerit substrate sync instance is required.')
+    error.code = 'PEERIT_SUBSTRATE_SYNC_AUTHORITY_REQUIRED'
+    throw error
+  }
+  return value
 }

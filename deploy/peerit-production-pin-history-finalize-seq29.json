@@ -1,0 +1,33 @@
+{
+  "schema": "peerit-production-pin-history-ceremony-v1",
+  "phase": "finalized-29",
+  "releaseAuthorityPublicKey": "d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b",
+  "genesisPinHash": "597f549686b89df44575623e61608182a00879fcf4d4a8e96eb553471b287f36",
+  "terminalReleaseSequence": 29,
+  "terminalPinHash": "8030405dfeb0342d26ee6a204e83ba447a2c1479683f15ee8088e8f72bdad8c6",
+  "bundleHash": "8c2f685e2b389972c6cb98f6978481af0b629b935ee623e77517d721b1f0a429",
+  "bindings": {
+    "profileSpecHash": "931a85e29eb3767d8d2a1920d7e127cf20d708cce6975d967522fd07f475f473",
+    "profileAbiHash": "205d935d74bec6f80f8b6ee934c9f281f85a07e1efd25d9977f111c34fb0ded6",
+    "profileVectorSetHash": "c5f679378d5b84de88cadffd89612044df59443663e292c308dde19fa4583155",
+    "validatorArtifactHash": "96ea7425eb1028748ee009486c1e72165f1cb7c80a37eb4ac0ffed748e18ac3d",
+    "validatorVectorSetHash": "b0cfcbe4deebd25632edb53c570ca9b05a1e0544532af4091ca8c43249994f9b",
+    "availabilityPolicyHash": "268c0eb215b3e538dc7655abefd6c3cf9a20f92a6de7067e459f4914ca70f83c",
+    "legacySourceSetHash": "85b2c1fd76beae4e763bdd26f6baf335234328e4282f546f0bab13a5c9f25aa7",
+    "hiveRelayWireTuple": {
+      "specHash": "470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9",
+      "abiHash": "aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d",
+      "vectorSetHash": "09bd04c86f6f62b4636b9360fd2fca985a63537a0cec8642918f450ec70f9e78"
+    }
+  },
+  "seedBootstrap": {
+    "path": "/peerit-seed-bootstrap-v1.json",
+    "sha256": "8eb0c977b84e26c726092bb2ed8de4f531b06d2b0a158bb31d0313dacd07ada1",
+    "domainHash": "600ab9ec1714657a8ab87733aee9e0f170636588dfcfc3e6cd6007da7a87e6a3",
+    "discoveryAuthorityPublicKey": "691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec",
+    "bootstrapSequence": 0,
+    "previousBootstrapHash": null
+  },
+  "appArtifactHash": "551f7321928e21683518ee8045927964a1369b9ad8eacf9cc2825f394f1a78e4",
+  "webAssetManifestHash": "1d1eafa021e9a978f8f979369fedb255d03b8323052d31703827368d432e3c9a"
+}

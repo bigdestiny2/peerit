@@ -1,15 +1,26 @@
 {
-  "schema": "PeeritVendoredHiveRelayBlindCellGetClientV1",
-  "version": 1,
+  "schema": "PeeritVendoredHiveRelayBlindCellGetClientV2",
+  "version": 2,
   "scope": "DESCRIBE.GET+DESCRIBE.CHALLENGE+CELL.GET",
   "networkPuts": 0,
-  "upstreamPackage": "@hiverelay/blind-client",
-  "upstreamArtifactPath": "browser-artifacts/blind-client-cell-get-v1.mjs",
+  "upstreamPackage": "@hiverelay/blind-client-public-browser",
+  "candidateCommit": "adeacef07c5de4d17d5ed1389fee7a35095b862f",
+  "candidateTree": "7c41786a4ccd758a4ddcb419eb02213cbeeaca0c",
+  "acceptedSourceCommit": "1a114f64c97547cab6a18102c2ef4bff930e53ed",
+  "acceptedSourceTree": "5a341ba17a3d91a750cac94ba51116fe3552a6aa",
+  "upstreamArtifactPath": "packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.mjs",
   "artifactPath": "vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.mjs",
-  "artifactLength": 174037,
-  "artifactHash": "7a34c2beaca5375c61754d165d5eed1d209489611f84517540bccd241c01ddcd",
-  "manifestHash": "9f71ff6c07d183cb806dcf8c869a1d15db57a55bc22c374eef3bb70fa794560a",
-  "sourceClosureHash": "ba9a2f6d411fc057e5c602248dc3ee5120779c6d38e14406603d6174ecf9f354",
+  "artifactLength": 191474,
+  "artifactRawSha256": "c4de3329a35ee0a6514cabfa8763e1217f6ab1fc5650ca794db5e3b9b17a6ebc",
+  "manifestRawSha256": "94d95bbc2cf2a779562eb8ce4a6207a1354238c8e5f5453fbf2e742687180e12",
+  "artifactHash": "ef60c0a45fe093d214cddb17f207675dfdf1df3bb5861bc9ea24542376bffb1c",
+  "manifestHash": "b483a8fcd032a378640f7f3a3da28650d6defdd8e9d7d78a01ee313e24ac5efa",
+  "browserTupleHash": "30c2c6c4bedfbf8cd77436a82c247490a09de9b46dfc45f28675c8cbb9df3b49",
+  "sourceClosureHash": "a021373afd51e6e80d5c4143ff8b80a3c305f69d45c12f2296ad98e06cd2d461",
+  "normalizedGraphHash": "867e0227b56336eb7eb4ea2c0aff4874e88c2fdf38261a594b95b15c0c663fff",
+  "normalizedGraphSetHash": "240dc9762391ab59539da2d01b7858055fb0579d8e9b3f7afe84b9ba369160bd",
+  "candidateEvidenceAuthority": "external-postcommit-final-sequence",
+  "standaloneAuthority": false,
   "wireTuple": {
     "specHash": "470a48af6879bfdb036992a686576f61eca3f69966aeb0c46a4043b0efed5cd9",
     "abiHash": "aaf29c8225ee33a59a02f1d27b898aa5b4f9aec005c6e509dee450ffc87b1b0d",
@@ -19,13 +30,41 @@
     "formatHash": "5637708aff4a6e93a6ff3a2f96361aa0b1597c229346e124eebeb2d7618ae09a",
     "vectorSetHash": "ea176ea78a611256689604541e55ba420d426dda2fa4dd64fb3ac9ac7503934d"
   },
+  "exactSortedExports": [
+    "createBlindCellGetControl",
+    "createBrowserCryptoRuntime"
+  ],
   "chromium": {
-    "version": "Google Chrome for Testing 151.0.7922.34"
+    "version": "Google Chrome for Testing 151.0.7922.34",
+    "executablePath": "/Users/localllm/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell",
+    "executableHash": "7687bff7cb2db075f250e6d5848bbc8838cac3802ac3952a899c574f8eccab45",
+    "contentSecurityPolicyHash": "b3c81c106609f04764e531e72842dffcaf061d33263a5c24c447a9a06cd0ed6b",
+    "requestInventory": [
+      "/",
+      "/bootstrap.mjs",
+      "/gate.mjs",
+      "/blind-client-public-cell-get-v1.mjs"
+    ],
+    "securityPolicyViolationCount": 0,
+    "errorCount": 0,
+    "unhandledRejectionCount": 0
   },
   "crossHost": {
-    "platform": "linux",
-    "architecture": "arm64",
+    "candidateIdentityBinding": "external-postcommit-final-sequence",
+    "sourceArchiveIdentity": "same-committed-relative-bytes",
+    "hostNode": "v22.22.0",
+    "hostModulesAbi": "127",
+    "hostNapi": "10",
+    "hostPlatform": "darwin",
+    "hostArchitecture": "arm64",
+    "nativeAddonHash": "9a6f4aed98b0cf12e6f70d15e4df89442eb4c4ba5076c5cee16f79f890a21356",
     "containerImageId": "sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4",
-    "node": "v22.23.1"
+    "containerPlatform": "linux/arm64",
+    "containerArchitecture": "arm64",
+    "containerNode": "v22.23.1",
+    "containerModulesAbi": "127",
+    "containerNapi": "10",
+    "normalizedGraphHash": "867e0227b56336eb7eb4ea2c0aff4874e88c2fdf38261a594b95b15c0c663fff",
+    "normalizedGraphSetHash": "240dc9762391ab59539da2d01b7858055fb0579d8e9b3f7afe84b9ba369160bd"
   }
 }

@@ -15,7 +15,7 @@ export const PROFILE_VALIDATOR_ARTIFACT_STATUS = Object.freeze({
   vectorManifest: 'protocol/validator/peerit-validator-v1.manifest.cenc',
   artifactBytes: 795428,
   vectorCount: 238,
-  validatorArtifactHash: 'c92f1b402d745fc5d8235358bc7909a50cb23b230e75de605fd421fc500f9613',
+  validatorArtifactHash: '96ea7425eb1028748ee009486c1e72165f1cb7c80a37eb4ac0ffed748e18ac3d',
   validatorVectorSetHash: 'b0cfcbe4deebd25632edb53c570ca9b05a1e0544532af4091ca8c43249994f9b',
   runtimeVectorSetHash: '84d0cfd27a3b078ea839b2ec35ae9df7dd4ab619faa39dd8bef805f0c2b1c77c',
   deterministicBuildReady: true,

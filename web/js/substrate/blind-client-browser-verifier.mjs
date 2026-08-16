@@ -4,36 +4,38 @@ import {
   bytesToHex,
   decodeUtf8,
   domainLengthHash,
-  utf8Bytes
+  hexToBytes
 } from './release-control-primitives.mjs'
 
-const MAGIC = utf8Bytes('HIVERELAY-BLIND-CLIENT-BROWSER-V1')
-const ARTIFACT_PATH = 'browser-artifacts/blind-client-control-v1.mjs'
-const CELL_GET_ARTIFACT_PATH = 'browser-artifacts/blind-client-cell-get-v1.mjs'
 const MAX_ARTIFACT_BYTES = 320 * 1024
-const ARTIFACT_HASH_DOMAIN = 'hiverelay.blind.client-browser-artifact-hash.v1'
-const MANIFEST_HASH_DOMAIN = 'hiverelay.blind.client-browser-artifact-manifest-hash.v1'
-const CHROMIUM_CHECKS = Object.freeze([
-  'STANDALONE_ESM_IMPORT',
-  'REQUIRED_CONTROL_EXPORTS',
-  'CLOSED_EXTERNAL_PROFILE_DECODER',
-  'WEBCRYPTO_AES_256_GCM_ROUNDTRIP',
-  'SIGNED_CAPABILITY_CELL_COMPOSITION',
-  'PLAINTEXT_SENTINEL_ABSENT_FROM_REQUEST'
-])
-const CELL_GET_CHROMIUM_CHECKS = Object.freeze([
-  'STANDALONE_ESM_IMPORT',
-  'EXACT_CELL_GET_ONLY_EXPORTS',
-  'WEBCRYPTO_AES_256_GCM_ROUNDTRIP',
-  'FIXED_CELL_GET_OPERATION_BOUNDARY',
-  'FORWARD_CANDIDATE_CODE_ABSENT'
-])
-const CROSS_HOST_CHECKS = Object.freeze([
-  'CLEAN_LINUX_DEPENDENCY_INSTALL',
-  'FROZEN_GENERATOR_CHECK',
-  'ARTIFACT_BYTE_EQUALITY',
-  'MANIFEST_BYTE_EQUALITY'
-])
+const ACCEPTED = Object.freeze({
+  candidateCommit: 'adeacef07c5de4d17d5ed1389fee7a35095b862f',
+  candidateTree: '7c41786a4ccd758a4ddcb419eb02213cbeeaca0c',
+  acceptedSourceCommit: '1a114f64c97547cab6a18102c2ef4bff930e53ed',
+  acceptedSourceTree: '5a341ba17a3d91a750cac94ba51116fe3552a6aa',
+  sourceClosureHash: 'a021373afd51e6e80d5c4143ff8b80a3c305f69d45c12f2296ad98e06cd2d461',
+  normalizedGraphSetHash: '240dc9762391ab59539da2d01b7858055fb0579d8e9b3f7afe84b9ba369160bd'
+})
+const FULL = Object.freeze({
+  authoritySchema: 'PeeritVendoredHiveRelayBlindClientV2',
+  profile: 'hiverelay.blind-client-public-browser.full.v1',
+  upstreamPath: 'packages/blind-client-public-browser/browser-artifacts/blind-client-public-control-v1.mjs',
+  vendoredPath: 'vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs',
+  artifactDomain: 'hiverelay.blind-client-public-browser.full-artifact-hash.v1',
+  manifestDomain: 'hiverelay.blind-client-public-browser.full-manifest-hash.v1',
+  graphHash: '5c90ed22f25725ec390974aa53add72465f0948e2fd319506684d575238a5997',
+  chromiumSchema: 'HiveRelayBlindClientPublicBrowserArtifactChromiumEvidenceV1'
+})
+const CELL_GET = Object.freeze({
+  authoritySchema: 'PeeritVendoredHiveRelayBlindCellGetClientV2',
+  profile: 'hiverelay.blind-client-public-browser.cell-get.v1',
+  upstreamPath: 'packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.mjs',
+  vendoredPath: 'vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.mjs',
+  artifactDomain: 'hiverelay.blind-client-public-browser.cell-get-artifact-hash.v1',
+  manifestDomain: 'hiverelay.blind-client-public-browser.cell-get-manifest-hash.v1',
+  graphHash: '867e0227b56336eb7eb4ea2c0aff4874e88c2fdf38261a594b95b15c0c663fff',
+  chromiumSchema: 'HiveRelayBlindClientPublicBrowserArtifactChromiumEvidenceV1'
+})
 
 function fail (code, message) {
   const error = new Error(message)
@@ -41,188 +43,156 @@ function fail (code, message) {
   throw error
 }
 
-function fixed32 (value, field) {
-  const output = new Uint8Array(asBytes(value, field))
-  if (output.byteLength !== 32) fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', `${field} must be 32 bytes`)
-  return output
-}
-
-class Reader {
-  constructor (input) {
-    this.bytes = new Uint8Array(asBytes(input, 'blind-client browser manifest'))
-    this.offset = 0
+function canonicalJson (input, field, maximum = 128 * 1024) {
+  const bytes = new Uint8Array(asBytes(input, field))
+  if (bytes.byteLength < 1 || bytes.byteLength > maximum) {
+    fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', `${field} is outside its byte bound`)
   }
-
-  take (length, field) {
-    if (!Number.isSafeInteger(length) || length < 0 || this.offset + length > this.bytes.byteLength) {
-      fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', `truncated ${field}`)
-    }
-    const output = this.bytes.slice(this.offset, this.offset + length)
-    this.offset += length
-    return output
+  const source = decodeUtf8(bytes, field)
+  let value
+  try { value = JSON.parse(source) } catch {
+    fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', `${field} is invalid JSON`)
   }
-
-  u8 (field) { return this.take(1, field)[0] }
-
-  u16 (field) {
-    const bytes = this.take(2, field)
-    return (bytes[0] << 8) | bytes[1]
-  }
-
-  u64 (field) {
-    let value = 0n
-    for (const byte of this.take(8, field)) value = (value << 8n) | BigInt(byte)
-    return value
-  }
-
-  text (field) {
-    const bytes = this.take(this.u16(`${field} length`), field)
-    const value = decodeUtf8(bytes, field)
-    if (!bytesEqual(utf8Bytes(value), bytes) || bytes.byteLength > 1024 || value.length < 1) {
-      fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', `${field} is noncanonical`)
-    }
-    return value
-  }
-
-  end () {
-    if (this.offset !== this.bytes.byteLength) {
-      fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', 'blind-client browser manifest has trailing bytes')
-    }
-  }
-}
-
-function decodeManifest (input, expectedArtifactPath) {
-  const reader = new Reader(input)
-  if (!bytesEqual(reader.take(MAGIC.byteLength, 'magic'), MAGIC) ||
-      reader.u8('version') !== 1 || reader.u8('draft') !== 0) {
-    fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', 'blind-client browser manifest is not final v1')
-  }
-  const value = Object.freeze({
-    specHash: fixed32(reader.take(32, 'specHash'), 'specHash'),
-    abiHash: fixed32(reader.take(32, 'abiHash'), 'abiHash'),
-    vectorSetHash: fixed32(reader.take(32, 'vectorSetHash'), 'vectorSetHash'),
-    clientCompositionFormatHash: fixed32(
-      reader.take(32, 'clientCompositionFormatHash'), 'clientCompositionFormatHash'),
-    clientCompositionVectorSetHash: fixed32(
-      reader.take(32, 'clientCompositionVectorSetHash'), 'clientCompositionVectorSetHash'),
-    toolchain: reader.text('toolchain'),
-    buildProfile: reader.text('buildProfile'),
-    sourceClosureHash: fixed32(reader.take(32, 'sourceClosureHash'), 'sourceClosureHash'),
-    artifactPath: reader.text('artifactPath'),
-    artifactLength: reader.u64('artifactLength'),
-    artifactHash: fixed32(reader.take(32, 'artifactHash'), 'artifactHash')
-  })
-  reader.end()
-  if (value.artifactPath !== expectedArtifactPath || value.artifactLength < 1n ||
-      value.artifactLength > BigInt(MAX_ARTIFACT_BYTES)) {
-    fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', 'blind-client browser artifact path or size is invalid')
+  if (JSON.stringify(value, null, 2) + '\n' !== source) {
+    fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', `${field} is noncanonical JSON`)
   }
   return value
 }
 
-export function decodeBlindClientBrowserManifestV1 (input) {
-  return decodeManifest(input, ARTIFACT_PATH)
+function hex32 (value, field) {
+  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
+    fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', `${field} is not 32-byte lowercase hex`)
+  }
+  return hexToBytes(value, 32, field)
 }
 
-function canonicalEvidence (input, field) {
-  const bytes = new Uint8Array(asBytes(input, field))
-  if (bytes.byteLength < 1 || bytes.byteLength > 16 * 1024) {
-    fail('BAD_BLIND_CLIENT_BROWSER_RELEASE_EVIDENCE', `${field} is outside its byte limit`)
-  }
-  const source = decodeUtf8(bytes, field)
-  let parsed
-  try { parsed = JSON.parse(source) } catch { fail('BAD_BLIND_CLIENT_BROWSER_RELEASE_EVIDENCE', `${field} is invalid JSON`) }
-  if (JSON.stringify(parsed, null, 2) + '\n' !== source) {
-    fail('BAD_BLIND_CLIENT_BROWSER_RELEASE_EVIDENCE', `${field} is noncanonical JSON`)
-  }
-  return parsed
-}
-
-function exactKeys (value, keys, field) {
-  if (!value || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).sort().join('\0') !== [...keys].sort().join('\0')) {
-    fail('BAD_BLIND_CLIENT_BROWSER_RELEASE_EVIDENCE', `${field} fields are invalid`)
+function exactArray (left, right, field) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length ||
+      left.some((value, index) => value !== right[index])) {
+    fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', `${field} differs from the accepted release`)
   }
 }
 
-function exactChecks (actual, expected, field) {
-  if (!Array.isArray(actual) || actual.length !== expected.length ||
-      actual.some((value, index) => value !== expected[index])) {
-    fail('BAD_BLIND_CLIENT_BROWSER_RELEASE_EVIDENCE', `${field} checks are invalid`)
+function decodeAuthorityManifest (manifestBytes, authorityBytes, profile) {
+  const manifest = canonicalJson(manifestBytes, 'blind-client public browser manifest')
+  const authority = canonicalJson(authorityBytes, 'Peerit vendored browser authority')
+  if (manifest.schema !== 'HiveRelayBlindClientPublicBrowserArtifactManifestV1' ||
+      manifest.version !== 1 || manifest.profile !== profile.profile ||
+      manifest.artifactPath !== profile.upstreamPath ||
+      manifest.artifactHashDomain !== profile.artifactDomain ||
+      manifest.manifestHashDomain !== profile.manifestDomain ||
+      manifest.acceptedSourceCommit !== ACCEPTED.acceptedSourceCommit ||
+      manifest.acceptedSourceTree !== ACCEPTED.acceptedSourceTree ||
+      manifest.sourceClosureHash !== ACCEPTED.sourceClosureHash ||
+      authority.schema !== profile.authoritySchema || authority.version !== 2 ||
+      authority.upstreamPackage !== '@hiverelay/blind-client-public-browser' ||
+      authority.candidateCommit !== ACCEPTED.candidateCommit ||
+      authority.candidateTree !== ACCEPTED.candidateTree ||
+      authority.acceptedSourceCommit !== ACCEPTED.acceptedSourceCommit ||
+      authority.acceptedSourceTree !== ACCEPTED.acceptedSourceTree ||
+      authority.sourceClosureHash !== ACCEPTED.sourceClosureHash ||
+      authority.normalizedGraphHash !== profile.graphHash ||
+      authority.normalizedGraphSetHash !== ACCEPTED.normalizedGraphSetHash ||
+      authority.upstreamArtifactPath !== profile.upstreamPath ||
+      authority.artifactPath !== profile.vendoredPath ||
+      authority.artifactLength !== manifest.artifactLength ||
+      authority.artifactHash !== manifest.artifactHash ||
+      authority.browserTupleHash !== manifest.tupleHash ||
+      authority.candidateEvidenceAuthority !== 'external-postcommit-final-sequence' ||
+      authority.standaloneAuthority !== false) {
+    fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', 'candidate manifest or vendored authority identity is invalid')
   }
+  exactArray(manifest.exactSortedExports, authority.exactSortedExports, 'exact export inventory')
+  const manifestHash = domainLengthHash(profile.manifestDomain, manifestBytes)
+  if (bytesToHex(manifestHash) !== authority.manifestHash) {
+    fail('BLIND_CLIENT_BROWSER_ARTIFACT_DRIFT', 'manifest bytes differ from the accepted candidate')
+  }
+  return Object.freeze({ manifest, authority, manifestHash })
+}
+
+export function decodeBlindClientBrowserManifestV1 (input, authorityInput = null) {
+  if (authorityInput == null) {
+    fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', 'candidate manifest decoding requires its vendored authority')
+  }
+  return releaseManifest(decodeAuthorityManifest(input, authorityInput, FULL))
+}
+
+function releaseManifest ({ manifest, authority }) {
+  return Object.freeze({
+    specHash: hex32(authority.wireTuple.specHash, 'wire specHash'),
+    abiHash: hex32(authority.wireTuple.abiHash, 'wire abiHash'),
+    vectorSetHash: hex32(authority.wireTuple.vectorSetHash, 'wire vectorSetHash'),
+    clientCompositionFormatHash: hex32(authority.clientComposition.formatHash, 'client composition format hash'),
+    clientCompositionVectorSetHash: hex32(authority.clientComposition.vectorSetHash, 'client composition vector-set hash'),
+    sourceClosureHash: hex32(manifest.sourceClosureHash, 'sourceClosureHash'),
+    artifactPath: manifest.artifactPath,
+    artifactLength: BigInt(manifest.artifactLength),
+    artifactHash: hex32(manifest.artifactHash, 'artifactHash'),
+    exactSortedExports: Object.freeze([...manifest.exactSortedExports]),
+    toolchain: Object.freeze({ ...manifest.toolchain }),
+    tupleHash: hex32(manifest.tupleHash, 'tupleHash')
+  })
+}
+
+function evidence (input, field) {
+  const value = canonicalJson(input, field)
+  if (value.version !== 1 || value.evidenceClass == null || value.passed !== true ||
+      value.candidateIdentityBinding !== 'external-postcommit-final-sequence' ||
+      value.standaloneAuthority !== false) {
+    fail('BAD_BLIND_CLIENT_BROWSER_RELEASE_EVIDENCE', `${field} is not accepted candidate evidence`)
+  }
+  return value
 }
 
 function verifyRelease (input, profile) {
-  const manifestBytes = new Uint8Array(asBytes(input.manifestBytes, 'blind-client browser manifest'))
-  const artifactBytes = new Uint8Array(asBytes(input.artifactBytes, 'blind-client browser artifact'))
-  const manifest = decodeManifest(manifestBytes, profile.artifactPath)
-  const manifestHash = domainLengthHash(MANIFEST_HASH_DOMAIN, manifestBytes)
-  const artifactHash = domainLengthHash(ARTIFACT_HASH_DOMAIN, artifactBytes)
+  const artifactBytes = new Uint8Array(asBytes(input.artifactBytes, 'browser artifact'))
+  if (artifactBytes.byteLength < 1 || artifactBytes.byteLength > MAX_ARTIFACT_BYTES) {
+    fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', 'browser artifact is outside its fixed bound')
+  }
+  const decoded = decodeAuthorityManifest(input.manifestBytes, input.authorityBytes, profile)
+  const manifest = releaseManifest(decoded)
+  const artifactHash = domainLengthHash(profile.artifactDomain, artifactBytes)
   if (BigInt(artifactBytes.byteLength) !== manifest.artifactLength ||
-      !bytesEqual(artifactHash, manifest.artifactHash)) {
-    fail('BLIND_CLIENT_BROWSER_ARTIFACT_DRIFT', 'blind-client browser artifact does not match its manifest')
+      !bytesEqual(artifactHash, manifest.artifactHash) ||
+      bytesToHex(artifactHash) !== decoded.authority.artifactHash) {
+    fail('BLIND_CLIENT_BROWSER_ARTIFACT_DRIFT', 'browser artifact does not match its candidate manifest')
   }
-  const expected = {
-    artifactPath: profile.artifactPath,
-    artifactLength: artifactBytes.byteLength,
-    artifactHash: bytesToHex(artifactHash),
-    manifestHash: bytesToHex(manifestHash),
-    sourceClosureHash: bytesToHex(manifest.sourceClosureHash)
-  }
-  const chromium = canonicalEvidence(input.chromiumEvidenceBytes, 'Chromium evidence')
-  exactKeys(chromium, [
-    'schema', 'version', 'evidenceClass', 'artifactPath', 'artifactLength',
-    'artifactHash', 'manifestHash', 'sourceClosureHash', 'chromium', 'checks', 'passed'
-  ], 'Chromium evidence')
-  const crossHost = canonicalEvidence(input.crossHostEvidenceBytes, 'cross-host evidence')
-  exactKeys(crossHost, [
-    'schema', 'version', 'evidenceClass', 'artifactPath', 'artifactLength',
-    'artifactHash', 'manifestHash', 'sourceClosureHash', 'platform', 'architecture',
-    'containerImageId', 'node', 'toolchain', 'checks', 'passed'
-  ], 'cross-host evidence')
-  for (const [field, value] of Object.entries(expected)) {
-    if (chromium[field] !== value || crossHost[field] !== value) {
-      fail('BLIND_CLIENT_BROWSER_RELEASE_EVIDENCE_MISMATCH', `${field} evidence does not bind the artifact`)
+  const chromium = evidence(input.chromiumEvidenceBytes, 'Chromium evidence')
+  const crossHost = evidence(input.crossHostEvidenceBytes, 'cross-host evidence')
+  for (const value of [chromium, crossHost]) {
+    if (value.profile !== profile.profile || value.artifactPath !== profile.upstreamPath ||
+        value.artifactLength !== artifactBytes.byteLength || value.artifactHash !== bytesToHex(artifactHash) ||
+        value.manifestHash !== bytesToHex(decoded.manifestHash) ||
+        value.tupleHash !== decoded.authority.browserTupleHash ||
+        value.sourceClosureHash !== ACCEPTED.sourceClosureHash) {
+      fail('BLIND_CLIENT_BROWSER_RELEASE_EVIDENCE_MISMATCH', 'candidate evidence does not bind the exact artifact')
     }
   }
-  if (chromium.schema !== 'HiveRelayBlindClientBrowserArtifactChromiumEvidenceV1' ||
-      chromium.version !== 1 || chromium.evidenceClass !== 'real-chromium' || chromium.passed !== true ||
-      typeof chromium.chromium !== 'string') {
-    fail('BAD_BLIND_CLIENT_BROWSER_RELEASE_EVIDENCE', 'Chromium evidence authority is invalid')
+  if (chromium.schema !== profile.chromiumSchema || chromium.evidenceClass !== 'real-chromium' ||
+      crossHost.schema !== 'HiveRelayBlindClientPublicBrowserArtifactCrossHostEvidenceV1' ||
+      crossHost.evidenceClass !== 'clean-linux-container' ||
+      crossHost.acceptedSourceCommit !== ACCEPTED.acceptedSourceCommit ||
+      crossHost.acceptedSourceTree !== ACCEPTED.acceptedSourceTree ||
+      crossHost.normalizedGraphHash !== profile.graphHash ||
+      crossHost.normalizedGraphSetHash !== ACCEPTED.normalizedGraphSetHash ||
+      crossHost.containerPlatform !== 'linux/arm64' ||
+      !/^sha256:[0-9a-f]{64}$/.test(crossHost.containerImageId)) {
+    fail('BAD_BLIND_CLIENT_BROWSER_RELEASE_EVIDENCE', 'candidate browser evidence identity is invalid')
   }
-  if (crossHost.schema !== 'HiveRelayBlindClientBrowserArtifactCrossHostEvidenceV1' ||
-      crossHost.version !== 1 || crossHost.evidenceClass !== 'clean-linux-container' ||
-      crossHost.platform !== 'linux' || crossHost.toolchain !== manifest.toolchain ||
-      crossHost.passed !== true || !/^sha256:[0-9a-f]{64}$/.test(crossHost.containerImageId)) {
-    fail('BAD_BLIND_CLIENT_BROWSER_RELEASE_EVIDENCE', 'cross-host evidence authority is invalid')
-  }
-  exactChecks(chromium.checks, profile.chromiumChecks, 'Chromium evidence')
-  exactChecks(crossHost.checks, CROSS_HOST_CHECKS, 'cross-host evidence')
   return Object.freeze({
     manifest,
     artifactBytes,
-    manifestHash,
+    manifestHash: decoded.manifestHash,
     artifactHash,
-    chromium: chromium.chromium,
-    crossHost: Object.freeze({
-      platform: crossHost.platform,
-      architecture: crossHost.architecture,
-      containerImageId: crossHost.containerImageId,
-      node: crossHost.node
-    })
+    chromium: decoded.authority.chromium.version,
+    crossHost: Object.freeze({ ...decoded.authority.crossHost })
   })
 }
 
 export function verifyBlindClientBrowserReleaseV1 (input) {
-  return verifyRelease(input, Object.freeze({
-    artifactPath: ARTIFACT_PATH,
-    chromiumChecks: CHROMIUM_CHECKS
-  }))
+  return verifyRelease(input, FULL)
 }
 
 export function verifyBlindClientCellGetBrowserReleaseV1 (input) {
-  return verifyRelease(input, Object.freeze({
-    artifactPath: CELL_GET_ARTIFACT_PATH,
-    chromiumChecks: CELL_GET_CHROMIUM_CHECKS
-  }))
+  return verifyRelease(input, CELL_GET)
 }

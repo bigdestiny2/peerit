@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: hyper: pear:; connect-src 'self' hyper: pear: https://relay-syd.p2phiverelay.xyz https://relay-dal.p2phiverelay.xyz; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: hyper: pear:; connect-src 'self' hyper: pear: https://relay-syd.p2phiverelay.xyz https://relay-dal.p2phiverelay.xyz https://relay-dal.p2phiverelay.xyz:8443 https://relay-syd.p2phiverelay.xyz:8443; form-action 'none'">
   <title>peerit — peer-to-peer Reddit</title>
   <meta name="description" content="peerit is a local-first community app using authenticated blind relay substrate artifacts.">
   <link rel="icon" type="image/svg+xml" href="icon.svg">
@@ -11,7 +11,7 @@
   <meta name="peerit-substrate" content="blind-v1">
   <meta name="peerit-substrate-relays" content="https://relay-syd.p2phiverelay.xyz/api/blind/v1/describe,https://relay-dal.p2phiverelay.xyz/api/blind/v1/describe">
   <meta name="peerit-release-key" content="d6633deaf051b4063585d561a58e435f62a305b75cee697241ae6cbd6e01001b">
-  <meta name="peerit-release-sequence" content="28">
+  <meta name="peerit-release-sequence" content="29">
   <meta name="peerit-production-web-asset-manifest" content="/peerit-web-assets-v1.cenc">
   <meta name="peerit-production-pin-history" content="/peerit-production-pin-history-v1.cenc">
   <script src="sw-register.js"></script>
@@ -22,6 +22,6 @@
     <div class="boot-name">peerit</div>
     <div class="boot-sub">first visit: verifying the signed substrate — about a minute · instant after that</div>
   </div>
-  <script type="module" src="js/substrate/app-entry.js" integrity="sha384-BFNt4aVHa22nd/QEGrJFhJK5QCx0ROLbrzbX2DvWsWyR70RUfCDiDl9Wka5yXErO" crossorigin="anonymous"></script>
+  <script type="module" src="js/substrate/app-entry.js" integrity="sha384-d+oQD1L5jDw/JajAkFDy4pWtD7Bm+jSZ995CJ/tN4vKKQMBqdoBCmgxpMZc9qc9g" crossorigin="anonymous"></script>
 </body>
 </html>

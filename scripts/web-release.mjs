@@ -2631,12 +2631,19 @@ async function main () {
   }
   if (opts.phase === 'prepare') {
     const currentSigningRequest = readJson(opts.signingRequest)
-    const assertStableReprepare = release.releaseSequence === 29 &&
+    // The Sequence-29 owner-decision machinery (pinned reprepare and the
+    // initial-prepare predecessor journal) is defined only for the
+    // blind-substrate transport. The legacy migration-compatibility lane
+    // never carries a Sequence-29 decision, so it must not be driven
+    // through either path merely because the production sequence is 29.
+    const seq29Substrate = release.transport === 'blind-substrate' &&
+      release.releaseSequence === 29
+    const assertStableReprepare = seq29Substrate &&
       peeritSeq29OwnerDecisionPhaseV1({
         phase: 'prepare',
         sourcePin: PEERIT_SEQ29_DECISION_SHA256_V1
       }) === 'PINNED_FINAL_REQUIRED'
-    const preservedPredecessor = assertStableReprepare
+    const preservedPredecessor = assertStableReprepare || !seq29Substrate
       ? null
       : readPeeritSeq29InitialWebPreparePredecessorV1({ root: ROOT })
     const priorSigningRequest = preservedPredecessor?.priorSigningRequest ||

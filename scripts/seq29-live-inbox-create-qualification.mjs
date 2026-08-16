@@ -84,7 +84,16 @@ const RELEASE_SEQUENCE = 29
 const PROFILE_RELEASE_SEQUENCE = 28
 const EPOCH_MILLIS = 21_600_000
 const MAX_DESCRIPTOR_HISTORY = 4096
+// Two distinct budgets:
+// - MAX_TIMEOUT_MILLIS caps each individual vendored-client call (the
+//   vendored blind client itself rejects timeoutMillis above 15000).
+// - MAX_SCOPE_TIMEOUT_MILLIS bounds one whole per-relay qualification (head
+//   fetch + the sequential head-to-genesis chain walk + CREATE endpoint +
+//   admission parameters). The walk is 20+ sequential describes per relay at
+//   real-world latency (~600ms each), so 15s only ever fit a loopback
+//   fixture; the scope budget must bound a wedged relay, not fixture speed.
 const MAX_TIMEOUT_MILLIS = 15_000
+const MAX_SCOPE_TIMEOUT_MILLIS = 120_000
 const DESCRIBE_MEDIA_TYPE = 'application/vnd.hiverelay.blind-v1'
 const DESCRIBE_OUTER_CLASS = 3
 const DESCRIBE_OUTER_BYTES = 65_536
@@ -327,6 +336,16 @@ function timeoutMillis (value) {
   if (!Number.isSafeInteger(value) || value < 1 || value > MAX_TIMEOUT_MILLIS) {
     fail('PEERIT_SEQ29_CREATE_TIMEOUT_INVALID',
       `timeoutMillis must be within 1..${MAX_TIMEOUT_MILLIS}`)
+  }
+  return value
+}
+
+function scopeTimeoutMillis (value) {
+  if (value == null) return MAX_SCOPE_TIMEOUT_MILLIS
+  if (!Number.isSafeInteger(value) || value < 1 ||
+      value > MAX_SCOPE_TIMEOUT_MILLIS) {
+    fail('PEERIT_SEQ29_CREATE_TIMEOUT_INVALID',
+      `scopeTimeoutMillis must be within 1..${MAX_SCOPE_TIMEOUT_MILLIS}`)
   }
   return value
 }
@@ -664,7 +683,9 @@ async function qualifyCreateRelayInternal ({
 }
 
 async function qualifyCreateRelay (input) {
-  const scope = abortScope(input.signal, input.timeout)
+  // The whole per-relay qualification gets the scope budget; each individual
+  // vendored call inside keeps its own per-call timeout (input.timeout).
+  const scope = abortScope(input.signal, input.scopeTimeout)
   try {
     return await qualifyCreateRelayInternal({ ...input, signal: scope.signal })
   } finally {
@@ -828,6 +849,7 @@ async function qualifyPreparedRelease (state, input) {
   const directClient = new control.BlindDirectHttpClient({ runtime, fetch })
   const profileRelays = new Map(release.profile.relays.map(row => [row.relayId, row]))
   const timeout = timeoutMillis(input.timeoutMillis)
+  const scopeTimeout = scopeTimeoutMillis(input.scopeTimeoutMillis)
   const rows = []
   for (const relay of release.seed.payload.relays) {
     rows.push(await qualifyCreateRelay({
@@ -841,7 +863,8 @@ async function qualifyPreparedRelease (state, input) {
       stateMonotonicMillis,
       fetch,
       signal: input.signal,
-      timeout
+      timeout,
+      scopeTimeout
     }))
   }
   const authority = Object.freeze({
@@ -877,7 +900,7 @@ async function qualifyPreparedRelease (state, input) {
 
 export async function qualifyPeeritSeq29PreparedLiveInboxCreateTargetsV1 (input = {}) {
   exactWithOptional(input, ['preparation'], [
-    'signal', 'timeoutMillis', 'monotonicMillis'
+    'signal', 'timeoutMillis', 'scopeTimeoutMillis', 'monotonicMillis'
   ], 'Seq29 prepared CREATE qualification input')
   return qualifyPreparedRelease(releasePreparationState(input.preparation), input)
 }
@@ -886,7 +909,7 @@ export async function qualifyPeeritSeq29CustodyFirstPreparedLiveInboxCreateTarge
   input = {}
 ) {
   exactWithOptional(input, ['preparation', 'preNetworkCustody'], [
-    'signal', 'timeoutMillis', 'monotonicMillis'
+    'signal', 'timeoutMillis', 'scopeTimeoutMillis', 'monotonicMillis'
   ], 'Seq29 custody-first prepared CREATE qualification input')
   const releaseState = releasePreparationState(input.preparation)
   const releaseSnapshot = snapshotPeeritSeq29LiveInboxCreateReleasePreparationV1(
@@ -907,7 +930,7 @@ export async function qualifyPeeritSeq29LiveInboxCreateTargetsV1 (input = {}) {
   exactWithOptional(input, [
     'seedBootstrapBytes', 'limitedCellPutProfileBytes'
   ], [
-    'signal', 'timeoutMillis', 'now', 'monotonicMillis', 'fixture'
+    'signal', 'timeoutMillis', 'scopeTimeoutMillis', 'now', 'monotonicMillis', 'fixture'
   ], 'Seq29 CREATE qualification input')
   const preparation = await preparePeeritSeq29LiveInboxCreateReleaseV1({
     seedBootstrapBytes: input.seedBootstrapBytes,

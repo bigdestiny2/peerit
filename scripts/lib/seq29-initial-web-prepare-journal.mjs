@@ -341,7 +341,13 @@ function parseCanonicalJson (content, field) {
   try { value = JSON.parse(Buffer.from(content).toString('utf8')) } catch {
     fail('PEERIT_SEQ29_INITIAL_WEB_PREPARE_CORRUPT', `${field} is not JSON`)
   }
-  if (!jsonBytes(value).equals(Buffer.from(content))) {
+  // The established release artifacts exist in exactly two byte forms:
+  // pretty-2 with a trailing newline (signing request, journal artifacts)
+  // and pretty-2 without it (the seq28 outer manifest). Both are accepted;
+  // anything else (minified, respaced) is still rejected byte-exactly.
+  const pretty = Buffer.from(JSON.stringify(value, null, 2))
+  const bytes = Buffer.from(content)
+  if (!bytes.equals(pretty) && !bytes.equals(Buffer.concat([pretty, Buffer.from('\n')]))) {
     fail('PEERIT_SEQ29_INITIAL_WEB_PREPARE_CORRUPT',
       `${field} is not canonical pretty JSON`)
   }

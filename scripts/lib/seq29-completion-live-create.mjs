@@ -279,12 +279,18 @@ export async function runPeeritSeq29CompletionCreatePhaseV1 (root) {
 
   // Step 4: fresh CSPRNG ceremony keys, persisted 0600 for an explicit
   // recovery flow. Never logged, never part of any receipt.
+  // The ceremony contract requires issued <= the qualification reference
+  // (validatePeeritLimitedInboxTopicCeremonyPlanV1), so the validity window
+  // starts at the exact qualified-observation time, not at wall-clock now.
   const authoritySeed = randomBytes(32)
   const authorityPublicKey = deriveEd25519PublicKey(authoritySeed)
   const stripeSelectionKey = randomBytes(32).toString('hex')
   const announcementMasterKey = randomBytes(32).toString('hex')
-  const issuedUnixMillis = String(Date.now())
-  const expiresUnixMillis = String(Date.now() + THIRTY_ONE_DAYS_MILLIS)
+  const issuedUnixMillis =
+    snapshotPeeritSeq29LiveInboxCreateQualificationV1(qualification)
+      .referenceUnixMillis
+  const expiresUnixMillis =
+    String(BigInt(issuedUnixMillis) + BigInt(THIRTY_ONE_DAYS_MILLIS))
   createOnlyFile(secretsPath, Buffer.from(JSON.stringify({
     schema: 'peerit-seq29-completion-create-ceremony-secrets-v1',
     version: 1,

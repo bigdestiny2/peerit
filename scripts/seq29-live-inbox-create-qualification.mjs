@@ -632,7 +632,9 @@ async function qualifyCreateRelayInternal ({
       advertised.roleBits !== CREATE_ADMISSION_PROFILE.roleBits ||
       advertised.parameterUrl != null) {
     fail('PEERIT_SEQ29_CREATE_ADMISSION_PROFILE_DRIFT',
-      `${relay.relayId} descriptor changed the frozen admission profile`)
+      `${relay.relayId} descriptor changed the frozen admission profile: ` +
+      `expected ${JSON.stringify(CREATE_ADMISSION_PROFILE)}, ` +
+      `advertised ${JSON.stringify(advertised || null)}`)
   }
   const request = control.createAdmissionParametersRequest({
     runtime,
@@ -780,7 +782,7 @@ export function snapshotPeeritSeq29LiveInboxCreateReleasePreparationV1 (authorit
       state.acceptedHiveRelayIdentity.inboxOperatorArtifactSha256,
     relays: Object.freeze(state.release.seed.payload.relays.map(relay => Object.freeze({
       relayId: relay.relayId,
-      canonicalDescribeUrl: relay.canonicalDescribeUrl,
+      canonicalDescribeUrl: planCanonicalDescribeUrl(relay.canonicalDescribeUrl),
       relayPublicKey: bytesToHex(profileRelays.get(relay.relayId).relayPublicKey),
       storeId: relay.storeId,
       continuityRootRelayPublicKey: relay.continuityRootRelayPublicKey,
@@ -955,6 +957,17 @@ function qualificationState (value) {
   return state
 }
 
+// The ceremony plan validator requires an explicit port in canonical
+// describe URLs. Production relay origins ride the default https port, so
+// the plan-facing snapshot renders the port explicitly. This is the same
+// endpoint; live fetches and seed-bound digests keep the seed's raw URL.
+function planCanonicalDescribeUrl (value) {
+  const parsed = new URL(value)
+  if (parsed.port !== '') return value
+  const port = parsed.protocol === 'https:' ? '443' : '80'
+  return `${parsed.protocol}//${parsed.hostname}:${port}${parsed.pathname}`
+}
+
 export function snapshotPeeritSeq29LiveInboxCreateQualificationV1 (authority) {
   const state = qualificationState(authority)
   return Object.freeze({
@@ -968,7 +981,7 @@ export function snapshotPeeritSeq29LiveInboxCreateQualificationV1 (authority) {
     mutationAuthorityExposed: false,
     relays: Object.freeze(state.rows.map(row => Object.freeze({
       relayId: row.relay.relayId,
-      canonicalDescribeUrl: row.relay.canonicalDescribeUrl,
+      canonicalDescribeUrl: planCanonicalDescribeUrl(row.relay.canonicalDescribeUrl),
       relayPublicKey: bytesToHex(row.context.relayPublicKey),
       storeId: bytesToHex(row.context.storeId),
       durabilityContinuityHash: bytesToHex(row.context.durabilityContinuityHash),

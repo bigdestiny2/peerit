@@ -765,8 +765,12 @@ export function snapshotPeeritSeq29LiveInboxCreateReleasePreparationV1 (authorit
       continuityRootRelayPublicKey: relay.continuityRootRelayPublicKey,
       descriptorGenesisHash: relay.descriptorGenesisHash,
       minimumDescriptorSequence: String(relay.minimumDescriptorSequence),
-      familyId: relay.familyId,
-      operationId: relay.operationId,
+      // The static snapshot asserts the ceremony's fixed CREATE scope
+      // (INBOX.CREATE family 3, operation 1). The signed seed relays keep
+      // their CELL.GET (2,2) binding — the browser read lane pins that
+      // scope, so the snapshot must pin the ceremony scope, not copy it.
+      familyId: 3,
+      operationId: 1,
       endpointId: relay.endpointId,
       transportId: relay.transportId,
       transportSupportBit: relay.transportSupportBit,

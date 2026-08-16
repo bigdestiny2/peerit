@@ -1,0 +1,80 @@
+{
+  "payload": {
+    "schema": "peerit-limited-public-inbox-bootstrap-v1",
+    "version": 1,
+    "artifactClass": "LIMITED_PUBLIC_TEST_RELEASE",
+    "claimBoundary": "LIVE_PUBLIC_TEST_ONLY",
+    "operatorBoundary": "TWO_OWNER_OPERATED_RELAYS_NOT_INDEPENDENT_OPERATORS",
+    "topicScope": "GLOBAL_PUBLIC_DISCOVERY",
+    "profileId": "@peerit/hiverelay-profile-v1",
+    "releaseSequence": 29,
+    "bootstrapSequence": "0",
+    "previousBootstrapHash": null,
+    "issuedUnixMillis": "1786909952056",
+    "expiresUnixMillis": "1789588352056",
+    "authorityPublicKey": "692dcbd623838867476e31a689242917e5d3dfadf49a608c593816c0c99a0874",
+    "relays": [
+      {
+        "relayId": "dal-1",
+        "canonicalDescribeUrl": "https://relay-dal.p2phiverelay.xyz:443/api/blind/v1/describe",
+        "relayPublicKey": "8b3f4161271cfa511bc49fb03033d6441da01bf27c35a754e2a1b0d7df32e1d2",
+        "storeId": "744a7e97bd96f74e7ce7cd6a600a0ff1846da4fe3d39c35c611f12ffcd69cb90",
+        "durabilityContinuityHash": "b0d28be1ec93dc70931de0715994deb0295507ada3a26b64b61c261b9c3306eb",
+        "descriptorFloor": {
+          "sequence": "43",
+          "hash": "8cc0ca619c704fc5575785f1e010f459daf98fe4e442671ff698275373b1616b"
+        }
+      },
+      {
+        "relayId": "syd-1",
+        "canonicalDescribeUrl": "https://relay-syd.p2phiverelay.xyz:443/api/blind/v1/describe",
+        "relayPublicKey": "52f4d78364180553a944629b5dd90834d3c3d4f7755cc2e452b3308329a88161",
+        "storeId": "5193f588aa3b55886e27dc35ead0777d6b3f787e575458d9b2d914f413b130de",
+        "durabilityContinuityHash": "b0d28be1ec93dc70931de0715994deb0295507ada3a26b64b61c261b9c3306eb",
+        "descriptorFloor": {
+          "sequence": "46",
+          "hash": "a40514004723fe2872ee4d32a072f259473c00634b02a237426b4245884a0024"
+        }
+      }
+    ],
+    "inboxEpochSets": [
+      {
+        "inboxEpoch": 2954,
+        "stripeCountLog2": 0,
+        "stripeSelectionKey": "e07f1e04da89ec05ce816def7caef2d1c6fcd2d3beff9bbd9950de3e68f252ec",
+        "announcementMasterKey": "3221b6c72e7b0dd8bab00d9e599f6dd62050c08911261c8a055ce6800acb4842",
+        "bindings": [
+          {
+            "inboxEpoch": 2954,
+            "stripeIndex": 0,
+            "relayId": "dal-1",
+            "relayPublicKey": "8b3f4161271cfa511bc49fb03033d6441da01bf27c35a754e2a1b0d7df32e1d2",
+            "allocationEpoch": 82727,
+            "createPublicKey": "e175dade77020a6906df43fd7bf3a87eb34fc7b67e00b2bdaf9a7134d1130f59",
+            "physicalTopic": "89078373d8cdaef18a70f3d52e9832b403cd28ccacf89c392c4a3a55f05b9772",
+            "frameClassBits": 3,
+            "appendAuthMode": 0,
+            "retentionClass": 3,
+            "leaseClass": 4,
+            "createReceiptCanonicalHex": "01018b3f4161271cfa511bc49fb03033d6441da01bf27c35a754e2a1b0d7df32e1d2744a7e97bd96f74e7ce7cd6a600a0ff1846da4fe3d39c35c611f12ffcd69cb90000000000000002b8cc0ca619c704fc5575785f1e010f459daf98fe4e442671ff698275373b1616b01b0d28be1ec93dc70931de0715994deb0295507ada3a26b64b61c261b9c3306eb3d4067661bf9380c4b2b41edc598878281b9f55257b896a5482a2c6495857e880000000000000000000000000000000000000000000000000000000000000000000000000000000000599895c724684cc291cedb6bbf8715b0461532636765e64da738399acf849b5f0000000000000000040001448fb1a6896fde9331067f6cd44f55f36d257a4fb2845c855885f3fbabd383c3c4c4781c02a094521d0b439bb4abe702bc58fd1a823c4b3f7dfa59bd06f225a740bc015ce65b0ebdf809ebaa14a1fd91d9f635a3982304d7be330377758308715517b15e963e5f41df826b6d9515151cb50017ae0960c3f4e6c7504eb632c3a0633207"
+          },
+          {
+            "inboxEpoch": 2954,
+            "stripeIndex": 0,
+            "relayId": "syd-1",
+            "relayPublicKey": "52f4d78364180553a944629b5dd90834d3c3d4f7755cc2e452b3308329a88161",
+            "allocationEpoch": 82727,
+            "createPublicKey": "f93494bb45122a530b5bbd26b164d4ab93aebad655dd5ddac5c06d461798e156",
+            "physicalTopic": "35e18a49f27ef10109c7b1f404d991984c9ac0a9e28f9948a0c97c6c8b5fe250",
+            "frameClassBits": 3,
+            "appendAuthMode": 0,
+            "retentionClass": 3,
+            "leaseClass": 4,
+            "createReceiptCanonicalHex": "010152f4d78364180553a944629b5dd90834d3c3d4f7755cc2e452b3308329a881615193f588aa3b55886e27dc35ead0777d6b3f787e575458d9b2d914f413b130de000000000000002ea40514004723fe2872ee4d32a072f259473c00634b02a237426b4245884a002401b0d28be1ec93dc70931de0715994deb0295507ada3a26b64b61c261b9c3306eb3d4067661bf9380c4b2b41edc598878281b9f55257b896a5482a2c6495857e8800000000000000000000000000000000000000000000000000000000000000000000000000000000006b82bad0d62d90e78bbb70e03c592332775cd5d141fa31f35c3fc635ef6e20220000000000000000040001448f8df91781b24476b532ceeacec334e2a656de1462d154f31c6e6b030eb2e88ff2d70f74dc0fad24b19682bec3852f10cb3c7b771438310e5ee65afa3561004294017ac3dc500b70bc5116ee2cc0082ec5710dfa0c030ebdba3d67ceef39feb5906f25b833557a964a4b6513540f29d99dcd99b68e5f69235fb74f7058ea4112670a"
+          }
+        ]
+      }
+    ]
+  },
+  "signature": "a005f56e8c08041bbe8abd1f5ada33d0f4e67a7689996b39c80ac0aa475f4163ac07f1f1b3d573baf78c7a8467a736b85470ffb16855cbaba587161d46236108"
+}

@@ -24,6 +24,10 @@ import {
   PEERIT_SEED_BOOTSTRAP_SCHEMA_V1,
   encodePeeritSeedBootstrapV1
 } from '../js/substrate/seed-bootstrap-v1.mjs'
+import {
+  canonicalPeeritLimitedPublicInboxJsonV1,
+  PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_DOMAIN_V1
+} from '../js/substrate/inbox-topic-v1.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const PKCS8_PREFIX = '302e020100300506032b657004220420'
@@ -34,6 +38,15 @@ const privateKey = createPrivateKey({
   type: 'pkcs8'
 })
 const releaseKey = createPublicKey(privateKey).export({
+  type: 'spki',
+  format: 'der'
+}).subarray(-32).toString('hex')
+const inboxPrivateKey = createPrivateKey({
+  key: Buffer.from(PKCS8_PREFIX + '51'.repeat(32), 'hex'),
+  format: 'der',
+  type: 'pkcs8'
+})
+const inboxAuthorityPublicKey = createPublicKey(inboxPrivateKey).export({
   type: 'spki',
   format: 'der'
 }).subarray(-32).toString('hex')
@@ -89,8 +102,7 @@ const seedRelays = ['dal', 'syd'].map((relayId, index) => ({
   transportSupportBit: 1,
   privacyProfileBit: 1
 }))
-const seedBootstrapBytes = Buffer.from(encodePeeritSeedBootstrapV1({
-  payload: {
+const seedBootstrapPayload = {
     schema: PEERIT_SEED_BOOTSTRAP_SCHEMA_V1,
     version: 1,
     profile: PEERIT_SEED_BOOTSTRAP_PROFILE_V1,
@@ -124,11 +136,44 @@ const seedBootstrapBytes = Buffer.from(encodePeeritSeedBootstrapV1({
         }
       }))
     }]
-  },
-  signature: '00'.repeat(64)
-}))
+}
+
+function seedBootstrapBytes (releaseSequence) {
+  return Buffer.from(encodePeeritSeedBootstrapV1({
+    payload: { ...seedBootstrapPayload, releaseSequence },
+    signature: '00'.repeat(64)
+  }))
+}
+
+const publicInboxFixture = JSON.parse(readFileSync(new URL(
+  './fixtures/peerit-seq29-limited-public-test-v1/positive-bootstrap.json',
+  import.meta.url)))
+const publicInboxPayload = structuredClone(publicInboxFixture.payload)
+const publicInboxReferenceNow = BigInt(Date.now())
+publicInboxPayload.artifactClass = 'LIMITED_PUBLIC_TEST_RELEASE'
+publicInboxPayload.authorityPublicKey = inboxAuthorityPublicKey
+publicInboxPayload.issuedUnixMillis = String(publicInboxReferenceNow - 1000n)
+publicInboxPayload.expiresUnixMillis = String(
+  publicInboxReferenceNow + (7n * 24n * 60n * 60n * 1000n))
+publicInboxPayload.inboxEpochSets[0].inboxEpoch = Math.floor(
+  Number(publicInboxReferenceNow / 21600000n) / 28)
+for (const binding of publicInboxPayload.inboxEpochSets[0].bindings) {
+  binding.inboxEpoch = publicInboxPayload.inboxEpochSets[0].inboxEpoch
+}
+const publicInboxSignature = nodeSign(null, Buffer.concat([
+  Buffer.from(PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_DOMAIN_V1, 'ascii'),
+  Buffer.from([0]),
+  Buffer.from(canonicalPeeritLimitedPublicInboxJsonV1(publicInboxPayload))
+]), inboxPrivateKey).toString('hex')
+const publicInboxBootstrapBytes = Buffer.from(JSON.stringify({
+  payload: publicInboxPayload,
+  signature: publicInboxSignature
+}, null, 2) + '\n')
 
 function releaseFixture (releaseSequence, relayHints = []) {
+  const releaseSeedBootstrapBytes = releaseSequence >= 13
+    ? seedBootstrapBytes(releaseSequence)
+    : null
   const artifact = buildPeeritSubstrateRuntimeArtifactV1({
     sourceFiles,
     substrateProfile: 'blind-v1',
@@ -137,8 +182,14 @@ function releaseFixture (releaseSequence, relayHints = []) {
     releaseKey,
     ...(releaseSequence >= 13
       ? {
-          seedBootstrapBytes,
+          seedBootstrapBytes: releaseSeedBootstrapBytes,
           seedDiscoveryAuthorityPublicKey: seedAuthorityPublicKey
+        }
+      : {}),
+    ...(releaseSequence >= 29
+      ? {
+          limitedPublicInboxBootstrapBytes: publicInboxBootstrapBytes,
+          limitedPublicInboxBootstrapAuthorityPublicKey: inboxAuthorityPublicKey
         }
       : {})
   })
@@ -168,6 +219,16 @@ function releaseFixture (releaseSequence, relayHints = []) {
             peeritSeedBootstrapReleaseSequence: artifact.seedBootstrap.releaseSequence
           }
         : {}),
+      ...(artifact.inboxBootstrap
+        ? {
+            peeritLimitedPublicInboxBootstrap: artifact.inboxBootstrap.path,
+            peeritLimitedPublicInboxBootstrapSha256: artifact.inboxBootstrap.sha256,
+            peeritLimitedPublicInboxBootstrapAuthorityPublicKey:
+              artifact.inboxBootstrap.authorityPublicKey,
+            peeritLimitedPublicInboxBootstrapReleaseSequence:
+              artifact.inboxBootstrap.releaseSequence
+          }
+        : {}),
       releaseKey
     }
   }
@@ -182,6 +243,9 @@ function releaseFixture (releaseSequence, relayHints = []) {
     [`/${PEERIT_APP_ARTIFACT_PATH}`, [artifact.appArtifactBytes, 'application/json']],
     ...(artifact.seedBootstrap
       ? [[artifact.seedBootstrap.path, [artifact.seedBootstrap.bytes, 'application/json']]]
+      : []),
+    ...(artifact.inboxBootstrap
+      ? [[artifact.inboxBootstrap.path, [publicInboxBootstrapBytes, 'application/json']]]
       : []),
     ['asset-manifest.json', [Buffer.from(JSON.stringify(manifest)), 'application/json']],
     ['asset-manifest.sig', [Buffer.from(JSON.stringify(signature)), 'application/json']]
@@ -293,4 +357,45 @@ const outerTampered = await verifyPeeritReleaseCoherenceV1({
 assert.equal(outerTampered.active, false,
   'a newly signed outer wrapper cannot drift from the seed hash bound by the app/canonical closure')
 
-console.log('peerit-release-coherence: signed bindings, canonical tamper, relay-hint drift, rollback floor, and Hyper status all fail/resolve correctly')
+const sequence29 = releaseFixture(29, hints)
+const sequence29Coherent = await verifyPeeritReleaseCoherenceV1({
+  ...sequence29,
+  storage: { getItem: () => null, setItem () {} }
+})
+assert.equal(sequence29Coherent.active, true)
+assert.deepEqual(sequence29Coherent.publicInboxBootstrap, {
+  path: '/peerit-limited-public-inbox-bootstrap-v1.json',
+  sha256: sequence29.artifact.inboxBootstrap.sha256,
+  authorityPublicKey: inboxAuthorityPublicKey,
+  releaseSequence: 29
+})
+const inboxOuterTamperManifest = structuredClone(sequence29.manifest)
+inboxOuterTamperManifest.webRelease.peeritLimitedPublicInboxBootstrapSha256 =
+  'ff'.repeat(32)
+const inboxOuterTamperSignature = {
+  alg: RELEASE_ALG,
+  msgVersion: RELEASE_MSG_VERSION,
+  key: releaseKey,
+  sig: nodeSign(null,
+    Buffer.from(releaseSigningMessage(inboxOuterTamperManifest)),
+    privateKey).toString('hex')
+}
+const inboxOuterTampered = await verifyPeeritReleaseCoherenceV1({
+  ...sequence29,
+  storage: { getItem: () => null, setItem () {} },
+  fetch: async input => {
+    if (String(input) === 'asset-manifest.json') {
+      return response(Buffer.from(JSON.stringify(inboxOuterTamperManifest)),
+        'application/json')
+    }
+    if (String(input) === 'asset-manifest.sig') {
+      return response(Buffer.from(JSON.stringify(inboxOuterTamperSignature)),
+        'application/json')
+    }
+    return sequence29.fetch(input)
+  }
+})
+assert.equal(inboxOuterTampered.active, false,
+  'a newly signed outer wrapper cannot drift from the public INBOX hash bound by the app/canonical closure')
+
+console.log('peerit-release-coherence: signed seed + Seq29 public-INBOX bindings, canonical tamper, relay-hint drift, rollback floor, and Hyper status all fail/resolve correctly')

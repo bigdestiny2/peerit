@@ -7,7 +7,14 @@ import { tmpdir } from 'node:os'
 import { createInterface } from 'node:readline/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { SITE_FILES, SUBSTRATE_SITE_FILES } from './publish.mjs'
-import { assertPeeritBlindProductReleaseReady } from './js/substrate/product-release-status.mjs'
+import {
+  PEERIT_BLIND_PRODUCT_RELEASE_BLOCKERS,
+  assertPeeritBlindProductReleaseReady
+} from './js/substrate/product-release-status.mjs'
+import {
+  PEERIT_SEQ29_DECISION_SHA256_V1,
+  verifyPinnedPeeritSeq29OwnerDecisionV1
+} from './scripts/seq29-owner-decision.mjs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const DEFAULT_PENDING_SHIP = join(__dir, '.deploy', 'pending-ship.json')
@@ -28,7 +35,7 @@ const RELEASE_SITE_FILES = configuredSiteFiles()
 
 function usage (code = 0, message = '') {
   if (message) console.error('error:', message)
-  console.error('usage: node ship.mjs [--publish] [--resume-signature] [--sign-command <command>] [--anchor-timeout-ms 240000] [--report <file>]')
+  console.error('usage: node ship.mjs [--publish] [--resume-signature] [--canary-limited-public-test-v1] [--sign-command <command>] [--anchor-timeout-ms 240000] [--report <file>]')
   process.exit(code)
 }
 
@@ -39,6 +46,7 @@ function parseArgs (argv) {
     skipTests: false,
     skipWeb: process.env.SKIP_WEB_RELEASE === '1',
     resumeSignature: false,
+    canaryLimitedPublicTestV1: false,
     signCommand: process.env.PEERIT_RELEASE_SIGN_COMMAND || '',
     anchorTimeoutMs: process.env.ANCHOR_TIMEOUT_MS || '240000',
     report: join(__dir, '.deploy', 'last-ship.json'),
@@ -56,6 +64,7 @@ function parseArgs (argv) {
     else if (arg === '--no-test') opts.skipTests = true
     else if (arg === '--no-web') opts.skipWeb = true
     else if (arg === '--resume-signature') opts.resumeSignature = true
+    else if (arg === '--canary-limited-public-test-v1') opts.canaryLimitedPublicTestV1 = true
     else if (arg === '--sign-command') {
       const value = argv[++i]
       if (!value) usage(2, '--sign-command requires a command')
@@ -105,6 +114,7 @@ const RELEASE_EXPLICIT_INPUTS = [
   'web',
   'config/seed-snapshot.json',
   'deploy/web-release.json',
+  'deploy/canary-decision-peerit-seq29-limited-public-inbox-DRAFT.json',
   'deploy/web-signing-request.json',
   'deploy/CAPACITY.md',
   'docs/PEERIT-BLIND-SUBSTRATE-DELIVERY-MAP.md',
@@ -258,6 +268,7 @@ try {
 const report = {
   appId: 'peerit',
   mode: opts.publish ? 'publish' : 'check',
+  canaryScope: opts.canaryLimitedPublicTestV1 ? 'LIMITED_PUBLIC_TEST_V1' : null,
   generatedAt: new Date().toISOString(),
   checks: [],
   publish: null,
@@ -346,6 +357,7 @@ function writePendingShip (driveKey) {
   const pending = {
     schema: 'peerit-pending-ship-v2',
     publish: opts.publish,
+    canaryLimitedPublicTestV1: opts.canaryLimitedPublicTestV1,
     driveKey,
     manifestSha256: request.manifestSha256,
     signingMessageSha256: request.signingMessageSha256,
@@ -368,6 +380,9 @@ function loadPendingShip () {
   }
   if (pending.publish !== opts.publish) {
     throw new Error(`pending handoff belongs to ${pending.publish ? 'ship:live' : 'ship:check'}, not this command`)
+  }
+  if (Boolean(pending.canaryLimitedPublicTestV1) !== opts.canaryLimitedPublicTestV1) {
+    throw new Error('pending handoff canary scope does not match this command')
   }
   if (!/^[0-9a-f]{64}$/i.test(String(pending.driveKey || ''))) throw new Error('pending handoff has an invalid drive key')
   if (currentManifestDriveKey().toLowerCase() !== pending.driveKey.toLowerCase()) {
@@ -421,18 +436,36 @@ function run (cmd, args, options = {}) {
   })
 }
 
-function runShell (command) {
+export const PEERIT_SEQ29_SCOPED_SIGN_COMMAND_V1 =
+  'keyvault exec --only peerit/release/signing-seed -- npm run release:sign'
+
+export function parseScopedSignCommandV1 (command) {
+  if (String(command || '') !== PEERIT_SEQ29_SCOPED_SIGN_COMMAND_V1) {
+    throw new Error('--sign-command must be the exact scoped Keyvault release signer: ' +
+      PEERIT_SEQ29_SCOPED_SIGN_COMMAND_V1)
+  }
+  return Object.freeze({
+    command: 'keyvault',
+    args: Object.freeze([
+      'exec', '--only', 'peerit/release/signing-seed', '--',
+      'npm', 'run', 'release:sign'
+    ])
+  })
+}
+
+function runScopedSignCommand (command) {
+  const scoped = parseScopedSignCommandV1(command)
   return new Promise((resolve, reject) => {
-    const child = spawn(command, {
+    const child = spawn(scoped.command, scoped.args, {
       cwd: __dir,
-      stdio: 'inherit',
+      stdio: ['ignore', 'inherit', 'inherit'],
       env: process.env,
-      shell: true
+      shell: false
     })
     child.on('error', reject)
     child.on('exit', (code, signal) => {
       if (code === 0) resolve()
-      else reject(new Error(`external signing command exited with ${signal || code}`))
+      else reject(new Error(`scoped Keyvault signing command exited with ${signal || code}`))
     })
   })
 }
@@ -612,6 +645,19 @@ export async function runLiveReleasePreflights ({ publish, readonly, relay, runS
 // historical reads/audits and is no longer called by the official release path.
 export const runReadonlyLivePreflights = runLiveReleasePreflights
 
+function verifyConfiguredSeq29Canary (release) {
+  if (!release || release.substrateProfile !== 'blind-v1' ||
+      release.releaseSequence !== 29) {
+    throw new Error('--canary-limited-public-test-v1 is restricted to the exact blind-v1 Sequence-29 release')
+  }
+  const verified = verifyPinnedPeeritSeq29OwnerDecisionV1({ root: __dir })
+  return Object.freeze({
+    decisionSha256: PEERIT_SEQ29_DECISION_SHA256_V1,
+    decidedAt: verified.decision.decided_at,
+    releaseBlockers: Object.freeze([...PEERIT_BLIND_PRODUCT_RELEASE_BLOCKERS])
+  })
+}
+
 async function runProductionLivePreflights () {
   const release = readJson(join(__dir, 'deploy', 'web-release.json'))
   if (!release) {
@@ -620,8 +666,14 @@ async function runProductionLivePreflights () {
   }
   if (release.substrateProfile) {
     try {
-      assertPeeritBlindProductReleaseReady(release)
-      addCheck('blind-product:release-ready', 'pass', `Replacement product ${release.substrateProfile} is release-ready; no legacy relay preflight was selected.`)
+      if (opts.canaryLimitedPublicTestV1) {
+        const canary = verifyConfiguredSeq29Canary(release)
+        addCheck('blind-product:limited-public-test', 'pass',
+          'Exact source-pinned Sequence-29 owner decision admits LIVE_PUBLIC_TEST_ONLY; every GA blocker remains DISCLOSED-OPEN.', canary)
+      } else {
+        assertPeeritBlindProductReleaseReady(release)
+        addCheck('blind-product:release-ready', 'pass', `Replacement product ${release.substrateProfile} is release-ready; no legacy relay preflight was selected.`)
+      }
     } catch (error) {
       addCheck('blind-product:release-ready', 'fail', error.message, {
         releaseBlockers: error.releaseBlockers || [],
@@ -668,9 +720,15 @@ function runConfiguredBlindProductGate () {
   const release = readJson(join(__dir, 'deploy', 'web-release.json'))
   if (!release || !release.substrateProfile) return
   try {
-    assertPeeritBlindProductReleaseReady(release)
-    addCheck('blind-product:composed-gate', 'pass',
-      `The complete ${release.substrateProfile} Peerit/HiveRelay product gate passed.`)
+    if (opts.canaryLimitedPublicTestV1) {
+      const canary = verifyConfiguredSeq29Canary(release)
+      addCheck('blind-product:limited-public-test-gate', 'pass',
+        'The exact source-pinned Sequence-29 LIMITED_PUBLIC_TEST_V1 gate passed; unchanged GA blockers remain disclosed-open.', canary)
+    } else {
+      assertPeeritBlindProductReleaseReady(release)
+      addCheck('blind-product:composed-gate', 'pass',
+        `The complete ${release.substrateProfile} Peerit/HiveRelay product gate passed.`)
+    }
   } catch (error) {
     addCheck('blind-product:composed-gate', 'fail', error.message, {
       releaseBlockers: error.releaseBlockers || [],
@@ -693,7 +751,11 @@ async function runPublish () {
   }
 
   mkdirSync(dirname(opts.publishReport), { recursive: true })
-  await run('node', ['publish.mjs'], { env: publishEnv })
+  const publishArgs = ['publish.mjs']
+  if (opts.canaryLimitedPublicTestV1) {
+    publishArgs.push('--canary-limited-public-test-v1')
+  }
+  await run('node', publishArgs, { env: publishEnv })
 
   const publishReport = readJson(opts.publishReport)
   report.publish = publishReport
@@ -725,13 +787,17 @@ async function runWebRelease (driveKey, phase) {
   mkdirSync(dirname(opts.webReport), { recursive: true })
   const phaseFlag = phase === 'prepare' ? '--prepare' : '--verify-only'
   try {
-    await run('node', [
+    const webReleaseArgs = [
       'scripts/web-release.mjs', phaseFlag,
       '--strict',
       '--drive-key', driveKey,
       '--report', opts.webReport,
       '--signing-request', opts.signingRequest
-    ])
+    ]
+    if (opts.canaryLimitedPublicTestV1) {
+      webReleaseArgs.push('--canary-limited-public-test-v1')
+    }
+    await run('node', webReleaseArgs)
   } catch (err) {
     const webReport = readJson(opts.webReport)
     report.webRelease = webReport
@@ -777,8 +843,8 @@ async function awaitSignatureHandoff () {
   }
   if (opts.signCommand) {
     console.log('[ship] invoking the operator-supplied signing command; its contents are not written to the report')
-    await runShell(opts.signCommand)
-    addCheck('web-release:sign-command', 'pass', 'Operator-supplied signing command completed.')
+    await runScopedSignCommand(opts.signCommand)
+    addCheck('web-release:sign-command', 'pass', 'Exact noninteractive scoped Keyvault signing command completed.')
     return true
   }
   if (process.stdin.isTTY && process.stdout.isTTY) {
@@ -797,9 +863,12 @@ async function awaitSignatureHandoff () {
   }
 
   report.awaitingSignature = true
-  const resume = opts.publish
+  const resumeBase = opts.publish
     ? 'npm run ship:live -- --resume-signature'
     : 'npm run ship:check -- --resume-signature'
+  const resume = opts.canaryLimitedPublicTestV1
+    ? `${resumeBase} --canary-limited-public-test-v1`
+    : resumeBase
   addCheck('web-release:signature-pending', 'info', `Offline signature is pending. Return web/asset-manifest.sig, then run: ${resume}`, {
     signingRequest: opts.signingRequest,
     manifest: WEB_MANIFEST,

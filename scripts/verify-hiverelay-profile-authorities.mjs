@@ -2,7 +2,6 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
 import {
   PEERIT_PROFILE_EXTERNAL_CLIENT_COMPOSITION_BINDING,
   PEERIT_PROFILE_EXTERNAL_WIRE_TUPLE_BINDING,
@@ -10,62 +9,103 @@ import {
   PEERIT_PROFILE_FINAL_HIVERELAY_WIRE_TUPLE_V1
 } from '../js/substrate/profile-codec-ir.mjs'
 import { PEERIT_PROFILE_INVENTORY } from '../js/substrate/profile-inventory.mjs'
+import {
+  PEERIT_PROFILE_EXTERNAL_AUTHORITY,
+  authenticatePeeritProfileExternalCodecAuthorityV1,
+  isAuthenticatedPeeritProfileExternalCodecAuthorityV1
+} from '../js/substrate/profile-external-authority.mjs'
+import { domainLengthHash } from '../js/substrate/release-control-primitives.mjs'
 
-const hiveRoot = path.resolve(process.argv.find(argument => argument.startsWith('--hiverelay-root='))?.slice('--hiverelay-root='.length) || '/private/tmp/hiverelay-blind')
+const hiveRoot = path.resolve(
+  process.argv.find(argument => argument.startsWith('--hiverelay-root='))
+    ?.slice('--hiverelay-root='.length) ||
+  process.env.HIVERELAY_BLIND_ROOT ||
+  '/Users/localllm/.pear-wt/s29artifact5')
+const peeritRoot = path.resolve(new URL('..', import.meta.url).pathname)
 const protocolRoot = path.join(hiveRoot, 'packages/blind-protocol')
 const read = relative => new Uint8Array(fs.readFileSync(path.join(hiveRoot, relative)))
 const hex = bytes => Buffer.from(bytes).toString('hex')
-const imported = relative => import(pathToFileURL(path.join(protocolRoot, relative)).href)
+const EXPECTED_EXTERNAL_WIRE = Object.freeze({
+  specHash: 'c9ddd235c3963461174e3de13c25a4c995b53ff320be822d8304f870766b6592',
+  abiHash: '199ba15d94d4d112cfac520a67055ce15ec870f0f6f7bd9adaaf47d552334567',
+  vectorSetHash: 'fa54012cd0d7e4e620878c67e61f435ecb31ddec05a6283917987cc84279ee05'
+})
+const EXPECTED_CLIENT_COMPOSITION = Object.freeze({
+  formatHash: '5637708aff4a6e93a6ff3a2f96361aa0b1597c229346e124eebeb2d7618ae09a',
+  vectorSetHash: 'ea176ea78a611256689604541e55ba420d426dda2fa4dd64fb3ac9ac7503934d'
+})
 
 const wireMetadata = JSON.parse(fs.readFileSync(path.join(protocolRoot, 'hiverelay-blind-wire-authority-v1.json'), 'utf8'))
-const hashes = await imported('hashes.js')
 const recomputedWire = Object.freeze({
-  specHash: hex(hashes.hashSpec(read(wireMetadata.specArtifact))),
-  abiHash: hex(hashes.hashAbi(read(wireMetadata.abiArtifact))),
-  vectorSetHash: hex(hashes.hashVectorSet(read(wireMetadata.vectorManifestArtifact)))
+  specHash: hex(domainLengthHash('hiverelay.blind.spec-hash.v1',
+    read(wireMetadata.specArtifact))),
+  abiHash: hex(domainLengthHash('hiverelay.blind.abi-hash.v1',
+    read(wireMetadata.abiArtifact))),
+  vectorSetHash: hex(domainLengthHash('hiverelay.blind.vector-set-hash.v1',
+    read(wireMetadata.vectorManifestArtifact)))
 })
 assert.deepEqual(recomputedWire, {
   specHash: wireMetadata.specHash,
   abiHash: wireMetadata.abiHash,
   vectorSetHash: wireMetadata.vectorSetHash
 }, 'Hive WIRE metadata must equal hashes recomputed from exact final artifacts')
-assert.deepEqual(PEERIT_PROFILE_FINAL_HIVERELAY_WIRE_TUPLE_V1, recomputedWire)
+assert.deepEqual(recomputedWire, EXPECTED_EXTERNAL_WIRE,
+  'supplied HiveRelay closure must be the exact current external v1 authority')
+
+const peeritRead = relative => new Uint8Array(fs.readFileSync(path.join(peeritRoot, relative)))
+const peeritWire = Object.freeze({
+  specHash: hex(domainLengthHash('hiverelay.blind.spec-hash.v1',
+    peeritRead('protocol/external-authority/hiverelay-blind-wire-v1.md'))),
+  abiHash: hex(domainLengthHash('hiverelay.blind.abi-hash.v1',
+    peeritRead('protocol/external-authority/hiverelay-blind-abi-v1.cenc'))),
+  vectorSetHash: hex(domainLengthHash('hiverelay.blind.vector-set-hash.v1',
+    peeritRead('protocol/external-authority/hiverelay-blind-wire-vector-manifest-v1.cenc')))
+})
+assert.deepEqual(PEERIT_PROFILE_FINAL_HIVERELAY_WIRE_TUPLE_V1, peeritWire,
+  'Peerit frozen WIRE tuple must equal its exact local accepted artifacts')
 assert.equal(PEERIT_PROFILE_EXTERNAL_WIRE_TUPLE_BINDING,
-  `wire-v1:${recomputedWire.specHash}:${recomputedWire.abiHash}:${recomputedWire.vectorSetHash}`)
+  `wire-v1:${peeritWire.specHash}:${peeritWire.abiHash}:${peeritWire.vectorSetHash}`)
+assert.notDeepEqual(recomputedWire, peeritWire,
+  'current external and Peerit frozen accepted WIRE closures are distinct by design')
 
 const clientMetadata = JSON.parse(fs.readFileSync(path.join(protocolRoot, 'hiverelay-blind-client-composition-authority-v1.json'), 'utf8'))
-const clientAuthority = await imported('client-composition-authority.js')
-const vectorRoot = path.join(hiveRoot, clientMetadata.vectorRoot)
-const vectors = new Map()
-const visit = (absolute, relative = '') => {
-  for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
-    const childAbsolute = path.join(absolute, entry.name)
-    const childRelative = path.posix.join(relative, entry.name)
-    if (entry.isDirectory()) visit(childAbsolute, childRelative)
-    else if (entry.isFile()) vectors.set(childRelative, new Uint8Array(fs.readFileSync(childAbsolute)))
-  }
-}
-visit(vectorRoot)
-const verifiedClient = clientAuthority.verifyClientCompositionAuthorityV1({
-  formatAuthorityBytes: read(clientMetadata.formatAuthorityArtifact),
-  specBytes: read(clientMetadata.specificationArtifact),
-  schemaCatalogBytes: read(clientMetadata.schemaCatalogArtifact),
-  vectorManifestBytes: read(clientMetadata.vectorManifestArtifact),
-  vectors,
-  expectedFormatHash: Buffer.from(clientMetadata.formatHash, 'hex'),
-  expectedVectorSetHash: Buffer.from(clientMetadata.vectorSetHash, 'hex')
-})
+const clientFormatBytes = read(clientMetadata.formatAuthorityArtifact)
+const clientVectorManifestBytes = read(clientMetadata.vectorManifestArtifact)
 const recomputedClient = Object.freeze({
-  formatHash: hex(verifiedClient.formatHash),
-  vectorSetHash: hex(verifiedClient.vectorSetHash)
+  formatHash: hex(domainLengthHash('hiverelay.blind.client-composition-format-hash.v1',
+    clientFormatBytes)),
+  vectorSetHash: hex(domainLengthHash('hiverelay.blind.client-composition-vector-set-hash.v1',
+    clientVectorManifestBytes))
 })
 assert.deepEqual(recomputedClient, {
   formatHash: clientMetadata.formatHash,
   vectorSetHash: clientMetadata.vectorSetHash
 })
+assert.deepEqual(recomputedClient, EXPECTED_CLIENT_COMPOSITION,
+  'supplied HiveRelay closure must be the exact accepted client-composition authority')
 assert.deepEqual(PEERIT_PROFILE_FINAL_HIVERELAY_CLIENT_COMPOSITION_V1, recomputedClient)
 assert.equal(PEERIT_PROFILE_EXTERNAL_CLIENT_COMPOSITION_BINDING,
   `client-composition-v1:${recomputedClient.formatHash}:${recomputedClient.vectorSetHash}`)
+assert.equal(Buffer.from(clientFormatBytes).equals(Buffer.from(peeritRead(
+  'protocol/external-authority/hiverelay-blind-client-composition-format-v1.cenc'
+))), true, 'external client-composition format must byte-equal Peerit\'s frozen accepted artifact')
+assert.equal(Buffer.from(clientVectorManifestBytes).equals(Buffer.from(peeritRead(
+  'protocol/external-authority/hiverelay-blind-client-composition-vector-manifest-v1.cenc'
+))), true, 'external client-composition vectors must byte-equal Peerit\'s frozen accepted artifact')
+const locallyVerifiedClient = authenticatePeeritProfileExternalCodecAuthorityV1({
+  name: 'ReadCellCapV1',
+  authorityKind: PEERIT_PROFILE_EXTERNAL_AUTHORITY.CLIENT_COMPOSITION_V1,
+  authorityBinding: PEERIT_PROFILE_EXTERNAL_CLIENT_COMPOSITION_BINDING,
+  artifacts: {
+    formatAuthorityBytes: clientFormatBytes,
+    vectorManifestBytes: clientVectorManifestBytes
+  },
+  assertCanonical () {
+    throw new Error('authority metadata audit does not execute external runtime codecs')
+  }
+})
+assert.equal(isAuthenticatedPeeritProfileExternalCodecAuthorityV1(locallyVerifiedClient), true,
+  'Peerit-local pinned authority verifier must authenticate the exact external composition bytes')
 
 const wireRows = PEERIT_PROFILE_INVENTORY.externalCodecImports.filter(row => row.authorityKind === 'WIRE_TUPLE_V1')
 const clientRows = PEERIT_PROFILE_INVENTORY.externalCodecImports.filter(row => row.authorityKind === 'CLIENT_COMPOSITION_V1')
@@ -75,17 +115,16 @@ assert.equal(wireRows.every(row => row.tupleBinding === PEERIT_PROFILE_EXTERNAL_
 assert.equal(clientRows.every(row => row.tupleBinding === PEERIT_PROFILE_EXTERNAL_CLIENT_COMPOSITION_BINDING), true)
 assert.equal(PEERIT_PROFILE_INVENTORY.externalCodecImports.some(row => row.name === 'BlindStoreManifestV1'), false)
 
-const staleDraftTuple = 'wire-v1:470a48af7d3e2c5e70aa8c14bfd9fb36344678be651f3c435cf157c27f49c7cc:aaf29c82d93125ad241f6cd257b69f2d76bbcebda896edc171816a947d099ed2:7943626b40d91ceec9ccd7419c4826c480d73a1290d39030dadfd95bf6fdc19d'
-assert.notEqual(PEERIT_PROFILE_EXTERNAL_WIRE_TUPLE_BINDING, staleDraftTuple, 'stale draft tuple must never satisfy final authority')
-const substitutedMetadata = { ...wireMetadata, specHash: staleDraftTuple.split(':')[1] }
-assert.notEqual(substitutedMetadata.specHash, recomputedWire.specHash, 'self-described stale metadata must fail exact artifact recomputation')
-
 process.stdout.write(`${JSON.stringify({
   schema: 'PeeritHiveRelayAuthorityIntegrationV1',
   hiveRoot,
-  wire: recomputedWire,
+  externalWire: recomputedWire,
+  peeritFrozenWire: peeritWire,
+  wirePosture: 'EXTERNAL_CURRENT_DIFFERS_FROM_PEERIT_FROZEN_ACCEPTED',
   clientComposition: recomputedClient,
   importedCodecs: [...wireRows, ...clientRows].map(row => row.name),
   storeManifestImportable: false,
-  staleDraftRejected: true
+  artifactMetadataRecomputed: true,
+  externalExecutableImports: false,
+  clientCompositionLocallyVerified: true
 }, null, 2)}\n`)

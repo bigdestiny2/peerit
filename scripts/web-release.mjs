@@ -1,9 +1,16 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
 import { createHash, createPrivateKey, createPublicKey, sign as nodeSign, verify as nodeVerify } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { dirname, join, posix, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   dedupeRelayList,
   normalizeRelayRosterPayload,
@@ -23,14 +30,36 @@ import {
 } from '../js/substrate/product-release-status.mjs'
 import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from '../js/substrate/production-release-authority.mjs'
 import { normalizePeeritReleaseRelayHintsV1 } from '../js/substrate/release-relay-hints.mjs'
+import { PEERIT_LIMITED_CELL_PUT_ISSUER_ORIGINS_V1 } from '../js/substrate/limited-cell-put-profile.mjs'
 import {
   PEERIT_APP_ARTIFACT_PATH,
+  PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH,
+  PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE,
   PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE,
   PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE,
   PEERIT_WEB_ASSET_MANIFEST_PATH,
   verifyPeeritSubstrateRuntimeArtifactV1
 } from './substrate-runtime-artifact.mjs'
 import { verifyPeeritProductionPinHistoryReleaseV1 } from './production-pin-history-release.mjs'
+import {
+  PEERIT_SEQ29_DECISION_DRAFT_PATH_V1,
+  PEERIT_SEQ29_DECISION_PATH_V1,
+  PEERIT_SEQ29_DECISION_SHA256_V1,
+  peeritSeq29OwnerDecisionPhaseV1,
+  verifyPeeritSeq29PinnedReprepareV1,
+  verifyPeeritSeq29OwnerDecisionV1,
+  verifyPinnedPeeritSeq29OwnerDecisionV1
+} from './seq29-owner-decision.mjs'
+import {
+  restorePeeritSeq29PinnedWebSignatureToStageV1,
+  snapshotPeeritSeq29PinnedWebReprepareV1,
+  snapshotPeeritSeq29PinnedWebStageOutputsV1,
+  verifyPeeritSeq29PinnedWebStageFinalV1,
+  writePeeritSeq29PinnedWebStageSigningRequestV1
+} from './lib/seq29-pinned-web-reprepare.mjs'
+import {
+  readPeeritSeq29InitialWebPreparePredecessorV1
+} from './lib/seq29-initial-web-prepare-journal.mjs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dir, '..')
@@ -91,25 +120,30 @@ function parseArgs (argv) {
   return opts
 }
 
-const opts = parseArgs(process.argv.slice(2))
-const report = {
-  appId: 'peerit',
-  mode: opts.phase,
-  strict: opts.strict,
-  canaryScope: opts.canaryLimitedPublicTestV1 ? 'LIMITED_PUBLIC_TEST_V1' : null,
-  generatedAt: new Date().toISOString(),
-  config: opts.config,
-  report: opts.report,
-  checks: [],
-  status: 'started',
-  summary: ''
+let opts
+let report
+
+function beginReport (options) {
+  opts = options
+  report = {
+    appId: 'peerit',
+    mode: opts.phase,
+    strict: opts.strict,
+    canaryScope: opts.canaryLimitedPublicTestV1 ? 'LIMITED_PUBLIC_TEST_V1' : null,
+    generatedAt: new Date().toISOString(),
+    config: opts.config,
+    report: opts.report,
+    checks: [],
+    status: 'started',
+    summary: ''
+  }
 }
 
 function addCheck (id, status, message, evidence = undefined) {
   const check = { id, status, message }
   if (evidence !== undefined) check.evidence = evidence
   report.checks.push(check)
-  if (!opts.json) {
+  if (!opts.json && !opts.quiet) {
     const prefix = status === 'pass' ? 'PASS' : status === 'warn' ? 'WARN' : status === 'fail' ? 'FAIL' : 'INFO'
     console.log(`[web-release] ${prefix} ${message}`)
   }
@@ -143,8 +177,10 @@ function writeReport () {
   finishReport()
   mkdirSync(dirname(opts.report), { recursive: true })
   writeFileSync(opts.report, JSON.stringify(report, null, 2) + '\n')
-  if (opts.json) console.log(JSON.stringify(report, null, 2))
-  else console.log(`[web-release] report: ${opts.report}`)
+  if (!opts.quiet) {
+    if (opts.json) console.log(JSON.stringify(report, null, 2))
+    else console.log(`[web-release] report: ${opts.report}`)
+  }
 }
 
 function readJson (file) {
@@ -181,7 +217,10 @@ function listWebFiles (root, dir = root, prefix = '') {
   return files.sort()
 }
 
-function verifyManifestFileHashes (assetManifest, { requireSignature = true } = {}) {
+function verifyManifestFileHashes (assetManifest, {
+  requireSignature = true,
+  webRoot = join(ROOT, 'web')
+} = {}) {
   const files = assetManifest && assetManifest.files
   if (!files || typeof files !== 'object' || Array.isArray(files)) throw new Error('asset-manifest.json files must be an object')
   const entries = Object.entries(files)
@@ -201,7 +240,7 @@ function verifyManifestFileHashes (assetManifest, { requireSignature = true } = 
       if (canonical.has(collisionKey)) throw new Error(`asset-manifest.json contains a duplicate/case-colliding path: ${file}`)
       canonical.add(collisionKey)
       if (!/^[0-9a-f]{64}$/i.test(String(expected || ''))) throw new Error(`asset-manifest.json has an invalid SHA-256 for ${file}`)
-      const abs = join(ROOT, 'web', ...file.split('/'))
+      const abs = join(webRoot, ...file.split('/'))
       if (!existsSync(abs) || !statSync(abs).isFile()) throw new Error(`${kind} web asset is missing: ${file}`)
       const actual = sha256(readFileSync(abs))
       if (actual !== String(expected).toLowerCase()) throw new Error(`${kind} web asset hash mismatch: ${file}`)
@@ -215,7 +254,7 @@ function verifyManifestFileHashes (assetManifest, { requireSignature = true } = 
   // by the signed `files` or `controls` maps.
   const metadataFiles = new Set(['asset-manifest.json'])
   if (requireSignature) metadataFiles.add('asset-manifest.sig')
-  const actualFiles = listWebFiles(join(ROOT, 'web'))
+  const actualFiles = listWebFiles(webRoot)
   for (const file of actualFiles) {
     if (!Object.hasOwn(files, file) && !Object.hasOwn(controls, file) && !metadataFiles.has(file)) {
       throw new Error(`web/ contains an unmanifested release file: ${file}`)
@@ -232,14 +271,15 @@ function verifyManifestFileHashes (assetManifest, { requireSignature = true } = 
   })
 }
 
-function signingRequestFor (release, driveKey, manifestBytes, assetManifest) {
+function signingRequestFor (release, driveKey, manifestBytes, assetManifest,
+  webRoot = join(ROOT, 'web')) {
   const artifactFiles = {}
-  for (const file of listWebFiles(join(ROOT, 'web'))) {
+  for (const file of listWebFiles(webRoot)) {
     // The signature is the response to this request, so it cannot be part of
     // the request itself. Every other deploy byte, including sw.js and
     // verify.html, is frozen here for build-free Render verification.
     if (file === 'asset-manifest.sig') continue
-    artifactFiles[file] = sha256(readFileSync(join(ROOT, 'web', ...file.split('/'))))
+    artifactFiles[file] = sha256(readFileSync(join(webRoot, ...file.split('/'))))
   }
   return {
     schema: 'peerit-web-signing-request-v2',
@@ -316,6 +356,10 @@ function normalizeConfig (raw) {
       peeritSeedBootstrapBundle: String(raw.peeritSeedBootstrapBundle || '').trim(),
       peeritSeedDiscoveryAuthorityPublicKey: String(
         raw.peeritSeedDiscoveryAuthorityPublicKey || '').trim().toLowerCase(),
+      peeritLimitedPublicInboxBootstrapBundle: String(
+        raw.peeritLimitedPublicInboxBootstrapBundle || '').trim(),
+      peeritLimitedPublicInboxBootstrapAuthorityPublicKey: String(
+        raw.peeritLimitedPublicInboxBootstrapAuthorityPublicKey || '').trim().toLowerCase(),
       releaseSequence: Number(raw.releaseSequence),
       pinnedReleaseKey: String(raw.pinnedReleaseKey || raw.releaseKey || '').trim().toLowerCase()
     }
@@ -446,6 +490,16 @@ function validateReleaseConfig (release) {
          !HEX64.test(release.peeritSeedDiscoveryAuthorityPublicKey))) {
       throw new Error('sequence-13+ release requires a seed bootstrap bundle and discovery authority key')
     }
+    const needsInbox =
+      release.releaseSequence >= PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE
+    if (needsInbox && (!release.peeritLimitedPublicInboxBootstrapBundle ||
+        !HEX64.test(release.peeritLimitedPublicInboxBootstrapAuthorityPublicKey))) {
+      throw new Error('sequence-29+ release requires a signed public INBOX bootstrap bundle and authority key')
+    }
+    if (!needsInbox && (release.peeritLimitedPublicInboxBootstrapBundle ||
+        release.peeritLimitedPublicInboxBootstrapAuthorityPublicKey)) {
+      throw new Error('public INBOX bootstrap configuration requires releaseSequence 29 or later')
+    }
     if (!HEX64.test(release.pinnedReleaseKey)) throw new Error('deploy/web-release.json has an invalid pinnedReleaseKey')
     addCheck('config:substrate', 'pass', `Release selects ${release.substrateProfile} with ${release.relayHints.length} untrusted relay hint(s).`, {
       relayHints: release.relayHints,
@@ -479,23 +533,30 @@ function assertDriveKey (driveKey) {
   addCheck('config:drive-key', 'pass', `Web bundle will pin drive key ${driveKey.slice(0, 12)}...`, { driveKey })
 }
 
-function run (cmd, args, options = {}) {
+function runBuildWeb (args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, {
+    const child = spawn(process.execPath, args, {
       cwd: ROOT,
       stdio: 'inherit',
-      env: options.env || process.env
+      env: {
+        LANG: 'C',
+        LC_ALL: 'C',
+        TZ: 'UTC'
+      },
+      shell: false,
+      windowsHide: true
     })
     child.on('error', reject)
     child.on('exit', (code, signal) => {
       if (code === 0) resolve()
-      else reject(new Error(`${cmd} ${args.join(' ')} exited with ${signal || code}`))
+      else reject(new Error(`fixed web build child exited with ${signal || code}`))
     })
   })
 }
 
-async function buildWeb (release, driveKey) {
+async function buildWeb (release, driveKey, { outputDirectory = null } = {}) {
   const args = ['build-web.mjs', '--config', opts.config, '--release-sequence', String(release.releaseSequence), '--drive-key', driveKey]
+  if (outputDirectory) args.push('--out', outputDirectory)
   if (release.transport === 'blind-substrate') {
     args.push('--substrate-profile', release.substrateProfile)
     if (release.relayHints.length) args.push('--substrate-relay-hints', release.relayHints.join(','))
@@ -506,7 +567,7 @@ async function buildWeb (release, driveKey) {
   if (release.relayRosterMirrors && release.relayRosterMirrors.length) args.push('--relay-roster-mirrors', release.relayRosterMirrors.join(','))
   if (release.dhtRelay) args.push('--dht-relay', release.dhtRelay)
   if (release.shardRoster) args.push('--shard-roster', release.shardRoster)
-  await run('node', args)
+  await runBuildWeb(args)
   addCheck('build:web', 'pass', release.transport === 'blind-substrate'
     ? 'Built web/ from the replacement substrate release config.'
     : 'Built the separately selected legacy migration-compatibility artifact.')
@@ -519,7 +580,10 @@ function metaContent (html, name) {
   return match ? match[1] : ''
 }
 
-async function verifySubstrateWebBundle (release, driveKey, { requireSignature = true } = {}) {
+async function verifySubstrateWebBundle (release, driveKey, {
+  requireSignature = true,
+  webRoot = join(ROOT, 'web')
+} = {}) {
   const required = [
     'index.html',
     'asset-manifest.json',
@@ -527,7 +591,7 @@ async function verifySubstrateWebBundle (release, driveKey, { requireSignature =
     'verify.html',
     PEERIT_APP_ARTIFACT_PATH,
     PEERIT_WEB_ASSET_MANIFEST_PATH
-  ].map(file => join(ROOT, 'web', file))
+  ].map(file => join(webRoot, file))
   for (const file of required) if (!existsSync(file)) throw new Error(`${file} is missing; run npm run build-web`)
   const html = readFileSync(required[0], 'utf8')
   if (metaContent(html, 'peerit-substrate') !== release.substrateProfile) throw new Error('web/index.html substrate profile meta does not match deploy/web-release.json')
@@ -552,17 +616,25 @@ async function verifySubstrateWebBundle (release, driveKey, { requireSignature =
 
   const manifest = readJson(required[1])
   if (!manifest) throw new Error('web/asset-manifest.json is invalid')
-  verifyManifestFileHashes(manifest, { requireSignature })
+  verifyManifestFileHashes(manifest, { requireSignature, webRoot })
   if (manifest.releaseSequence !== release.releaseSequence || manifest.driveKey !== driveKey) throw new Error('web/asset-manifest.json release identity does not match the release config')
   const runtimeFiles = new Map(Object.keys(manifest.files).map(file => [
     file,
-    readFileSync(join(ROOT, 'web', ...file.split('/')))
+    readFileSync(join(webRoot, ...file.split('/')))
   ]))
   const runtime = verifyPeeritSubstrateRuntimeArtifactV1({
     files: runtimeFiles,
     releaseSequence: release.releaseSequence,
     releaseKey: release.pinnedReleaseKey
   })
+  if (release.releaseSequence >= PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE &&
+      (!runtime.inboxBootstrap ||
+       runtime.inboxBootstrap.path !== `/${PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH}` ||
+       runtime.inboxBootstrap.authorityPublicKey !==
+         release.peeritLimitedPublicInboxBootstrapAuthorityPublicKey ||
+       runtime.inboxBootstrap.releaseSequence !== release.releaseSequence)) {
+    throw new Error('canonical runtime does not bind the config-selected Sequence-29 public INBOX bootstrap')
+  }
   if (release.productionPinHistoryBundle) {
     await verifyPeeritProductionPinHistoryReleaseV1({
       bundleBytes: runtimeFiles.get(release.productionPinHistoryBundle),
@@ -593,6 +665,16 @@ async function verifySubstrateWebBundle (release, driveKey, { requireSignature =
           peeritSeedBootstrapReleaseSequence: runtime.seedBootstrap.releaseSequence
         }
       : {}),
+    ...(runtime.inboxBootstrap
+      ? {
+          peeritLimitedPublicInboxBootstrap: runtime.inboxBootstrap.path,
+          peeritLimitedPublicInboxBootstrapSha256: runtime.inboxBootstrap.sha256,
+          peeritLimitedPublicInboxBootstrapAuthorityPublicKey:
+            runtime.inboxBootstrap.authorityPublicKey,
+          peeritLimitedPublicInboxBootstrapReleaseSequence:
+            runtime.inboxBootstrap.releaseSequence
+        }
+      : {}),
     releaseKey: release.pinnedReleaseKey
   }
   if (!manifest.webRelease || JSON.stringify(manifest.webRelease) !== JSON.stringify(expected)) {
@@ -607,7 +689,7 @@ async function verifySubstrateWebBundle (release, driveKey, { requireSignature =
     addCheck('web:release-signature', 'info', 'Artifact is frozen and awaiting an external asset-manifest.sig; no build will run during verification.')
     return
   }
-  const sigPath = join(ROOT, 'web', 'asset-manifest.sig')
+  const sigPath = join(webRoot, 'asset-manifest.sig')
   if (!existsSync(sigPath)) throw new Error('pinnedReleaseKey is set but web/asset-manifest.sig is missing')
   const sig = readJson(sigPath)
   if (!sig || sig.alg !== RELEASE_ALG || sig.msgVersion !== RELEASE_MSG_VERSION || String(sig.key || '').toLowerCase() !== release.pinnedReleaseKey || !/^[0-9a-f]{128}$/i.test(String(sig.sig || ''))) {
@@ -620,8 +702,16 @@ async function verifySubstrateWebBundle (release, driveKey, { requireSignature =
   addCheck('web:release-signature', 'pass', `asset-manifest.sig verifies with the pinned release key ${release.pinnedReleaseKey.slice(0, 12)}...`)
 }
 
-async function verifyWebBundle (release, rosterInfo, driveKey, { requireSignature = true } = {}) {
-  if (release.transport === 'blind-substrate') return verifySubstrateWebBundle(release, driveKey, { requireSignature })
+async function verifyWebBundle (release, rosterInfo, driveKey, {
+  requireSignature = true,
+  webRoot = join(ROOT, 'web')
+} = {}) {
+  if (release.transport === 'blind-substrate') {
+    return verifySubstrateWebBundle(release, driveKey, { requireSignature, webRoot })
+  }
+  if (webRoot !== join(ROOT, 'web')) {
+    throw new Error('staged verification is available only for the blind-substrate release')
+  }
   const webIndex = join(ROOT, 'web', 'index.html')
   const webManifest = join(ROOT, 'web', 'asset-manifest.json')
   const webRoster = join(ROOT, 'web', 'relay-roster.json')
@@ -684,7 +774,7 @@ async function verifyWebBundle (release, rosterInfo, driveKey, { requireSignatur
 
   const assetManifest = readJson(webManifest)
   if (!assetManifest) throw new Error('web/asset-manifest.json is invalid')
-  verifyManifestFileHashes(assetManifest, { requireSignature })
+  verifyManifestFileHashes(assetManifest, { requireSignature, webRoot })
   if (assetManifest.releaseSequence !== release.releaseSequence) throw new Error('web/asset-manifest.json releaseSequence does not match deploy/web-release.json')
   if (assetManifest.driveKey !== driveKey) throw new Error('web/asset-manifest.json driveKey does not match the release drive key')
   if (!assetManifest.files || assetManifest.files['relay-roster.json'] !== rootRosterHash) throw new Error('asset-manifest.json does not pin relay-roster.json hash')
@@ -841,6 +931,33 @@ function verifyCanaryOwnerDecision (release) {
     'fc80b076becb28c9fbda596def255246cd506fc5ed4e5f4d22499c5cdad95f1b',
     '52f99d16c0ab47bdad025cbd4138549802e552d55835435588887e7ca178e3a6'
   ]
+  if (release.releaseSequence === 29) {
+    const decisionPhase = peeritSeq29OwnerDecisionPhaseV1({
+      phase: opts.phase,
+      sourcePin: PEERIT_SEQ29_DECISION_SHA256_V1
+    })
+    const pinResolved = decisionPhase === 'PINNED_FINAL_REQUIRED'
+    const verified = pinResolved
+      ? verifyPinnedPeeritSeq29OwnerDecisionV1({ root: ROOT })
+      : verifyPeeritSeq29OwnerDecisionV1({
+        decisionBytes: readFileSync(join(ROOT, PEERIT_SEQ29_DECISION_DRAFT_PATH_V1)),
+        allowDraft: true
+      })
+    const file = pinResolved
+      ? PEERIT_SEQ29_DECISION_PATH_V1
+      : PEERIT_SEQ29_DECISION_DRAFT_PATH_V1
+    addCheck('canary:owner-decision', 'pass',
+      pinResolved
+        ? `Owner Sequence-29 public INBOX decision verified byte-exact (sha256 ${PEERIT_SEQ29_DECISION_SHA256_V1.slice(0, 12)}...).`
+        : 'Canonical Sequence-29 decision DRAFT admitted for deterministic artifact preparation only; verify/publish remain blocked until the materialized decision is source-pinned.', {
+        file,
+        sha256: pinResolved ? PEERIT_SEQ29_DECISION_SHA256_V1 : sha256(readFileSync(join(ROOT, file))),
+        decisionStatus: verified.status,
+        decidedAt: verified.decision.decided_at,
+        functionalReleaseSequence: 29
+      })
+    return decisionPhase
+  }
   if (release.releaseSequence === 28) {
     const decision = readCanaryOwnerDecision(
       CANARY_SEQ28_T2_CELL_PUT_DECISION_FILE,
@@ -2379,14 +2496,31 @@ function verifyCanaryPinHistoryContinuity (release, driveKey) {
   }
   const head = history.entries[history.entries.length - 1]
   const manifestSha256 = sha256(readFileSync(join(ROOT, 'web', 'asset-manifest.json')))
-  if (head.manifestSha256 !== manifestSha256) throw new Error('pin-history head does not bind the exact frozen web/asset-manifest.json bytes')
+  const seq29DecisionPhase = release.releaseSequence === 29 && opts.phase === 'prepare'
+    ? peeritSeq29OwnerDecisionPhaseV1({
+      phase: 'prepare',
+      sourcePin: PEERIT_SEQ29_DECISION_SHA256_V1
+    })
+    : null
+  if (opts.phase !== 'prepare' || seq29DecisionPhase !== 'PINNED_FINAL_REQUIRED') {
+    if (head.manifestSha256 !== manifestSha256) {
+      throw new Error('pin-history head does not bind the exact frozen predecessor web/asset-manifest.json bytes')
+    }
+  } else {
+    const currentManifest = readJson(join(ROOT, 'web', 'asset-manifest.json'))
+    if (currentManifest?.releaseSequence !== release.releaseSequence) {
+      throw new Error('source-pinned Sequence-29 reprepare requires the authenticated current Sequence-29 outer manifest')
+    }
+  }
   if (head.pinnedReleaseKey !== release.pinnedReleaseKey) throw new Error('pin-history head key does not match the release config')
   if (head.driveKey !== driveKey) throw new Error('pin-history head drive key does not match the release drive key')
   if (head.transport !== 'blind-substrate/blind-v1') throw new Error('pin-history head transport is not blind-substrate/blind-v1')
   if (JSON.stringify(head.relayHints) !== JSON.stringify(release.relayHints)) throw new Error('pin-history head relay hints do not match the release config')
   if (head.claim_boundary !== 'LIVE_PUBLIC_TEST_ONLY') throw new Error('pin-history head must carry the LIVE_PUBLIC_TEST_ONLY claim boundary')
   const phaseDescription = opts.phase === 'prepare'
-    ? `signed predecessor ${expectedHeadSequence}`
+    ? seq29DecisionPhase === 'PINNED_FINAL_REQUIRED'
+      ? `signed predecessor ${expectedHeadSequence} plus authenticated current Sequence-29 candidate`
+      : `signed predecessor ${expectedHeadSequence}`
     : `continuity ${sequences[sequences.length - 2]} -> ${sequences[sequences.length - 1]}`
   addCheck('canary:pin-history-continuity', 'pass', `Pin-history ${phaseDescription} verified: head entry binds the exact frozen asset-manifest, both relay hints, and the pinned release key; history signature verifies.`, {
     sequences,
@@ -2402,8 +2536,17 @@ function verifyCanaryCspOrigins (release) {
   if (!cspMatch) throw new Error('render.yaml does not pin a Content-Security-Policy header')
   const connectSrc = (cspMatch[1].split(';').map((v) => v.trim()).find((v) => v.startsWith('connect-src ')) || '')
   if (!connectSrc) throw new Error('render.yaml CSP has no connect-src directive')
+  const relayOrigins = release.relayHints.map((hint) => new URL(hint).origin)
+  const issuerOrigins = release.relayHints.map((hint) => {
+    const url = new URL(hint)
+    return `https://${url.hostname}:8443`
+  })
+  if (issuerOrigins.length !== PEERIT_LIMITED_CELL_PUT_ISSUER_ORIGINS_V1.length ||
+      issuerOrigins.some(origin => !PEERIT_LIMITED_CELL_PUT_ISSUER_ORIGINS_V1.includes(origin))) {
+    throw new Error('release relay hints do not reproduce the exact fixed Cell-PUT issuer origin set')
+  }
   const expectedTokens = ['connect-src', '\'self\'', 'hyper:', 'pear:',
-    ...release.relayHints.map((hint) => new URL(hint).origin)]
+    ...relayOrigins, ...issuerOrigins]
   const actualTokens = connectSrc.split(/\s+/)
   if (JSON.stringify(actualTokens) !== JSON.stringify(expectedTokens)) {
     throw new Error(`render.yaml CSP connect-src is not the exact bounded origin set: ${actualTokens.join(' ')}`)
@@ -2417,7 +2560,7 @@ function verifyCanaryCspOrigins (release) {
   if (headerCsp !== cspMatch[1] || String(headerCsp).includes('evidence.example')) {
     throw new Error('deploy/render-security-headers.json must byte-match the bounded blueprint CSP')
   }
-  addCheck('canary:csp-origins', 'pass', `render.yaml CSP connect-src allows exactly the canary relay hint origins (${release.relayHints.map((hint) => new URL(hint).origin).join(', ')}).`)
+  addCheck('canary:csp-origins', 'pass', `render.yaml CSP connect-src allows exactly the canary relay and fixed Cell-PUT issuer origins (${[...relayOrigins, ...issuerOrigins].join(', ')}).`)
 }
 
 function verifyCanaryLimitedPublicTestV1 (release, driveKey) {
@@ -2430,7 +2573,13 @@ function verifyCanaryLimitedPublicTestV1 (release, driveKey) {
   for (const blocker of gaBlockers) {
     addCheck(`canary:ga-blocker:${blocker}`, 'info', `DISCLOSED-OPEN (GA blocker, not canary-blocking): ${blocker}`)
   }
-  verifyCanaryOwnerDecision(release)
+  const decisionPhase = verifyCanaryOwnerDecision(release)
+  if (release.releaseSequence === 29 && opts.phase === 'prepare' &&
+      decisionPhase === 'PINNED_FINAL_REQUIRED') {
+    verifySigningRequest(release, driveKey)
+    addCheck('canary:pinned-reprepare-input', 'pass',
+      'Source-pinned Sequence-29 preparation authenticated the exact current signing request and decision-bound artifact before predecessor-history admission.')
+  }
   verifyCanaryPinHistoryContinuity(release, driveKey)
   verifyCanaryCspOrigins(release)
   addCheck('canary:verdict', 'pass', `CANARY ${CANARY_SCOPE} verification complete: frozen artifact, owner decision, pin-history continuity, relay hints and CSP origins all bind; ${gaBlockers.length} GA blockers remain DISCLOSED-OPEN.`)
@@ -2481,10 +2630,71 @@ async function main () {
     verifyCanaryLimitedPublicTestV1(release, driveKey)
   }
   if (opts.phase === 'prepare') {
-    const priorSigningRequest = readJson(opts.signingRequest)
-    await buildWeb(release, driveKey)
-    await verifyWebBundle(release, rosterInfo, driveKey, { requireSignature: false })
-    writeSigningRequest(release, driveKey, priorSigningRequest)
+    const currentSigningRequest = readJson(opts.signingRequest)
+    const assertStableReprepare = release.releaseSequence === 29 &&
+      peeritSeq29OwnerDecisionPhaseV1({
+        phase: 'prepare',
+        sourcePin: PEERIT_SEQ29_DECISION_SHA256_V1
+      }) === 'PINNED_FINAL_REQUIRED'
+    const preservedPredecessor = assertStableReprepare
+      ? null
+      : readPeeritSeq29InitialWebPreparePredecessorV1({ root: ROOT })
+    const priorSigningRequest = preservedPredecessor?.priorSigningRequest ||
+      currentSigningRequest
+    if (assertStableReprepare) {
+      const snapshot = snapshotPeeritSeq29PinnedWebReprepareV1({
+        root: ROOT,
+        signingRequestPath: opts.signingRequest
+      })
+      await buildWeb(release, driveKey, {
+        outputDirectory: snapshot.stageWebDirectory
+      })
+      await verifyWebBundle(release, rosterInfo, driveKey, {
+        requireSignature: false,
+        webRoot: snapshot.stageWebDirectory
+      })
+      const stagedManifestBytes = readFileSync(join(
+        snapshot.stageWebDirectory, 'asset-manifest.json'))
+      const stagedManifest = JSON.parse(stagedManifestBytes.toString('utf8'))
+      const stagedSigningRequest = signingRequestFor(
+        release, driveKey, stagedManifestBytes, stagedManifest,
+        snapshot.stageWebDirectory)
+      assertReleaseSequenceProgression({
+        releaseSequence: stagedSigningRequest.releaseSequence,
+        manifestIdentity: stagedSigningRequest.signingMessageSha256,
+        priorRecord: priorSigningRequest
+      })
+      const stagedSigningRequestBytes = Buffer.from(
+        JSON.stringify(stagedSigningRequest, null, 2) + '\n')
+      writePeeritSeq29PinnedWebStageSigningRequestV1({
+        snapshot,
+        bytes: stagedSigningRequestBytes
+      })
+      const stageSnapshot = snapshotPeeritSeq29PinnedWebStageOutputsV1({
+        snapshot
+      })
+      const restored = restorePeeritSeq29PinnedWebSignatureToStageV1({
+        snapshot,
+        stageSnapshot
+      })
+      const finalized = verifyPeeritSeq29PinnedWebStageFinalV1({ restored })
+      verifyPeeritSeq29PinnedReprepareV1({
+        sourcePin: PEERIT_SEQ29_DECISION_SHA256_V1,
+        decisionBytes: readFileSync(join(ROOT, PEERIT_SEQ29_DECISION_PATH_V1)),
+        before: finalized.before,
+        after: finalized.after
+      })
+      await verifyWebBundle(release, rosterInfo, driveKey, {
+        requireSignature: true,
+        webRoot: finalized.stageWebDirectory
+      })
+      addCheck('canary:deterministic-reprepare', 'pass',
+        'Source-pinned Sequence-29 re-prepare reproduced and verified a private staged byte-identical app, canonical Web manifest, outer manifest, signing request, and returned signature; the authenticated live artifact was never deleted or rewritten.')
+    } else {
+      await buildWeb(release, driveKey)
+      await verifyWebBundle(release, rosterInfo, driveKey, { requireSignature: false })
+      writeSigningRequest(release, driveKey, priorSigningRequest)
+    }
   } else {
     // Verification is intentionally build-free. The signing request binds this
     // exact manifest to the build phase; a missing or changed artifact is fatal.
@@ -2493,12 +2703,50 @@ async function main () {
   }
 }
 
-main().catch((err) => {
-  addCheck('web-release:error', 'fail', err.message,
-    Array.isArray(err.releaseBlockers)
-      ? { releaseBlockers: [...err.releaseBlockers], profileOnlyGateAccepted: false }
-      : undefined)
-}).finally(() => {
+async function runConfigured (options) {
+  beginReport(options)
+  try {
+    await main()
+  } catch (err) {
+    addCheck('web-release:error', 'fail', err.message,
+      Array.isArray(err.releaseBlockers)
+        ? { releaseBlockers: [...err.releaseBlockers], profileOnlyGateAccepted: false }
+        : undefined)
+  }
   writeReport()
-  process.exit(report.status === 'blocked' ? 1 : 0)
-})
+  if (report.status === 'blocked') {
+    const error = new Error('fixed Web release phase was blocked')
+    error.code = 'PEERIT_WEB_RELEASE_BLOCKED'
+    error.report = structuredClone(report)
+    throw error
+  }
+  return Object.freeze(structuredClone(report))
+}
+
+export async function runPeeritSeq29WebReleasePhaseV1 (input = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) ||
+      Object.keys(input).join('\0') !== 'phase' ||
+      !['prepare', 'verify'].includes(input.phase)) {
+    const error = new Error('fixed Sequence-29 Web release phase is required')
+    error.code = 'PEERIT_WEB_RELEASE_PHASE_INVALID'
+    throw error
+  }
+  return runConfigured({
+    phase: input.phase,
+    config: DEFAULT_CONFIG,
+    report: DEFAULT_REPORT,
+    signingRequest: DEFAULT_SIGNING_REQUEST,
+    driveKey: '',
+    strict: true,
+    json: false,
+    quiet: true,
+    canaryLimitedPublicTestV1: true
+  })
+}
+
+const isDirectRun = process.argv[1] &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+if (isDirectRun) {
+  runConfigured({ ...parseArgs(process.argv.slice(2)), quiet: false })
+    .catch(() => { process.exitCode = 1 })
+}

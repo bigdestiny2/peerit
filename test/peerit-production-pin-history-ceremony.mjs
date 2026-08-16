@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import {
   createHash,
   createPrivateKey,
-  createPublicKey
+  createPublicKey,
+  sign as nodeSign
 } from 'node:crypto'
 import {
   copyFileSync,
@@ -22,6 +23,10 @@ import {
 } from '../js/substrate/release-control-codec.mjs'
 import { blake2b256, bytesEqual, bytesToHex } from '../js/substrate/release-control-primitives.mjs'
 import {
+  PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_DOMAIN_V1,
+  canonicalPeeritLimitedPublicInboxJsonV1
+} from '../js/substrate/inbox-topic-v1.mjs'
+import {
   PEERIT_SEED_BOOTSTRAP_OPERATOR_BOUNDARY_V1,
   PEERIT_SEED_BOOTSTRAP_PROFILE_V1,
   PEERIT_SEED_BOOTSTRAP_SCHEMA_V1,
@@ -36,8 +41,12 @@ import {
   hashPeeritWebAssetManifestV1
 } from '../js/substrate/web-asset-manifest.mjs'
 import {
+  PEERIT_LOW_ORDER_VALIDATOR_TRANSITION_RELEASE_SEQUENCE,
+  PEERIT_SEQUENCE_28_VALIDATOR_ARTIFACT_HASH,
+  PEERIT_SEQUENCE_29_VALIDATOR_ARTIFACT_HASH,
   PEERIT_SEQUENCE_18_VALIDATOR_ARTIFACT_HASH,
   PEERIT_SEQUENCE_19_VALIDATOR_ARTIFACT_HASH,
+  PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE,
   assertProductionPredecessorBindingsV1,
   deriveProductionPinBindingsV1,
   finalizeProductionPinHistoryV1,
@@ -227,12 +236,52 @@ const predictionSourceFiles = new Map([
   ['styles.css', readFileSync(join(root, 'styles.css'))],
   ['js/substrate/app-entry.js', readFileSync(join(root, 'js/substrate/app-entry.js'))]
 ])
+const inboxSigningSeed = '7c'.repeat(32)
+const inboxPrivateKey = createPrivateKey({
+  key: Buffer.concat([PKCS8_PREFIX, Buffer.from(inboxSigningSeed, 'hex')]),
+  format: 'der',
+  type: 'pkcs8'
+})
+const inboxAuthorityPublicKey = createPublicKey(inboxPrivateKey)
+  .export({ format: 'der', type: 'spki' }).subarray(-32).toString('hex')
+const inboxFixture = JSON.parse(readFileSync(new URL(
+  './fixtures/peerit-seq29-limited-public-test-v1/positive-bootstrap.json',
+  import.meta.url)))
+const inboxPayload = structuredClone(inboxFixture.payload)
+const inboxReferenceNow = BigInt(Date.now())
+inboxPayload.artifactClass = 'LIMITED_PUBLIC_TEST_RELEASE'
+inboxPayload.authorityPublicKey = inboxAuthorityPublicKey
+inboxPayload.issuedUnixMillis = String(inboxReferenceNow - 1000n)
+inboxPayload.expiresUnixMillis = String(
+  inboxReferenceNow + (7n * 24n * 60n * 60n * 1000n))
+inboxPayload.inboxEpochSets[0].inboxEpoch = Math.floor(
+  Number(inboxReferenceNow / 21600000n) / 28)
+for (const binding of inboxPayload.inboxEpochSets[0].bindings) {
+  binding.inboxEpoch = inboxPayload.inboxEpochSets[0].inboxEpoch
+}
+const inboxSignature = nodeSign(null, Buffer.concat([
+  Buffer.from(PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_DOMAIN_V1, 'ascii'),
+  Buffer.from([0]),
+  Buffer.from(canonicalPeeritLimitedPublicInboxJsonV1(inboxPayload))
+]), inboxPrivateKey).toString('hex')
+const inboxBootstrapBytes = Buffer.from(JSON.stringify({
+  payload: inboxPayload,
+  signature: inboxSignature
+}, null, 2) + '\n')
 const predictionConfig = (releaseSequence) => Buffer.from(JSON.stringify({
   substrateProfile: 'blind-v1',
   relayHints: [],
   productionPinHistoryBundle: 'peerit-production-pin-history-v1.cenc',
   peeritSeedBootstrapBundle: 'deploy/peerit-seed-bootstrap-v1.json',
   peeritSeedDiscoveryAuthorityPublicKey: discoveryPublicKey,
+  ...(releaseSequence >= 29
+    ? {
+        peeritLimitedPublicInboxBootstrapBundle:
+          'deploy/peerit-limited-public-inbox-bootstrap-v1-seq29.json',
+        peeritLimitedPublicInboxBootstrapAuthorityPublicKey:
+          inboxAuthorityPublicKey
+      }
+    : {}),
   releaseSequence,
   pinnedReleaseKey: releasePublicKey
 }) + '\n')
@@ -363,6 +412,9 @@ async function finalizeSuccessor (sequence, prefixBundleBytes, issuedAt) {
     configBytes: predictionConfig(sequence),
     pinHistoryBytes: prefixBundleBytes,
     seedBootstrapBytes: successorBootstrapBytes,
+    ...(sequence >= 29
+      ? { limitedPublicInboxBootstrapBytes: inboxBootstrapBytes }
+      : {}),
     sourceFiles: predictionSourceFiles,
     outputDirectory: mkdtempSync(join(tmpdir(), `peerit-predict-${sequence}-`))
   })
@@ -393,7 +445,12 @@ const final18 = await finalizeSuccessor(18, final17.bundleBytes, 50_000)
 const final18Terminal = decodePeeritHiveRelayProfilePinV1(
   decodePeeritPinHistoryBundleV1(final18.bundleBytes).pins[18])
 const transitionBindings = deriveProductionPinBindingsV1(fixtureRoot)
-assert.equal(bytesToHex(transitionBindings.validatorArtifactHash),
+const cspTransitionBindings = {
+  ...transitionBindings,
+  validatorArtifactHash: new Uint8Array(Buffer.from(
+    PEERIT_SEQUENCE_19_VALIDATOR_ARTIFACT_HASH, 'hex'))
+}
+assert.equal(bytesToHex(cspTransitionBindings.validatorArtifactHash),
   PEERIT_SEQUENCE_19_VALIDATOR_ARTIFACT_HASH)
 const historicalSequence18 = {
   ...final18Terminal,
@@ -401,13 +458,13 @@ const historicalSequence18 = {
     PEERIT_SEQUENCE_18_VALIDATOR_ARTIFACT_HASH, 'hex'))
 }
 assert.doesNotThrow(() => assertProductionPredecessorBindingsV1(
-  historicalSequence18, transitionBindings, 19))
+  historicalSequence18, cspTransitionBindings, 19))
 assert.throws(() => assertProductionPredecessorBindingsV1(
-  historicalSequence18, transitionBindings, 20), /validatorArtifactHash is stale/)
+  historicalSequence18, cspTransitionBindings, 20), /validatorArtifactHash is stale/)
 assert.throws(() => assertProductionPredecessorBindingsV1({
   ...historicalSequence18,
   releaseSequence: 17n
-}, transitionBindings, 19), /validatorArtifactHash is stale/)
+}, cspTransitionBindings, 19), /validatorArtifactHash is stale/)
 assert.throws(() => assertProductionPredecessorBindingsV1({
   ...historicalSequence18,
   readSubstrates: [{
@@ -415,32 +472,66 @@ assert.throws(() => assertProductionPredecessorBindingsV1({
     abiHash: new Uint8Array(32),
     vectorSetHash: new Uint8Array(32)
   }]
-}, transitionBindings, 19), /substrate does not match/)
+}, cspTransitionBindings, 19), /substrate does not match/)
 assert.throws(() => assertProductionPredecessorBindingsV1(
   historicalSequence18, {
-    ...transitionBindings,
+    ...cspTransitionBindings,
     validatorArtifactHash: new Uint8Array(Buffer.from('ff'.repeat(32), 'hex'))
   }, 19), /validatorArtifactHash is stale/)
 const final19 = await finalizeSuccessor(19, final18.bundleBytes, 60_000)
 const final20 = await finalizeSuccessor(20, final19.bundleBytes, 70_000)
 assert.equal(decodePeeritPinHistoryBundleV1(final20.bundleBytes).pins.length, 21)
+let final28 = final20
+for (let sequence = 21; sequence <= 28; sequence++) {
+  final28 = await finalizeSuccessor(
+    sequence, final28.bundleBytes, 70_000 + (sequence - 20) * 10_000)
+}
+const final28Terminal = decodePeeritHiveRelayProfilePinV1(
+  decodePeeritPinHistoryBundleV1(final28.bundleBytes).pins[28])
+assert.equal(PEERIT_LOW_ORDER_VALIDATOR_TRANSITION_RELEASE_SEQUENCE, 29)
+assert.equal(bytesToHex(transitionBindings.validatorArtifactHash),
+  PEERIT_SEQUENCE_29_VALIDATOR_ARTIFACT_HASH)
+const historicalSequence28 = {
+  ...final28Terminal,
+  validatorArtifactHash: new Uint8Array(Buffer.from(
+    PEERIT_SEQUENCE_28_VALIDATOR_ARTIFACT_HASH, 'hex'))
+}
+assert.doesNotThrow(() => assertProductionPredecessorBindingsV1(
+  historicalSequence28, transitionBindings, 29))
+assert.throws(() => assertProductionPredecessorBindingsV1(
+  historicalSequence28, transitionBindings, 28), /validatorArtifactHash is stale/)
+assert.throws(() => assertProductionPredecessorBindingsV1({
+  ...historicalSequence28,
+  releaseSequence: 27n
+}, transitionBindings, 29), /validatorArtifactHash is stale/)
+assert.throws(() => assertProductionPredecessorBindingsV1(
+  historicalSequence28, {
+    ...transitionBindings,
+    validatorArtifactHash: new Uint8Array(Buffer.from('ff'.repeat(32), 'hex'))
+  }, 29), /validatorArtifactHash is stale/)
+const final29 = await finalizeSuccessor(29, final28.bundleBytes, 160_000)
+const final29Bundle = decodePeeritPinHistoryBundleV1(final29.bundleBytes)
+assert.equal(final29Bundle.pins.length, 30)
+assert.equal(
+  decodePeeritHiveRelayProfilePinV1(final29Bundle.pins[29]).releaseSequence,
+  29n)
 await assert.rejects(predictPeeritProductionRuntimeV1({
   root: fixtureRoot,
   fixtureOnly: true,
-  configBytes: predictionConfig(21),
-  pinHistoryBytes: final20.bundleBytes,
+  configBytes: predictionConfig(PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE + 1),
+  pinHistoryBytes: final29.bundleBytes,
   seedBootstrapBytes: bootstrap14Bytes,
   sourceFiles: predictionSourceFiles
-}), /sequence 13\.\.20/)
+}), new RegExp(`sequence 13\\.\\.${PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE}`))
 await assert.rejects(finalizeProductionPinHistoryV1({
   ...finalizeOptions,
-  releaseSequence: 21,
-  prefixBundleBytes: final20.bundleBytes
-}), /between 13 and 20/)
+  releaseSequence: PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE + 1,
+  prefixBundleBytes: final29.bundleBytes
+}), new RegExp(`between 13 and ${PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE}`))
 await assert.rejects(finalizeProductionPinHistoryV1({
   ...finalizeOptions,
   releaseSequence: 12
-}), /between 13 and 20/)
+}), new RegExp(`between 13 and ${PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE}`))
 
 const tampered = Buffer.from(prefixA.bundleBytes)
 tampered[tampered.length - 1] ^= 1
@@ -458,4 +549,4 @@ await assert.rejects(finalizeProductionPinHistoryV1({
   seedBootstrapBytes: wrongBootstrap
 }))
 
-console.log('peerit-production-pin-history-ceremony: deterministic 13..20 prefix/finalization, exact bindings, tamper/wrong-key/order rejection green')
+console.log(`peerit-production-pin-history-ceremony: deterministic 13..20 chain plus exact 13..${PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE} ceiling, bindings, tamper/wrong-key/order rejection green`)

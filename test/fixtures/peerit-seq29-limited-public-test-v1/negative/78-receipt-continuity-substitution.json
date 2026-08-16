@@ -1,0 +1,13 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "bootstrap",
+  "validationStage": "POST_SIGNATURE",
+  "mutation": {
+    "op": "xor-hex",
+    "path": "/payload/relays/1/durabilityContinuityHash",
+    "byteIndex": 0,
+    "mask": 1
+  },
+  "expectedError": "BAD_RECEIPT_BINDING"
+}

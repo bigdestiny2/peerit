@@ -9,8 +9,8 @@
   "hiveCellGet": {
     "artifactPath": "/vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.mjs",
     "manifestPath": "/vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.manifest.cenc",
-    "artifactHash": "7a34c2beaca5375c61754d165d5eed1d209489611f84517540bccd241c01ddcd",
-    "manifestHash": "9f71ff6c07d183cb806dcf8c869a1d15db57a55bc22c374eef3bb70fa794560a"
+    "artifactHash": "ef60c0a45fe093d214cddb17f207675dfdf1df3bb5861bc9ea24542376bffb1c",
+    "manifestHash": "b483a8fcd032a378640f7f3a3da28650d6defdd8e9d7d78a01ee313e24ac5efa"
   },
   "supportedProtocolProfiles": [
     {

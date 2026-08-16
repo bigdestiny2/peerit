@@ -5,11 +5,13 @@ import {
   PEERIT_WEB_RELEASE_PIN_HISTORY_NOTE_V1,
   appendPeeritWebReleasePinHistoryV1
 } from '../scripts/append-web-release-pin-history.mjs'
+import { PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE } from '../scripts/production-pin-history-ceremony.mjs'
 
 const hash = value => createHash('sha256').update(value).digest('hex')
 const releaseKey = '11'.repeat(32)
 const driveKey = '22'.repeat(32)
 const discoveryKey = '33'.repeat(32)
+const inboxAuthorityKey = 'aa'.repeat(32)
 const relayHints = [
   'https://relay-syd.example/api/blind/v1/describe',
   'https://relay-dal.example/api/blind/v1/describe'
@@ -132,14 +134,40 @@ assert.throws(() => appendPeeritWebReleasePinHistoryV1({
 }), /outer asset manifest does not reproduce/)
 
 function successorOptions (releaseSequence, historyValue) {
-  const successorConfig = { ...config, releaseSequence }
+  const inbox = releaseSequence >= 29
+  const successorConfig = {
+    ...config,
+    releaseSequence,
+    ...(inbox
+      ? {
+          peeritLimitedPublicInboxBootstrapBundle:
+            'deploy/peerit-limited-public-inbox-bootstrap-v1-seq29.json',
+          peeritLimitedPublicInboxBootstrapAuthorityPublicKey: inboxAuthorityKey
+        }
+      : {})
+  }
   const successorManifest = {
     ...manifest,
     releaseSequence,
+    files: {
+      ...manifest.files,
+      ...(inbox
+        ? { 'peerit-limited-public-inbox-bootstrap-v1.json': 'ab'.repeat(32) }
+        : {})
+    },
     webRelease: {
       ...manifest.webRelease,
       releaseSequence,
-      peeritSeedBootstrapReleaseSequence: releaseSequence
+      peeritSeedBootstrapReleaseSequence: releaseSequence,
+      ...(inbox
+        ? {
+            peeritLimitedPublicInboxBootstrap:
+              '/peerit-limited-public-inbox-bootstrap-v1.json',
+            peeritLimitedPublicInboxBootstrapSha256: 'ab'.repeat(32),
+            peeritLimitedPublicInboxBootstrapAuthorityPublicKey: inboxAuthorityKey,
+            peeritLimitedPublicInboxBootstrapReleaseSequence: releaseSequence
+          }
+        : {})
     }
   }
   const successorManifestBytes = Buffer.from(JSON.stringify(successorManifest, null, 2) + '\n')
@@ -197,11 +225,34 @@ assert.equal(sequence19.value.entries.at(-1).note,
   'bounded local public-test release sequence 19; not a GA claim')
 assert.equal(sequence20.value.entries.at(-1).note,
   'bounded local public-test release sequence 20; not a GA claim')
-assert.throws(() => appendPeeritWebReleasePinHistoryV1(
-  successorOptions(29, sequence20.value)), /sequence 13\.\.28/)
-assert.throws(() => appendPeeritWebReleasePinHistoryV1(successorOptions(12, {
+const sequence29Options = successorOptions(29, {
   schema: 'peerit-web-release-pin-history/v1',
+  note: PEERIT_WEB_RELEASE_PIN_HISTORY_NOTE_V1,
+  entries: [{ releaseSequence: 28, historicalField: 'preserved-for-seq29' }]
+})
+if (PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE >= 29) {
+  const sequence29 = appendPeeritWebReleasePinHistoryV1(sequence29Options)
+  assert.equal(sequence29.value.entries.at(-1).releaseSequence, 29)
+  assert.equal(sequence29.value.entries[0].historicalField, 'preserved-for-seq29')
+  assert.throws(() => appendPeeritWebReleasePinHistoryV1({
+    ...successorOptions(29, {
+      schema: 'peerit-web-release-pin-history/v1',
+      entries: [{ releaseSequence: 28 }]
+    }),
+    configBytes: bytes({
+      ...config,
+      releaseSequence: 29
+    })
+  }), /public INBOX bootstrap config fields/)
+  assert.throws(() => appendPeeritWebReleasePinHistoryV1(
+    successorOptions(30, sequence29.value)), /sequence 13\.\.29/)
+} else {
+  assert.throws(() => appendPeeritWebReleasePinHistoryV1(sequence29Options),
+    new RegExp(`sequence 13\\.\\.${PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE}`))
+}
+assert.throws(() => appendPeeritWebReleasePinHistoryV1(successorOptions(12, {
+    schema: 'peerit-web-release-pin-history/v1',
   entries: [{ releaseSequence: 11 }]
-})), /sequence 13\.\.28/)
+})), new RegExp(`sequence 13\\.\\.${PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE}`))
 
-console.log('peerit-web-release-pin-history-append: exact 13..20 request/config copy, contiguous predecessor, stale-note replacement and drift rejection green')
+console.log(`peerit-web-release-pin-history-append: exact 13..${PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE} request/config copy, conditional Seq29 public-INBOX binding, contiguous predecessor, stale-note replacement and drift rejection green`)

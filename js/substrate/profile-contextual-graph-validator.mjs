@@ -55,8 +55,8 @@ const SINGLE_SIGNATURE = Object.freeze({
 const LOW_ORDER_X25519_PUBLIC_KEYS = Object.freeze([
   '0000000000000000000000000000000000000000000000000000000000000000',
   '0100000000000000000000000000000000000000000000000000000000000000',
-  'e0eb7a7c3b41b8ae1656e3fa1f6f7f3c0a37f7d5b4f47f170bcfdc728d63333f',
-  '5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224e8b01f22f4f',
+  'e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800',
+  '5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157',
   'ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
   'edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
   'eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f'

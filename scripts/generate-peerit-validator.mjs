@@ -31,7 +31,7 @@ const CSP_SODIUM_ENTRYPOINTS = Object.freeze([
   'sodium-javascript/crypto_scalarmult.js',
   'sodium-javascript/crypto_sign.js'
 ])
-const CSP_METAFILE_INPUT_CLOSURE_SHA256 = '49bba7fd634d4085d74d13b5716491ad66415d3fbf4d1028c60a9b6d7cf628da'
+const CSP_METAFILE_INPUT_CLOSURE_SHA256 = '2002d794411bc3356f5dd1f0f9eb62c1152da566118baca774ef7208a06bdc64'
 const CSP_THIRD_PARTY_INPUTS = Object.freeze([
   'node_modules/@noble/hashes/_md.js',
   'node_modules/@noble/hashes/_u64.js',

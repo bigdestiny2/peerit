@@ -71,7 +71,8 @@ async function assertVendoredClientAuthority () {
     artifactBytes,
     manifestBytes,
     chromiumEvidenceBytes,
-    crossHostEvidenceBytes
+    crossHostEvidenceBytes,
+    authorityBytes: Buffer.from(authoritySource)
   })
   assert.equal(authority.artifactLength, artifactBytes.byteLength)
   assert.equal(authority.artifactHash, hex(verified.artifactHash))

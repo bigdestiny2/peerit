@@ -18,6 +18,8 @@ import { normalizePeeritReleaseRelayHintsV1 } from '../js/substrate/release-rela
 import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from '../js/substrate/production-release-authority.mjs'
 import {
   PEERIT_APP_ARTIFACT_PATH,
+  PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH,
+  PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE,
   PEERIT_SEED_BOOTSTRAP_PATH,
   PEERIT_WEB_ASSET_MANIFEST_PATH
 } from './substrate-runtime-artifact.mjs'
@@ -65,7 +67,7 @@ function parseJson (bytes, field) {
 }
 
 function bytesOrFile (options, key, path) {
-  if (options.fixtureOnly === true && options[key] instanceof Uint8Array) {
+  if (options.write === false && options[key] instanceof Uint8Array) {
     return Buffer.from(options[key])
   }
   return readFileSync(path)
@@ -80,6 +82,17 @@ function normalizedConfig (value) {
       value.productionPinHistoryBundle !== PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)) {
     fail(`release config must select exact blind-v1 sequence ${PEERIT_PRODUCTION_CEREMONY_MIN_RELEASE_SEQUENCE}..${PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE} and the fixed production pin-history path`)
   }
+  const peeritLimitedPublicInboxBootstrapBundle = String(
+    value.peeritLimitedPublicInboxBootstrapBundle || '')
+  const peeritLimitedPublicInboxBootstrapAuthorityPublicKey = String(
+    value.peeritLimitedPublicInboxBootstrapAuthorityPublicKey || '')
+  const needsInbox = releaseSequence >= PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE
+  if ((needsInbox && (!peeritLimitedPublicInboxBootstrapBundle ||
+      !peeritLimitedPublicInboxBootstrapAuthorityPublicKey)) ||
+      (!needsInbox && (peeritLimitedPublicInboxBootstrapBundle ||
+        peeritLimitedPublicInboxBootstrapAuthorityPublicKey))) {
+    fail('public INBOX bootstrap config fields must be present exactly from sequence 29')
+  }
   return Object.freeze({
     releaseSequence,
     substrateProfile: 'blind-v1',
@@ -88,7 +101,12 @@ function normalizedConfig (value) {
     peeritSeedBootstrapBundle: String(value.peeritSeedBootstrapBundle || ''),
     peeritSeedDiscoveryAuthorityPublicKey: hex32(
       value.peeritSeedDiscoveryAuthorityPublicKey,
-      'release config peeritSeedDiscoveryAuthorityPublicKey')
+      'release config peeritSeedDiscoveryAuthorityPublicKey'),
+    peeritLimitedPublicInboxBootstrapBundle,
+    peeritLimitedPublicInboxBootstrapAuthorityPublicKey: needsInbox
+      ? hex32(peeritLimitedPublicInboxBootstrapAuthorityPublicKey,
+        'release config peeritLimitedPublicInboxBootstrapAuthorityPublicKey')
+      : ''
   })
 }
 
@@ -134,6 +152,30 @@ function assertOuterManifest (manifest, config) {
   hex32(release.canonicalWebAssetManifestHash,
     'outer asset manifest canonical WebAssetManifestV1 hash')
   hex32(release.peeritSeedBootstrapSha256, 'outer asset manifest seed bootstrap SHA-256')
+  const inboxFields = [
+    'peeritLimitedPublicInboxBootstrap',
+    'peeritLimitedPublicInboxBootstrapSha256',
+    'peeritLimitedPublicInboxBootstrapAuthorityPublicKey',
+    'peeritLimitedPublicInboxBootstrapReleaseSequence'
+  ]
+  if (config.releaseSequence >= PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE) {
+    if (release.peeritLimitedPublicInboxBootstrap !==
+          `/${PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH}` ||
+        release.peeritLimitedPublicInboxBootstrapAuthorityPublicKey !==
+          config.peeritLimitedPublicInboxBootstrapAuthorityPublicKey ||
+        release.peeritLimitedPublicInboxBootstrapReleaseSequence !==
+          config.releaseSequence) {
+      fail('outer asset manifest does not bind the exact Sequence-29 public INBOX bootstrap')
+    }
+    const inboxSha256 = hex32(release.peeritLimitedPublicInboxBootstrapSha256,
+      'outer asset manifest public INBOX bootstrap SHA-256')
+    if (manifest.files?.[PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH] !== inboxSha256) {
+      fail('outer asset manifest file map does not bind the exact public INBOX bootstrap bytes')
+    }
+  } else if (inboxFields.some(field => Object.hasOwn(release, field)) ||
+      Object.hasOwn(manifest.files || {}, PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH)) {
+    fail('pre-sequence-29 outer asset manifest cannot carry public INBOX bootstrap fields or bytes')
+  }
 }
 
 function assertHistory (history, nextSequence) {

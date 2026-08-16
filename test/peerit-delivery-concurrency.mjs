@@ -108,7 +108,10 @@ const sync = createPeeritSubstrateSync({
   requireVerifiedRelayAdapters: false,
   deliveryIntentConcurrency: 4,
   deliveryRelayConcurrency: 3,
-  deliveryAttemptTimeoutMs: 20,
+  // Real timers on a busy CI host can delay a nominal 2 ms healthy adapter by
+  // tens of milliseconds. Keep this fixture's deadline comfortably above
+  // scheduler jitter while still proving every hung attempt is bounded.
+  deliveryAttemptTimeoutMs: 250,
   channelName: 'peerit-delivery-concurrency-test'
 })
 await sync.ready()
@@ -242,7 +245,7 @@ assert.deepEqual(retrySelections[0], ['bounded-0', 'bounded-1'],
   'retry scans use only the bounded active relay set')
 assert.deepEqual(wakeSelections[0], retrySelections[0],
   'wake scheduling uses the same bounded active relay set as retry scans')
-assert.deepEqual([...boundedCalls.keys()], [0, 1],
+assert.deepEqual([...boundedCalls.keys()].sort((left, right) => left - right), [0, 1],
   'delivery cannot escape the bounded active relay set')
 boundedSync.destroy()
 

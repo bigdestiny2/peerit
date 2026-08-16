@@ -27,6 +27,7 @@ const artifactBytes = bytes(files.artifact)
 const manifestBytes = bytes(files.manifest)
 const chromiumEvidenceBytes = bytes(files.chromium)
 const crossHostEvidenceBytes = bytes(files.crossHost)
+const authorityBytes = bytes(files.authority)
 const authoritySource = readFileSync(join(directory, files.authority), 'utf8')
 const authority = JSON.parse(authoritySource)
 assert.equal(JSON.stringify(authority, null, 2) + '\n', authoritySource,
@@ -36,12 +37,15 @@ const verified = verifyBlindClientBrowserReleaseV1({
   artifactBytes,
   manifestBytes,
   chromiumEvidenceBytes,
-  crossHostEvidenceBytes
+  crossHostEvidenceBytes,
+  authorityBytes
 })
 const hex = value => Buffer.from(value).toString('hex')
-assert.equal(authority.schema, 'PeeritVendoredHiveRelayBlindClientV1')
-assert.equal(authority.version, 1)
-assert.equal(authority.upstreamPackage, '@hiverelay/blind-client')
+assert.equal(authority.schema, 'PeeritVendoredHiveRelayBlindClientV2')
+assert.equal(authority.version, 2)
+assert.equal(authority.upstreamPackage, '@hiverelay/blind-client-public-browser')
+assert.equal(authority.candidateCommit, 'adeacef07c5de4d17d5ed1389fee7a35095b862f')
+assert.equal(authority.candidateTree, '7c41786a4ccd758a4ddcb419eb02213cbeeaca0c')
 assert.equal(authority.artifactLength, artifactBytes.byteLength)
 assert.equal(authority.artifactHash, hex(verified.artifactHash))
 assert.equal(authority.manifestHash, hex(verified.manifestHash))
@@ -58,7 +62,8 @@ assert.throws(
     artifactBytes: mutatedArtifact,
     manifestBytes,
     chromiumEvidenceBytes,
-    crossHostEvidenceBytes
+    crossHostEvidenceBytes,
+    authorityBytes
   }),
   error => error && error.code === 'BLIND_CLIENT_BROWSER_ARTIFACT_DRIFT',
   'one changed vendored artifact byte must fail the ordinary pin gate'

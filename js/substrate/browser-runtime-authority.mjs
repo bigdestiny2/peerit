@@ -11,6 +11,17 @@ import {
   verifyPeeritLimitedCellGetProfileV1
 } from './limited-cell-get-profile.mjs'
 import {
+  PEERIT_LIMITED_CELL_PUT_PROFILE_ID_V1,
+  PEERIT_LIMITED_CELL_PUT_PROFILE_PATH_V1,
+  PEERIT_LIMITED_CELL_PUT_RELEASE_SEQUENCE,
+  PEERIT_LIMITED_CELL_PUT_SCHEME_ID_V1,
+  verifyPeeritLimitedCellPutProfileV1
+} from './limited-cell-put-profile.mjs'
+import {
+  PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH_V1,
+  PEERIT_LIMITED_PUBLIC_INBOX_RELEASE_SEQUENCE_V1
+} from './inbox-topic-v1.mjs'
+import {
   decodePeeritProfileRegistry,
   hashPeeritProfileAbi,
   hashPeeritProfileSpec,
@@ -22,8 +33,16 @@ import {
 } from './release-control-codec.mjs'
 import {
   asBytes,
+  asciiBytes,
+  blake2b256,
   bytesEqual,
-  bytesToHex
+  bytesToHex,
+  compareBytes,
+  concatBytes,
+  isAllZero,
+  u16Bytes,
+  u32Bytes,
+  u64Bytes
 } from './release-control-primitives.mjs'
 import {
   canonicalExpectedPinProjection,
@@ -45,6 +64,10 @@ import {
   verifyPeeritWebAssetBytesV1
 } from './web-asset-manifest.mjs'
 import { createBlindCellRelay } from './blind-client-relay.js'
+import { preparePeeritPublicInboxAnnouncementV1 } from './inbox-pointer-publish.mjs'
+import {
+  createPowIssuanceV1AdmissionProviderFactory
+} from './pow-issuance-spend-provider.mjs'
 import { PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1 } from './production-release-authority.mjs'
 
 export { PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1 } from './production-release-authority.mjs'
@@ -52,15 +75,25 @@ export { PEERIT_PRODUCTION_RELEASE_AUTHORITY_V1 } from './production-release-aut
 const PEERIT_SEED_BOOTSTRAP_PATH_V1 = '/peerit-seed-bootstrap-v1.json'
 const PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE = 13
 export const PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE = 28
+const PEERIT_SEQ29_PUBLIC_INBOX_COORDINATOR_PATH_V1 =
+  '/js/substrate/public-inbox-boot-coordinator.mjs'
 const HEX_32 = /^[0-9a-f]{64}$/
 
 function browserRuntimeAssetPathsForRelease (releaseSequence) {
+  const sequence = BigInt(releaseSequence)
   const limitedCellGet = BigInt(releaseSequence) ===
     BigInt(PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE)
-  return Object.entries(PEERIT_BROWSER_RUNTIME_ASSET_PATHS)
-    .filter(([name]) => limitedCellGet ||
-      (!name.startsWith('hiveCellGet') && name !== 'limitedCellGetProfile'))
+  const publicInbox = sequence ===
+    BigInt(PEERIT_LIMITED_PUBLIC_INBOX_RELEASE_SEQUENCE_V1)
+  const paths = Object.entries(PEERIT_BROWSER_RUNTIME_ASSET_PATHS)
+    .filter(([name]) => (limitedCellGet ||
+      (!name.startsWith('hiveCellGet') && name !== 'limitedCellGetProfile')) &&
+      (publicInbox || name !== 'limitedCellPutProfile') &&
+      (publicInbox ||
+        (!name.startsWith('external') && name !== 'seq29PublicInboxCoordinator')))
     .map(([, path]) => path)
+  if (publicInbox) paths.push(PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH_V1)
+  return paths
 }
 
 export const PEERIT_BROWSER_RUNTIME_ASSET_PATHS = Object.freeze({
@@ -76,13 +109,20 @@ export const PEERIT_BROWSER_RUNTIME_ASSET_PATHS = Object.freeze({
   hiveCellGetChromiumEvidence: '/vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.chromium-evidence.json',
   hiveCellGetCrossHostEvidence: '/vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.cross-host-evidence.json',
   hiveCellGetVendorAuthority: '/vendor/hiverelay-blind-cell-get-v1/authority.json',
+  limitedCellPutProfile: PEERIT_LIMITED_CELL_PUT_PROFILE_PATH_V1,
   profileSource: '/docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md',
   profileRegistry: '/protocol/peerit-profile-v1.cenc',
   profileVectorManifest: '/protocol/vectors/peerit-profile-v1.manifest.cenc',
   validatorArtifact: '/protocol/validator/peerit-validator-v1.bare.mjs',
   validatorVectorManifest: '/protocol/validator/peerit-validator-v1.manifest.cenc',
+  externalWireSpec: '/protocol/external-authority/hiverelay-blind-wire-v1.md',
+  externalWireAbi: '/protocol/external-authority/hiverelay-blind-abi-v1.cenc',
+  externalWireVectors: '/protocol/external-authority/hiverelay-blind-wire-vector-manifest-v1.cenc',
+  externalClientFormat: '/protocol/external-authority/hiverelay-blind-client-composition-format-v1.cenc',
+  externalClientVectors: '/protocol/external-authority/hiverelay-blind-client-composition-vector-manifest-v1.cenc',
   availabilityPolicy: '/protocol/availability-policy-v1.cenc',
-  peeritRelayAdapter: '/js/substrate/blind-client-relay.js'
+  peeritRelayAdapter: '/js/substrate/blind-client-relay.js',
+  seq29PublicInboxCoordinator: PEERIT_SEQ29_PUBLIC_INBOX_COORDINATOR_PATH_V1
 })
 
 const ASSET_HARD_CAPS = Object.freeze({
@@ -98,13 +138,21 @@ const ASSET_HARD_CAPS = Object.freeze({
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetChromiumEvidence]: 16 * 1024,
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetCrossHostEvidence]: 16 * 1024,
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetVendorAuthority]: 16 * 1024,
+  [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.limitedCellPutProfile]: 32 * 1024,
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.profileSource]: 512 * 1024,
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.profileRegistry]: 1024 * 1024,
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.profileVectorManifest]: 128 * 1024,
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.validatorArtifact]: 1024 * 1024,
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.validatorVectorManifest]: 256 * 1024,
+  [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.externalWireSpec]: 512 * 1024,
+  [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.externalWireAbi]: 1024 * 1024,
+  [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.externalWireVectors]: 256 * 1024,
+  [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.externalClientFormat]: 512 * 1024,
+  [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.externalClientVectors]: 256 * 1024,
   [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.availabilityPolicy]: 4 * 1024,
-  [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.peeritRelayAdapter]: 128 * 1024
+  [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.peeritRelayAdapter]: 128 * 1024,
+  [PEERIT_BROWSER_RUNTIME_ASSET_PATHS.seq29PublicInboxCoordinator]: 128 * 1024,
+  [PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH_V1]: 256 * 1024
 })
 const MAX_RUNTIME_BOOT_BYTES = 4 * 1024 * 1024
 const MAX_WEB_ASSET_MANIFEST_BYTES = 2269742
@@ -141,6 +189,7 @@ export const PEERIT_BROWSER_RUNTIME_ASSEMBLY_STATUS = Object.freeze({
 
 const VERIFIED_AUTHORITIES = new WeakMap()
 const VERIFIED_SEED_BOOTSTRAPS = new WeakMap()
+const VERIFIED_PUBLIC_INBOX_BOOTSTRAPS = new WeakMap()
 const LEASE_EPOCH_MILLIS = 21600000n
 const REQUIRED_CONTROL_EXPORTS = Object.freeze([
   'BlindDescriptorBootstrapHttpClient',
@@ -149,15 +198,21 @@ const REQUIRED_CONTROL_EXPORTS = Object.freeze([
   'DescriptorTrustStore',
   'createAdmissionParametersRequest',
   'createBrowserCryptoRuntime',
+  'createAppendInboxRequest',
   'createCellReplica',
+  'createDescribeGetRequest',
+  'createGetCellRequest',
+  'createReadInboxRequest',
   'decodeBlindExternalProfileValueV1',
   'qualifyDescribeControlEndpoint',
+  'openVerifiedCellGetResult',
   'trustedAdmissionProfile',
   'trustedDescriptorValidity',
   'verifiedAdmissionParametersValidity',
   'verifiedEndpointContext',
   'verifiedHealthValidity',
   'verifyAdmissionParametersBytes',
+  'verifyDescriptorBytes',
   'verifyOperationResult'
 ])
 
@@ -224,6 +279,15 @@ function assertControlModule (control) {
       fail('BLIND_CLIENT_BROWSER_MODULE_INVALID', `blind-client browser module is missing ${name}`)
     }
   }
+  for (const name of [
+    'createInboxReplica', 'createWatchInboxRequest', 'createRenewInboxRequest',
+    'createCloseInboxRequest', 'destroyInboxWriteCapability'
+  ]) {
+    if (name in control) {
+      fail('BLIND_CLIENT_BROWSER_MODULE_INVALID',
+        `public browser module exposes forbidden INBOX lifecycle constructor ${name}`)
+    }
+  }
 }
 
 function assertCellGetControlModule (control) {
@@ -256,6 +320,35 @@ function epochDeadline (snapshot, epoch) {
   const delta = Number(unixDeadline - BigInt(snapshot.unixMillis))
   if (!Number.isSafeInteger(delta)) fail('BROWSER_RUNTIME_CLOCK_INVALID', 'lease epoch deadline is outside the browser clock range')
   return snapshot.monotonicMillis + delta
+}
+
+function monotonicNow () {
+  const value = globalThis.performance &&
+    typeof globalThis.performance.now === 'function'
+    ? globalThis.performance.now()
+    : 0
+  if (!Number.isFinite(value) || value < 0) {
+    fail('BROWSER_RUNTIME_CLOCK_INVALID', 'browser monotonic clock is invalid')
+  }
+  return value
+}
+
+function authenticatedRuntimeClock (snapshot) {
+  return Object.freeze({
+    monotonicMillis: monotonicNow,
+    unixMillis () {
+      const elapsed = monotonicNow() - snapshot.monotonicMillis
+      if (!Number.isFinite(elapsed) || elapsed < 0) {
+        fail('BROWSER_RUNTIME_CLOCK_INVALID',
+          'browser monotonic clock moved behind the authenticated runtime snapshot')
+      }
+      const value = snapshot.unixMillis + Math.floor(elapsed)
+      if (!Number.isSafeInteger(value) || value < 0) {
+        fail('BROWSER_RUNTIME_CLOCK_INVALID', 'browser runtime time is outside the safe range')
+      }
+      return BigInt(value)
+    }
+  })
 }
 
 function expectedProjection (pin, values) {
@@ -377,6 +470,21 @@ export function getVerifiedPeeritBrowserSeedBootstrapV1 (value) {
   })
 }
 
+export function getVerifiedPeeritBrowserPublicInboxBootstrapV1 (value) {
+  const record = VERIFIED_AUTHORITIES.get(value)
+  if (!record) fail('PEERIT_AUTHENTICATED_RELAY_RUNTIME_AUTHORITY_REQUIRED', 'verified browser runtime authority is required')
+  const publicInbox = VERIFIED_PUBLIC_INBOX_BOOTSTRAPS.get(value)
+  if (!publicInbox) {
+    fail('PEERIT_AUTHENTICATED_PUBLIC_INBOX_BOOTSTRAP_REQUIRED',
+      'verified browser runtime has no release-bound public INBOX bootstrap')
+  }
+  return Object.freeze({
+    appArtifactBytes: publicInbox.appArtifactBytes.slice(),
+    bootstrapBytes: publicInbox.bootstrapBytes.slice(),
+    verification: Object.freeze({ ...publicInbox.verification })
+  })
+}
+
 function authenticatedSeedBootstrap (appArtifactBytes, assets, manifest, releaseSequence) {
   if (Number(releaseSequence) < PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE) {
     if (manifest.recommendedBootstrapHashes.length !== 0 || assets.has(PEERIT_SEED_BOOTSTRAP_PATH_V1)) {
@@ -414,6 +522,488 @@ function authenticatedSeedBootstrap (appArtifactBytes, assets, manifest, release
         previousBootstrapHash: null
       })
     })
+  })
+}
+
+async function authenticatedPublicInboxBootstrap (
+  appArtifactBytes, assets, releaseSequence) {
+  if (Number(releaseSequence) !== PEERIT_LIMITED_PUBLIC_INBOX_RELEASE_SEQUENCE_V1) return null
+  let appArtifact
+  try { appArtifact = JSON.parse(new TextDecoder().decode(appArtifactBytes)) } catch {
+    fail('PRODUCTION_APP_ARTIFACT_INVALID', 'the exact app-distribution artifact is not valid JSON')
+  }
+  const bootstrapPath = PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH_V1
+  const coordinatorPath = PEERIT_SEQ29_PUBLIC_INBOX_COORDINATOR_PATH_V1.slice(1)
+  const cellPutProfilePath = PEERIT_LIMITED_CELL_PUT_PROFILE_PATH_V1.slice(1)
+  if (!appArtifact || appArtifact.schema !== 'peerit-app-artifact-v1' ||
+      appArtifact.releaseSequence !== PEERIT_LIMITED_PUBLIC_INBOX_RELEASE_SEQUENCE_V1 ||
+      appArtifact.peeritLimitedPublicInboxBootstrap !== bootstrapPath ||
+      !HEX_32.test(String(appArtifact.peeritLimitedPublicInboxBootstrapSha256 || '')) ||
+      !HEX_32.test(String(appArtifact.peeritLimitedPublicInboxBootstrapAuthorityPublicKey || '')) ||
+      appArtifact.peeritLimitedPublicInboxBootstrapReleaseSequence !==
+        PEERIT_LIMITED_PUBLIC_INBOX_RELEASE_SEQUENCE_V1 ||
+      !appArtifact.files || typeof appArtifact.files !== 'object' ||
+      appArtifact.files[bootstrapPath.slice(1)] !==
+        appArtifact.peeritLimitedPublicInboxBootstrapSha256 ||
+      !HEX_32.test(String(appArtifact.files[coordinatorPath] || '')) ||
+      !HEX_32.test(String(appArtifact.files[cellPutProfilePath] || ''))) {
+    fail('PRODUCTION_PUBLIC_INBOX_BOOTSTRAP_BINDING_INVALID',
+      'sequence-29 app artifact does not bind one exact public INBOX bootstrap and coordinator')
+  }
+  const bootstrapBytes = requireAsset(assets, bootstrapPath)
+  const coordinatorBytes = requireAsset(
+    assets, PEERIT_SEQ29_PUBLIC_INBOX_COORDINATOR_PATH_V1)
+  const cellPutProfileBytes = requireAsset(
+    assets, PEERIT_LIMITED_CELL_PUT_PROFILE_PATH_V1)
+  const [bootstrapSha256, coordinatorSha256, cellPutProfileSha256] = await Promise.all([
+    hashBytes(bootstrapBytes),
+    hashBytes(coordinatorBytes),
+    hashBytes(cellPutProfileBytes)
+  ])
+  if (bootstrapSha256 !== appArtifact.peeritLimitedPublicInboxBootstrapSha256 ||
+      coordinatorSha256 !== appArtifact.files[coordinatorPath] ||
+      cellPutProfileSha256 !== appArtifact.files[cellPutProfilePath]) {
+    fail('PRODUCTION_PUBLIC_INBOX_BOOTSTRAP_BINDING_MISMATCH',
+      'public INBOX bootstrap, coordinator, or frozen Cell-PUT profile differs from the authenticated app binding')
+  }
+  return Object.freeze({
+    appArtifactBytes: appArtifactBytes.slice(),
+    bootstrapBytes: bootstrapBytes.slice(),
+    verification: Object.freeze({
+      authorityPublicKey:
+        appArtifact.peeritLimitedPublicInboxBootstrapAuthorityPublicKey,
+      releaseSequence: PEERIT_LIMITED_PUBLIC_INBOX_RELEASE_SEQUENCE_V1,
+      expectedArtifactHash: bootstrapSha256,
+      coordinatorSha256,
+      limitedCellPutReleaseSequence: PEERIT_LIMITED_CELL_PUT_RELEASE_SEQUENCE,
+      limitedCellPutProfileSha256: cellPutProfileSha256
+    })
+  })
+}
+
+function seq29ReadCellCapabilityBytes (value) {
+  const expected = bytes(
+    value.expectedCellBlobHash, 'ReadCellCapV1 expected blob hash', 32)
+  return concatBytes(
+    Uint8Array.of(1),
+    bytes(value.relayPublicKey, 'ReadCellCapV1 relay public key', 32),
+    bytes(value.storageSlot, 'ReadCellCapV1 storage slot', 32),
+    bytes(value.cellKey, 'ReadCellCapV1 cell key', 32),
+    Uint8Array.of(value.sizeClass),
+    Uint8Array.of(1),
+    expected
+  )
+}
+
+function seq29ReplicaProjection (value) {
+  const projection = concatBytes(
+    value.logicalHash,
+    value.encodingCommitment,
+    value.relayPublicKey,
+    value.readCapability,
+    value.cellBlobHash,
+    Uint8Array.of(value.sizeClass),
+    u32Bytes(value.allocationEpoch)
+  )
+  return blake2b256(concatBytes(
+    asciiBytes('peerit.hiverelay.replica-id.v1'),
+    Uint8Array.of(1),
+    u64Bytes(projection.byteLength),
+    projection
+  ))
+}
+
+function seq29RecordId (manifestTag, value) {
+  return blake2b256(concatBytes(
+    asciiBytes('peerit.hiverelay.manifest-record-id.v1'),
+    u16Bytes(manifestTag),
+    u64Bytes(value.byteLength),
+    value
+  ))
+}
+
+function unsignedRecordPrefix (catalog, schemaName, value) {
+  const encoded = catalog[schemaName].encode(value)
+  if (encoded.byteLength <= 64 || !isAllZero(encoded.subarray(encoded.byteLength - 64))) {
+    fail('PEERIT_SEQ29_SIGNING_PREFIX_INVALID',
+      `${schemaName} signature is not the exact final fixed field`)
+  }
+  return Object.freeze({ encoded, prefix: encoded.slice(0, encoded.byteLength - 64) })
+}
+
+async function createSeq29SignedPublication (
+  validator, profileValidator, input) {
+  const publication = input.publication
+  const authorPublicKey = bytes(input.authorPublicKey, 'author public key', 32)
+  if (!publication || publication.innerCodec !== 334 ||
+      typeof publication.innerLength !== 'number' ||
+      publication.innerLength < 8 || publication.innerLength > 1048519 ||
+      !Array.isArray(input.replicas) || input.replicas.length !== 2 ||
+      typeof input.signAuthorBindV1 !== 'function' ||
+      typeof input.signPeeritAnnouncementV1 !== 'function') {
+    fail('PEERIT_SEQ29_SIGNED_PUBLICATION_INVALID',
+      'an exact intrinsic publication, two replicas, and fixed-domain signers are required')
+  }
+  const replicas = input.replicas.map((row, index) => {
+    const readCap = row && row.readCap
+    const request = row && row.request
+    const receipt = row && row.receipt
+    if (!readCap || !request || !receipt) {
+      fail('PEERIT_SEQ29_SIGNED_PUBLICATION_INVALID',
+        `replica ${index} lacks its exact PUT request, capability, or receipt`)
+    }
+    return Object.freeze({
+      version: 1,
+      logicalHash: bytes(publication.logicalHash, 'logical hash', 32),
+      encodingCommitment: bytes(
+        publication.encodingCommitment, 'encoding commitment', 32),
+      relayPublicKey: bytes(readCap.relayPublicKey, 'relay public key', 32),
+      readCapability: seq29ReadCellCapabilityBytes(readCap),
+      cellBlobHash: bytes(readCap.expectedCellBlobHash, 'cell blob hash', 32),
+      sizeClass: readCap.sizeClass,
+      allocationEpoch: request.allocationEpoch,
+      leaseEpoch: receipt.leaseEpoch,
+      createPublicKey: bytes(request.createPublicKey, 'create public key', 32),
+      renewPublicKey: bytes(request.renewPublicKey, 'renew public key', 32),
+      dropPublicKey: bytes(request.dropPublicKey, 'drop public key', 32),
+      allocationCommitment: bytes(
+        row.allocationCommitment, 'allocation commitment', 32),
+      relayReceipt: bytes(row.receiptBytes, 'relay receipt')
+    })
+  }).sort((left, right) => compareBytes(
+    seq29ReplicaProjection(left), seq29ReplicaProjection(right)))
+  const authorValue = Object.freeze({
+    version: 1,
+    authorSequence: typeof input.authorSequence === 'bigint'
+      ? input.authorSequence
+      : BigInt(input.authorSequence),
+    previousAuthorRecordId: input.previousAuthorRecordId == null
+      ? null
+      : bytes(input.previousAuthorRecordId, 'previous AuthorBind record ID', 32),
+    logicalHash: bytes(publication.logicalHash, 'logical hash', 32),
+    innerCodec: publication.innerCodec,
+    innerLength: BigInt(publication.innerLength),
+    initialReplicas: replicas,
+    authorPublicKey,
+    signature: new Uint8Array(64)
+  })
+  const unsignedAuthor = unsignedRecordPrefix(
+    validator.catalog, 'AuthorBindV1', authorValue)
+  const authorSignature = bytes(
+    await input.signAuthorBindV1(unsignedAuthor.prefix), 'AuthorBindV1 signature', 64)
+  const authorBindBytes = validator.catalog.AuthorBindV1.encode(Object.freeze({
+    ...authorValue,
+    signature: authorSignature
+  }))
+  profileValidator.validate('AuthorBindV1', authorBindBytes)
+  const manifestRecordId = seq29RecordId(3, authorBindBytes)
+  const announcementValue = Object.freeze({
+    version: 1,
+    manifestTag: 3,
+    manifestRecordId,
+    manifestMode: 1,
+    manifestRecord: authorBindBytes,
+    manifestReadCaps: Object.freeze([]),
+    publishedLeaseEpoch: input.publishedLeaseEpoch,
+    publisherPublicKey: authorPublicKey,
+    signature: new Uint8Array(64)
+  })
+  const unsignedAnnouncement = unsignedRecordPrefix(
+    validator.catalog, 'PeeritAnnouncementV1', announcementValue)
+  const announcementSignature = bytes(
+    await input.signPeeritAnnouncementV1(unsignedAnnouncement.prefix),
+    'PeeritAnnouncementV1 signature', 64)
+  const announcementBytes = validator.catalog.PeeritAnnouncementV1.encode(
+    Object.freeze({ ...announcementValue, signature: announcementSignature }))
+  profileValidator.validate('PeeritAnnouncementV1', announcementBytes)
+  return Object.freeze({
+    authorBindBytes,
+    authorRecordId: manifestRecordId,
+    announcementBytes,
+    replicas: Object.freeze(replicas)
+  })
+}
+
+function runtimeOwnedSeq29ValidationOnlyProfileValidator (
+  validatorModule, registry, control, assets) {
+  if (typeof validatorModule.authenticatePeeritProfileExternalCodecAuthorityV1 !== 'function') {
+    fail('PROFILE_VALIDATOR_RUNTIME_BINDING_MISMATCH',
+      'authenticated validator module has no external-codec authority minter')
+  }
+  const wireArtifacts = Object.freeze({
+    specBytes: requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.externalWireSpec),
+    abiBytes: requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.externalWireAbi),
+    vectorManifestBytes: requireAsset(
+      assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.externalWireVectors)
+  })
+  const clientArtifacts = Object.freeze({
+    formatAuthorityBytes: requireAsset(
+      assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.externalClientFormat),
+    vectorManifestBytes: requireAsset(
+      assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.externalClientVectors)
+  })
+  const externalAuthorities = Object.create(null)
+  for (const row of registry.externalCodecImports) {
+    externalAuthorities[row.name] =
+      validatorModule.authenticatePeeritProfileExternalCodecAuthorityV1({
+        name: row.name,
+        authorityKind: row.authorityKind,
+        authorityBinding: row.tupleBinding,
+        artifacts: row.authorityKind === 'WIRE_TUPLE_V1'
+          ? wireArtifacts
+          : clientArtifacts,
+        assertCanonical (input, expectedName) {
+          if (arguments.length !== 2 || expectedName !== row.name) {
+            fail('PROFILE_EXTERNAL_CODEC_AUTHORITY_MISMATCH',
+              `${row.name} runtime authority cannot validate another schema`)
+          }
+          control.decodeBlindExternalProfileValueV1(row.name, input)
+        }
+      })
+  }
+  // The generated module's public exact-artifact minter intentionally creates
+  // productionTrusted:false codec authorities. That is sufficient only for
+  // canonical decode, local semantics, and signature verification. Do not set
+  // production:true here: no fixed production contextual-graph authority
+  // exists. The wrapper below is a narrow pre-readback validator, and the
+  // coordinator must obtain its separate branded CELL.GET/intrinsic readback
+  // before any record is accepted or committed.
+  const validator = validatorModule.createPeeritValidatorV1({
+    externalAuthorities: Object.freeze(externalAuthorities),
+    verifySignatures: true
+  })
+  const acceptedSchemas = new Set(['PeeritAnnouncementV1', 'AuthorBindV1'])
+  // The generated validator supplies strict canonical decoding, exact external
+  // codec authority and mandatory Ed25519 checks. Contextual acceptance remains
+  // deliberately outside this narrow surface: the public-INBOX coordinator
+  // requires its separately branded same-relay CELL.GET/intrinsic readback
+  // before a decoded record can enter the journal or authorize an APPEND.
+  const surface = Object.freeze({
+    authorityClass: 'PEERIT_SEQ29_AUTHENTICATED_VALIDATION_ONLY_V1',
+    productionValidator: false,
+    productionTrustedExternalAuthority: false,
+    signatureVerificationRequired: true,
+    contextualValidationPerformed: false,
+    contextualAcceptanceAuthority: 'peerit-seq29-public-inbox-readback-v1',
+    createSignedInlineAuthorBindPublicationV1 (input) {
+      if (arguments.length !== 1 || !input || typeof input !== 'object') {
+        fail('PEERIT_SEQ29_SIGNED_PUBLICATION_INVALID',
+          'one bounded signed-publication input is required')
+      }
+      return createSeq29SignedPublication(validator, surface, input)
+    },
+    validate (schemaName, input) {
+      if (arguments.length !== 2 || !acceptedSchemas.has(schemaName)) {
+        fail('PEERIT_SEQ29_PROFILE_VALIDATOR_SCOPE_INVALID',
+          'runtime-owned public INBOX validator is closed to Announcement and AuthorBind')
+      }
+      const result = validator.validate(schemaName, bytes(input, `${schemaName} bytes`))
+      if (result.contextual !== null) {
+        fail('PEERIT_SEQ29_PROFILE_VALIDATOR_CONTEXT_INVALID',
+          'public INBOX profile validation cannot substitute an unbranded graph result')
+      }
+      return result
+    }
+  })
+  return surface
+}
+
+function sameSeq29AdmissionProfile (actual, expected) {
+  return actual && actual.schemeId === expected.schemeId &&
+    actual.profileId === expected.profileId &&
+    actual.conformanceClass === expected.conformanceClass &&
+    actual.roleBits === expected.roleBits &&
+    actual.parameterUrl == null && expected.parameterUrl == null
+}
+
+function clearCellManagementCapability (writeCap) {
+  for (const field of ['createPrivateKey', 'renewPrivateKey', 'dropPrivateKey']) {
+    try { writeCap?.[field]?.fill(0) } catch {}
+  }
+}
+
+function runtimeOwnedSeq29PublicationControl (
+  control, profile, trusted) {
+  const fetch = trusted.fetch || (typeof globalThis.fetch === 'function'
+    ? globalThis.fetch.bind(globalThis)
+    : null)
+  const subtle = trusted.subtle || globalThis.crypto?.subtle
+  let factory = null
+  const getFactory = () => {
+    if (!factory) {
+      factory = createPowIssuanceV1AdmissionProviderFactory({
+        profileId: PEERIT_LIMITED_CELL_PUT_PROFILE_ID_V1,
+        schemeId: PEERIT_LIMITED_CELL_PUT_SCHEME_ID_V1,
+        issuers: profile.relays.map(relay => Object.freeze({
+          relayPublicKey: relay.relayPublicKey,
+          issuanceUrl: new TextDecoder('utf-8', { fatal: true }).decode(relay.issuanceUrl)
+        })),
+        fetch,
+        subtle
+      })
+    }
+    return factory
+  }
+  const relayPin = relayId => profile.relays.find(row => row.relayId === relayId)
+
+  async function verifiedAdmission (input, operation) {
+    const relay = relayPin(input.relayId)
+    const context = control.verifiedEndpointContext(input.endpoint)
+    if (!relay || context.familyId !== operation.familyId ||
+        context.operationId !== operation.operationId ||
+        !bytesEqual(context.relayPublicKey, relay.relayPublicKey)) {
+      fail('PEERIT_SEQ29_ADMISSION_CONTEXT_INVALID',
+        `${input.relayId} endpoint is outside the frozen Cell-PUT issuer authority`)
+    }
+    const advertised = control.trustedAdmissionProfile(
+      input.trustedDescriptor, PEERIT_LIMITED_CELL_PUT_PROFILE_ID_V1)
+    if (!sameSeq29AdmissionProfile(advertised, relay.admissionProfile)) {
+      fail('PEERIT_SEQ29_ADMISSION_PROFILE_DRIFT',
+        `${input.relayId} descriptor changed the frozen admission profile`)
+    }
+    const request = control.createAdmissionParametersRequest({
+      runtime: input.runtime,
+      profileId: PEERIT_LIMITED_CELL_PUT_PROFILE_ID_V1,
+      schemeId: PEERIT_LIMITED_CELL_PUT_SCHEME_ID_V1
+    })
+    const endpoint = control.qualifyDescribeControlEndpoint({
+      trustedDescriptor: input.trustedDescriptor,
+      nowEpoch: input.nowEpoch,
+      familyId: 1,
+      operationId: 3,
+      endpointId: 1,
+      requiredRoleBits: 49,
+      privacyProfileBit: 1,
+      transportSupportBit: 1
+    })
+    const client = input.httpClient || new control.BlindDirectHttpClient({
+      runtime: input.runtime,
+      fetch
+    })
+    const response = await client.request({
+      endpoint,
+      ...request.wire,
+      body: request.requestBytes,
+      signal: input.signal,
+      timeoutMillis: input.timeoutMillis
+    })
+    if (!response || response.ok !== true) {
+      fail('PEERIT_SEQ29_ADMISSION_PARAMETERS_UNAVAILABLE',
+        `${input.relayId} did not return signed admission parameters`, response?.error)
+    }
+    const verified = control.verifyAdmissionParametersBytes(
+      response.body, input.trustedDescriptor, advertised, { nowEpoch: input.nowEpoch })
+    if (!verified || !bytesEqual(verified.parameterHash, advertised.parameterHash)) {
+      fail('PEERIT_SEQ29_ADMISSION_PARAMETERS_UNTRUSTED',
+        `${input.relayId} admission parameters differ from the current descriptor`)
+    }
+    return Object.freeze({ relay, context, verified, advertised })
+  }
+
+  async function providerFor (factory, input, operation) {
+    const admission = await verifiedAdmission(input, operation)
+    return factory.createAdmissionProvider({
+      endpointContext: admission.context,
+      verifiedAdmissionParameters: admission.verified,
+      admissionProfile: admission.advertised,
+      signal: input.signal
+    })
+  }
+
+  return Object.freeze({
+    qualificationProfile: Object.freeze({
+      supportedProtocolProfiles: profile.supportedProtocolProfiles,
+      supportedTransportProfiles: profile.supportedTransportProfiles
+    }),
+
+    async createDualCellReplicasV1 (input = {}) {
+      if (!Array.isArray(input.rows) || input.rows.length !== 2) {
+        fail('PEERIT_SEQ29_CELL_PUT_INVALID',
+          'two exact authenticated relay publications are required')
+      }
+      const relayIds = new Set()
+      for (const row of input.rows) {
+        const relay = row && relayPin(row.relayId)
+        if (!relay || relayIds.has(row.relayId) || !row.binding ||
+            !bytesEqual(row.binding.relayPublicKey, relay.relayPublicKey)) {
+          fail('PEERIT_SEQ29_CELL_PUT_INVALID',
+            'the dual CELL.PUT rows must cover each frozen relay identity exactly once')
+        }
+        if (!row.publication || !Number.isInteger(row.publication.sizeClass) ||
+            row.publication.sizeClass < 1 ||
+            row.publication.sizeClass > profile.powIssuance.maximumCellSizeClass) {
+          fail('PEERIT_SEQ29_CELL_PUT_INVALID',
+            'the authored publication exceeds the frozen Cell-PUT size authority')
+        }
+        relayIds.add(row.relayId)
+      }
+      if (relayIds.size !== profile.relays.length ||
+          profile.relays.some(relay => !relayIds.has(relay.relayId))) {
+        fail('PEERIT_SEQ29_CELL_PUT_INVALID',
+          'the dual CELL.PUT rows differ from the frozen two-relay authority')
+      }
+      const pow = getFactory()
+      const providers = await Promise.all(input.rows.map(row => providerFor(
+        pow, row, Object.freeze({ familyId: 2, operationId: 1 }))))
+      const session = pow.beginRecord({
+        relayPublicKeys: input.rows.map(row => row.binding.relayPublicKey)
+      })
+      try {
+        return Object.freeze(await Promise.all(input.rows.map(async (row, index) => {
+          let created
+          try {
+            created = await control.createCellReplica({
+              runtime: row.runtime,
+              relayPublicKey: row.binding.relayPublicKey,
+              allocationEpoch: row.allocationEpoch,
+              sizeClass: row.publication.sizeClass,
+              leaseClass: profile.powIssuance.maximumCellLeaseClass,
+              structuredContent: row.publication.innerBytes,
+              admissionProvider: providers[index]
+            })
+            return Object.freeze({
+              relayId: row.relayId,
+              request: structuredClone(created.request),
+              requestBytes: bytes(created.requestBytes, 'CELL.PUT request bytes').slice(),
+              requestCommitment: bytes(
+                created.requestCommitment, 'CELL.PUT request commitment', 32).slice(),
+              wire: structuredClone(created.wire),
+              readCap: structuredClone(created.readCap),
+              allocationCommitment: bytes(
+                created.allocationCommitment, 'CELL.PUT allocation commitment', 32).slice()
+            })
+          } finally {
+            clearCellManagementCapability(created?.writeCap)
+          }
+        })))
+      } finally {
+        session.close()
+      }
+    },
+
+    async prepareAppendV1 (input = {}) {
+      const pow = getFactory()
+      const provider = await providerFor(
+        pow, input, Object.freeze({ familyId: 3, operationId: 4 }))
+      const session = pow.beginOperationRecord({
+        operations: [Object.freeze({
+          relayPublicKey: input.binding.relayPublicKey,
+          kind: 'append'
+        })]
+      })
+      try {
+        return await preparePeeritPublicInboxAnnouncementV1({
+          authority: input.authority,
+          binding: input.binding,
+          control,
+          runtime: input.runtime,
+          announcementBytes: input.announcementBytes,
+          admissionProvider: provider
+        })
+      } finally {
+        session.close()
+      }
+    }
   })
 }
 
@@ -456,12 +1046,23 @@ async function assemblePeeritBrowserRuntimeAuthorityInternal (input, trusted) {
   }
   const seedBootstrap = await authenticatedSeedBootstrap(
     appArtifactBytes, assets, webAssetManifest, pin.releaseSequence)
+  const publicInboxBootstrap = await authenticatedPublicInboxBootstrap(
+    appArtifactBytes, assets, pin.releaseSequence)
+  const limitedCellPutProfile = publicInboxBootstrap
+    ? verifyPeeritLimitedCellPutProfileV1(
+      requireAsset(assets, PEERIT_LIMITED_CELL_PUT_PROFILE_PATH_V1), {
+        // The Seq29 app retains the exact frozen Seq28 authority bytes; it does
+        // not reinterpret or reissue them under the newer release sequence.
+        releaseSequence: PEERIT_LIMITED_CELL_PUT_RELEASE_SEQUENCE
+      })
+    : null
 
   const hive = verifyBlindClientBrowserReleaseV1({
     artifactBytes: requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveArtifact),
     manifestBytes: requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveManifest),
     chromiumEvidenceBytes: requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveChromiumEvidence),
-    crossHostEvidenceBytes: requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCrossHostEvidence)
+    crossHostEvidenceBytes: requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCrossHostEvidence),
+    authorityBytes: requireAsset(assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveVendorAuthority)
   })
   const hiveCellGet = Number(pin.releaseSequence) === PEERIT_LIMITED_CELL_GET_RELEASE_SEQUENCE
     ? verifyBlindClientCellGetBrowserReleaseV1({
@@ -470,7 +1071,9 @@ async function assemblePeeritBrowserRuntimeAuthorityInternal (input, trusted) {
       chromiumEvidenceBytes: requireAsset(
         assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetChromiumEvidence),
       crossHostEvidenceBytes: requireAsset(
-        assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetCrossHostEvidence)
+        assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetCrossHostEvidence),
+      authorityBytes: requireAsset(
+        assets, PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveCellGetVendorAuthority)
     })
     : null
   if (hiveCellGet && (!sameTuple(hive.manifest, hiveCellGet.manifest) ||
@@ -550,6 +1153,7 @@ async function assemblePeeritBrowserRuntimeAuthorityInternal (input, trusted) {
   }))
   if (!validatorModule || !validatorModule.PEERIT_VALIDATOR_PROFILE_BINDING_V1 ||
       typeof validatorModule.createPeeritValidatorV1 !== 'function' ||
+      typeof validatorModule.authenticatePeeritProfileExternalCodecAuthorityV1 !== 'function' ||
       !bytesEqual(validatorModule.PEERIT_VALIDATOR_PROFILE_BINDING_V1.profileSpecHash, profileSpecHash) ||
       !bytesEqual(validatorModule.PEERIT_VALIDATOR_PROFILE_BINDING_V1.inventoryCommitment, registry.inventoryCommitment) ||
       validatorModule.PEERIT_VALIDATOR_PROFILE_BINDING_V1.schemaCount !== registry.schemas.length) {
@@ -569,7 +1173,16 @@ async function assemblePeeritBrowserRuntimeAuthorityInternal (input, trusted) {
     }))
     : null
   if (cellGetControl) assertCellGetControlModule(cellGetControl)
+  const validationOnlyProfileValidator = Number(pin.releaseSequence) ===
+    PEERIT_LIMITED_PUBLIC_INBOX_RELEASE_SEQUENCE_V1
+    ? runtimeOwnedSeq29ValidationOnlyProfileValidator(
+      validatorModule, registry, control, assets)
+    : null
+  const seq29PublicationControl = limitedCellPutProfile
+    ? runtimeOwnedSeq29PublicationControl(control, limitedCellPutProfile, trusted)
+    : null
   const clock = exactClock(trusted.clock)
+  const runtimeClock = authenticatedRuntimeClock(clock)
   const authority = Object.freeze({
     version: 1,
     releaseSequence: pin.releaseSequence,
@@ -601,7 +1214,16 @@ async function assemblePeeritBrowserRuntimeAuthorityInternal (input, trusted) {
     registry,
     verifiedPin,
     validatorArtifactAuthenticated: true,
+    // General/production validator construction remains unavailable because
+    // the fixed production contextual graph authority is not release-ready.
     validatorInstantiationAuthorized: false,
+    seq29ValidationOnlyValidatorInstantiationAuthorized:
+      validationOnlyProfileValidator != null,
+    seq29ValidationOnlyProfileValidator: validationOnlyProfileValidator,
+    seq29PublicationControl,
+    runtimeClock,
+    publicInboxContextualAcceptanceAuthority: validationOnlyProfileValidator &&
+      validationOnlyProfileValidator.contextualAcceptanceAuthority,
     createRelayAdapter (options) {
       return createBlindCellRelay({
         ...options,
@@ -611,6 +1233,9 @@ async function assemblePeeritBrowserRuntimeAuthorityInternal (input, trusted) {
     }
   }))
   if (seedBootstrap) VERIFIED_SEED_BOOTSTRAPS.set(authority, seedBootstrap)
+  if (publicInboxBootstrap) {
+    VERIFIED_PUBLIC_INBOX_BOOTSTRAPS.set(authority, publicInboxBootstrap)
+  }
   return authority
 }
 
@@ -620,6 +1245,8 @@ const PUBLIC_FORBIDDEN_AUTHORITY_INPUTS = Object.freeze([
   'expectedReleaseAuthorityPublicKey',
   'expectedReleaseSequence',
   'crypto',
+  'subtle',
+  'fetch',
   'clock',
   'importModule',
   'appDistributionArtifactBytes',
@@ -659,6 +1286,8 @@ export async function assemblePeeritBrowserRuntimeAuthorityV1 (input = {}) {
     expectedReleaseAuthorityPublicKey: productionKey,
     expectedReleaseSequence: terminal.terminalSequence,
     crypto: browserReleaseCrypto(),
+    subtle: globalThis.crypto?.subtle,
+    fetch: typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null,
     clock: undefined,
     importModule: importAuthenticatedSameOriginModuleV1
   }))
@@ -689,6 +1318,10 @@ export async function assemblePeeritBrowserRuntimeAuthorityNodeTestV1 (input = {
     expectedReleaseAuthorityPublicKey: input.expectedReleaseAuthorityPublicKey,
     expectedReleaseSequence: input.expectedReleaseSequence,
     crypto: input.crypto,
+    subtle: input.subtle || globalThis.crypto?.subtle,
+    fetch: input.fetch || (typeof globalThis.fetch === 'function'
+      ? globalThis.fetch.bind(globalThis)
+      : null),
     clock: input.clock,
     importModule: importNodeTestModule
   }))
@@ -792,7 +1425,8 @@ export async function fetchBoundedPeeritBrowserRuntimeAssetV1 ({
     if (!acceptedContentType(path, response.headers && response.headers.get('content-type'))) {
       fail('BROWSER_RUNTIME_ASSET_CONTENT_TYPE_INVALID', `${path} has an unexpected content type`)
     }
-    const contentEncoding = String(response.headers && response.headers.get('content-encoding') || '')
+    const contentEncoding = String(
+      (response.headers && response.headers.get('content-encoding')) || '')
       .split(';')[0].trim().toLowerCase()
     const lengthHeader = response.headers && response.headers.get('content-length')
     if (contentEncoding && contentEncoding !== 'identity') {

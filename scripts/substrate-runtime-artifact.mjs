@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, createPublicKey, verify as verifySignature } from 'node:crypto'
 import { patchCspForWeb } from './csp.mjs'
 import {
   decodePeeritWebAssetManifestV1,
@@ -9,20 +9,38 @@ import {
   verifyPeeritWebAssetBytesV1
 } from '../js/substrate/web-asset-manifest.mjs'
 import {
+  asciiBytes,
   blake2b256,
-  bytesToHex
+  bytesToHex,
+  concatBytes,
+  u32Bytes,
+  u64Bytes
 } from '../js/substrate/release-control-primitives.mjs'
 import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from '../js/substrate/production-release-authority.mjs'
 import { normalizePeeritReleaseRelayHintsV1 } from '../js/substrate/release-relay-hints.mjs'
 import { encodePeeritSeedBootstrapV1 } from '../js/substrate/seed-bootstrap-v1.mjs'
+import { PEERIT_LIMITED_CELL_PUT_ISSUER_ORIGINS_V1 } from '../js/substrate/limited-cell-put-profile.mjs'
+import {
+  decodeBlindExternalProfileValueV1
+} from '../vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs'
 
 export const PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE = 7
 export const PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE = 13
+export const PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE = 29
 export const PEERIT_APP_ARTIFACT_PATH = 'peerit-app-artifact-v1.json'
 export const PEERIT_WEB_ASSET_MANIFEST_PATH = 'peerit-web-assets-v1.cenc'
 export const PEERIT_SEED_BOOTSTRAP_PATH = 'peerit-seed-bootstrap-v1.json'
+export const PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH =
+  'peerit-limited-public-inbox-bootstrap-v1.json'
 
 const HEX_32 = /^[0-9a-f]{64}$/
+const HEX_64 = /^[0-9a-f]{128}$/
+const DECIMAL_U64 = /^(0|[1-9][0-9]{0,19})$/
+const MAX_U64 = (1n << 64n) - 1n
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex')
+const LIMITED_INBOX_DOMAIN = 'peerit.limited-public-test.inbox-bootstrap.v1'
+const LIMITED_INBOX_MAX_LIFETIME_MILLIS = 2678400000n
+const LIMITED_INBOX_LEASE_EPOCH_MILLIS = 21600000n
 
 function sha256 (input) {
   return createHash('sha256').update(input).digest('hex')
@@ -45,6 +63,272 @@ function exactBuffer (value, field) {
 function sortedObject (entries) {
   return Object.fromEntries([...entries].sort(([left], [right]) =>
     left < right ? -1 : left > right ? 1 : 0))
+}
+
+function stableJson (value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return '[' + value.map(stableJson).join(',') + ']'
+  return '{' + Object.keys(value).sort()
+    .map(key => JSON.stringify(key) + ':' + stableJson(value[key])).join(',') + '}'
+}
+
+function exactObject (value, fields, field) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      Object.keys(value).sort().join('\0') !== [...fields].sort().join('\0')) {
+    throw new Error(`${field} fields are missing or unexpected`)
+  }
+  return value
+}
+
+function decimalU64 (value, field) {
+  if (typeof value !== 'string' || !DECIMAL_U64.test(value)) {
+    throw new Error(`${field} is not canonical u64 decimal`)
+  }
+  const parsed = BigInt(value)
+  if (parsed > MAX_U64) throw new Error(`${field} exceeds u64`)
+  return parsed
+}
+
+function exactHex (value, bytes, field) {
+  const pattern = bytes === 32 ? HEX_32 : bytes === 64 ? HEX_64 : /^[0-9a-f]+$/
+  if (typeof value !== 'string' || !pattern.test(value) || value.length % 2 !== 0) {
+    throw new Error(`${field} is not canonical lowercase hex`)
+  }
+  return Buffer.from(value, 'hex')
+}
+
+function uniqueValues (values, field) {
+  if (new Set(values).size !== values.length) throw new Error(`${field} contains duplicates`)
+}
+
+function noPrivateInboxMaterial (value, path = []) {
+  if (value == null || typeof value !== 'object') return
+  for (const [key, child] of Object.entries(value)) {
+    const lower = key.toLowerCase()
+    if (lower.includes('privateseed') || lower.includes('privatekey') ||
+        lower === 'secretseed' || lower === 'managementkeyderivation' ||
+        lower === 'deterministicpublicinputderivation') {
+      throw new Error(`public INBOX bootstrap carries forbidden management material at ${[...path, key].join('.')}`)
+    }
+    noPrivateInboxMaterial(child, [...path, key])
+  }
+}
+
+function canonicalInboxDescribeUrl (value) {
+  if (typeof value !== 'string' ||
+      !/^https:\/\/[a-z0-9.-]+:[1-9][0-9]{0,4}\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/.test(value)) {
+    throw new Error('public INBOX relay describe URL is not canonical HTTPS with an explicit port')
+  }
+  const port = Number(/^https:\/\/[^/]+:([0-9]+)\//.exec(value)[1])
+  if (port > 65535 || value.includes('/./') || value.includes('/../') || value.includes('//', 8)) {
+    throw new Error('public INBOX relay describe URL has an invalid port or path')
+  }
+}
+
+function verifyInboxBootstrapSignature (wrapper, authorityPublicKey) {
+  const signatureMessage = Buffer.concat([
+    Buffer.from(LIMITED_INBOX_DOMAIN, 'ascii'),
+    Buffer.from([0]),
+    Buffer.from(stableJson(wrapper.payload), 'utf8')
+  ])
+  const publicKey = createPublicKey({
+    key: Buffer.concat([ED25519_SPKI_PREFIX, Buffer.from(authorityPublicKey, 'hex')]),
+    format: 'der',
+    type: 'spki'
+  })
+  return verifySignature(null, signatureMessage, publicKey, Buffer.from(wrapper.signature, 'hex'))
+}
+
+function verifyInboxCreateReceipt (binding, relay) {
+  const receiptBytes = exactHex(binding.createReceiptCanonicalHex, null, 'public INBOX create receipt')
+  let receipt
+  try {
+    receipt = decodeBlindExternalProfileValueV1('InboxReceiptV1', receiptBytes)
+  } catch (cause) {
+    throw new Error(`public INBOX create receipt is not canonical: ${cause.message}`)
+  }
+  const unsigned = receiptBytes.subarray(0, receiptBytes.byteLength - 64)
+  const signature = receiptBytes.subarray(receiptBytes.byteLength - 64)
+  const signatureMessage = concatBytes(
+    asciiBytes('hiverelay.blind.inbox-receipt.v1'), u64Bytes(unsigned.byteLength), unsigned)
+  const relayPublicKey = exactHex(relay.relayPublicKey, 32, 'public INBOX relayPublicKey')
+  const publicKey = createPublicKey({
+    key: Buffer.concat([ED25519_SPKI_PREFIX, relayPublicKey]),
+    format: 'der',
+    type: 'spki'
+  })
+  if (!verifySignature(null, signatureMessage, publicKey, signature)) {
+    throw new Error('public INBOX create receipt relay signature is invalid')
+  }
+  const topic = exactHex(binding.physicalTopic, 32, 'public INBOX physicalTopic')
+  if (!Buffer.from(receipt.relayBinding.relayPublicKey).equals(relayPublicKey) ||
+      !Buffer.from(receipt.relayBinding.storeId).equals(
+        exactHex(relay.storeId, 32, 'public INBOX relay storeId')) ||
+      !Buffer.from(receipt.relayBinding.durabilityContinuityHash).equals(
+        exactHex(relay.durabilityContinuityHash, 32, 'public INBOX relay durabilityContinuityHash')) ||
+      String(receipt.relayBinding.descriptorSequence) !== relay.descriptorFloor.sequence ||
+      !Buffer.from(receipt.relayBinding.descriptorHash).equals(
+        exactHex(relay.descriptorFloor.hash, 32, 'public INBOX descriptor floor hash')) ||
+      !Buffer.from(receipt.topicCommitment).equals(Buffer.from(blake2b256(topic))) ||
+      String(receipt.stateRevision) !== '0' || receipt.leaseClass !== 4 || receipt.result !== 1) {
+    throw new Error('public INBOX create receipt does not bind the advertised topic and relay floor')
+  }
+}
+
+// Synchronous Node-side equivalent of verifyPeeritLimitedPublicInboxBootstrapV1.
+// Artifact construction intentionally stays synchronous; this uses Node's
+// Ed25519 verifier plus the exact pinned external-profile receipt decoder while
+// matching the browser verifier's wrapper, payload, relay, epoch, topic,
+// receipt, time, authority, and release checks.
+function verifyExactInboxBootstrap (wrapper, expectedAuthorityPublicKey, releaseSequence,
+  referenceUnixMillis = BigInt(Date.now())) {
+  noPrivateInboxMaterial(wrapper)
+  exactObject(wrapper, ['payload', 'signature'], 'public INBOX bootstrap wrapper')
+  const payload = exactObject(wrapper.payload, [
+    'schema', 'version', 'artifactClass', 'claimBoundary', 'operatorBoundary',
+    'topicScope', 'profileId', 'releaseSequence', 'bootstrapSequence',
+    'previousBootstrapHash', 'issuedUnixMillis', 'expiresUnixMillis',
+    'authorityPublicKey', 'relays', 'inboxEpochSets'
+  ], 'public INBOX bootstrap payload')
+  if (payload.artifactClass !== 'LIMITED_PUBLIC_TEST_RELEASE') {
+    throw new Error('public INBOX bootstrap is not a limited public test release production-test class')
+  }
+  if (payload.schema !== 'peerit-limited-public-inbox-bootstrap-v1' ||
+      payload.version !== 1 ||
+      payload.claimBoundary !== 'LIVE_PUBLIC_TEST_ONLY' ||
+      payload.operatorBoundary !== 'TWO_OWNER_OPERATED_RELAYS_NOT_INDEPENDENT_OPERATORS' ||
+      payload.topicScope !== 'GLOBAL_PUBLIC_DISCOVERY' ||
+      payload.profileId !== '@peerit/hiverelay-profile-v1' ||
+      payload.releaseSequence !== PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE ||
+      payload.releaseSequence !== releaseSequence) {
+    throw new Error('public INBOX bootstrap contract identity is invalid')
+  }
+  const sequence = decimalU64(payload.bootstrapSequence, 'public INBOX bootstrapSequence')
+  if ((sequence === 0n) !== (payload.previousBootstrapHash === null)) {
+    throw new Error('public INBOX bootstrap predecessor presence does not match sequence')
+  }
+  if (payload.previousBootstrapHash !== null) {
+    exactHex(payload.previousBootstrapHash, 32, 'public INBOX previousBootstrapHash')
+  }
+  const issued = decimalU64(payload.issuedUnixMillis, 'public INBOX issuedUnixMillis')
+  const expires = decimalU64(payload.expiresUnixMillis, 'public INBOX expiresUnixMillis')
+  const reference = typeof referenceUnixMillis === 'bigint'
+    ? referenceUnixMillis
+    : BigInt(referenceUnixMillis)
+  if (expires <= issued || expires - issued > LIMITED_INBOX_MAX_LIFETIME_MILLIS ||
+      reference < issued || reference >= expires) {
+    throw new Error('trusted local time is outside the bounded public INBOX bootstrap lifetime')
+  }
+  exactHex(payload.authorityPublicKey, 32, 'public INBOX authorityPublicKey')
+  if (payload.authorityPublicKey !== expectedAuthorityPublicKey) {
+    throw new Error('public INBOX bootstrap authority key differs from the release binding')
+  }
+  exactHex(wrapper.signature, 64, 'public INBOX bootstrap signature')
+  if (!verifyInboxBootstrapSignature(wrapper, payload.authorityPublicKey)) {
+    throw new Error('public INBOX bootstrap signature is invalid')
+  }
+  if (!Array.isArray(payload.relays) || payload.relays.length !== 2) {
+    throw new Error('public INBOX bootstrap must name exactly two relays')
+  }
+  const relayById = new Map()
+  for (const relay of payload.relays) {
+    exactObject(relay, [
+      'relayId', 'canonicalDescribeUrl', 'relayPublicKey', 'storeId',
+      'durabilityContinuityHash', 'descriptorFloor'
+    ], 'public INBOX relay')
+    if (!/^[a-z][a-z0-9-]{0,31}$/.test(relay.relayId)) {
+      throw new Error('public INBOX relayId is invalid')
+    }
+    canonicalInboxDescribeUrl(relay.canonicalDescribeUrl)
+    exactHex(relay.relayPublicKey, 32, 'public INBOX relayPublicKey')
+    exactHex(relay.storeId, 32, 'public INBOX relay storeId')
+    exactHex(relay.durabilityContinuityHash, 32,
+      'public INBOX relay durabilityContinuityHash')
+    exactObject(relay.descriptorFloor, ['sequence', 'hash'],
+      'public INBOX descriptorFloor')
+    decimalU64(relay.descriptorFloor.sequence, 'public INBOX descriptorFloor.sequence')
+    exactHex(relay.descriptorFloor.hash, 32, 'public INBOX descriptorFloor.hash')
+    relayById.set(relay.relayId, relay)
+  }
+  uniqueValues(payload.relays.map(value => value.relayId), 'public INBOX relay IDs')
+  uniqueValues(payload.relays.map(value => value.relayPublicKey), 'public INBOX relay keys')
+  uniqueValues(payload.relays.map(value => value.storeId), 'public INBOX relay stores')
+  if (!Array.isArray(payload.inboxEpochSets) || payload.inboxEpochSets.length !== 1) {
+    throw new Error('public INBOX bootstrap must carry exactly one current epoch set')
+  }
+  const set = exactObject(payload.inboxEpochSets[0], [
+    'inboxEpoch', 'stripeCountLog2', 'stripeSelectionKey',
+    'announcementMasterKey', 'bindings'
+  ], 'public INBOX epoch set')
+  const effectiveLeaseEpoch = Number(reference / LIMITED_INBOX_LEASE_EPOCH_MILLIS)
+  if (!Number.isSafeInteger(set.inboxEpoch) ||
+      set.inboxEpoch !== Math.floor(effectiveLeaseEpoch / 28) ||
+      set.stripeCountLog2 !== 0 || !Array.isArray(set.bindings) ||
+      set.bindings.length !== 2) {
+    throw new Error('public INBOX bootstrap epoch or one-stripe shape is invalid')
+  }
+  exactHex(set.stripeSelectionKey, 32, 'public INBOX stripeSelectionKey')
+  exactHex(set.announcementMasterKey, 32, 'public INBOX announcementMasterKey')
+  uniqueValues(set.bindings.map(value => value.relayId), 'public INBOX binding relay IDs')
+  uniqueValues(set.bindings.map(value => value.physicalTopic), 'public INBOX physical topics')
+  for (const binding of set.bindings) {
+    exactObject(binding, [
+      'inboxEpoch', 'stripeIndex', 'relayId', 'relayPublicKey',
+      'allocationEpoch', 'createPublicKey', 'physicalTopic', 'frameClassBits',
+      'appendAuthMode', 'retentionClass', 'leaseClass', 'createReceiptCanonicalHex'
+    ], 'public INBOX binding')
+    const relay = relayById.get(binding.relayId)
+    if (!relay || binding.inboxEpoch !== set.inboxEpoch || binding.stripeIndex !== 0 ||
+        binding.relayPublicKey !== relay.relayPublicKey || binding.frameClassBits !== 3 ||
+        binding.appendAuthMode !== 0 || binding.retentionClass !== 3 ||
+        binding.leaseClass !== 4 || !Number.isSafeInteger(binding.allocationEpoch) ||
+        binding.allocationEpoch > effectiveLeaseEpoch + 1 ||
+        effectiveLeaseEpoch >= binding.allocationEpoch + 1460) {
+      throw new Error('public INBOX binding does not match the accepted OPEN_APPEND shape')
+    }
+    const expectedTopic = blake2b256(concatBytes(
+      asciiBytes('hiverelay.blind.inbox-topic.v1'), u32Bytes(binding.allocationEpoch),
+      exactHex(binding.createPublicKey, 32, 'public INBOX createPublicKey')))
+    if (!Buffer.from(expectedTopic).equals(
+      exactHex(binding.physicalTopic, 32, 'public INBOX physicalTopic'))) {
+      throw new Error('public INBOX physical topic is not self-certifying')
+    }
+    verifyInboxCreateReceipt(binding, relay)
+  }
+  return wrapper
+}
+
+export function verifyPeeritLimitedPublicInboxBootstrapArtifactV1 (options = {}) {
+  const bytes = exactBuffer(options.bytes, 'public INBOX bootstrap')
+  if (bytes.byteLength < 1 || bytes.byteLength > 1024 * 1024) {
+    throw new Error('public INBOX bootstrap exceeds its fixed byte bound')
+  }
+  let wrapper
+  try { wrapper = JSON.parse(bytes.toString('utf8')) } catch (cause) {
+    throw new Error(`public INBOX bootstrap is not JSON: ${cause.message}`)
+  }
+  if (JSON.stringify(wrapper, null, 2) + '\n' !== bytes.toString('utf8')) {
+    throw new Error('public INBOX bootstrap JSON bytes are not canonical')
+  }
+  const authorityPublicKey = String(options.expectedAuthorityPublicKey || '').toLowerCase()
+  const releaseSequence = Number(options.expectedReleaseSequence)
+  if (!HEX_32.test(authorityPublicKey) ||
+      !Number.isSafeInteger(releaseSequence) ||
+      releaseSequence !== PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE) {
+    throw new Error('public INBOX bootstrap verification requires the exact release authority and sequence')
+  }
+  const referenceUnixMillis = options.referenceUnixMillis == null
+    ? BigInt(Date.now())
+    : options.referenceUnixMillis
+  verifyExactInboxBootstrap(wrapper, authorityPublicKey, releaseSequence,
+    referenceUnixMillis)
+  return Object.freeze({
+    sha256: sha256(bytes),
+    authorityPublicKey: wrapper.payload.authorityPublicKey,
+    artifactClass: wrapper.payload.artifactClass,
+    releaseSequence: wrapper.payload.releaseSequence,
+    bindingCount: wrapper.payload.inboxEpochSets[0].bindings.length
+  })
 }
 
 function seedReleaseBinding (value) {
@@ -109,6 +393,60 @@ function seedBuildInput (options, releaseSequence) {
   })
 }
 
+function inboxReleaseBinding (value) {
+  const fields = [
+    'peeritLimitedPublicInboxBootstrap',
+    'peeritLimitedPublicInboxBootstrapSha256',
+    'peeritLimitedPublicInboxBootstrapAuthorityPublicKey',
+    'peeritLimitedPublicInboxBootstrapReleaseSequence'
+  ]
+  const present = fields.filter(field => Object.hasOwn(value, field))
+  if (value.releaseSequence < PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE) {
+    if (present.length !== 0) throw new Error('pre-sequence-29 app artifact cannot carry a public INBOX bootstrap binding')
+    return null
+  }
+  if (present.length !== fields.length ||
+      value.peeritLimitedPublicInboxBootstrap !== `/${PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH}` ||
+      !HEX_32.test(String(value.peeritLimitedPublicInboxBootstrapSha256 || '')) ||
+      !HEX_32.test(String(value.peeritLimitedPublicInboxBootstrapAuthorityPublicKey || '')) ||
+      value.peeritLimitedPublicInboxBootstrapReleaseSequence !== value.releaseSequence) {
+    throw new Error('sequence-29+ app artifact must bind one exact public INBOX bootstrap')
+  }
+  return Object.freeze({
+    path: value.peeritLimitedPublicInboxBootstrap,
+    sha256: value.peeritLimitedPublicInboxBootstrapSha256,
+    authorityPublicKey: value.peeritLimitedPublicInboxBootstrapAuthorityPublicKey,
+    releaseSequence: value.peeritLimitedPublicInboxBootstrapReleaseSequence
+  })
+}
+
+function inboxBuildInput (options, releaseSequence) {
+  const supplied = options.limitedPublicInboxBootstrapBytes != null ||
+    String(options.limitedPublicInboxBootstrapAuthorityPublicKey || '').length > 0
+  if (releaseSequence < PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE) {
+    if (supplied) throw new Error('public INBOX bootstrap composition requires releaseSequence 29 or later')
+    return null
+  }
+  const bytes = exactBuffer(options.limitedPublicInboxBootstrapBytes, 'public INBOX bootstrap')
+  const authorityPublicKey = String(
+    options.limitedPublicInboxBootstrapAuthorityPublicKey || '').toLowerCase()
+  if (!HEX_32.test(authorityPublicKey)) {
+    throw new Error('public INBOX bootstrap does not match the exact release authority and production-test class')
+  }
+  const verified = verifyPeeritLimitedPublicInboxBootstrapArtifactV1({
+    bytes,
+    expectedAuthorityPublicKey: authorityPublicKey,
+    expectedReleaseSequence: releaseSequence
+  })
+  return Object.freeze({
+    bytes,
+    path: `/${PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH}`,
+    sha256: verified.sha256,
+    authorityPublicKey: verified.authorityPublicKey,
+    releaseSequence: verified.releaseSequence
+  })
+}
+
 function normalizedFiles (sourceFiles) {
   const source = sourceFiles instanceof Map ? sourceFiles : new Map(Object.entries(sourceFiles || {}))
   const files = new Map()
@@ -151,7 +489,27 @@ function decodeAppArtifactV1 (bytes) {
   value.relayHints = normalizePeeritReleaseRelayHintsV1(
     value.relayHints, 'app artifact')
   value.seedBootstrap = seedReleaseBinding(value)
+  value.inboxBootstrap = inboxReleaseBinding(value)
   return value
+}
+
+export function verifyPeeritAppArtifactReleaseBindingsV1 (input) {
+  const bytes = exactBuffer(input, PEERIT_APP_ARTIFACT_PATH)
+  let source
+  try { source = JSON.parse(bytes.toString('utf8')) } catch {
+    throw new Error(`${PEERIT_APP_ARTIFACT_PATH} is not valid JSON`)
+  }
+  if (JSON.stringify(source, null, 2) + '\n' !== bytes.toString('utf8')) {
+    throw new Error(`${PEERIT_APP_ARTIFACT_PATH} bytes are not canonical pretty JSON`)
+  }
+  const artifact = decodeAppArtifactV1(bytes)
+  return Object.freeze({
+    releaseSequence: artifact.releaseSequence,
+    releaseKey: artifact.releaseKey,
+    seedBootstrap: artifact.seedBootstrap,
+    inboxBootstrap: artifact.inboxBootstrap,
+    files: Object.freeze({ ...artifact.files })
+  })
 }
 
 // Verify a generated replacement closure without trusting either wrapper's JSON
@@ -212,6 +570,23 @@ export function verifyPeeritSubstrateRuntimeArtifactV1 (options = {}) {
   } else if (webAssetManifest.recommendedBootstrapHashes.length !== 0 ||
       source.has(PEERIT_SEED_BOOTSTRAP_PATH)) {
     throw new Error('pre-sequence-13 replacement runtime cannot carry recommended seed bootstrap bytes')
+  }
+
+  const inboxBinding = appArtifact.inboxBootstrap
+  if (inboxBinding) {
+    const inboxPath = inboxBinding.path.slice(1)
+    if (!source.has(inboxPath)) throw new Error('replacement runtime is missing its bound public INBOX bootstrap')
+    const inboxBytes = exactBuffer(source.get(inboxPath), inboxPath)
+    if (sha256(inboxBytes) !== inboxBinding.sha256) {
+      throw new Error('public INBOX bootstrap bytes do not match the app release binding')
+    }
+    verifyPeeritLimitedPublicInboxBootstrapArtifactV1({
+      bytes: inboxBytes,
+      expectedAuthorityPublicKey: inboxBinding.authorityPublicKey,
+      expectedReleaseSequence: inboxBinding.releaseSequence
+    })
+  } else if (source.has(PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH)) {
+    throw new Error('pre-sequence-29 replacement runtime cannot carry public INBOX bootstrap bytes')
   }
 
   const indexHtml = exactBuffer(source.get('index.html'), 'index.html').toString('utf8')
@@ -279,6 +654,7 @@ export function verifyPeeritSubstrateRuntimeArtifactV1 (options = {}) {
   return Object.freeze({
     appArtifact,
     seedBootstrap: seedBinding,
+    inboxBootstrap: inboxBinding,
     webAssetManifest,
     appArtifactHash,
     appArtifactHashHex: bytesToHex(appArtifactHash),
@@ -344,10 +720,15 @@ export function buildPeeritSubstrateRuntimeArtifactV1 (options = {}) {
     throw new Error('production pin-history bundle exceeds its fixed byte bound')
   }
   const seedBootstrap = seedBuildInput(options, releaseSequence)
+  const inboxBootstrap = inboxBuildInput(options, releaseSequence)
   if (files.has(PEERIT_SEED_BOOTSTRAP_PATH)) {
     throw new Error(`${PEERIT_SEED_BOOTSTRAP_PATH} is generated only from the explicit release seed input`)
   }
   if (seedBootstrap) files.set(PEERIT_SEED_BOOTSTRAP_PATH, seedBootstrap.bytes)
+  if (files.has(PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH)) {
+    throw new Error(`${PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH} is generated only from the explicit release INBOX input`)
+  }
+  if (inboxBootstrap) files.set(PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH, inboxBootstrap.bytes)
   const styleIntegrity = sri(files.get('styles.css'))
   const entryIntegrity = sri(files.get('js/substrate/app-entry.js'))
   let html = files.get('index.html').toString('utf8')
@@ -371,7 +752,10 @@ export function buildPeeritSubstrateRuntimeArtifactV1 (options = {}) {
   html = html.replace('</head>', `  ${head}\n</head>`)
   html = patchCspForWeb(html, {
     dhtRelay: '',
-    connectOrigins: [...new Set(relayHints.map(value => new URL(value).origin))]
+    connectOrigins: [...new Set([
+      ...relayHints.map(value => new URL(value).origin),
+      ...PEERIT_LIMITED_CELL_PUT_ISSUER_ORIGINS_V1
+    ])]
   })
   html = html.replace('<link rel="stylesheet" href="styles.css">',
     `<link rel="stylesheet" href="styles.css" integrity="${styleIntegrity}" crossorigin="anonymous">`)
@@ -399,6 +783,14 @@ export function buildPeeritSubstrateRuntimeArtifactV1 (options = {}) {
           peeritSeedBootstrapSha256: seedBootstrap.sha256,
           peeritSeedDiscoveryAuthorityPublicKey: seedBootstrap.authorityPublicKey,
           peeritSeedBootstrapReleaseSequence: seedBootstrap.releaseSequence
+        }
+      : {}),
+    ...(inboxBootstrap
+      ? {
+          peeritLimitedPublicInboxBootstrap: inboxBootstrap.path,
+          peeritLimitedPublicInboxBootstrapSha256: inboxBootstrap.sha256,
+          peeritLimitedPublicInboxBootstrapAuthorityPublicKey: inboxBootstrap.authorityPublicKey,
+          peeritLimitedPublicInboxBootstrapReleaseSequence: inboxBootstrap.releaseSequence
         }
       : {}),
     files: closureHashes
@@ -448,6 +840,7 @@ export function buildPeeritSubstrateRuntimeArtifactV1 (options = {}) {
     webAssetManifestHash,
     webAssetManifestHashHex: bytesToHex(webAssetManifestHash),
     seedBootstrap,
+    inboxBootstrap,
     sha256Files: sortedObject([...files].map(([path, bytes]) => [path, sha256(bytes)]))
   })
 }

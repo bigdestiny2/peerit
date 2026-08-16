@@ -21,17 +21,18 @@ if (!SOURCE_ROOT || !path.isAbsolute(SOURCE_ROOT)) {
 
 const EXPECTED_TARGET_HASHES = Object.freeze({
   'docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md': '74d3b65dff1bbf2a4630791fd1a770e8dcdfac415bf693ff313d38d0262619fd',
-  'protocol/validator/peerit-validator-v1.bare.mjs': 'e69bf4554720c853e340f212eda4fe7760ae119594f5f136701a71c1b214a809'
+  'protocol/validator/peerit-validator-v1.bare.mjs': '66676fddb0c973dececaf78d4a070d76afb2febf78f967a7f83e57c6fba67628'
 })
 const EXPECTED_CANONICAL_SOURCE_HASHES = Object.freeze({
   'docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md': '74d3b65dff1bbf2a4630791fd1a770e8dcdfac415bf693ff313d38d0262619fd',
   'js/canon.js': 'b3e7f8841771675e0ef2bba59d65a217e46e081669ad36bea9fa6a3f45922599',
   'js/substrate/peerit-operation-authority-v1.js': 'fae7940063a907042f8ae21754089170fb9f8c68400e86e3804a4c641258f9bf',
   'js/substrate/profile-codec-ir.mjs': 'a521429f4ed1ae60b57fdecc2536e207dcb3f6b20cb4fd5391aebe07a8dbc824',
+  'js/substrate/profile-contextual-graph-validator.mjs': '9847f1a9a2d08091afb9fab029eaebfb99423523840115ed6d3d2c5abbf21a59',
   'js/substrate/profile-external-authority.mjs': 'be5593361de52730b56812ece09107a86dfdbabddf83f5b2e523c2644db7277f',
   'js/substrate/profile-inventory.mjs': 'c2b5ebb36c257987596798773e9ea31bc62037210041235ee06a5458b610d84a',
   'js/substrate/profile-validator.mjs': 'dfcfd21909e90bb6fd568a5aceb27cd248973ff392dc02ea8b04d67fb1e7301a',
-  'vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs': '64e50f14cd58c4279aff99ccff478ec6c6fc2f80e860d2d51602b816b6909bb9'
+  'vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs': '88e51864c4a21296e64864523a7d602a1df6e24beed7dbbed45690c05eb1902f'
 })
 
 const sha256Hex = value => createHash('sha256').update(value).digest('hex')

@@ -18,7 +18,7 @@ services:
         value: "application/octet-stream"
       - path: "/*"
         name: "Content-Security-Policy"
-        value: "default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: hyper: pear:; connect-src 'self' hyper: pear: https://relay-syd.p2phiverelay.xyz https://relay-dal.p2phiverelay.xyz; frame-ancestors 'none'; form-action 'none'"
+        value: "default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: hyper: pear:; connect-src 'self' hyper: pear: https://relay-syd.p2phiverelay.xyz https://relay-dal.p2phiverelay.xyz https://relay-syd.p2phiverelay.xyz:8443 https://relay-dal.p2phiverelay.xyz:8443; frame-ancestors 'none'; form-action 'none'"
       - path: "/*"
         name: "X-Content-Type-Options"
         value: "nosniff"

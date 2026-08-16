@@ -1,0 +1,11 @@
+{
+  "schema": "peerit-seq29-limited-public-test-negative-v1",
+  "version": 1,
+  "target": "vector",
+  "mutation": {
+    "op": "replace",
+    "path": "/managementCustody/fixtureCustodianPublicKeys/0",
+    "value": "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157"
+  },
+  "expectedError": "CUSTODY_LOW_ORDER_PUBLIC_KEY"
+}

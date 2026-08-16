@@ -167,13 +167,15 @@ function profileFor (parsed) {
 }
 
 async function verifiedBlindClient () {
-  const authority = JSON.parse(await fs.readFile(path.join(VENDOR_DIR, 'authority.json'), 'utf8'))
+  const authorityBytes = await fs.readFile(path.join(VENDOR_DIR, 'authority.json'))
+  const authority = JSON.parse(authorityBytes.toString('utf8'))
   const artifactBytes = await fs.readFile(path.join(VENDOR_DIR, 'blind-client-control-v1.mjs'))
   const verified = verifyBlindClientBrowserReleaseV1({
     artifactBytes,
     manifestBytes: await fs.readFile(path.join(VENDOR_DIR, 'blind-client-control-v1.manifest.cenc')),
     chromiumEvidenceBytes: await fs.readFile(path.join(VENDOR_DIR, 'blind-client-control-v1.chromium-evidence.json')),
-    crossHostEvidenceBytes: await fs.readFile(path.join(VENDOR_DIR, 'blind-client-control-v1.cross-host-evidence.json'))
+    crossHostEvidenceBytes: await fs.readFile(path.join(VENDOR_DIR, 'blind-client-control-v1.cross-host-evidence.json')),
+    authorityBytes
   })
   if (hex(verified.artifactHash) !== authority.artifactHash || artifactBytes.byteLength !== authority.artifactLength) {
     fail('PEERIT_THREE_POST_BLIND_ARTIFACT_DRIFT', 'vendored blind client does not match its checked authority')

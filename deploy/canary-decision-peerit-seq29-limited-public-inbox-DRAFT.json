@@ -1,0 +1,106 @@
+{
+  "schema_version": 7,
+  "decision_id": "peerit-seq29-limited-public-inbox-activation-20260813",
+  "status": "DRAFT_MATERIALIZATION_REQUIRED",
+  "decision": null,
+  "decided_at": null,
+  "authority": {
+    "baseline_release_sequence": 28,
+    "cited_prior_decisions": [
+      {
+        "file": "deploy/canary-decision-peerit-t2-cell-put-pow-issuance-20260806.json",
+        "sha256": "5431c9ea9e2d41fbc391ba02c4d8d5a1cff63a2ffb332e09722e6e365d816b2b"
+      }
+    ],
+    "explicit_browser_activation_confirmation": null
+  },
+  "activation": {
+    "functional_release_sequence": 29,
+    "claim_boundary": "LIVE_PUBLIC_TEST_ONLY",
+    "relays": [
+      "dal-1",
+      "syd-1"
+    ],
+    "allowed_browser_operations": [
+      "DESCRIBE.GET",
+      "DESCRIBE.CHALLENGE",
+      "CELL.GET",
+      "CELL.PUT",
+      "INBOX.APPEND",
+      "INBOX.READ"
+    ],
+    "forbidden_browser_operations": [
+      "INBOX.CREATE",
+      "INBOX.RENEW",
+      "INBOX.CLOSE"
+    ],
+    "dual_append_after_verified_cell_put_readback": true,
+    "dual_read_same_relay_cell_get_intrinsic_ingest": true,
+    "browser_management_seed_access": "FORBIDDEN",
+    "ga_product_gate": "BLOCKED — DISCLOSED-OPEN, none cleared by this scope"
+  },
+  "release_artifacts": {
+    "accepted_hiverelay_candidate_commit": "adeacef07c5de4d17d5ed1389fee7a35095b862f",
+    "release_config_sha256": null,
+    "seed_bootstrap": {
+      "path": "deploy/peerit-seed-bootstrap-v1-seq29.json",
+      "sha256": null,
+      "authority_public_key": "691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec",
+      "release_sequence": 29,
+      "bootstrap_sequence": 0,
+      "previous_bootstrap_hash": null,
+      "records": 39
+    },
+    "public_inbox_bootstrap": {
+      "path": "deploy/peerit-limited-public-inbox-bootstrap-v1-seq29.json",
+      "sha256": null,
+      "authority_public_key": null,
+      "artifact_class": "LIMITED_PUBLIC_TEST_RELEASE",
+      "release_sequence": 29,
+      "binding_count": 2
+    },
+    "app_artifact_hash": null,
+    "canonical_web_asset_manifest_hash": null,
+    "outer_asset_manifest_sha256": null,
+    "outer_signing_message_sha256": null,
+    "signing_request_sha256": null
+  },
+  "evidence": {
+    "corrected_direct_full_suite": {
+      "tests": 4037,
+      "assertions": 23710,
+      "receipt_sha256": "a349ccee216a1f174f476abb29f5997fff755eaec709fe9186d1a8426d027af1"
+    },
+    "independent_v9_control_commit": "692cff73e8f04eca4e0e5ea14e8cae664af58ebd",
+    "pushed_main_ci_commit": "43f51e0b41b5f67a7f4f63c124c6af9dec194e9b",
+    "github_actions": {
+      "test": {
+        "run_id": "31729754451",
+        "url": "https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/31729754451",
+        "conclusion": "success"
+      },
+      "publish_docker_image": {
+        "run_id": "31729754371",
+        "url": "https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/31729754371",
+        "conclusion": "success"
+      }
+    }
+  },
+  "unresolved": [
+    "authority.explicit_browser_activation_confirmation",
+    "release_artifacts.seed_bootstrap.sha256",
+    "release_artifacts.public_inbox_bootstrap.sha256",
+    "release_artifacts.public_inbox_bootstrap.authority_public_key",
+    "release_artifacts.release_config_sha256",
+    "release_artifacts.app_artifact_hash",
+    "release_artifacts.canonical_web_asset_manifest_hash",
+    "release_artifacts.outer_asset_manifest_sha256",
+    "release_artifacts.outer_signing_message_sha256",
+    "release_artifacts.signing_request_sha256",
+    "byte_pinned_decision_sha256"
+  ],
+  "followups": [
+    "Materialize only from accepted local evidence and signed artifacts; never fabricate a hash or signature.",
+    "GA product gate remains honestly blocked and disclosed-open."
+  ]
+}

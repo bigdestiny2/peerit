@@ -198,7 +198,7 @@ function throwIfAborted (signal) {
 // The low-level client half of one issuer origin: fetch a challenge, mint the
 // hashcash nonce over challenge‖recordCommitment, redeem for a one-use token.
 export function createPowIssuanceV1SpendProvider (options = {}) {
-  const subtle = subtleOrFail(options.subtle)
+  subtleOrFail(options.subtle)
   const fetchValue = typeof options.fetch === 'function'
     ? options.fetch
     : (typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null)
@@ -447,22 +447,17 @@ function issuerRow (value, index, allowInsecureLoopback) {
 // key — syd-1 on the current fleet), and hands each relay the presentation for
 // its own slot. The shared issuer key lets the single token redeem on both
 // relays; the binding root makes each spend authorize exactly one request.
-// Per-relay operation records (T2 INBOX-discovery half): one authored record
-// spans the CELL.PUT and the board INBOX.APPEND on the SAME relay, so one
-// operation record collects the two request commitments in DECLARED order
-// (slot 0 = 'put', slot 1 = 'append' — never relay-key-sorted; this is the
-// per-relay shape, not the cross-relay [PUT_syd, PUT_dal] shape beginRecord
-// covers) and mints ONE token whose binding root commits to that slot list.
-// INBOX.CREATE is a separate one-slot operation record (kind 'create'), opened
-// only when the board topic is absent.
+// Operation records are created only after their exact request commitments can
+// be prepared. The Seq29 browser path uses a fresh one-slot APPEND record per
+// relay after both PUT readbacks; it never predeclares a cyclic PUT+APPEND
+// record. `beginRecord` remains the separate two-relay CELL.PUT constructor.
 //
 // Kind is inferred from the artifact's frozen admission context
 // (familyId/operationId): CELL.PUT (2/1) → 'put', INBOX.APPEND (3/4) →
-// 'append', INBOX.CREATE (3/1) → 'create'. Anything else fails closed.
+// 'append'. Anything else, including INBOX.CREATE, fails closed.
 const OPERATION_RECORD_KINDS = Object.freeze({
   put: Object.freeze({ familyId: 2, operationId: 1 }),
-  append: Object.freeze({ familyId: 3, operationId: 4 }),
-  create: Object.freeze({ familyId: 3, operationId: 1 })
+  append: Object.freeze({ familyId: 3, operationId: 4 })
 })
 
 function operationRecordKind (familyId, operationId) {
@@ -609,6 +604,11 @@ export function createPowIssuanceV1AdmissionProviderFactory (options = {}) {
 
     const session = Object.freeze({
       allowance: slots.length,
+      acceptsOperation (context) {
+        if (!context || context.familyId !== 2 || context.operationId !== 1) return false
+        const key = asBytes(context.relayPublicKey, 'relayPublicKey')
+        return slots.some(row => bytesEqual(row.relayPublicKey, key))
+      },
       slotIndexOf (relayPublicKey) {
         const key = asBytes(relayPublicKey, 'relayPublicKey')
         return slots.findIndex(row => bytesEqual(row.relayPublicKey, key))
@@ -634,7 +634,7 @@ export function createPowIssuanceV1AdmissionProviderFactory (options = {}) {
 
   // The T2 INBOX-discovery session type: slots are the DECLARED operations in
   // declaration order (slot 0 = first entry), each `{relayPublicKey, kind}`
-  // with kind 'put' | 'append' | 'create' and an optional pre-declared
+  // with kind 'put' | 'append' and an optional pre-declared
   // `requestCommitment` (a slot whose commitment is already known — e.g. the
   // completed CELL.PUT the pointer publish binds). At most
   // POW_ISSUANCE_V1_FLEET_ISSUER_ALLOWANCE_CAP slots (the fleet issuer cap);
@@ -745,7 +745,7 @@ export function createPowIssuanceV1AdmissionProviderFactory (options = {}) {
       const kind = operationRecordKind(context.familyId, context.operationId)
       if (kind == null) {
         fail('PEERIT_POW_ISSUANCE_OPERATION_INVALID',
-          `pow-issuance operation records only admit CELL.PUT (2/1), INBOX.APPEND (3/4), and INBOX.CREATE (3/1), got ${context.familyId}/${context.operationId}`)
+          `pow-issuance operation records only admit CELL.PUT (2/1) and INBOX.APPEND (3/4), got ${context.familyId}/${context.operationId}`)
       }
       const relayPublicKey = fixedBytesValue(context.relayPublicKey, 32, 'relayPublicKey')
       const requestCommitment = fixedBytesValue(context.requestCommitment, 32, 'requestCommitment')
@@ -782,6 +782,13 @@ export function createPowIssuanceV1AdmissionProviderFactory (options = {}) {
 
     const session = Object.freeze({
       allowance: slots.length,
+      acceptsOperation (context) {
+        if (!context || typeof context !== 'object') return false
+        const kind = operationRecordKind(context.familyId, context.operationId)
+        if (kind !== 'put' && kind !== 'append') return false
+        const key = asBytes(context.relayPublicKey, 'relayPublicKey')
+        return slots.some(row => row.kind === kind && bytesEqual(row.relayPublicKey, key))
+      },
       slotIndexOf (kind, relayPublicKey) {
         const key = asBytes(relayPublicKey, 'relayPublicKey')
         return slots.findIndex(row => row.kind === kind && bytesEqual(row.relayPublicKey, key))
@@ -841,20 +848,23 @@ export function createPowIssuanceV1AdmissionProviderFactory (options = {}) {
         'the qualified relay is not one of the signed profile issuer pins')
     }
     const qualificationSignal = input.signal
-    return async function powIssuanceAdmissionProvider (putContext) {
-      if (!putContext || putContext.familyId !== 2 || putContext.operationId !== 1) {
+    return async function powIssuanceAdmissionProvider (operationContext) {
+      const kind = operationContext && operationRecordKind(
+        operationContext.familyId, operationContext.operationId)
+      if (kind !== 'put' && kind !== 'append') {
         fail('PEERIT_POW_ISSUANCE_OPERATION_INVALID',
-          'pow-issuance spend providers only admit CELL.PUT (family 2, operation 1)')
+          'pow-issuance spend providers only admit CELL.PUT or INBOX.APPEND')
       }
-      if (!bytesEqual(asBytes(putContext.relayPublicKey, 'relayPublicKey'), issuer.relayPublicKey)) {
+      if (!bytesEqual(asBytes(operationContext.relayPublicKey, 'relayPublicKey'), issuer.relayPublicKey)) {
         fail('PEERIT_POW_ISSUANCE_UNEXPECTED_RELAY',
-          'a CELL.PUT context crossed relay identity inside one provider')
+          'an operation context crossed relay identity inside one provider')
       }
-      if (!openRecord) {
+      if (!openRecord || typeof openRecord.acceptsOperation !== 'function' ||
+          !openRecord.acceptsOperation(operationContext)) {
         fail('PEERIT_POW_ISSUANCE_NO_OPEN_RECORD',
-          'no open pow-issuance record covers this CELL.PUT; writes begin with an explicit user action')
+          'no open pow-issuance record covers this exact relay operation')
       }
-      const spent = await openRecord.spend(putContext, qualificationSignal)
+      const spent = await openRecord.spend(operationContext, qualificationSignal)
       return Object.freeze({
         profileId,
         schemeId,

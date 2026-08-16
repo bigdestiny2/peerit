@@ -33,7 +33,7 @@ function canonicalBytes (value) {
 
 function verify (value) {
   return verifyPeeritLimitedCellGetProfileV1(canonicalBytes(value), {
-    releaseSequence: 19,
+    releaseSequence: parsed.releaseSequence,
     hive: {
       artifactHash: hexBytes(parsed.hiveCellGet.artifactHash),
       manifestHash: hexBytes(parsed.hiveCellGet.manifestHash)
@@ -44,7 +44,7 @@ function verify (value) {
 assert.equal(PEERIT_LIMITED_CELL_GET_PARAMETER_URL_V1,
   'https://evidence.example:443/admission.cenc')
 const profile = verify(parsed)
-assert.equal(profile.releaseSequence, 19)
+assert.equal(profile.releaseSequence, parsed.releaseSequence)
 for (const relay of profile.relays) {
   assert.equal(Buffer.from(relay.admissionProfile.parameterUrl).toString('hex'),
     expectedUrlHex)
@@ -72,7 +72,7 @@ assert.throws(() => verify(omitted), error =>
   error?.code === 'PEERIT_LIMITED_CELL_GET_PROFILE_INVALID')
 
 const wrongSequence = structuredClone(parsed)
-wrongSequence.releaseSequence = 20
+wrongSequence.releaseSequence = parsed.releaseSequence + 1
 assert.throws(() => verify(wrongSequence), error =>
   error?.code === 'PEERIT_LIMITED_CELL_GET_PROFILE_INVALID')
 

@@ -1,8 +1,43 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  sign as nodeSign
+} from 'node:crypto'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { SUBSTRATE_SITE_FILES } from '../publish.mjs'
+import { releaseSigningMessage } from '../js/release-verify.js'
+import {
+  blake2b256,
+  bytesToHex
+} from '../js/substrate/release-control-primitives.mjs'
+import {
+  encodePeeritWebAssetManifestV1,
+  hashPeeritAppArtifactV1,
+  hashPeeritWebAssetManifestV1
+} from '../js/substrate/web-asset-manifest.mjs'
+import {
+  canonicalPeeritLimitedPublicInboxJsonV1,
+  PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_DOMAIN_V1
+} from '../js/substrate/inbox-topic-v1.mjs'
 import { releaseConfig, verifyIndexConfig, verifyManifestConfig } from '../scripts/verify-deployed-web.mjs'
+import {
+  PEERIT_SEQ29_DECISION_DRAFT_PATH_V1,
+  PEERIT_SEQ29_EXPLICIT_CONFIRMATION_V1,
+  PEERIT_SEQ29_DECISION_PATH_V1,
+  PEERIT_SEQ29_DECISION_SHA256_V1,
+  materializePeeritSeq29OwnerDecisionV1,
+  peeritSeq29OwnerDecisionPhaseV1,
+  verifyPeeritSeq29PinnedReprepareV1,
+  verifyPeeritSeq29OwnerDecisionV1,
+  verifyPinnedPeeritSeq29OwnerDecisionV1,
+  writePeeritSeq29OwnerDecisionCreateOnlyV1
+} from '../scripts/seq29-owner-decision.mjs'
 import {
   PEERIT_APP_ARTIFACT_PATH,
   PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE,
@@ -135,13 +170,89 @@ assert.throws(() => releaseConfig({
   pinnedReleaseKey: key
 }), /requires a seed bootstrap bundle/)
 
+const inboxAuthority = '78'.repeat(32)
+const inboxSha256 = '9a'.repeat(32)
+const sequence29Release = releaseConfig({
+  substrateProfile: 'blind-v1',
+  relayHints: [],
+  productionPinHistoryBundle: 'peerit-production-pin-history-v1.cenc',
+  peeritSeedBootstrapBundle: 'deploy/peerit-seed-bootstrap-v1-seq29.json',
+  peeritSeedDiscoveryAuthorityPublicKey: seedAuthority,
+  peeritLimitedPublicInboxBootstrapBundle:
+    'deploy/peerit-limited-public-inbox-bootstrap-v1-seq29.json',
+  peeritLimitedPublicInboxBootstrapAuthorityPublicKey: inboxAuthority,
+  releaseSequence: 29,
+  pinnedReleaseKey: key
+})
+const sequence29Manifest = structuredClone(seededManifest)
+sequence29Manifest.releaseSequence = 29
+sequence29Manifest.files['peerit-limited-public-inbox-bootstrap-v1.json'] = inboxSha256
+Object.assign(sequence29Manifest.webRelease, {
+  releaseSequence: 29,
+  peeritSeedBootstrapReleaseSequence: 29,
+  peeritLimitedPublicInboxBootstrap:
+    '/peerit-limited-public-inbox-bootstrap-v1.json',
+  peeritLimitedPublicInboxBootstrapSha256: inboxSha256,
+  peeritLimitedPublicInboxBootstrapAuthorityPublicKey: inboxAuthority,
+  peeritLimitedPublicInboxBootstrapReleaseSequence: 29
+})
+delete sequence29Manifest.webRelease.releaseKey
+sequence29Manifest.webRelease.releaseKey = key
+verifyManifestConfig(sequence29Manifest, sequence29Release, '', '', drive,
+  seedSha256, inboxSha256)
+assert.throws(() => verifyManifestConfig(sequence29Manifest, sequence29Release,
+  '', '', drive, seedSha256, 'bc'.repeat(32)), /webRelease does not match/,
+'the deployed manifest must bind the exact local public INBOX bootstrap bytes')
+assert.throws(() => releaseConfig({
+  substrateProfile: 'blind-v1',
+  relayHints: [],
+  peeritSeedBootstrapBundle: 'deploy/peerit-seed-bootstrap-v1-seq29.json',
+  peeritSeedDiscoveryAuthorityPublicKey: seedAuthority,
+  releaseSequence: 29,
+  pinnedReleaseKey: key
+}), /requires a signed public INBOX bootstrap/)
+assert.throws(() => releaseConfig({
+  substrateProfile: 'blind-v1',
+  relayHints: [],
+  peeritSeedBootstrapBundle: 'deploy/peerit-seed-bootstrap-v1-seq28.json',
+  peeritSeedDiscoveryAuthorityPublicKey: seedAuthority,
+  peeritLimitedPublicInboxBootstrapBundle:
+    'deploy/peerit-limited-public-inbox-bootstrap-v1-seq29.json',
+  peeritLimitedPublicInboxBootstrapAuthorityPublicKey: inboxAuthority,
+  releaseSequence: 28,
+  pinnedReleaseKey: key
+}), /requires releaseSequence 29 or later/)
+
 const publishSource = readFileSync(new URL('../publish.mjs', import.meta.url), 'utf8')
 assert.ok(publishSource.indexOf('assertPeeritBlindProductReleaseReady(release)') < publishSource.indexOf('await loadHiveRelayClient()'),
   'public publish checks composed product readiness before loading or starting a network client')
+assert.ok(publishSource.indexOf(
+  'canaryPublication = verifyPeeritSeq29CanaryPublicationV1') <
+  publishSource.indexOf('await loadHiveRelayClient()'),
+'public canary publication recomputes the pinned decision and release-config hash before loading a network client')
+assert.match(publishSource,
+  /if \(!LOCAL && CANARY_LIMITED_PUBLIC_TEST_V1\)[\s\S]*else if \(!LOCAL\) \{\s*assertPeeritBlindProductReleaseReady\(release\)/,
+  'publish retains the unchanged GA gate unless the exact canary flag is present')
+assert.match(publishSource, /publishOptions\.key = canaryPublication\.driveKey/,
+  'canary publication reopens only the exact prepared drive key')
 const shipSource = readFileSync(new URL('../ship.mjs', import.meta.url), 'utf8')
 assert.match(shipSource, /assertPeeritBlindProductReleaseReady\(release\)/)
+assert.match(shipSource,
+  /publishArgs\.push\('--canary-limited-public-test-v1'\)/,
+  'ship propagates the explicit canary flag to public publication')
+assert.match(shipSource,
+  /webReleaseArgs\.push\('--canary-limited-public-test-v1'\)/,
+  'ship propagates the explicit canary flag to prepare and verify')
+assert.doesNotMatch(shipSource, /shell: true/,
+  'the release signing handoff never executes a shell command')
+assert.match(shipSource, /stdio: \['ignore', 'inherit', 'inherit'\]/,
+  'the scoped signing command cannot read interactive stdin')
 assert.match(shipSource, /await run\('npm', \['run', 'test:ship'\]\)/,
   'ship verification executes the complete substrate/closure/cutover suite')
+const webReleaseSource = readFileSync(new URL('../scripts/web-release.mjs', import.meta.url), 'utf8')
+assert.match(webReleaseSource,
+  /release\.transport === 'blind-substrate' && !opts\.canaryLimitedPublicTestV1\)[\s\S]*assertPeeritBlindProductReleaseReady\(release\)/,
+  'web release retains the unchanged GA gate unless the exact canary flag is present')
 const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 assert.match(packageJson.scripts['test:ship'], /npm test && npm run test:peerit-substrate/)
 assert.match(packageJson.scripts['test:peerit-substrate'], /peerit-app-entry-composition\.mjs/)
@@ -192,5 +303,441 @@ const renderHeaderPolicy = readFileSync(new URL('../deploy/render-security-heade
 for (const source of [officialConfig, render, renderHeaderPolicy]) {
   assert.doesNotMatch(source, /outbox\.peerit\.site|peerit-relay|hiverelay-outbox/i)
 }
+const renderCsp = /name: "Content-Security-Policy"\n {8}value: "([^"]+)"/.exec(render)?.[1]
+const expectedConnectSrc = [
+  'connect-src', "'self'", 'hyper:', 'pear:',
+  ...officialRelease.relayHints.map(hint => new URL(hint).origin),
+  ...officialRelease.relayHints.map(hint => `https://${new URL(hint).hostname}:8443`)
+].join(' ')
+assert.equal(renderCsp?.split(';').map(value => value.trim())
+  .find(value => value.startsWith('connect-src ')), expectedConnectSrc,
+'production CSP binds exactly both relay origins and both fixed :8443 issuer origins')
+assert.equal(JSON.parse(renderHeaderPolicy).headers.find(header =>
+  header.name === 'Content-Security-Policy')?.value, renderCsp,
+'render policy JSON remains byte-identical to the source blueprint CSP')
+
+// Sequence-29's owner decision is an external release authorization record,
+// not a bag of shape-valid hashes. Its verifier must bind the exact seed,
+// INBOX bootstrap, app artifact, canonical WebAssetManifest, outer manifest,
+// and offline signing request bytes while the checked-in DRAFT stays blocked.
+const decisionDraftBytes = readFileSync(new URL(
+  '../deploy/canary-decision-peerit-seq29-limited-public-inbox-DRAFT.json',
+  import.meta.url))
+assert.equal(PEERIT_SEQ29_DECISION_DRAFT_PATH_V1,
+  'deploy/canary-decision-peerit-seq29-limited-public-inbox-DRAFT.json')
+assert.equal(PEERIT_SEQ29_DECISION_PATH_V1,
+  'deploy/canary-decision-peerit-seq29-limited-public-inbox-20260813.json')
+assert.equal(peeritSeq29OwnerDecisionPhaseV1({
+  phase: 'prepare', sourcePin: ''
+}), 'DRAFT_PREPARE_ONLY')
+assert.throws(() => peeritSeq29OwnerDecisionPhaseV1({
+  phase: 'verify', sourcePin: ''
+}), error => error.code === 'PEERIT_SEQ29_OWNER_DECISION_PIN_REQUIRED')
+assert.equal(peeritSeq29OwnerDecisionPhaseV1({
+  phase: 'prepare', sourcePin: 'ab'.repeat(32)
+}), 'PINNED_FINAL_REQUIRED')
+assert.equal(peeritSeq29OwnerDecisionPhaseV1({
+  phase: 'verify', sourcePin: 'ab'.repeat(32)
+}), 'PINNED_FINAL_REQUIRED')
+assert.throws(() => peeritSeq29OwnerDecisionPhaseV1({
+  phase: 'prepare', sourcePin: 'AB'.repeat(32)
+}), error => error.code === 'PEERIT_SEQ29_OWNER_DECISION_PIN_INVALID')
+if (PEERIT_SEQ29_DECISION_SHA256_V1 === '') {
+  assert.throws(() => verifyPinnedPeeritSeq29OwnerDecisionV1({ root: '.' }),
+    error => error.code === 'PEERIT_SEQ29_OWNER_DECISION_PIN_REQUIRED',
+    'verify/publish fail closed before the mechanically reviewed source-pin step')
+} else {
+  assert.match(PEERIT_SEQ29_DECISION_SHA256_V1, /^[0-9a-f]{64}$/)
+  assert.equal(verifyPinnedPeeritSeq29OwnerDecisionV1({
+    root: join(dirname(fileURLToPath(import.meta.url)), '..')
+  }).status, 'decided', 'a resolved source pin authenticates the exact final decision')
+}
+const decisionDraft = JSON.parse(decisionDraftBytes)
+assert.equal(decisionDraft.release_artifacts.release_config_sha256, null)
+assert.ok(decisionDraft.unresolved.includes(
+  'release_artifacts.release_config_sha256'))
+assert.equal(verifyPeeritSeq29OwnerDecisionV1({
+  decisionBytes: decisionDraftBytes,
+  allowDraft: true
+}).status, 'draft')
+assert.throws(() => verifyPeeritSeq29OwnerDecisionV1({
+  decisionBytes: Buffer.from(JSON.stringify({ ...decisionDraft, unexpected: true }, null, 2) + '\n'),
+  allowDraft: true
+}), /fields are missing or unexpected/,
+'the owner decision rejects even a canonical unknown top-level field')
+
+const decisionRoot = mkdtempSync(join(tmpdir(), 'peerit-seq29-decision-'))
+mkdirSync(join(decisionRoot, 'deploy'), { recursive: true })
+mkdirSync(join(decisionRoot, 'web'), { recursive: true })
+const inboxSigningSeed = '7c'.repeat(32)
+const inboxPrivateKey = createPrivateKey({
+  key: Buffer.concat([
+    Buffer.from('302e020100300506032b657004220420', 'hex'),
+    Buffer.from(inboxSigningSeed, 'hex')
+  ]),
+  format: 'der',
+  type: 'pkcs8'
+})
+const decisionInboxAuthority = createPublicKey(inboxPrivateKey)
+  .export({ format: 'der', type: 'spki' }).subarray(-32).toString('hex')
+const inboxFixture = JSON.parse(readFileSync(new URL(
+  './fixtures/peerit-seq29-limited-public-test-v1/positive-bootstrap.json',
+  import.meta.url)))
+const inboxPayload = structuredClone(inboxFixture.payload)
+const inboxNow = BigInt(Date.now())
+inboxPayload.artifactClass = 'LIMITED_PUBLIC_TEST_RELEASE'
+inboxPayload.authorityPublicKey = decisionInboxAuthority
+inboxPayload.issuedUnixMillis = String(inboxNow - 1000n)
+inboxPayload.expiresUnixMillis = String(
+  inboxNow + (7n * 24n * 60n * 60n * 1000n))
+inboxPayload.inboxEpochSets[0].inboxEpoch = Math.floor(
+  Number(inboxNow / 21600000n) / 28)
+for (const binding of inboxPayload.inboxEpochSets[0].bindings) {
+  binding.inboxEpoch = inboxPayload.inboxEpochSets[0].inboxEpoch
+}
+const inboxSignature = nodeSign(null, Buffer.concat([
+  Buffer.from(PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_DOMAIN_V1, 'ascii'),
+  Buffer.from([0]),
+  Buffer.from(canonicalPeeritLimitedPublicInboxJsonV1(inboxPayload))
+]), inboxPrivateKey).toString('hex')
+const inboxBytes = Buffer.from(JSON.stringify({
+  payload: inboxPayload,
+  signature: inboxSignature
+}, null, 2) + '\n')
+const seedBytes = Buffer.from('exact-seed-bootstrap\n')
+const digest = bytes => createHash('sha256').update(bytes).digest('hex')
+const decisionReleasePrivateKey = createPrivateKey({
+  key: Buffer.concat([
+    Buffer.from('302e020100300506032b657004220420', 'hex'),
+    Buffer.from('8d'.repeat(32), 'hex')
+  ]),
+  format: 'der',
+  type: 'pkcs8'
+})
+const decisionReleaseKey = createPublicKey(decisionReleasePrivateKey)
+  .export({ format: 'der', type: 'spki' }).subarray(-32).toString('hex')
+const appValue = {
+  schema: 'peerit-app-artifact-v1',
+  releaseSequence: 29,
+  transport: 'blind-substrate',
+  substrateProfile: 'blind-v1',
+  relayHints: [],
+  releaseKey: decisionReleaseKey,
+  entry: '/index.html',
+  canonicalWebAssetManifest: '/peerit-web-assets-v1.cenc',
+  productionPinHistory: null,
+  peeritSeedBootstrap: '/peerit-seed-bootstrap-v1.json',
+  peeritSeedBootstrapSha256: digest(seedBytes),
+  peeritSeedDiscoveryAuthorityPublicKey:
+    '691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec',
+  peeritSeedBootstrapReleaseSequence: 29,
+  peeritLimitedPublicInboxBootstrap:
+    '/peerit-limited-public-inbox-bootstrap-v1.json',
+  peeritLimitedPublicInboxBootstrapSha256: digest(inboxBytes),
+  peeritLimitedPublicInboxBootstrapAuthorityPublicKey: decisionInboxAuthority,
+  peeritLimitedPublicInboxBootstrapReleaseSequence: 29,
+  files: {
+    'peerit-limited-public-inbox-bootstrap-v1.json': digest(inboxBytes),
+    'peerit-seed-bootstrap-v1.json': digest(seedBytes)
+  }
+}
+const appBytes = Buffer.from(JSON.stringify(appValue, null, 2) + '\n')
+const canonicalManifestBytes = Buffer.from(encodePeeritWebAssetManifestV1({
+  version: 1,
+  releaseSequence: 29n,
+  appArtifactHash: hashPeeritAppArtifactV1(appBytes),
+  recommendedBootstrapHashes: [],
+  assets: [
+    ['/peerit-app-artifact-v1.json', appBytes],
+    ['/peerit-limited-public-inbox-bootstrap-v1.json', inboxBytes],
+    ['/peerit-seed-bootstrap-v1.json', seedBytes]
+  ].map(([path, bytes]) => ({
+    path,
+    byteLength: BigInt(bytes.byteLength),
+    assetHash: blake2b256(bytes)
+  }))
+}))
+const releaseConfigBytes = Buffer.from(JSON.stringify({
+  substrateProfile: 'blind-v1',
+  relayHints: [],
+  productionPinHistoryBundle: 'peerit-production-pin-history-v1.cenc',
+  releaseSequence: 29,
+  pinnedReleaseKey: decisionReleaseKey,
+  peeritSeedBootstrapBundle: 'deploy/peerit-seed-bootstrap-v1-seq29.json',
+  peeritSeedDiscoveryAuthorityPublicKey:
+    '691d524a1c2ac38de86ed592fbae6f9a906770b96fe704d3c63397a23171f6ec',
+  peeritLimitedPublicInboxBootstrapBundle:
+    'deploy/peerit-limited-public-inbox-bootstrap-v1-seq29.json',
+  peeritLimitedPublicInboxBootstrapAuthorityPublicKey: decisionInboxAuthority
+}, null, 2) + '\n')
+const decisionFiles = {
+  'deploy/peerit-seed-bootstrap-v1-seq29.json': seedBytes,
+  'deploy/peerit-limited-public-inbox-bootstrap-v1-seq29.json': inboxBytes,
+  'deploy/web-release.json': releaseConfigBytes,
+  'web/peerit-app-artifact-v1.json': appBytes,
+  'web/peerit-web-assets-v1.cenc': canonicalManifestBytes
+}
+for (const [path, bytes] of Object.entries(decisionFiles)) {
+  writeFileSync(join(decisionRoot, path), bytes)
+}
+const fixtureOuter = {
+  releaseSequence: 29,
+  driveKey: drive,
+  files: {
+    'peerit-seed-bootstrap-v1.json':
+      digest(decisionFiles['deploy/peerit-seed-bootstrap-v1-seq29.json']),
+    'peerit-limited-public-inbox-bootstrap-v1.json':
+      digest(decisionFiles['deploy/peerit-limited-public-inbox-bootstrap-v1-seq29.json']),
+    'peerit-app-artifact-v1.json':
+      digest(decisionFiles['web/peerit-app-artifact-v1.json']),
+    'peerit-web-assets-v1.cenc':
+      digest(decisionFiles['web/peerit-web-assets-v1.cenc'])
+  },
+  controls: {},
+  webRelease: {
+    releaseSequence: 29,
+    appArtifactHash: bytesToHex(hashPeeritAppArtifactV1(
+      decisionFiles['web/peerit-app-artifact-v1.json'])),
+    canonicalWebAssetManifestHash: bytesToHex(hashPeeritWebAssetManifestV1(
+      decisionFiles['web/peerit-web-assets-v1.cenc'])),
+    peeritSeedBootstrapSha256:
+      digest(decisionFiles['deploy/peerit-seed-bootstrap-v1-seq29.json']),
+    peeritLimitedPublicInboxBootstrap:
+      '/peerit-limited-public-inbox-bootstrap-v1.json',
+    peeritLimitedPublicInboxBootstrapSha256:
+      digest(decisionFiles['deploy/peerit-limited-public-inbox-bootstrap-v1-seq29.json']),
+    peeritLimitedPublicInboxBootstrapAuthorityPublicKey: decisionInboxAuthority,
+    peeritLimitedPublicInboxBootstrapReleaseSequence: 29
+  }
+}
+const fixtureOuterBytes = Buffer.from(JSON.stringify(fixtureOuter, null, 2) + '\n')
+decisionFiles['web/asset-manifest.json'] = fixtureOuterBytes
+writeFileSync(join(decisionRoot, 'web/asset-manifest.json'), fixtureOuterBytes)
+const fixtureSignatureBytes = Buffer.from(JSON.stringify({
+  alg: 'Ed25519',
+  key: decisionReleaseKey,
+  sig: nodeSign(null, Buffer.from(releaseSigningMessage(fixtureOuter), 'utf8'),
+    decisionReleasePrivateKey).toString('hex'),
+  msgVersion: 'peerit-release-v2'
+}, null, 2) + '\n')
+decisionFiles['web/asset-manifest.sig'] = fixtureSignatureBytes
+writeFileSync(join(decisionRoot, 'web/asset-manifest.sig'), fixtureSignatureBytes)
+const fixtureSigningMessageSha256 = digest(Buffer.from(
+  releaseSigningMessage(fixtureOuter), 'utf8'))
+const fixtureRequest = {
+  schema: 'peerit-web-signing-request-v2',
+  manifest: 'web/asset-manifest.json',
+  signature: 'web/asset-manifest.sig',
+  releaseSequence: 29,
+  driveKey: drive,
+  pinnedReleaseKey: decisionReleaseKey,
+  manifestSha256: digest(fixtureOuterBytes),
+  signingMessageSha256: fixtureSigningMessageSha256,
+  artifactFiles: {
+    'asset-manifest.json': digest(fixtureOuterBytes),
+    'peerit-seed-bootstrap-v1.json':
+      digest(decisionFiles['deploy/peerit-seed-bootstrap-v1-seq29.json']),
+    'peerit-limited-public-inbox-bootstrap-v1.json':
+      digest(decisionFiles['deploy/peerit-limited-public-inbox-bootstrap-v1-seq29.json']),
+    'peerit-app-artifact-v1.json':
+      digest(decisionFiles['web/peerit-app-artifact-v1.json']),
+    'peerit-web-assets-v1.cenc':
+      digest(decisionFiles['web/peerit-web-assets-v1.cenc'])
+  }
+}
+const fixtureRequestBytes = Buffer.from(JSON.stringify(fixtureRequest, null, 2) + '\n')
+decisionFiles['deploy/web-signing-request.json'] = fixtureRequestBytes
+writeFileSync(join(decisionRoot, 'deploy/web-signing-request.json'), fixtureRequestBytes)
+
+const materializationArtifacts = {
+  seedBootstrap: decisionFiles['deploy/peerit-seed-bootstrap-v1-seq29.json'],
+  publicInboxBootstrap:
+    decisionFiles['deploy/peerit-limited-public-inbox-bootstrap-v1-seq29.json'],
+  appArtifact: decisionFiles['web/peerit-app-artifact-v1.json'],
+  canonicalWebAssetManifest: decisionFiles['web/peerit-web-assets-v1.cenc'],
+  outerAssetManifest: decisionFiles['web/asset-manifest.json'],
+  outerSignature: decisionFiles['web/asset-manifest.sig'],
+  signingRequest: decisionFiles['deploy/web-signing-request.json'],
+  releaseConfig: decisionFiles['deploy/web-release.json']
+}
+const materializationInput = {
+  root: decisionRoot,
+  draftBytes: decisionDraftBytes,
+  expectedDraftSha256: digest(decisionDraftBytes),
+  explicitConfirmation: PEERIT_SEQ29_EXPLICIT_CONFIRMATION_V1,
+  decidedAt: '2026-08-13T20:00:00.000Z',
+  artifacts: materializationArtifacts
+}
+assert.throws(() => materializePeeritSeq29OwnerDecisionV1({
+  ...materializationInput,
+  expectedDraftSha256: materializationInput.expectedDraftSha256.toUpperCase()
+}), error => error.code === 'PEERIT_SEQ29_OWNER_DECISION_DRAFT_PIN_INVALID')
+assert.throws(() => materializePeeritSeq29OwnerDecisionV1({
+  ...materializationInput,
+  expectedDraftSha256: 'ab'.repeat(32)
+}), error => error.code === 'PEERIT_SEQ29_OWNER_DECISION_DRAFT_PIN_MISMATCH')
+assert.throws(() => materializePeeritSeq29OwnerDecisionV1({
+  ...materializationInput,
+  explicitConfirmation: PEERIT_SEQ29_EXPLICIT_CONFIRMATION_V1 + '_DRIFT'
+}), error => error.code === 'PEERIT_SEQ29_OWNER_DECISION_CONFIRMATION_REQUIRED')
+assert.throws(() => materializePeeritSeq29OwnerDecisionV1({
+  ...materializationInput,
+  artifacts: {
+    ...materializationArtifacts,
+    signingRequest: Buffer.concat([fixtureRequestBytes, Buffer.from('drift')])
+  }
+}), error => error.code === 'PEERIT_SEQ29_OWNER_DECISION_ARTIFACT_DRIFT')
+const materialized = materializePeeritSeq29OwnerDecisionV1(materializationInput)
+const materializedDecisionBytes = materialized.decisionBytes
+const materializedDecisionSha256 = materialized.decisionSha256
+const materializedDecision = JSON.parse(materializedDecisionBytes)
+assert.equal(materializedDecision.release_artifacts.release_config_sha256,
+  digest(releaseConfigBytes))
+const uppercaseReleaseConfigDecision = structuredClone(materializedDecision)
+uppercaseReleaseConfigDecision.release_artifacts.release_config_sha256 =
+  uppercaseReleaseConfigDecision.release_artifacts.release_config_sha256.toUpperCase()
+const uppercaseReleaseConfigDecisionBytes = Buffer.from(JSON.stringify(
+  uppercaseReleaseConfigDecision, null, 2) + '\n')
+assert.throws(() => verifyPeeritSeq29OwnerDecisionV1({
+  root: decisionRoot,
+  decisionBytes: uppercaseReleaseConfigDecisionBytes,
+  expectedDecisionSha256: digest(uppercaseReleaseConfigDecisionBytes)
+}), /not fully materialized/,
+'release_config_sha256 must remain canonical lowercase hex even if substituted decision bytes are repinned')
+assert.equal(verifyPeeritSeq29OwnerDecisionV1({
+  root: decisionRoot,
+  decisionBytes: materializedDecisionBytes,
+  expectedDecisionSha256: materializedDecisionSha256
+}).status, 'decided')
+assert.deepEqual(writePeeritSeq29OwnerDecisionCreateOnlyV1({
+  root: decisionRoot,
+  materialized
+}), {
+  path: PEERIT_SEQ29_DECISION_PATH_V1,
+  sha256: materializedDecisionSha256,
+  sourcePin: materialized.sourcePin
+})
+assert.throws(() => writePeeritSeq29OwnerDecisionCreateOnlyV1({
+  root: decisionRoot,
+  materialized
+}), error => error.code === 'PEERIT_SEQ29_OWNER_DECISION_CREATE_ONLY')
+
+const decisionCliRoot = mkdtempSync(join(tmpdir(), 'peerit-seq29-decision-cli-'))
+mkdirSync(join(decisionCliRoot, 'deploy'), { recursive: true })
+mkdirSync(join(decisionCliRoot, 'web'), { recursive: true })
+writeFileSync(join(decisionCliRoot, PEERIT_SEQ29_DECISION_DRAFT_PATH_V1),
+  decisionDraftBytes)
+for (const [path, fileBytes] of Object.entries(decisionFiles)) {
+  writeFileSync(join(decisionCliRoot, path), fileBytes)
+}
+const decisionCli = spawnSync(process.execPath, [
+  fileURLToPath(new URL('../scripts/seq29-owner-decision.mjs', import.meta.url)),
+  'materialize',
+  '--root', decisionCliRoot,
+  '--expected-draft-sha256', digest(decisionDraftBytes),
+  '--decided-at', '2026-08-13T20:00:00.000Z',
+  '--explicit-confirmation', PEERIT_SEQ29_EXPLICIT_CONFIRMATION_V1
+], { encoding: 'utf8' })
+assert.equal(decisionCli.status, 0, decisionCli.stderr)
+const decisionCliReceipt = JSON.parse(decisionCli.stdout)
+assert.equal(decisionCliReceipt.sha256, materializedDecisionSha256)
+assert.equal(digest(readFileSync(join(decisionCliRoot,
+  PEERIT_SEQ29_DECISION_PATH_V1))), materializedDecisionSha256)
+
+const stableOutputs = {
+  appArtifact: appBytes,
+  canonicalWebAssetManifest: canonicalManifestBytes,
+  outerAssetManifest: fixtureOuterBytes,
+  outerSignature: fixtureSignatureBytes,
+  signingRequest: fixtureRequestBytes
+}
+assert.equal(verifyPeeritSeq29PinnedReprepareV1({
+  sourcePin: materializedDecisionSha256,
+  decisionBytes: materializedDecisionBytes,
+  before: stableOutputs,
+  after: stableOutputs
+}).sourcePin, materializedDecisionSha256)
+assert.throws(() => verifyPeeritSeq29PinnedReprepareV1({
+  sourcePin: 'ab',
+  decisionBytes: materializedDecisionBytes,
+  before: stableOutputs,
+  after: stableOutputs
+}), error => error.code === 'PEERIT_SEQ29_OWNER_DECISION_PIN_INVALID')
+assert.throws(() => verifyPeeritSeq29PinnedReprepareV1({
+  sourcePin: materializedDecisionSha256.toUpperCase(),
+  decisionBytes: materializedDecisionBytes,
+  before: stableOutputs,
+  after: stableOutputs
+}), error => error.code === 'PEERIT_SEQ29_OWNER_DECISION_PIN_INVALID')
+assert.throws(() => verifyPeeritSeq29PinnedReprepareV1({
+  sourcePin: 'ab'.repeat(32),
+  decisionBytes: materializedDecisionBytes,
+  before: stableOutputs,
+  after: stableOutputs
+}), error => error.code === 'PEERIT_SEQ29_OWNER_DECISION_PIN_MISMATCH')
+assert.throws(() => verifyPeeritSeq29PinnedReprepareV1({
+  sourcePin: materializedDecisionSha256,
+  decisionBytes: materializedDecisionBytes,
+  before: stableOutputs,
+  after: {
+    ...stableOutputs,
+    signingRequest: Buffer.concat([fixtureRequestBytes, Buffer.from('drift')])
+  }
+}), error => error.code === 'PEERIT_SEQ29_OWNER_DECISION_REPREPARE_DRIFT')
+
+const releaseConfigPath = join(decisionRoot, 'deploy/web-release.json')
+for (const [field, mutate] of [
+  ['relayHints', config => {
+    config.relayHints = ['https://relay-drift.example/api/blind/v1/describe']
+  }],
+  ['peeritSeedBootstrapBundle', config => {
+    config.peeritSeedBootstrapBundle =
+      'deploy/peerit-seed-bootstrap-v1-seq29-drift.json'
+  }]
+]) {
+  const driftedReleaseConfig = JSON.parse(releaseConfigBytes)
+  mutate(driftedReleaseConfig)
+  writeFileSync(releaseConfigPath,
+    JSON.stringify(driftedReleaseConfig, null, 2) + '\n')
+  assert.throws(() => verifyPeeritSeq29OwnerDecisionV1({
+    root: decisionRoot,
+    decisionBytes: materializedDecisionBytes,
+    expectedDecisionSha256: materializedDecisionSha256
+  }), /byte-bind/,
+  `canonical JSON drift in ${field} fails the exact release-config hash before publication`)
+  writeFileSync(releaseConfigPath, releaseConfigBytes)
+}
+
+for (const path of Object.keys(decisionFiles)) {
+  const original = readFileSync(join(decisionRoot, path))
+  writeFileSync(join(decisionRoot, path), Buffer.concat([original, Buffer.from('tamper')]))
+  assert.throws(() => verifyPeeritSeq29OwnerDecisionV1({
+    root: decisionRoot,
+    decisionBytes: materializedDecisionBytes,
+    expectedDecisionSha256: materializedDecisionSha256
+  }), /byte-bind|not JSON|not authenticated|not canonical/,
+  `the owner decision rejects exact-byte tamper of ${path}`)
+  writeFileSync(join(decisionRoot, path), original)
+}
+const shapeOnlyDecision = structuredClone(materializedDecision)
+shapeOnlyDecision.release_artifacts.seed_bootstrap.sha256 = 'aa'.repeat(32)
+const shapeOnlyDecisionBytes = Buffer.from(JSON.stringify(shapeOnlyDecision, null, 2) + '\n')
+assert.throws(() => verifyPeeritSeq29OwnerDecisionV1({
+  root: decisionRoot,
+  decisionBytes: shapeOnlyDecisionBytes,
+  expectedDecisionSha256: digest(shapeOnlyDecisionBytes)
+}), /byte-bind/,
+'a shape-valid substituted artifact hash cannot pass the owner decision')
+const authorityOnlyDecision = structuredClone(materializedDecision)
+authorityOnlyDecision.release_artifacts.public_inbox_bootstrap.authority_public_key =
+  'aa'.repeat(32)
+const authorityOnlyDecisionBytes = Buffer.from(
+  JSON.stringify(authorityOnlyDecision, null, 2) + '\n')
+assert.throws(() => verifyPeeritSeq29OwnerDecisionV1({
+  root: decisionRoot,
+  decisionBytes: authorityOnlyDecisionBytes,
+  expectedDecisionSha256: digest(authorityOnlyDecisionBytes)
+}), /not authenticated|authority key differs/,
+'changing only the decision authority and repinning its bytes cannot override the signed INBOX authority')
 
 console.log('peerit-cutover-gates: replacement-only unsigned and exact sealed release states fail/verify correctly')

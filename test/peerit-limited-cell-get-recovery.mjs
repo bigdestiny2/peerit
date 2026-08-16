@@ -162,6 +162,11 @@ function signedDescriptor ({
   value.previousDescriptorHash = previousDescriptorHash == null
     ? null
     : Buffer.from(previousDescriptorHash)
+  // The frozen descriptor vector contains every registry bit, including
+  // operations that adeacef deliberately keeps reserved. Build an admissible
+  // relay descriptor for this CELL.GET fixture from the source authority's
+  // exact active-release mask.
+  value.enabledOperationBits = protocol.ADVERTISED_OPERATION_BITS
   value.protocols = [
     {
       protocolId: protocol.FAMILY.DESCRIBE,
@@ -395,7 +400,8 @@ async function releaseAuthorityFor (seedBytes, seedAuthorityPublicKey) {
   assets.set('/peerit-seed-bootstrap-v1.json', seedBytes)
   const webAssetManifestBytes = manifestFor(assets)
   const hiveManifest = decodeBlindClientBrowserManifestV1(
-    assets.get(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveManifest))
+    assets.get(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveManifest),
+    assets.get(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveVendorAuthority))
   const emitSubstrate = {
     specHash: hiveManifest.specHash,
     abiHash: hiveManifest.abiHash,
@@ -770,7 +776,7 @@ for (const relay of relays) {
     request.relayId === relay.relayId)
   assert.equal(relayRequests.filter(request =>
     request.familyId === protocol.FAMILY.DESCRIBE &&
-    request.operationId === protocol.OPERATION.DESCRIBE.GET).length, 3)
+    request.operationId === protocol.OPERATION.DESCRIBE.GET).length, 5)
   assert.equal(relayRequests.filter(request =>
     request.familyId === protocol.FAMILY.DESCRIBE &&
     request.operationId === protocol.OPERATION.DESCRIBE.CHALLENGE).length, 1)

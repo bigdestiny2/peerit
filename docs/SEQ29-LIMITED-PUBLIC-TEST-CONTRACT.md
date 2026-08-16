@@ -30,8 +30,10 @@ The test bootstrap MUST say:
 - `operatorBoundary = TWO_OWNER_OPERATED_RELAYS_NOT_INDEPENDENT_OPERATORS`;
 - `topicScope = GLOBAL_PUBLIC_DISCOVERY`;
 - `releaseSequence = 29`;
-- exactly one current epoch set with two distinct relay keys, store IDs,
-  continuity hashes, and active topics for the initial Sequence 29 release; and
+- exactly one current epoch set with two distinct relay keys, store IDs, and
+  active topics for the initial Sequence 29 release; each relay's continuity
+  hash MUST match its authenticated descriptor/receipt binding, while the
+  profile-1 canonical continuity hash MAY repeat across the two relays; and
 - `artifactClass = LIMITED_PUBLIC_TEST_RELEASE` for an actual test release.
 
 Checked-in vectors say `artifactClass = FIXTURE_ONLY` and MUST be rejected by a
@@ -248,7 +250,7 @@ projection, canonically decodes and byte-identically re-encodes the signed
 `AuthorBindV1` and `PeeritAnnouncementV1`, and runs their profile validators.
 The archive-runnable gate pins the self-contained generated validator at
 `protocol/validator/peerit-validator-v1.bare.mjs` SHA-256
-`e69bf4554720c853e340f212eda4fe7760ae119594f5f136701a71c1b214a809`.
+`66676fddb0c973dececaf78d4a070d76afb2febf78f967a7f83e57c6fba67628`.
 That module is fixture replay authority only, never release authority. A populated
 checkout MUST also run `canonical-cross-check.mjs`; it requires byte-identical
 encode/decode and accept/reject parity with the pinned canonical source profile

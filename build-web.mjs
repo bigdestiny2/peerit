@@ -36,6 +36,8 @@ import {
   peeritServiceWorkerRegisterSourceV1,
   PEERIT_APP_ARTIFACT_PATH,
   PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE,
+  PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH,
+  PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE,
   PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE,
   PEERIT_SEED_BOOTSTRAP_PATH,
   PEERIT_WEB_ASSET_MANIFEST_PATH
@@ -128,6 +130,23 @@ if (IS_SUBSTRATE_RELEASE && RELEASE_SEQUENCE < PEERIT_SEED_BOOTSTRAP_MINIMUM_REL
 }
 const SEED_BOOTSTRAP_BYTES = SEED_BOOTSTRAP_BUNDLE
   ? readFileSync(resolve(__dir, SEED_BOOTSTRAP_BUNDLE))
+  : null
+const INBOX_BOOTSTRAP_BUNDLE = IS_SUBSTRATE_RELEASE
+  ? String(releaseConfig.peeritLimitedPublicInboxBootstrapBundle || '').trim()
+  : ''
+const INBOX_BOOTSTRAP_AUTHORITY_PUBLIC_KEY = IS_SUBSTRATE_RELEASE
+  ? String(releaseConfig.peeritLimitedPublicInboxBootstrapAuthorityPublicKey || '').trim().toLowerCase()
+  : ''
+if (IS_SUBSTRATE_RELEASE && RELEASE_SEQUENCE >= PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE &&
+    (!INBOX_BOOTSTRAP_BUNDLE || !INBOX_BOOTSTRAP_AUTHORITY_PUBLIC_KEY)) {
+  throw new Error('sequence-29+ blind-substrate release requires the signed public INBOX bootstrap bundle and authority key')
+}
+if (IS_SUBSTRATE_RELEASE && RELEASE_SEQUENCE < PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE &&
+    (INBOX_BOOTSTRAP_BUNDLE || INBOX_BOOTSTRAP_AUTHORITY_PUBLIC_KEY)) {
+  throw new Error('public INBOX bootstrap configuration requires releaseSequence 29 or later')
+}
+const INBOX_BOOTSTRAP_BYTES = INBOX_BOOTSTRAP_BUNDLE
+  ? readFileSync(resolve(__dir, INBOX_BOOTSTRAP_BUNDLE))
   : null
 const NO_RELAY_ROSTER = hasArg('--no-relay-roster') || process.env.PEERIT_NO_RELAY_ROSTER === '1'
 const RELAY_ROSTER = IS_SUBSTRATE_RELEASE || NO_RELAY_ROSTER ? '' : (process.env.PEERIT_RELAY_ROSTER || arg('--relay-roster') || releaseConfig.relayRoster || '')
@@ -292,7 +311,9 @@ if (IS_SUBSTRATE_RELEASE) {
     releaseKey: RELEASE_KEY,
     productionPinHistoryBytes: PRODUCTION_PIN_HISTORY_BYTES,
     seedBootstrapBytes: SEED_BOOTSTRAP_BYTES,
-    seedDiscoveryAuthorityPublicKey: SEED_DISCOVERY_AUTHORITY_PUBLIC_KEY
+    seedDiscoveryAuthorityPublicKey: SEED_DISCOVERY_AUTHORITY_PUBLIC_KEY,
+    limitedPublicInboxBootstrapBytes: INBOX_BOOTSTRAP_BYTES,
+    limitedPublicInboxBootstrapAuthorityPublicKey: INBOX_BOOTSTRAP_AUTHORITY_PUBLIC_KEY
   })
   if (PRODUCTION_PIN_HISTORY_BYTES) {
     await verifyPeeritProductionPinHistoryReleaseV1({
@@ -387,6 +408,18 @@ writeFileSync(join(OUT, 'asset-manifest.json'), JSON.stringify({
               peeritSeedBootstrapSha256: substrateArtifact.seedBootstrap.sha256,
               peeritSeedDiscoveryAuthorityPublicKey: substrateArtifact.seedBootstrap.authorityPublicKey,
               peeritSeedBootstrapReleaseSequence: substrateArtifact.seedBootstrap.releaseSequence
+            }
+          : {}),
+        ...(substrateArtifact.inboxBootstrap
+          ? {
+              peeritLimitedPublicInboxBootstrap:
+                `/${PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH}`,
+              peeritLimitedPublicInboxBootstrapSha256:
+                substrateArtifact.inboxBootstrap.sha256,
+              peeritLimitedPublicInboxBootstrapAuthorityPublicKey:
+                substrateArtifact.inboxBootstrap.authorityPublicKey,
+              peeritLimitedPublicInboxBootstrapReleaseSequence:
+                substrateArtifact.inboxBootstrap.releaseSequence
             }
           : {}),
         releaseKey: RELEASE_KEY

@@ -9,8 +9,8 @@ async function test (name, operation) {
   process.stdout.write(`ok ${passed} - ${name}\n`)
 }
 
-function domainPrefix (prefix) {
-  const domain = new TextEncoder().encode('peerit.hiverelay.author-bind.v1')
+function domainPrefix (prefix, name = 'author-bind') {
+  const domain = new TextEncoder().encode(`peerit.hiverelay.${name}.v1`)
   const output = new Uint8Array(domain.byteLength + prefix.byteLength)
   output.set(domain)
   output.set(prefix, domain.byteLength)
@@ -67,6 +67,17 @@ await test('the narrow signer rejects non-Uint8Array and empty protocol prefixes
   )
 })
 
+await test('the announcement signer is a separate fixed-domain capability', async () => {
+  const announcement = await identity.signPeeritAnnouncementV1(prefix)
+  assert.equal(await verifyBytes(
+    entry.pubkey, domainPrefix(prefix, 'announcement'), announcement), true)
+  assert.equal(await verifyBytes(entry.pubkey, domainPrefix(prefix), announcement), false)
+  await assert.rejects(
+    identity.signPeeritAnnouncementV1(new Uint8Array()),
+    error => error && error.code === 'PEERIT_ANNOUNCEMENT_PREFIX_INVALID'
+  )
+})
+
 await test('deactivation immediately removes the AuthorBindV1 signing capability', async () => {
   identity.deactivate()
   await assert.rejects(
@@ -75,4 +86,4 @@ await test('deactivation immediately removes the AuthorBindV1 signing capability
   )
 })
 
-process.stdout.write(`peerit-author-bind-signer: ${passed}/6 passed\n`)
+process.stdout.write(`peerit-author-bind-signer: ${passed}/7 passed\n`)

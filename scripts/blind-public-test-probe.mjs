@@ -118,13 +118,15 @@ async function fetchDescriptor (control, runtime, relay, protocolPins, transport
 
 async function main () {
   // 1. Vendored artifact integrity against its own authority pin.
-  const authority = JSON.parse(readFileSync(path.join(VENDOR_DIR, 'authority.json'), 'utf8'))
+  const authorityBytes = readFileSync(path.join(VENDOR_DIR, 'authority.json'))
+  const authority = JSON.parse(authorityBytes.toString('utf8'))
   const artifactBytes = readFileSync(path.join(VENDOR_DIR, 'blind-client-control-v1.mjs'))
   const verifiedRelease = verifyBlindClientBrowserReleaseV1({
     artifactBytes,
     manifestBytes: readFileSync(path.join(VENDOR_DIR, 'blind-client-control-v1.manifest.cenc')),
     chromiumEvidenceBytes: readFileSync(path.join(VENDOR_DIR, 'blind-client-control-v1.chromium-evidence.json')),
-    crossHostEvidenceBytes: readFileSync(path.join(VENDOR_DIR, 'blind-client-control-v1.cross-host-evidence.json'))
+    crossHostEvidenceBytes: readFileSync(path.join(VENDOR_DIR, 'blind-client-control-v1.cross-host-evidence.json')),
+    authorityBytes
   })
   const artifactHash = hex(verifiedRelease.artifactHash)
   if (artifactHash !== authority.artifactHash || artifactBytes.byteLength !== authority.artifactLength) {

@@ -11,9 +11,9 @@
   "generatorCommand": "node protocol/seq29-limited-public-test/generate-fixtures.mjs",
   "checker": "protocol/seq29-limited-public-test/check.mjs",
   "positiveFixtureCount": 3,
-  "negativeFixtureCount": 75,
+  "negativeFixtureCount": 78,
   "aggregateRecipe": "SHA-256(path || NUL || decimalByteLength || NUL || lowercaseSha256 || LF), paths sorted lexicographically; vector-manifest-v1.json is excluded",
-  "artifactAggregateSha256": "83753f984708915a27f03ff92b9a4819400129c259f8209572ea63e0664c94bd",
+  "artifactAggregateSha256": "f33fe90a9f5109b27f6d30d8ace5933cd2f7efe84ecd156ef2a0c4ba7f975ef1",
   "artifacts": [
     {
       "path": "config/peerit-limited-availability-bootstrap-v1.schema.json",
@@ -22,23 +22,23 @@
     },
     {
       "path": "docs/SEQ29-LIMITED-PUBLIC-TEST-CONTRACT.md",
-      "byteLength": 24047,
-      "sha256": "8513844036d0d17f023254f7fa6e2137c90fb2de6a8fc6843f9baa72489172a2"
+      "byteLength": 24198,
+      "sha256": "f8a6efeae4a4353faef9251a53ebcb945b8d379f96c866a492e68d937dc074f6"
     },
     {
       "path": "protocol/seq29-limited-public-test/canonical-cross-check.mjs",
-      "byteLength": 10944,
-      "sha256": "5a4feed470b6084e35463a2cd9fda38f85c12dbf24a5dc6bfbd9d84088e73833"
+      "byteLength": 11069,
+      "sha256": "007213ee577bbcefc17764b4943777c95c7bc814da564d7862d1a3e70be24280"
     },
     {
       "path": "protocol/seq29-limited-public-test/check.mjs",
-      "byteLength": 109574,
-      "sha256": "715889edc948cfc12838b72cf74217621597aaf60ef0747dee0beabaed319e64"
+      "byteLength": 109464,
+      "sha256": "3e7601931a3f4b24a080900c7c8b4583a68c4e92f71ea0559720e0e52bd32d40"
     },
     {
       "path": "protocol/seq29-limited-public-test/codec-registry-v1.json",
       "byteLength": 9572,
-      "sha256": "78f9122c64dc449047e1fe89769571f376d9220059fb11ad3b577493476ae27e"
+      "sha256": "5b355a0fa4196d9ea94fa6ad1a462550da2a93596f1e18f3342839d7e7ab329b"
     },
     {
       "path": "protocol/seq29-limited-public-test/compatibility-v1.json",
@@ -47,8 +47,8 @@
     },
     {
       "path": "protocol/seq29-limited-public-test/generate-fixtures.mjs",
-      "byteLength": 81932,
-      "sha256": "49cd7f640b0db0ccc5fb5b924d7448daf7bbde3de9b18fbfe518b45766c1dcdb"
+      "byteLength": 82861,
+      "sha256": "ea810e315186f8d5e2415c68b37b340d44e09dde78620331809b5fc96fb126c2"
     },
     {
       "path": "protocol/seq29-limited-public-test/limited-management-custody-v1.json",
@@ -58,7 +58,7 @@
     {
       "path": "protocol/validator/peerit-validator-v1.bare.mjs",
       "byteLength": 795428,
-      "sha256": "e69bf4554720c853e340f212eda4fe7760ae119594f5f136701a71c1b214a809"
+      "sha256": "66676fddb0c973dececaf78d4a070d76afb2febf78f967a7f83e57c6fba67628"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/01-private-management-seed.json",
@@ -278,12 +278,12 @@
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/44-custody-entry-binding.json",
       "byteLength": 35789,
-      "sha256": "32d1c0daff8600050d07112fe36546a361e269661f6253ffe7cfeaddb86c018c"
+      "sha256": "b4f7b71d7239f4df99f0baad5f70c2e7850ba57230d8302fd6879b250396c3b7"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/45-read-signature-payload-drift.json",
       "byteLength": 9361,
-      "sha256": "4d32303cb334d84208177dcfcc124fbc2657a6fab0c3061bcf552194107aba27"
+      "sha256": "f6960890ab222b55351525b374ad3170fd9000093d35e3db1a119fa0ed90364d"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/46-custody-malicious-plus-unavailable.json",
@@ -308,12 +308,12 @@
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/50-custody-duplicate-share-nonce.json",
       "byteLength": 6774,
-      "sha256": "130b9a4e3de4ae7cd6651449722531a10aeb670c975dc2be67975900606f96dd"
+      "sha256": "40862d0128ae03e4bbd5481b439f379630ba7b6e283bc3e75acdb5f024c02627"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/51-custody-duplicate-share-ciphertext.json",
       "byteLength": 6774,
-      "sha256": "6110377ddcc6cc06c25b094e39a3f2eccb058b2ba2b809f3e36b06661bf4337c"
+      "sha256": "325280bbf787329946f07e7581c762c3692f83e3becbd6ada08e94a0410367cc"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/52-bootstrap-u64-overflow.json",
@@ -363,27 +363,27 @@
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/61-valid-signature-wrong-inner-authority.json",
       "byteLength": 8380,
-      "sha256": "bb2dd44e1aef38d29ef0841c52e8e6cf240e8214cbe350381ccd3acf068c7f7e"
+      "sha256": "cd7295dbf573d79b7b413e00975d14d2135fe9321795e53e2254fc722d6456df"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/62-valid-signature-logical-mismatch.json",
       "byteLength": 8386,
-      "sha256": "efbea52aeaf1f3292eea138d4e3eaebdb26e3c99d2834700a4fb57eedd044d71"
+      "sha256": "23701d5699acdfb73faa969fab90ca30a5c1721577e013b2ebf987f439c27da1"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/63-valid-signature-author-sequence-gap.json",
       "byteLength": 8567,
-      "sha256": "071de13d821842a8243e73e7322dbacecd53e4aaf661fdf4cffde2a3d94940e2"
+      "sha256": "49db7a42a19077331f6b2a0b99f818d36736ab4d2456d060fffe25b1fb8bff8c"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/64-valid-signature-replica-allocation-mismatch.json",
       "byteLength": 8386,
-      "sha256": "f5c0c38dd7cc831856e35f4dc4de2689f74a3129a8c7e4917d2d6a95f0e1bb2c"
+      "sha256": "4c3208c15efa2b6060061f5816d4bef659ea3869fb2298054d9d1eaf146bc9db"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/65-valid-signature-future-announcement.json",
       "byteLength": 12971,
-      "sha256": "eb6e6925994b36b11813cca933b8c94d69f5f8a2ee76947d63d64e8d509959e0"
+      "sha256": "a15da532c6ea7709e5e2fc4266cbe60b315e75e2cebfe6430f664b860186f508"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/66-cell-put-allocation-commitment.json",
@@ -398,22 +398,22 @@
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/68-valid-signature-cell-receipt-request-mismatch.json",
       "byteLength": 1211,
-      "sha256": "90ecfa170b65895593e427cb46918e4b9c9c474476284ee9a071e93dbf7c3ff1"
+      "sha256": "3ffde65dbb9db8860a40d701659c0f58afbe303c78a37996a7bf17187fd9cef6"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/69-cross-relay-cross-role-key-reuse.json",
       "byteLength": 144756,
-      "sha256": "8cc001a4568e2357c39d438fdb0a852be74e330bfea31cd6b107ac6ba6712496"
+      "sha256": "7efb9dc955de83d04e96428e179a71113996355ed8b423505a53c3a9b7225255"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/70-custody-duplicate-ephemeral-key.json",
       "byteLength": 6774,
-      "sha256": "a3d05126c8f5e204c194afcc22030488f93a08acd23330111721a8076648be6e"
+      "sha256": "2940756b59d9e1dc5bedafaf6ca1fd6f8c8b0726256dcba7ed38e662bf73d976"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/71-custody-nonzero-low-order-ephemeral.json",
       "byteLength": 6785,
-      "sha256": "a4b369e97b7566f4a56131dc27c2201ee86fe0068566d0c9fa9026cf588598fc"
+      "sha256": "a79eaa19e95420290fc238520d6e1ecb4d406edc2e9f8cdf71c661b2378c4613"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/72-cell-put-blob-tamper.json",
@@ -423,32 +423,47 @@
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/73-custody-wrong-profile-pin.json",
       "byteLength": 35787,
-      "sha256": "e743304583b5375d258bde00f2fd28fea14b739191d98d69875cf5d241484625"
+      "sha256": "1b3364c805c12b2bc8d6e1f6f7a8aba35a49fe68fd564ffb5d26ada1572ec048"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/74-cell-get-client-nonce-reuse.json",
       "byteLength": 144755,
-      "sha256": "6fce087bc3d205920f2784c6f12a656283ea11a3e6402ae84849bd918bc1e74c"
+      "sha256": "9bf49d81c5fd5dbfffccd4244c3c97b525e05ed6eab626bcda63ec918c71fc3c"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/75-signed-replica-mixed-cell-evidence.json",
       "byteLength": 144761,
-      "sha256": "b64778a6fe4a24d656be493c093e25246ba01ff9214c1aa836297b8a1332fa5a"
+      "sha256": "aa87053ccbdaca005c5e63e524ead4630ebdc742c6f6d65c8f05d44b595f69f4"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/76-custody-order-eight-public-pin-a.json",
+      "byteLength": 337,
+      "sha256": "fce1c3ca055855ca7b574259847603fa33815152dd3a399caaa3a4fcb1f2952a"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/77-custody-order-eight-public-pin-b.json",
+      "byteLength": 337,
+      "sha256": "6d42650d4b0de2159ed4a62693fef10deaacff2c562c80d36d20d35834b0184a"
+    },
+    {
+      "path": "test/fixtures/peerit-seq29-limited-public-test-v1/negative/78-receipt-continuity-substitution.json",
+      "byteLength": 319,
+      "sha256": "319dbf5053418e31c65c643366488797633d1e5d6b8078ac4e068371816e766f"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/positive-bootstrap-successor.json",
       "byteLength": 5159,
-      "sha256": "95d286c95951b291d07f18ac69c061f460ec40f810916d345c91ace6c0fd7aa6"
+      "sha256": "498e42470e5cddd9e81dac8c012b26921443dd2326539b25a84555285a770113"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/positive-bootstrap.json",
       "byteLength": 5097,
-      "sha256": "65c4abf878d9560653ce18e8dae7c8cd578ddad1c9af288033e257141453b495"
+      "sha256": "9267ef43e9dd0105592999bed8187e5dfbc4627cfc4db543b9d7d44310104194"
     },
     {
       "path": "test/fixtures/peerit-seq29-limited-public-test-v1/positive-protocol-vector.json",
       "byteLength": 143332,
-      "sha256": "e6e1dff55ea2be3488db8f4eab9659ff00c56948379b0dd3c6a314343c424fdc"
+      "sha256": "f5365ca974c23508d970adf4a9413e9d2500b72e7c2b045295eb20fd4ca1706a"
     }
   ]
 }

@@ -17,23 +17,34 @@ import { verifiedIdentityEntry } from '../identity-primitives.js'
 
 const NAMESPACE = 'peerit'
 const AUTHOR_BIND_DOMAIN = new TextEncoder().encode('peerit.hiverelay.author-bind.v1')
+const ANNOUNCEMENT_DOMAIN = new TextEncoder().encode('peerit.hiverelay.announcement.v1')
 const MAX_AUTHOR_BIND_PREFIX_BYTES = 2 * 1024 * 1024
 
-function authorBindPrefix (value) {
+function fixedProtocolPrefix (value, domain, code, field) {
   if (!(value instanceof Uint8Array)) {
-    const error = new TypeError('AuthorBindV1 signing prefix must be a Uint8Array')
-    error.code = 'PEERIT_AUTHOR_BIND_PREFIX_INVALID'
+    const error = new TypeError(`${field} signing prefix must be a Uint8Array`)
+    error.code = code
     throw error
   }
   if (value.byteLength < 1 || value.byteLength > MAX_AUTHOR_BIND_PREFIX_BYTES) {
-    const error = new RangeError('AuthorBindV1 signing prefix is outside the bounded protocol range')
-    error.code = 'PEERIT_AUTHOR_BIND_PREFIX_INVALID'
+    const error = new RangeError(`${field} signing prefix is outside the bounded protocol range`)
+    error.code = code
     throw error
   }
-  const output = new Uint8Array(AUTHOR_BIND_DOMAIN.byteLength + value.byteLength)
-  output.set(AUTHOR_BIND_DOMAIN)
-  output.set(value, AUTHOR_BIND_DOMAIN.byteLength)
+  const output = new Uint8Array(domain.byteLength + value.byteLength)
+  output.set(domain)
+  output.set(value, domain.byteLength)
   return output
+}
+
+function authorBindPrefix (value) {
+  return fixedProtocolPrefix(value, AUTHOR_BIND_DOMAIN,
+    'PEERIT_AUTHOR_BIND_PREFIX_INVALID', 'AuthorBindV1')
+}
+
+function announcementPrefix (value) {
+  return fixedProtocolPrefix(value, ANNOUNCEMENT_DOMAIN,
+    'PEERIT_ANNOUNCEMENT_PREFIX_INVALID', 'PeeritAnnouncementV1')
 }
 
 function publicIdentity (entry) {
@@ -169,6 +180,27 @@ export class PeeritLocalIdentityV1 {
     if (this._entry !== entry || this._entry.pubkey !== entry.pubkey) {
       const error = new Error('Active durable identity changed while AuthorBindV1 was signing')
       error.code = 'PEERIT_AUTHOR_BIND_IDENTITY_CHANGED'
+      throw error
+    }
+    return new Uint8Array(signature)
+  }
+
+  // The public-INBOX publisher uses the same durable author identity as the
+  // intrinsic operation batch. This is a second fixed protocol domain, not a
+  // generic binary-signing API: callers cannot select a domain or obtain the
+  // active seed.
+  async signPeeritAnnouncementV1 (prefix) {
+    await this.ready()
+    const entry = this._entry
+    if (!entry) {
+      const error = new Error('No active durable identity')
+      error.code = 'PEERIT_DURABLE_IDENTITY_REQUIRED'
+      throw error
+    }
+    const signature = await signBytes(entry.seed, announcementPrefix(prefix))
+    if (this._entry !== entry || this._entry.pubkey !== entry.pubkey) {
+      const error = new Error('Active durable identity changed while PeeritAnnouncementV1 was signing')
+      error.code = 'PEERIT_ANNOUNCEMENT_IDENTITY_CHANGED'
       throw error
     }
     return new Uint8Array(signature)

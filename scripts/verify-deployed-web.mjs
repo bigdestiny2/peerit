@@ -15,6 +15,8 @@ import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from '../js/substrate/production-r
 import { normalizePeeritReleaseRelayHintsV1 } from '../js/substrate/release-relay-hints.mjs'
 import {
   PEERIT_APP_ARTIFACT_PATH,
+  PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH,
+  PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE,
   PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE,
   PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE,
   PEERIT_SEED_BOOTSTRAP_PATH,
@@ -147,6 +149,19 @@ export function releaseConfig (raw) {
     } else if (peeritSeedBootstrapBundle || peeritSeedDiscoveryAuthorityPublicKey) {
       throw new Error('Peerit seed bootstrap configuration requires releaseSequence 13 or later')
     }
+    const peeritLimitedPublicInboxBootstrapBundle = String(
+      raw.peeritLimitedPublicInboxBootstrapBundle || '').trim()
+    const peeritLimitedPublicInboxBootstrapAuthorityPublicKey = String(
+      raw.peeritLimitedPublicInboxBootstrapAuthorityPublicKey || '').trim().toLowerCase()
+    if (releaseSequence >= PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE) {
+      if (!peeritLimitedPublicInboxBootstrapBundle ||
+          !HEX64.test(peeritLimitedPublicInboxBootstrapAuthorityPublicKey)) {
+        throw new Error('sequence-29+ release requires a signed public INBOX bootstrap bundle and authority key')
+      }
+    } else if (peeritLimitedPublicInboxBootstrapBundle ||
+        peeritLimitedPublicInboxBootstrapAuthorityPublicKey) {
+      throw new Error('public INBOX bootstrap configuration requires releaseSequence 29 or later')
+    }
     return {
       transport: 'blind-substrate',
       substrateProfile,
@@ -154,6 +169,8 @@ export function releaseConfig (raw) {
       productionPinHistoryBundle,
       peeritSeedBootstrapBundle,
       peeritSeedDiscoveryAuthorityPublicKey,
+      peeritLimitedPublicInboxBootstrapBundle,
+      peeritLimitedPublicInboxBootstrapAuthorityPublicKey,
       releaseSequence,
       pinnedReleaseKey
     }
@@ -343,7 +360,15 @@ export function verifyIndexConfig (html, release) {
   }
 }
 
-export function verifyManifestConfig (manifest, release, rosterHash, shardRosterHash, driveKey, seedBootstrapSha256 = '') {
+export function verifyManifestConfig (
+  manifest,
+  release,
+  rosterHash,
+  shardRosterHash,
+  driveKey,
+  seedBootstrapSha256 = '',
+  publicInboxBootstrapSha256 = ''
+) {
   if (manifest.releaseSequence !== release.releaseSequence) {
     throw new Error('asset-manifest.json releaseSequence does not match deploy/web-release.json')
   }
@@ -361,6 +386,10 @@ export function verifyManifestConfig (manifest, release, rosterHash, shardRoster
     }
     if (release.peeritSeedBootstrapBundle && !HEX64.test(seedBootstrapSha256)) {
       throw new Error('local Peerit seed bootstrap has an invalid SHA-256')
+    }
+    if (release.peeritLimitedPublicInboxBootstrapBundle &&
+        !HEX64.test(publicInboxBootstrapSha256)) {
+      throw new Error('local public INBOX bootstrap has an invalid SHA-256')
     }
     const expected = {
       releaseSequence: release.releaseSequence,
@@ -382,6 +411,16 @@ export function verifyManifestConfig (manifest, release, rosterHash, shardRoster
             peeritSeedBootstrapSha256: seedBootstrapSha256,
             peeritSeedDiscoveryAuthorityPublicKey: release.peeritSeedDiscoveryAuthorityPublicKey,
             peeritSeedBootstrapReleaseSequence: release.releaseSequence
+          }
+        : {}),
+      ...(release.peeritLimitedPublicInboxBootstrapBundle
+        ? {
+            peeritLimitedPublicInboxBootstrap:
+              `/${PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH}`,
+            peeritLimitedPublicInboxBootstrapSha256: publicInboxBootstrapSha256,
+            peeritLimitedPublicInboxBootstrapAuthorityPublicKey:
+              release.peeritLimitedPublicInboxBootstrapAuthorityPublicKey,
+            peeritLimitedPublicInboxBootstrapReleaseSequence: release.releaseSequence
           }
         : {}),
       releaseKey: release.pinnedReleaseKey
@@ -555,6 +594,15 @@ async function main () {
     seedBootstrapSha256 = sha256(seedBootstrapBytes)
   }
 
+  let publicInboxBootstrapSha256 = ''
+  if (release.peeritLimitedPublicInboxBootstrapBundle) {
+    const publicInboxBootstrapBytes = await readRequired(
+      repoPath(release.peeritLimitedPublicInboxBootstrapBundle,
+        'peeritLimitedPublicInboxBootstrapBundle'),
+      release.peeritLimitedPublicInboxBootstrapBundle)
+    publicInboxBootstrapSha256 = sha256(publicInboxBootstrapBytes)
+  }
+
   const localManifestBytes = await readRequired(join(WEB, 'asset-manifest.json'), 'web/asset-manifest.json')
   const localSignatureBytes = await readRequired(join(WEB, 'asset-manifest.sig'), 'web/asset-manifest.sig')
   if (localManifestBytes.length > MAX_METADATA_BYTES || localSignatureBytes.length > MAX_METADATA_BYTES) {
@@ -564,7 +612,8 @@ async function main () {
   const signature = parseJson(localSignatureBytes, 'web/asset-manifest.sig')
   const entries = manifestEntries(manifest)
 
-  verifyManifestConfig(manifest, release, rosterHash, shardRosterHash, driveKey, seedBootstrapSha256)
+  verifyManifestConfig(manifest, release, rosterHash, shardRosterHash, driveKey,
+    seedBootstrapSha256, publicInboxBootstrapSha256)
   await verifyReleaseManifest({
     manifest,
     signature,
@@ -598,6 +647,16 @@ async function main () {
          runtime.seedBootstrap.authorityPublicKey !== release.peeritSeedDiscoveryAuthorityPublicKey ||
          runtime.seedBootstrap.releaseSequence !== release.releaseSequence)) {
       throw new Error('signed JSON manifest does not cross-bind the exact Peerit seed bootstrap')
+    }
+    if (release.peeritLimitedPublicInboxBootstrapBundle &&
+        (!runtime.inboxBootstrap ||
+         runtime.inboxBootstrap.path !==
+           manifest.webRelease.peeritLimitedPublicInboxBootstrap ||
+         runtime.inboxBootstrap.sha256 !== publicInboxBootstrapSha256 ||
+         runtime.inboxBootstrap.authorityPublicKey !==
+           release.peeritLimitedPublicInboxBootstrapAuthorityPublicKey ||
+         runtime.inboxBootstrap.releaseSequence !== release.releaseSequence)) {
+      throw new Error('signed JSON manifest does not cross-bind the exact public INBOX bootstrap')
     }
     if (release.productionPinHistoryBundle) {
       await verifyPeeritProductionPinHistoryReleaseV1({

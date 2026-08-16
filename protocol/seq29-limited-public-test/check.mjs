@@ -42,7 +42,7 @@ const FIXTURES = path.join(ROOT, 'test/fixtures/peerit-seq29-limited-public-test
 const NEGATIVE = path.join(FIXTURES, 'negative')
 const PROFILE_SHA256 = '74d3b65dff1bbf2a4630791fd1a770e8dcdfac415bf693ff313d38d0262619fd'
 const PROFILE_PIN_HASH = hexToBytes(PROFILE_SHA256, 32, 'profile pin hash')
-const BARE_VALIDATOR_SHA256 = 'e69bf4554720c853e340f212eda4fe7760ae119594f5f136701a71c1b214a809'
+const BARE_VALIDATOR_SHA256 = '66676fddb0c973dececaf78d4a070d76afb2febf78f967a7f83e57c6fba67628'
 const BOOTSTRAP_DOMAIN = 'peerit.limited-public-test.inbox-bootstrap.v1'
 const MAX_BOOTSTRAP_LIFETIME_MILLIS = 2678400000n
 const LIMITED_MANAGEMENT_BUNDLE_DOMAIN = 'peerit.hiverelay.limited-public-inbox-management-bundle.v1'
@@ -58,8 +58,8 @@ const FIXTURE_SUCCESSOR_REFERENCE_UNIX_MILLIS = 1780531201000n
 const LOW_ORDER_X25519_PUBLIC_KEYS = new Set([
   '0000000000000000000000000000000000000000000000000000000000000000',
   '0100000000000000000000000000000000000000000000000000000000000000',
-  'e0eb7a7c3b41b8ae1656e3fa1f6f7f3c0a37f7d5b4f47f170bcfdc728d63333f',
-  '5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224e8b01f22f4f',
+  'e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800',
+  '5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157',
   'ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
   'edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
   'eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f'
@@ -418,7 +418,6 @@ function validateBootstrap (wrapper, options = {}) {
   unique(payload.relays.map(value => value.relayId), 'DUPLICATE_RELAY', 'relay IDs')
   unique(payload.relays.map(value => value.relayPublicKey), 'DUPLICATE_RELAY', 'relay keys')
   unique(payload.relays.map(value => value.storeId), 'DUPLICATE_RELAY', 'store IDs')
-  unique(payload.relays.map(value => value.durabilityContinuityHash), 'DUPLICATE_RELAY', 'continuity hashes')
 
   ok(Array.isArray(payload.inboxEpochSets) && payload.inboxEpochSets.length === 1,
     'INITIAL_EPOCH_SET', 'Sequence 29 bootstrap carries exactly one current epoch set')

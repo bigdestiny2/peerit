@@ -27,7 +27,7 @@
     "sourceSha256": "74d3b65dff1bbf2a4630791fd1a770e8dcdfac415bf693ff313d38d0262619fd",
     "fixtureReplayAuthority": {
       "module": "protocol/validator/peerit-validator-v1.bare.mjs",
-      "moduleSha256": "e69bf4554720c853e340f212eda4fe7760ae119594f5f136701a71c1b214a809",
+      "moduleSha256": "66676fddb0c973dececaf78d4a070d76afb2febf78f967a7f83e57c6fba67628",
       "scope": "FIXTURE_ONLY_ARCHIVE_REPLAY",
       "canonicalParityCommand": "PEERIT_CANONICAL_SOURCE_ROOT=/absolute/populated/peerit node protocol/seq29-limited-public-test/canonical-cross-check.mjs",
       "releaseAuthority": false

@@ -228,13 +228,15 @@ async function qualifyRelay ({ control, runtime, relay, kv, captured, label }) {
 
 async function main () {
   if (!globalThis.crypto || !globalThis.crypto.subtle) throw new Error('drills require Web Crypto')
-  const authority = JSON.parse(readFileSync(path.join(VENDOR_DIR, 'authority.json'), 'utf8'))
+  const authorityBytes = readFileSync(path.join(VENDOR_DIR, 'authority.json'))
+  const authority = JSON.parse(authorityBytes.toString('utf8'))
   const artifactBytes = readFileSync(path.join(VENDOR_DIR, 'blind-client-control-v1.mjs'))
   const verifiedRelease = verifyBlindClientBrowserReleaseV1({
     artifactBytes,
     manifestBytes: readFileSync(path.join(VENDOR_DIR, 'blind-client-control-v1.manifest.cenc')),
     chromiumEvidenceBytes: readFileSync(path.join(VENDOR_DIR, 'blind-client-control-v1.chromium-evidence.json')),
-    crossHostEvidenceBytes: readFileSync(path.join(VENDOR_DIR, 'blind-client-control-v1.cross-host-evidence.json'))
+    crossHostEvidenceBytes: readFileSync(path.join(VENDOR_DIR, 'blind-client-control-v1.cross-host-evidence.json')),
+    authorityBytes
   })
   if (hex(verifiedRelease.artifactHash) !== authority.artifactHash) throw new Error('vendored artifact drift before drills')
   const control = await import(pathToFileURL(path.join(VENDOR_DIR, 'blind-client-control-v1.mjs')).href)

@@ -21,6 +21,9 @@ const APP_ARTIFACT_PATH = '/peerit-app-artifact-v1.json'
 const WEB_ASSET_MANIFEST_PATH = '/peerit-web-assets-v1.cenc'
 const SEED_BOOTSTRAP_PATH = '/peerit-seed-bootstrap-v1.json'
 const SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE = 13
+const LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH =
+  '/peerit-limited-public-inbox-bootstrap-v1.json'
+const LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE = 29
 const MAX_RELEASE_CONTROL_BYTES = 4 * 1024 * 1024
 const MAX_RELEASE_MANIFEST_BYTES = 2 * 1024 * 1024
 const MAX_RELEASE_SIGNATURE_BYTES = 64 * 1024
@@ -192,6 +195,35 @@ function seedBinding (value, label) {
   })
 }
 
+function publicInboxBinding (value, label) {
+  const fields = [
+    'peeritLimitedPublicInboxBootstrap',
+    'peeritLimitedPublicInboxBootstrapSha256',
+    'peeritLimitedPublicInboxBootstrapAuthorityPublicKey',
+    'peeritLimitedPublicInboxBootstrapReleaseSequence'
+  ]
+  const present = fields.filter(field => Object.hasOwn(value, field))
+  if (value.releaseSequence < LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE) {
+    if (present.length !== 0) {
+      throw new Error(`${label} cannot bind a public INBOX bootstrap before release sequence 29`)
+    }
+    return null
+  }
+  if (present.length !== fields.length ||
+      value.peeritLimitedPublicInboxBootstrap !== LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH ||
+      !HEX_32.test(String(value.peeritLimitedPublicInboxBootstrapSha256 || '')) ||
+      !HEX_32.test(String(value.peeritLimitedPublicInboxBootstrapAuthorityPublicKey || '')) ||
+      value.peeritLimitedPublicInboxBootstrapReleaseSequence !== value.releaseSequence) {
+    throw new Error(`${label} does not bind one exact sequence-29+ public INBOX bootstrap`)
+  }
+  return Object.freeze({
+    path: value.peeritLimitedPublicInboxBootstrap,
+    sha256: value.peeritLimitedPublicInboxBootstrapSha256,
+    authorityPublicKey: value.peeritLimitedPublicInboxBootstrapAuthorityPublicKey,
+    releaseSequence: value.peeritLimitedPublicInboxBootstrapReleaseSequence
+  })
+}
+
 function decodeAppArtifact (bytes) {
   let value
   try { value = JSON.parse(new TextDecoder().decode(bytes)) } catch {
@@ -208,6 +240,7 @@ function decodeAppArtifact (bytes) {
   }
   value.relayHints = normalizePeeritReleaseRelayHintsV1(value.relayHints, 'app artifact')
   value.seedBootstrap = seedBinding(value, 'peerit app artifact')
+  value.publicInboxBootstrap = publicInboxBinding(value, 'peerit app artifact')
   return value
 }
 
@@ -250,6 +283,15 @@ async function verifyCanonicalBindings ({
       canonical.assets.some(asset => asset.path === SEED_BOOTSTRAP_PATH)) {
     throw new Error('pre-sequence-13 canonical release unexpectedly carries a Peerit seed bootstrap')
   }
+  if (appArtifact.publicInboxBootstrap) {
+    if (!canonical.assets.some(asset =>
+      asset.path === LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH)) {
+      throw new Error('canonical WebAssetManifestV1 does not carry the bound public INBOX bootstrap')
+    }
+  } else if (canonical.assets.some(asset =>
+    asset.path === LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH)) {
+    throw new Error('pre-sequence-29 canonical release unexpectedly carries a public INBOX bootstrap')
+  }
   const canonicalHasPinHistory = canonical.assets.some(
     asset => asset.path === PEERIT_PRODUCTION_PIN_HISTORY_PATH)
   if (canonicalHasPinHistory) {
@@ -263,7 +305,8 @@ async function verifyCanonicalBindings ({
     appArtifact,
     canonicalHash,
     appArtifactHash,
-    seedBootstrap: appArtifact.seedBootstrap
+    seedBootstrap: appArtifact.seedBootstrap,
+    publicInboxBootstrap: appArtifact.publicInboxBootstrap
   })
 }
 
@@ -339,6 +382,7 @@ export async function verifyPeeritReleaseCoherenceV1 (options = {}) {
           appArtifactHash: bound.appArtifactHash,
           relayHints: bound.appArtifact.relayHints,
           seedBootstrap: bound.seedBootstrap,
+          publicInboxBootstrap: bound.publicInboxBootstrap,
           productionPinHistory,
           floorPersisted: false
         })
@@ -373,6 +417,8 @@ export async function verifyPeeritReleaseCoherenceV1 (options = {}) {
       throw new Error('signed JSON manifest does not carry the canonical replacement release bindings')
     }
     const outerSeedBootstrap = seedBinding(release, 'signed JSON manifest')
+    const outerPublicInboxBootstrap = publicInboxBinding(
+      release, 'signed JSON manifest')
     if (manifest.files?.[WEB_ASSET_MANIFEST_PATH.slice(1)] !== await hashBytes(canonicalBytes) ||
         manifest.files?.[APP_ARTIFACT_PATH.slice(1)] !== await hashBytes(appArtifactBytes)) {
       throw new Error('signed JSON file hashes do not match the fetched canonical release artifacts')
@@ -392,6 +438,13 @@ export async function verifyPeeritReleaseCoherenceV1 (options = {}) {
           outerSeedBootstrap.sha256)) {
       throw new Error('signed JSON manifest and app artifact disagree on the Peerit seed bootstrap binding')
     }
+    if (JSON.stringify(outerPublicInboxBootstrap) !==
+          JSON.stringify(bound.publicInboxBootstrap) ||
+        (outerPublicInboxBootstrap &&
+          manifest.files?.[outerPublicInboxBootstrap.path.slice(1)] !==
+            outerPublicInboxBootstrap.sha256)) {
+      throw new Error('signed JSON manifest and app artifact disagree on the public INBOX bootstrap binding')
+    }
     const floorPersisted = persistFloor(storageOrNull(options.storage), pinnedKey, verified.floor)
     return status('signed-release-coherent', true, [],
       `Signed replacement release ${expectedSequence} is coherent.`, {
@@ -401,6 +454,7 @@ export async function verifyPeeritReleaseCoherenceV1 (options = {}) {
         appArtifactHash: bound.appArtifactHash,
         relayHints: bound.appArtifact.relayHints,
         seedBootstrap: bound.seedBootstrap,
+        publicInboxBootstrap: bound.publicInboxBootstrap,
         productionPinHistory,
         floorPersisted
       })

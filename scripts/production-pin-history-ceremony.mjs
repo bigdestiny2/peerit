@@ -76,12 +76,17 @@ export const PEERIT_PRODUCTION_CEREMONY_SCHEMA_V1 = 'peerit-production-pin-histo
 export const PEERIT_SEED_BOOTSTRAP_PATH = '/peerit-seed-bootstrap-v1.json'
 export const PEERIT_PRODUCTION_PREFIX_TERMINAL_SEQUENCE = 12
 export const PEERIT_PRODUCTION_CEREMONY_MIN_RELEASE_SEQUENCE = 13
-export const PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE = 28
+export const PEERIT_PRODUCTION_CEREMONY_MAX_RELEASE_SEQUENCE = 29
 export const PEERIT_CSP_SAFE_VALIDATOR_TRANSITION_RELEASE_SEQUENCE = 19
 export const PEERIT_SEQUENCE_18_VALIDATOR_ARTIFACT_HASH =
   '9e4c2e57769d005bee92a227751e559144824553b202401fb89c06d4bca55b2a'
 export const PEERIT_SEQUENCE_19_VALIDATOR_ARTIFACT_HASH =
   'c92f1b402d745fc5d8235358bc7909a50cb23b230e75de605fd421fc500f9613'
+export const PEERIT_LOW_ORDER_VALIDATOR_TRANSITION_RELEASE_SEQUENCE = 29
+export const PEERIT_SEQUENCE_28_VALIDATOR_ARTIFACT_HASH =
+  'c92f1b402d745fc5d8235358bc7909a50cb23b230e75de605fd421fc500f9613'
+export const PEERIT_SEQUENCE_29_VALIDATOR_ARTIFACT_HASH =
+  '96ea7425eb1028748ee009486c1e72165f1cb7c80a37eb4ac0ffed748e18ac3d'
 export const PEERIT_ACCEPTED_SEQUENCE_12_APP_HASH = 'b34628cb7580e8decb9f3dfced4dceaff6220573d6cba31970f3b1b7f165c292'
 export const PEERIT_ACCEPTED_SEQUENCE_12_WEB_HASH = 'fb79fd6c8ec4bd628aff8a1007a88f9200117903f6356cc41ab16bc1d308229c'
 
@@ -407,7 +412,15 @@ export function assertProductionPredecessorBindingsV1 (pin, bindings, successorS
       pin.releaseSequence === BigInt(successorSequence - 1) &&
       bytesToHex(pin.validatorArtifactHash) === PEERIT_SEQUENCE_18_VALIDATOR_ARTIFACT_HASH &&
       bytesToHex(bindings.validatorArtifactHash) === PEERIT_SEQUENCE_19_VALIDATOR_ARTIFACT_HASH
-    if (!exactCspSafeValidatorTransition) fail(`prefix terminal ${field} is stale`)
+    const exactLowOrderValidatorTransition =
+      field === 'validatorArtifactHash' &&
+      successorSequence === PEERIT_LOW_ORDER_VALIDATOR_TRANSITION_RELEASE_SEQUENCE &&
+      pin.releaseSequence === BigInt(successorSequence - 1) &&
+      bytesToHex(pin.validatorArtifactHash) === PEERIT_SEQUENCE_28_VALIDATOR_ARTIFACT_HASH &&
+      bytesToHex(bindings.validatorArtifactHash) === PEERIT_SEQUENCE_29_VALIDATOR_ARTIFACT_HASH
+    if (!exactCspSafeValidatorTransition && !exactLowOrderValidatorTransition) {
+      fail(`prefix terminal ${field} is stale`)
+    }
   }
   if (!bytesEqual(pin.emitSubstrate.specHash, bindings.emitSubstrate.specHash) ||
       !bytesEqual(pin.emitSubstrate.abiHash, bindings.emitSubstrate.abiHash) ||

@@ -16,11 +16,30 @@ import { createPeeritLocalIdentityV1 } from './local-identity.js'
 import { createPeeritSubstrateSync } from './peerit-substrate-sync.js'
 import { publicationUiState } from './publication-status.js'
 
+const PRODUCT_RUNTIME_INSTANCES = new WeakSet()
+const PRODUCT_SEQ29_AUTHORITIES = new WeakMap()
+
 function immutableNetworkStatus (value) {
   return Object.freeze({
     state: String((value && value.state) || 'blocked-authenticated-browser-runtime'),
     active: value && value.active === true,
     releaseBlockers: Object.freeze([...(value && value.releaseBlockers ? value.releaseBlockers : [])])
+  })
+}
+
+function immutableInboxStatus (value) {
+  const acceptedRecords = Number(value?.acceptedRecords || 0)
+  const rejectedEntries = Number(value?.rejectedEntries || 0)
+  return Object.freeze({
+    state: String(value?.state || 'blocked-public-inbox-bootstrap'),
+    active: value?.active === true,
+    acceptedRecords: Number.isSafeInteger(acceptedRecords) && acceptedRecords >= 0
+      ? acceptedRecords
+      : 0,
+    rejectedEntries: Number.isSafeInteger(rejectedEntries) && rejectedEntries >= 0
+      ? rejectedEntries
+      : 0,
+    releaseBlockers: Object.freeze([...(value?.releaseBlockers || [])])
   })
 }
 
@@ -45,6 +64,7 @@ export class PeeritProductRuntimeV1 {
       journalDbName: options.journalDbName
     })
     this._network = immutableNetworkStatus(options.networkStatus)
+    this._inbox = immutableInboxStatus(options.inboxStatus)
     this._listeners = new Set()
     this._ready = null
     this._destroyed = false
@@ -59,6 +79,7 @@ export class PeeritProductRuntimeV1 {
       minBits: options.minBits,
       mint: options.mint
     })
+    PRODUCT_RUNTIME_INSTANCES.add(this)
   }
 
   async ready () {
@@ -101,6 +122,12 @@ export class PeeritProductRuntimeV1 {
     return this._network
   }
 
+  setInboxDiscoveryStatus (status) {
+    this._inbox = immutableInboxStatus(status)
+    this._emit()
+    return this._inbox
+  }
+
   // Only already-qualified, branded relay adapters may cross this boundary.
   // Raw URLs and descriptor hints are handled by the authenticated consumer.
   setQualifiedRelays (relays) {
@@ -116,6 +143,7 @@ export class PeeritProductRuntimeV1 {
       identity: this.identity.me(),
       lurker: !this.identity.me().pubkey,
       network: this._network,
+      inbox: this._inbox,
       sync: syncStatus,
       publication: publicationUiState(syncStatus)
     })
@@ -145,4 +173,49 @@ export class PeeritProductRuntimeV1 {
 
 export function createPeeritProductRuntimeV1 (options = {}) {
   return new PeeritProductRuntimeV1(options)
+}
+
+// A bounded bridge from shipped product authoring to Seq29 publication. It
+// exposes neither a seed nor a generic signer. The coordinator may only obtain
+// the exact ordinary sync instance and the two fixed protocol signatures used
+// to wrap an already-authored intrinsic operation batch.
+export function getPeeritProductSeq29AuthoringAuthorityV1 (value) {
+  if (!value || !PRODUCT_RUNTIME_INSTANCES.has(value)) {
+    const error = new TypeError('The exact Peerit product runtime is required.')
+    error.code = 'PEERIT_PRODUCT_RUNTIME_AUTHORITY_REQUIRED'
+    throw error
+  }
+  let authority = PRODUCT_SEQ29_AUTHORITIES.get(value)
+  if (authority) return authority
+  authority = Object.freeze({
+    version: 1,
+    substrateSync: value.sync,
+    async authorPublicKey () {
+      const identity = await value.ensureWriter()
+      if (!identity || !/^[0-9a-f]{64}$/.test(String(identity.pubkey || ''))) {
+        const error = new Error('A durable Peerit author identity is required.')
+        error.code = 'PEERIT_DURABLE_IDENTITY_REQUIRED'
+        throw error
+      }
+      const output = new Uint8Array(32)
+      for (let index = 0; index < 32; index++) {
+        output[index] = Number.parseInt(identity.pubkey.slice(index * 2, index * 2 + 2), 16)
+      }
+      return output
+    },
+    signAuthorBindV1 (prefix) {
+      return value.identity.signAuthorBindV1(prefix)
+    },
+    signPeeritAnnouncementV1 (prefix) {
+      return value.identity.signPeeritAnnouncementV1(prefix)
+    },
+    withSeq29PublicationSession (operation) {
+      if (typeof operation !== 'function') {
+        throw new TypeError('Seq29 publication session callback is required')
+      }
+      return value.sync.withLocalWriterSession(operation)
+    }
+  })
+  PRODUCT_SEQ29_AUTHORITIES.set(value, authority)
+  return authority
 }

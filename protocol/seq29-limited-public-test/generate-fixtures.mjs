@@ -54,6 +54,8 @@ const FIXTURE_CURRENT_INBOX_EPOCH = Math.floor(FIXTURE_EFFECTIVE_LEASE_EPOCH / 2
 const FIXTURE_L90_EXPIRY_EPOCH = FIXTURE_EFFECTIVE_LEASE_EPOCH + 360
 const FIXTURE_SUCCESSOR_EFFECTIVE_LEASE_EPOCH = (FIXTURE_CURRENT_INBOX_EPOCH + 1) * 28
 const FIXTURE_SUCCESSOR_REFERENCE_UNIX_MILLIS = BigInt(FIXTURE_SUCCESSOR_EFFECTIVE_LEASE_EPOCH) * 21600000n + 1000n
+const PROFILE1_DURABILITY_CONTINUITY_HASH = new Uint8Array(Buffer.from(
+  'b0d28be1ec93dc70931de0715994deb0295507ada3a26b64b61c261b9c3306eb', 'hex'))
 
 if (process.env.PEERIT_SEQ29_ARTIFACT_CLASS && process.env.PEERIT_SEQ29_ARTIFACT_CLASS !== 'FIXTURE_ONLY') {
   throw new Error('fixture generator refuses every non-FIXTURE_ONLY artifact class')
@@ -681,7 +683,7 @@ function relayBinding (pair, label, sequence) {
     descriptorSequence: BigInt(sequence),
     descriptorHash: fixtureBytes(`${label}:descriptor-hash`, 32),
     durabilityProfileId: 1,
-    durabilityContinuityHash: fixtureBytes(`${label}:continuity`, 32),
+    durabilityContinuityHash: new Uint8Array(PROFILE1_DURABILITY_CONTINUITY_HASH),
     durabilityProfileHash: fixtureBytes(`${label}:durability-profile`, 32),
     restoreEvidenceHeadSequence: 0n,
     restoreEvidenceHeadHash: new Uint8Array(32),
@@ -1640,7 +1642,23 @@ async function generate () {
     }, 'CELL_CLIENT_NONCE_REUSE'],
     ['75-signed-replica-mixed-cell-evidence.json', 'vector', null, {
       op: 'replace-root', value: mixedReplicaEvidenceVector
-    }, 'CELL_REPLICA_EVIDENCE_BINDING']
+    }, 'CELL_REPLICA_EVIDENCE_BINDING'],
+    ['76-custody-order-eight-public-pin-a.json', 'vector', null, {
+      op: 'replace',
+      path: '/managementCustody/fixtureCustodianPublicKeys/0',
+      value: 'e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800'
+    }, 'CUSTODY_LOW_ORDER_PUBLIC_KEY'],
+    ['77-custody-order-eight-public-pin-b.json', 'vector', null, {
+      op: 'replace',
+      path: '/managementCustody/fixtureCustodianPublicKeys/0',
+      value: '5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157'
+    }, 'CUSTODY_LOW_ORDER_PUBLIC_KEY'],
+    ['78-receipt-continuity-substitution.json', 'bootstrap', 'POST_SIGNATURE', {
+      op: 'xor-hex',
+      path: '/payload/relays/1/durabilityContinuityHash',
+      byteIndex: 0,
+      mask: 1
+    }, 'BAD_RECEIPT_BINDING']
   ])
 
   await fs.writeFile(path.join(FIXTURES, 'positive-bootstrap.json'), jsonBytes(bootstrap))

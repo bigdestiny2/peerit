@@ -10,6 +10,7 @@ import {
   assemblePeeritBrowserRuntimeAuthorityV1,
   assemblePeeritBrowserRuntimeAuthorityNodeTestV1,
   fetchBoundedPeeritBrowserRuntimeAssetV1,
+  getVerifiedPeeritBrowserPublicInboxBootstrapV1,
   getVerifiedPeeritBrowserSeedBootstrapV1,
   getVerifiedPeeritBrowserRuntimeAssembly,
   isVerifiedPeeritBrowserRuntimeAuthority,
@@ -50,6 +51,9 @@ import {
 import {
   recoverPeeritSeedWithLimitedCellGetAuthorityV1
 } from '../js/substrate/relay-consumer.js'
+import {
+  createPeeritSeq29PublicInboxBootCoordinatorV1
+} from '../js/substrate/public-inbox-boot-coordinator.mjs'
 import {
   PEERIT_SEED_BOOTSTRAP_OPERATOR_BOUNDARY_V1,
   PEERIT_SEED_BOOTSTRAP_PROFILE_V1,
@@ -114,7 +118,8 @@ function signedInputs (assets = originalAssets(), options = {}) {
   const recommendedBootstrapHashes = options.recommendedBootstrapHashes || []
   const webAssetManifestBytes = manifestFor(assets, { releaseSequence, recommendedBootstrapHashes })
   const hiveManifest = decodeBlindClientBrowserManifestV1(
-    assets.get(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveManifest))
+    assets.get(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveManifest),
+    assets.get(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.hiveVendorAuthority))
   const profileSource = assets.get(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.profileSource)
   const profileRegistry = assets.get(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.profileRegistry)
   const profileVectors = assets.get(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.profileVectorManifest)
@@ -176,6 +181,21 @@ assert.equal(typeof assembled.control.decodeBlindExternalProfileValueV1, 'functi
 assert.equal(assembled.validatorArtifactAuthenticated, true)
 assert.equal(assembled.validatorInstantiationAuthorized, false,
   'caller-selected external codec callbacks never become a profile validator authority')
+await assert.rejects(
+  createPeeritSeq29PublicInboxBootCoordinatorV1({
+    runtimeAuthority: authority,
+    runtimeAppBinding: { ...assembled }
+  }),
+  error => error.code === 'PEERIT_SEQ29_RUNTIME_APP_BINDING_REQUIRED',
+  'shape-copying the authenticated runtime/app binding cannot reach seq29 boot')
+await assert.rejects(
+  createPeeritSeq29PublicInboxBootCoordinatorV1({
+    runtimeAuthority: authority,
+    runtimeAppBinding: assembled,
+    get appArtifactBytes () { throw new Error('must not inspect untrusted bytes') }
+  }),
+  error => error.code === 'PEERIT_SEQ29_RUNTIME_AUTHORITY_INJECTION',
+  'seq29 boot rejects caller app bytes without inspecting them')
 assert.equal(typeof assembled.createRelayAdapter, 'function')
 assert.equal(authority.epochDeadlineMonotonicMillis(1n), 21600100)
 
@@ -404,7 +424,128 @@ await assert.rejects(recoverPeeritSeedWithLimitedCellGetAuthorityV1({
 assert.equal(limitedRecoveryFetches, 0,
   'caller seed substitution fails before relay I/O')
 
-for (const rollbackSequence of [27, 29]) {
+const seed29Payload = JSON.parse(JSON.stringify(seed28Value.payload))
+seed29Payload.releaseSequence = 29
+const seed29Artifact = await createPeeritSeedBootstrapV1(
+  seed29Payload, { seedHex: seed28Authority.seedHex })
+const seed29Bytes = new Uint8Array(encodePeeritSeedBootstrapV1(seed29Artifact))
+const seed29Sha256 = createHash('sha256').update(seed29Bytes).digest('hex')
+const publicInboxBytes = new Uint8Array(fs.readFileSync(path.join(
+  root, 'test/fixtures/peerit-seq29-limited-public-test-v1/positive-bootstrap.json')))
+const publicInbox = JSON.parse(new TextDecoder().decode(publicInboxBytes))
+const publicInboxSha256 = createHash('sha256').update(publicInboxBytes).digest('hex')
+const seq29Assets = withoutLimitedCellGetAssets()
+const seq29CoordinatorPath = PEERIT_BROWSER_RUNTIME_ASSET_PATHS.seq29PublicInboxCoordinator
+const seq29CoordinatorBytes = seq29Assets.get(seq29CoordinatorPath)
+const seq29CoordinatorSha256 = createHash('sha256')
+  .update(seq29CoordinatorBytes).digest('hex')
+const seq29CellPutProfilePath = PEERIT_BROWSER_RUNTIME_ASSET_PATHS.limitedCellPutProfile
+const seq29CellPutProfileBytes = seq29Assets.get(seq29CellPutProfilePath)
+const seq29CellPutProfileSha256 = createHash('sha256')
+  .update(seq29CellPutProfileBytes).digest('hex')
+const seq29AppArtifactBytes = new TextEncoder().encode(JSON.stringify({
+  schema: 'peerit-app-artifact-v1',
+  releaseSequence: 29,
+  peeritSeedBootstrap: '/peerit-seed-bootstrap-v1.json',
+  peeritSeedBootstrapSha256: seed29Sha256,
+  peeritSeedDiscoveryAuthorityPublicKey: seed28Authority.pubHex,
+  peeritSeedBootstrapReleaseSequence: 29,
+  peeritLimitedPublicInboxBootstrap: '/peerit-limited-public-inbox-bootstrap-v1.json',
+  peeritLimitedPublicInboxBootstrapSha256: publicInboxSha256,
+  peeritLimitedPublicInboxBootstrapAuthorityPublicKey:
+    publicInbox.payload.authorityPublicKey,
+  peeritLimitedPublicInboxBootstrapReleaseSequence: 29,
+  files: {
+    'peerit-limited-public-inbox-bootstrap-v1.json': publicInboxSha256,
+    'js/substrate/public-inbox-boot-coordinator.mjs': seq29CoordinatorSha256,
+    [seq29CellPutProfilePath.slice(1)]: seq29CellPutProfileSha256
+  }
+}) + '\n')
+seq29Assets.set(PEERIT_BROWSER_RUNTIME_ASSET_PATHS.appArtifact,
+  seq29AppArtifactBytes)
+seq29Assets.set('/peerit-seed-bootstrap-v1.json', seed29Bytes)
+seq29Assets.set('/peerit-limited-public-inbox-bootstrap-v1.json',
+  publicInboxBytes)
+const authority29 = await assemblePeeritBrowserRuntimeAuthorityNodeTestV1(
+  signedInputs(seq29Assets, {
+    releaseSequence: 29n,
+    recommendedBootstrapHashes: [hashPeeritBootstrapV1(seed29Bytes)]
+  }))
+const assembled29 = getVerifiedPeeritBrowserRuntimeAssembly(authority29)
+assert.equal(assembled29.limitedCellGet, null,
+  'sequence 29 uses the full authenticated control rather than the retired limited GET surface')
+assert.equal(typeof assembled29.control.createDescribeGetRequest, 'function',
+  'sequence 29 full control discovers current descriptor heads without a limited asset')
+assert.equal(typeof assembled29.control.verifyDescriptorBytes, 'function',
+  'sequence 29 full control authenticates current descriptor bytes')
+assert.equal(typeof assembled29.control.createGetCellRequest, 'function',
+  'sequence 29 full control carries the required CELL.GET request constructor')
+assert.equal(typeof assembled29.control.openVerifiedCellGetResult, 'function',
+  'sequence 29 full control carries the required authenticated CELL.GET opener')
+assert.equal(assembled29.validatorInstantiationAuthorized, false,
+  'general production validator construction remains unavailable')
+assert.equal(assembled29.seq29ValidationOnlyValidatorInstantiationAuthorized, true)
+assert.equal(assembled29.seq29ValidationOnlyProfileValidator.authorityClass,
+  'PEERIT_SEQ29_AUTHENTICATED_VALIDATION_ONLY_V1')
+assert.equal(assembled29.seq29ValidationOnlyProfileValidator.productionValidator, false)
+assert.equal(
+  assembled29.seq29ValidationOnlyProfileValidator.productionTrustedExternalAuthority,
+  false)
+assert.equal(assembled29.seq29ValidationOnlyProfileValidator.signatureVerificationRequired, true)
+assert.equal(assembled29.seq29ValidationOnlyProfileValidator.contextualValidationPerformed, false)
+assert.equal(assembled29.seq29ValidationOnlyProfileValidator.contextualAcceptanceAuthority,
+  'peerit-seq29-public-inbox-readback-v1')
+assert.equal(typeof assembled29.runtimeClock.unixMillis, 'function')
+const retainedPublicInbox = getVerifiedPeeritBrowserPublicInboxBootstrapV1(
+  authority29)
+assert.deepEqual(retainedPublicInbox.appArtifactBytes, seq29AppArtifactBytes)
+assert.deepEqual(retainedPublicInbox.bootstrapBytes, publicInboxBytes)
+assert.deepEqual(retainedPublicInbox.verification, {
+  authorityPublicKey: publicInbox.payload.authorityPublicKey,
+  releaseSequence: 29,
+  expectedArtifactHash: publicInboxSha256,
+  coordinatorSha256: seq29CoordinatorSha256,
+  limitedCellPutReleaseSequence: 28,
+  limitedCellPutProfileSha256: seq29CellPutProfileSha256
+})
+retainedPublicInbox.appArtifactBytes.fill(0)
+retainedPublicInbox.bootstrapBytes.fill(0)
+assert.deepEqual(
+  getVerifiedPeeritBrowserPublicInboxBootstrapV1(authority29).appArtifactBytes,
+  seq29AppArtifactBytes,
+  'returned app bytes cannot mutate the runtime-owned activation binding')
+assert.deepEqual(
+  getVerifiedPeeritBrowserPublicInboxBootstrapV1(authority29).bootstrapBytes,
+  publicInboxBytes,
+  'returned bootstrap bytes cannot mutate the runtime-owned activation binding')
+assert.throws(() => assembled29.seq29ValidationOnlyProfileValidator.validate(
+  'WebAssetManifestV1', canonicalVector),
+error => error.code === 'PEERIT_SEQ29_PROFILE_VALIDATOR_SCOPE_INVALID',
+'the runtime-owned validator is closed to the two public INBOX record schemas')
+const seq29ProtocolVector = JSON.parse(fs.readFileSync(path.join(
+  root, 'test/fixtures/peerit-seq29-limited-public-test-v1/positive-protocol-vector.json'),
+'utf8'))
+const unsignedAnnouncement = new Uint8Array(Buffer.from(
+  seq29ProtocolVector.announcement.canonicalHex, 'hex'))
+unsignedAnnouncement[unsignedAnnouncement.byteLength - 1] ^= 1
+assert.throws(() => assembled29.seq29ValidationOnlyProfileValidator.validate(
+  'PeeritAnnouncementV1', unsignedAnnouncement),
+error => error.code === 'INVALID_PROFILE_SIGNATURE',
+'canonical announcement bytes without a valid author signature fail closed')
+await assert.rejects(createPeeritSeq29PublicInboxBootCoordinatorV1({
+  runtimeAuthority: authority29,
+  runtimeAppBinding: assembled29,
+  profileValidator: assembled29.seq29ValidationOnlyProfileValidator
+}), error => error.code === 'PEERIT_SEQ29_RUNTIME_AUTHORITY_INJECTION',
+'callers cannot replace even the exact runtime-owned validator object')
+await assert.rejects(createPeeritSeq29PublicInboxBootCoordinatorV1({
+  runtimeAuthority: authority29,
+  runtimeAppBinding: assembled29,
+  relayEndpoints: []
+}), error => error.code === 'PEERIT_SEQ29_RUNTIME_AUTHORITY_INJECTION',
+'callers cannot route the coordinator through supplied endpoint handles')
+
+for (const rollbackSequence of [27]) {
   const rollbackPayload = JSON.parse(JSON.stringify(seed28Value.payload))
   rollbackPayload.releaseSequence = rollbackSequence
   const rollbackArtifact = await createPeeritSeedBootstrapV1(

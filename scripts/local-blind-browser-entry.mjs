@@ -102,18 +102,20 @@ async function exactFetchJson (path, maximumBytes = 1024 * 1024) {
 }
 
 async function verifiedHiveClient () {
-  const [artifactBytes, manifestBytes, chromiumEvidenceBytes, crossHostEvidenceBytes, authority] = await Promise.all([
+  const [artifactBytes, manifestBytes, chromiumEvidenceBytes, crossHostEvidenceBytes, authorityBytes] = await Promise.all([
     exactFetchBytes(VENDOR_ARTIFACT),
     exactFetchBytes(`${VENDOR_ROOT}/blind-client-control-v1.manifest.cenc`),
     exactFetchBytes(`${VENDOR_ROOT}/blind-client-control-v1.chromium-evidence.json`),
     exactFetchBytes(`${VENDOR_ROOT}/blind-client-control-v1.cross-host-evidence.json`),
-    exactFetchJson(`${VENDOR_ROOT}/authority.json`)
+    exactFetchBytes(`${VENDOR_ROOT}/authority.json`)
   ])
+  const authority = JSON.parse(new TextDecoder().decode(authorityBytes))
   const verified = verifyBlindClientBrowserReleaseV1({
     artifactBytes,
     manifestBytes,
     chromiumEvidenceBytes,
-    crossHostEvidenceBytes
+    crossHostEvidenceBytes,
+    authorityBytes
   })
   const snapshot = Object.freeze({
     artifactHash: hex(verified.artifactHash),

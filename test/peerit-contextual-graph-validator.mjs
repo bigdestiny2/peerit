@@ -710,6 +710,21 @@ await test('custody reconstruction authenticates exact AAD, recipient, shares, k
     () => authority.recoverCustodyEnvelope(bytes, [x25519Pair(201).privateKey, fixture.custodians[1].privateKey]),
     error => error.code === 'CUSTODY_WRONG_RECIPIENT'
   )
+
+  for (const encoded of [
+    'e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800',
+    '5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157'
+  ]) {
+    const lowOrder = structuredClone(fixture.envelope)
+    lowOrder.encryptedShares[0].ephemeralPublicKey = new Uint8Array(Buffer.from(encoded, 'hex'))
+    assert.throws(
+      () => authority.recoverCustodyEnvelope(
+        catalog.PeeritCustodyEnvelopeV1.encode(lowOrder),
+        [fixture.custodians[0].privateKey, fixture.custodians[1].privateKey]
+      ),
+      error => error.code === 'CUSTODY_LOW_ORDER_PUBLIC_KEY'
+    )
+  }
 })
 
 await test('portable XChaCha20-Poly1305 bytes equal libsodium-native', () => {

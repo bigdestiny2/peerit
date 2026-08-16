@@ -2,6 +2,7 @@
 // authoring, but durable identity and journal authority are not.
 
 import assert from 'node:assert/strict'
+import { getPeeritCommittedIntentIdV1 } from '../js/data.js'
 import { createIdentityStore, memoryKv } from '../js/identity-store.js'
 import { createPeeritLocalIdentityV1 } from '../js/substrate/local-identity.js'
 import {
@@ -140,6 +141,20 @@ async function main () {
     'fresh boot does not inspect, create, or mutate the identity database')
   ok(shared.writeTransactions === 0, 'fresh boot performs no journal write')
   ok(boot.publication.authoringReady === true, 'healthy local authoring is available with zero relays')
+  ok(boot.inbox.active === false && boot.inbox.state === 'blocked-public-inbox-bootstrap',
+    'fresh runtime exposes public-INBOX discovery as fail-closed until authenticated bootstrap')
+
+  first.setInboxDiscoveryStatus({
+    state: 'public-inbox-discovery-active',
+    active: true,
+    acceptedRecords: 3,
+    rejectedEntries: 1,
+    releaseBlockers: []
+  })
+  const discovery = await first.status()
+  ok(discovery.inbox.active && discovery.inbox.acceptedRecords === 3 &&
+    discovery.inbox.rejectedEntries === 1,
+  'runtime exposes accepted and rejected authenticated public-INBOX discovery counts')
 
   first.setNetworkStatus({
     state: 'blocked-authenticated-browser-runtime',
@@ -160,7 +175,14 @@ async function main () {
     'an unbranded raw relay object cannot cross the product relay boundary')
 
   console.log('\n— first explicit action persists once, signs once, and queues locally —')
-  await first.data.createCommunity({ slug: 'localfirst', title: 'Local First' })
+  const community = await first.data.createCommunity({ slug: 'localfirst', title: 'Local First' })
+  const communityIntentId = getPeeritCommittedIntentIdV1(community)
+  ok(/^[0-9a-f]{64}$/.test(communityIntentId) &&
+    (await first.sync.journal.getIntent(communityIntentId))?.intentId === communityIntentId,
+  'the exact returned action object carries an in-memory receipt for its durable local intent')
+  ok(getPeeritCommittedIntentIdV1({ ...community }) == null &&
+    !JSON.stringify(community).includes(communityIntentId),
+  'the exact-intent receipt is neither forgeable by copying nor serialized with product data')
   const originalWriter = first.identity.me().pubkey
   ok(/^[0-9a-f]{64}$/.test(originalWriter), 'first action activates one Ed25519 writer')
   const storedIdentity = await backing.base.get('identity:v1')

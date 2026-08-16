@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash, createPrivateKey, createPublicKey } from 'node:crypto'
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -19,6 +20,8 @@ import {
   dirtyReleaseStatus,
   filterReleaseDirtyLines,
   inspectReleaseGitStatus,
+  parseScopedSignCommandV1,
+  PEERIT_SEQ29_SCOPED_SIGN_COMMAND_V1,
   releaseInputClosure,
   runReadonlyLivePreflights,
   validatePendingPublishEvidence,
@@ -82,6 +85,23 @@ function copyFixture () {
 }
 
 async function main () {
+  assert.deepEqual(parseScopedSignCommandV1(
+    PEERIT_SEQ29_SCOPED_SIGN_COMMAND_V1), {
+    command: 'keyvault',
+    args: [
+      'exec', '--only', 'peerit/release/signing-seed', '--',
+      'npm', 'run', 'release:sign'
+    ]
+  })
+  for (const command of [
+    `${PEERIT_SEQ29_SCOPED_SIGN_COMMAND_V1}; true`,
+    'keyvault exec -- npm run release:sign',
+    'keyvault exec --only peerit/release/signing-seed -- npm run release:sign --silent'
+  ]) {
+    assert.throws(() => parseScopedSignCommandV1(command),
+      /exact scoped Keyvault release signer/)
+  }
+
   console.log('— live publish bypasses fail closed —')
   for (const candidate of [
     { publish: true, skipWeb: true, allowDirty: false, skipTests: false },
@@ -108,6 +128,7 @@ async function main () {
     'js/crypto.js',
     'config/seed-snapshot.json',
     'deploy/web-release.json',
+    'deploy/canary-decision-peerit-seq29-limited-public-inbox-DRAFT.json',
     'deploy/CAPACITY.md',
     'docs/PEERIT-BLIND-SUBSTRATE-DELIVERY-MAP.md',
     'docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md',
@@ -260,7 +281,34 @@ async function main () {
       '--drive-key', DRIVE_KEY,
       '--report', '.deploy/web-report.json'
     ]
-    runNode(fixture, ['scripts/web-release.mjs', '--prepare', ...common])
+    const hostileBin = join(parent, 'hostile-bin')
+    const pathMarker = join(parent, 'path-node-invoked')
+    const preloadMarker = join(parent, 'node-options-inherited')
+    const preload = join(parent, 'hostile-preload.mjs')
+    mkdirSync(hostileBin)
+    writeFileSync(join(hostileBin, 'node'), [
+      '#!/bin/sh',
+      `/usr/bin/touch ${JSON.stringify(pathMarker)}`,
+      'exit 97',
+      ''
+    ].join('\n'))
+    chmodSync(join(hostileBin, 'node'), 0o755)
+    writeFileSync(preload, [
+      "import { writeFileSync } from 'node:fs'",
+      `if (String(process.argv[1] || '').endsWith('/build-web.mjs')) writeFileSync(${JSON.stringify(preloadMarker)}, 'inherited')`,
+      ''
+    ].join('\n'))
+    runNode(fixture, ['scripts/web-release.mjs', '--prepare', ...common], {
+      env: {
+        PATH: hostileBin,
+        NODE_OPTIONS: `--import=${preload}`,
+        NODE_PATH: parent
+      }
+    })
+    assert.equal(existsSync(pathMarker), false,
+      'web prepare executes the exact current runtime rather than PATH node')
+    assert.equal(existsSync(preloadMarker), false,
+      'web prepare strips NODE_OPTIONS and NODE_PATH from the fixed build child')
 
     const manifestPath = join(fixture, 'web', 'asset-manifest.json')
     const signaturePath = join(fixture, 'web', 'asset-manifest.sig')

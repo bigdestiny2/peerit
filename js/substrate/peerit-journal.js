@@ -52,6 +52,11 @@ const TARGET_STATES = Object.freeze([
 ])
 const HEX64 = /^[0-9a-f]{64}$/
 const DISCOVERY_FLOOR_PREFIX = 'discovery-floor:v1:'
+const SEQ29_PUBLIC_INBOX_BOOTSTRAP_FLOOR_PREFIX = 'seq29-public-inbox-bootstrap-floor:v1:'
+const SEQ29_PUBLIC_INBOX_STATE_PREFIX = 'seq29-public-inbox-state:v1:'
+const SEQ29_PUBLICATION_AUTHOR_HEAD_PREFIX = 'seq29-publication-author-head:v1:'
+const SEQ29_PUBLICATION_INTENT_PREFIX = 'seq29-publication-intent:v1:'
+const SEQ29_PUBLIC_INBOX_RELEASE_SEQUENCE = 29
 
 function clone (value) {
   if (value == null) return value
@@ -223,6 +228,275 @@ function discoveredRecordWins (incoming, current) {
 
 function discoveryFloorKey (sourceId) {
   return DISCOVERY_FLOOR_PREFIX + validateIntentId(sourceId, 'discovery sourceId')
+}
+
+function seq29PublicInboxHex (value, field) {
+  const normalized = String(value || '')
+  if (!HEX64.test(normalized)) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', `${field} must be 32-byte lowercase hex.`)
+  }
+  return normalized
+}
+
+function seq29PublicInboxDecimal (value, field) {
+  let parsed
+  try { parsed = typeof value === 'bigint' ? value : BigInt(value) } catch (cause) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', `${field} must be an unsigned integer.`, cause)
+  }
+  if (parsed < 0n || parsed > ((1n << 64n) - 1n)) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', `${field} must fit unsigned 64-bit storage.`)
+  }
+  return parsed
+}
+
+function seq29PublicInboxRelayId (value) {
+  const relayId = String(value || '')
+  if (!/^[a-z][a-z0-9-]{0,31}$/.test(relayId)) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'Seq29 public INBOX relayId is invalid.')
+  }
+  return relayId
+}
+
+function seq29PublicInboxBootstrapFloorKey (authorityPublicKey) {
+  return SEQ29_PUBLIC_INBOX_BOOTSTRAP_FLOOR_PREFIX +
+    seq29PublicInboxHex(authorityPublicKey, 'Seq29 public INBOX authorityPublicKey')
+}
+
+function seq29PublicInboxStateKey (authorityPublicKey, completeSignedWrapperHash) {
+  return SEQ29_PUBLIC_INBOX_STATE_PREFIX +
+    seq29PublicInboxHex(authorityPublicKey, 'Seq29 public INBOX authorityPublicKey') + ':' +
+    seq29PublicInboxHex(completeSignedWrapperHash, 'Seq29 public INBOX completeSignedWrapperHash')
+}
+
+function normalizeSeq29PublicInboxBootstrap (input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) ||
+      input.releaseSequence !== SEQ29_PUBLIC_INBOX_RELEASE_SEQUENCE) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'Seq29 public INBOX bootstrap identity is invalid.')
+  }
+  const authorityPublicKey = seq29PublicInboxHex(
+    input.authorityPublicKey, 'Seq29 public INBOX authorityPublicKey')
+  const completeSignedWrapperHash = seq29PublicInboxHex(
+    input.completeSignedWrapperHash, 'Seq29 public INBOX completeSignedWrapperHash')
+  const bootstrapSequence = seq29PublicInboxDecimal(
+    input.bootstrapSequence, 'Seq29 public INBOX bootstrapSequence')
+  if (!Array.isArray(input.relayIds) || input.relayIds.length !== 2) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'Seq29 public INBOX bootstrap must bind exactly two relays.')
+  }
+  const relayIds = input.relayIds.map(seq29PublicInboxRelayId).sort()
+  if (relayIds[0] === relayIds[1]) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'Seq29 public INBOX relay IDs must be distinct.')
+  }
+  return Object.freeze({
+    releaseSequence: SEQ29_PUBLIC_INBOX_RELEASE_SEQUENCE,
+    authorityPublicKey,
+    completeSignedWrapperHash,
+    bootstrapSequence,
+    relayIds: Object.freeze(relayIds)
+  })
+}
+
+function validateSeq29PublicInboxBootstrapFloor (value, authorityPublicKey) {
+  if (!value || value.schema !== 'PeeritSeq29PublicInboxBootstrapFloorV1' || value.version !== 1 ||
+      value.authorityPublicKey !== authorityPublicKey ||
+      !/^(0|[1-9][0-9]*)$/.test(value.highestAcceptedBootstrapSequence || '') ||
+      !HEX64.test(value.completeSignedWrapperHash || '')) {
+    throw journalError('PEERIT_JOURNAL_CORRUPT', 'Seq29 public INBOX bootstrap floor is corrupt.')
+  }
+  return value
+}
+
+function validateSeq29PublicInboxState (value, bootstrap) {
+  if (!value || value.schema !== 'PeeritSeq29PublicInboxStateV1' || value.version !== 1 ||
+      value.releaseSequence !== SEQ29_PUBLIC_INBOX_RELEASE_SEQUENCE ||
+      value.authorityPublicKey !== bootstrap.authorityPublicKey ||
+      value.completeSignedWrapperHash !== bootstrap.completeSignedWrapperHash ||
+      value.bootstrapSequence !== String(bootstrap.bootstrapSequence) ||
+      !Array.isArray(value.relays) || value.relays.length !== 2) {
+    throw journalError('PEERIT_JOURNAL_CORRUPT', 'Seq29 public INBOX append-floor state is corrupt.')
+  }
+  const relayIds = []
+  for (const relay of value.relays) {
+    const relayId = seq29PublicInboxRelayId(relay && relay.relayId)
+    if (!/^(0|[1-9][0-9]*)$/.test(relay.appendRevision || '') ||
+        !/^(0|[1-9][0-9]*)$/.test(relay.previousAppendRevision || '') ||
+        (relay.observationHash != null && !HEX64.test(relay.observationHash))) {
+      throw journalError('PEERIT_JOURNAL_CORRUPT', 'Seq29 public INBOX relay append floor is corrupt.')
+    }
+    if (BigInt(relay.previousAppendRevision) > BigInt(relay.appendRevision) ||
+        (BigInt(relay.appendRevision) === 0n && relay.observationHash != null)) {
+      throw journalError('PEERIT_JOURNAL_CORRUPT', 'Seq29 public INBOX relay transition is inconsistent.')
+    }
+    relayIds.push(relayId)
+  }
+  relayIds.sort()
+  if (relayIds[0] === relayIds[1] ||
+      relayIds.some((relayId, index) => relayId !== bootstrap.relayIds[index])) {
+    throw journalError('PEERIT_JOURNAL_CORRUPT', 'Seq29 public INBOX relay set differs from its signed bootstrap.')
+  }
+  return clone(value)
+}
+
+function seq29PublicInboxBootstrapFloorValue (floor) {
+  return Object.freeze({
+    schema: 'PeeritLimitedPublicInboxBootstrapFloorV1',
+    version: 1,
+    highestAcceptedBootstrapSequence: floor.highestAcceptedBootstrapSequence,
+    completeSignedWrapperHash: floor.completeSignedWrapperHash
+  })
+}
+
+function seq29PublicationScope (input) {
+  const bootstrap = normalizeSeq29PublicInboxBootstrap(input)
+  const authorPublicKey = seq29PublicInboxHex(
+    input.authorPublicKey, 'Seq29 publication authorPublicKey')
+  return Object.freeze({ ...bootstrap, authorPublicKey })
+}
+
+function seq29PublicationAuthorHeadKey (scope) {
+  return SEQ29_PUBLICATION_AUTHOR_HEAD_PREFIX + scope.authorityPublicKey + ':' +
+    scope.completeSignedWrapperHash + ':' + scope.authorPublicKey
+}
+
+function seq29PublicationIntentKey (scope, logicalHash) {
+  return SEQ29_PUBLICATION_INTENT_PREFIX + scope.authorityPublicKey + ':' +
+    scope.completeSignedWrapperHash + ':' + scope.authorPublicKey + ':' +
+    seq29PublicInboxHex(logicalHash, 'Seq29 publication logicalHash')
+}
+
+function validateSeq29PublicationHead (value, scope) {
+  if (value == null) {
+    return Object.freeze({
+      nextAuthorSequence: 0n,
+      previousAuthorRecordId: null
+    })
+  }
+  if (value.schema !== 'PeeritSeq29PublicationAuthorHeadV1' || value.version !== 1 ||
+      value.authorityPublicKey !== scope.authorityPublicKey ||
+      value.completeSignedWrapperHash !== scope.completeSignedWrapperHash ||
+      value.authorPublicKey !== scope.authorPublicKey ||
+      !/^(0|[1-9][0-9]*)$/.test(value.nextAuthorSequence || '') ||
+      (value.previousAuthorRecordId != null && !HEX64.test(value.previousAuthorRecordId))) {
+    throw journalError('PEERIT_JOURNAL_CORRUPT', 'Seq29 publication author head is corrupt.')
+  }
+  const nextAuthorSequence = BigInt(value.nextAuthorSequence)
+  if ((nextAuthorSequence === 0n) !== (value.previousAuthorRecordId == null)) {
+    throw journalError('PEERIT_JOURNAL_CORRUPT', 'Seq29 publication author head continuity is corrupt.')
+  }
+  return Object.freeze({
+    nextAuthorSequence,
+    previousAuthorRecordId: value.previousAuthorRecordId
+  })
+}
+
+function seq29PublicationBytes (value, field, minimum, maximum) {
+  const output = bytesCopy(value, field)
+  if (output.byteLength < minimum || output.byteLength > maximum) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', `${field} is outside its byte bound.`)
+  }
+  return output
+}
+
+function normalizeSeq29PreparedRelay (value, relayIds, field) {
+  const relayId = seq29PublicInboxRelayId(value && value.relayId)
+  if (!relayIds.includes(relayId)) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', `${field} relay is absent from the signed bootstrap.`)
+  }
+  if (!value.request || typeof value.request !== 'object' || Array.isArray(value.request)) {
+    throw journalError('PEERIT_JOURNAL_BAD_INPUT', `${field} exact APPEND request is required.`)
+  }
+  return {
+    relayId,
+    frame: seq29PublicationBytes(value.frame, `${field} frame`, 4096, 4096),
+    request: clone(value.request),
+    requestBytes: seq29PublicationBytes(
+      value.requestBytes, `${field} requestBytes`, 1, 32 * 1024),
+    requestCommitment: seq29PublicationBytes(
+      value.requestCommitment, `${field} requestCommitment`, 32, 32),
+    stage: 'prepared',
+    attemptToken: null,
+    leaseUntil: 0,
+    attempts: 0,
+    result: null,
+    lastError: null,
+    updatedAt: 0
+  }
+}
+
+function seq29PublicationValueEqual (left, right) {
+  if (left instanceof Uint8Array || right instanceof Uint8Array) {
+    return left instanceof Uint8Array && right instanceof Uint8Array && bytesEqual(left, right)
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length &&
+      left.every((value, index) => seq29PublicationValueEqual(value, right[index]))
+  }
+  if (left && right && typeof left === 'object' && typeof right === 'object') {
+    const leftKeys = Object.keys(left).sort()
+    const rightKeys = Object.keys(right).sort()
+    return leftKeys.length === rightKeys.length &&
+      leftKeys.every((key, index) => key === rightKeys[index] &&
+        seq29PublicationValueEqual(left[key], right[key]))
+  }
+  return Object.is(left, right)
+}
+
+function seq29PreparedRelayConflict (left, right) {
+  if (left.relayId !== right.relayId) return 'relayId'
+  if (!bytesEqual(left.frame, right.frame)) return 'frame'
+  if (!seq29PublicationValueEqual(left.request, right.request)) return 'request'
+  if (!bytesEqual(left.requestBytes, right.requestBytes)) return 'requestBytes'
+  if (!bytesEqual(left.requestCommitment, right.requestCommitment)) return 'requestCommitment'
+  return null
+}
+
+function validateSeq29PublicationIntent (value, scope = null) {
+  if (!value || value.schema !== 'PeeritSeq29PublicationIntentV1' || value.version !== 1 ||
+      value.releaseSequence !== SEQ29_PUBLIC_INBOX_RELEASE_SEQUENCE ||
+      !HEX64.test(value.authorityPublicKey || '') ||
+      !HEX64.test(value.completeSignedWrapperHash || '') ||
+      !HEX64.test(value.authorPublicKey || '') || !HEX64.test(value.logicalHash || '') ||
+      !HEX64.test(value.authorRecordId || '') ||
+      !/^(0|[1-9][0-9]*)$/.test(value.authorSequence || '') ||
+      (value.previousAuthorRecordId != null && !HEX64.test(value.previousAuthorRecordId)) ||
+      !Array.isArray(value.relays) || value.relays.length !== 2 ||
+      !(value.announcementBytes instanceof Uint8Array) ||
+      value.announcementBytes.byteLength < 1 || value.announcementBytes.byteLength > 12288 ||
+      !Number.isSafeInteger(value.createdAt) || value.createdAt < 0 ||
+      !Number.isSafeInteger(value.updatedAt) || value.updatedAt < 0 ||
+      !Number.isSafeInteger(value.completedAt) || value.completedAt < 0) {
+    throw journalError('PEERIT_JOURNAL_CORRUPT', 'Seq29 publication intent is corrupt.')
+  }
+  if (scope && (value.authorityPublicKey !== scope.authorityPublicKey ||
+      value.completeSignedWrapperHash !== scope.completeSignedWrapperHash ||
+      value.authorPublicKey !== scope.authorPublicKey)) {
+    throw journalError('PEERIT_JOURNAL_CORRUPT', 'Seq29 publication intent crossed its authority scope.')
+  }
+  const sequence = BigInt(value.authorSequence)
+  if ((sequence === 0n) !== (value.previousAuthorRecordId == null)) {
+    throw journalError('PEERIT_JOURNAL_CORRUPT', 'Seq29 publication author continuity is corrupt.')
+  }
+  const seen = new Set()
+  for (const relay of value.relays) {
+    const relayId = seq29PublicInboxRelayId(relay && relay.relayId)
+    if (seen.has(relayId) || !['prepared', 'sending', 'reconciling', 'pending-unknown', 'succeeded'].includes(relay.stage) ||
+        !(relay.frame instanceof Uint8Array) || relay.frame.byteLength !== 4096 ||
+        !relay.request || typeof relay.request !== 'object' ||
+        !(relay.requestBytes instanceof Uint8Array) || relay.requestBytes.byteLength < 1 ||
+        !(relay.requestCommitment instanceof Uint8Array) || relay.requestCommitment.byteLength !== 32 ||
+        (relay.attemptToken != null && typeof relay.attemptToken !== 'string') ||
+        !Number.isSafeInteger(relay.leaseUntil) || relay.leaseUntil < 0 ||
+        !Number.isSafeInteger(relay.attempts) || relay.attempts < 0) {
+      throw journalError('PEERIT_JOURNAL_CORRUPT', 'Seq29 publication relay intent is corrupt.')
+    }
+    if ((relay.stage === 'succeeded') !== (relay.result != null)) {
+      throw journalError('PEERIT_JOURNAL_CORRUPT', 'Seq29 publication relay outcome is inconsistent.')
+    }
+    seen.add(relayId)
+  }
+  if ((value.completedAt > 0) !== value.relays.every(relay => relay.stage === 'succeeded')) {
+    throw journalError('PEERIT_JOURNAL_CORRUPT', 'Seq29 publication completion is inconsistent.')
+  }
+  return clone(value)
 }
 
 function normalizedInnerIntent (input, limits) {
@@ -995,6 +1269,535 @@ export class PeeritJournal {
       meta.updatedAt = now
       await tx.put(JOURNAL_STORES.META, meta)
       return { duplicate: false, compacted: false, queued: true, viewRevision: meta.viewRevision }
+    })
+  }
+
+  // Persists the signed Seq29 bootstrap before any public-INBOX transport is
+  // attempted. The authority-wide row is the monotonic anti-rollback/fork
+  // floor; append floors live in a second row keyed by that exact authority and
+  // complete signed-wrapper hash. Both rows share the same backend transaction.
+  async acceptSeq29PublicInboxBootstrap (input) {
+    const bootstrap = normalizeSeq29PublicInboxBootstrap(input)
+    const floorKey = seq29PublicInboxBootstrapFloorKey(bootstrap.authorityPublicKey)
+    const stateKey = seq29PublicInboxStateKey(
+      bootstrap.authorityPublicKey, bootstrap.completeSignedWrapperHash)
+    const now = Number.isSafeInteger(input.observedAt) && input.observedAt >= 0
+      ? input.observedAt
+      : this.clock()
+    return this._transaction([JOURNAL_STORES.META], 'readwrite', 'Seq29 public INBOX bootstrap commit', async tx => {
+      const meta = validateMeta(await tx.get(JOURNAL_STORES.META, META_KEY))
+      const rawFloor = await tx.get(JOURNAL_STORES.META, floorKey)
+      let duplicate = false
+      let previousStateKey = null
+      if (rawFloor) {
+        const floor = validateSeq29PublicInboxBootstrapFloor(
+          rawFloor, bootstrap.authorityPublicKey)
+        previousStateKey = seq29PublicInboxStateKey(
+          bootstrap.authorityPublicKey, floor.completeSignedWrapperHash)
+        const previousSequence = BigInt(floor.highestAcceptedBootstrapSequence)
+        if (bootstrap.bootstrapSequence < previousSequence) {
+          throw journalError('PEERIT_JOURNAL_SEQ29_BOOTSTRAP_ROLLBACK',
+            'Seq29 public INBOX bootstrap is below the durable authority floor.')
+        }
+        if (bootstrap.bootstrapSequence === previousSequence &&
+            bootstrap.completeSignedWrapperHash !== floor.completeSignedWrapperHash) {
+          throw journalError('PEERIT_JOURNAL_SEQ29_BOOTSTRAP_FORK',
+            'Seq29 public INBOX bootstrap conflicts at the durable authority sequence.')
+        }
+        duplicate = bootstrap.bootstrapSequence === previousSequence
+      }
+
+      const rawState = await tx.get(JOURNAL_STORES.META, stateKey)
+      let state
+      if (rawState) {
+        state = validateSeq29PublicInboxState(rawState, bootstrap)
+      } else {
+        if (duplicate) {
+          throw journalError('PEERIT_JOURNAL_CORRUPT',
+            'Seq29 public INBOX bootstrap floor has no exact append-floor state.')
+        }
+        state = {
+          key: stateKey,
+          schema: 'PeeritSeq29PublicInboxStateV1',
+          version: 1,
+          releaseSequence: SEQ29_PUBLIC_INBOX_RELEASE_SEQUENCE,
+          authorityPublicKey: bootstrap.authorityPublicKey,
+          completeSignedWrapperHash: bootstrap.completeSignedWrapperHash,
+          bootstrapSequence: String(bootstrap.bootstrapSequence),
+          relays: bootstrap.relayIds.map(relayId => ({
+            relayId,
+            previousAppendRevision: '0',
+            appendRevision: '0',
+            observationHash: null
+          })),
+          observedAt: now,
+          updatedAt: now
+        }
+        await tx.put(JOURNAL_STORES.META, state)
+      }
+
+      if (!duplicate) {
+        await tx.put(JOURNAL_STORES.META, {
+          key: floorKey,
+          schema: 'PeeritSeq29PublicInboxBootstrapFloorV1',
+          version: 1,
+          authorityPublicKey: bootstrap.authorityPublicKey,
+          highestAcceptedBootstrapSequence: String(bootstrap.bootstrapSequence),
+          completeSignedWrapperHash: bootstrap.completeSignedWrapperHash,
+          observedAt: now,
+          updatedAt: now
+        })
+        if (previousStateKey != null && previousStateKey !== stateKey) {
+          await tx.delete(JOURNAL_STORES.META, previousStateKey)
+        }
+        meta.revision++
+        if (!meta.createdAt) meta.createdAt = now
+        meta.updatedAt = Math.max(meta.updatedAt, now)
+        await tx.put(JOURNAL_STORES.META, meta)
+      }
+      return Object.freeze({
+        duplicate,
+        bootstrapFloor: Object.freeze({
+          schema: 'PeeritLimitedPublicInboxBootstrapFloorV1',
+          version: 1,
+          highestAcceptedBootstrapSequence: String(bootstrap.bootstrapSequence),
+          completeSignedWrapperHash: bootstrap.completeSignedWrapperHash
+        }),
+        appendFloors: Object.freeze(Object.fromEntries(state.relays.map(relay =>
+          [relay.relayId, BigInt(relay.appendRevision)])))
+      })
+    })
+  }
+
+  async getSeq29PublicInboxBootstrapFloor (authorityPublicKey) {
+    const normalizedAuthority = seq29PublicInboxHex(
+      authorityPublicKey, 'Seq29 public INBOX authorityPublicKey')
+    const key = seq29PublicInboxBootstrapFloorKey(normalizedAuthority)
+    return this._transaction([JOURNAL_STORES.META], 'readonly', 'Seq29 public INBOX bootstrap floor read', async tx => {
+      if (!tx) return null
+      const raw = await tx.get(JOURNAL_STORES.META, key)
+      if (!raw) return null
+      return seq29PublicInboxBootstrapFloorValue(
+        validateSeq29PublicInboxBootstrapFloor(raw, normalizedAuthority))
+    })
+  }
+
+  async getSeq29PublicInboxAppendFloors (input) {
+    const bootstrap = normalizeSeq29PublicInboxBootstrap(input)
+    const floorKey = seq29PublicInboxBootstrapFloorKey(bootstrap.authorityPublicKey)
+    const stateKey = seq29PublicInboxStateKey(
+      bootstrap.authorityPublicKey, bootstrap.completeSignedWrapperHash)
+    return this._transaction([JOURNAL_STORES.META], 'readonly', 'Seq29 public INBOX append-floor read', async tx => {
+      if (!tx) return null
+      const rawFloor = await tx.get(JOURNAL_STORES.META, floorKey)
+      if (!rawFloor) return null
+      const floor = validateSeq29PublicInboxBootstrapFloor(
+        rawFloor, bootstrap.authorityPublicKey)
+      const sequence = BigInt(floor.highestAcceptedBootstrapSequence)
+      if (bootstrap.bootstrapSequence < sequence) {
+        throw journalError('PEERIT_JOURNAL_SEQ29_BOOTSTRAP_ROLLBACK',
+          'Seq29 public INBOX bootstrap is below the durable authority floor.')
+      }
+      if (bootstrap.bootstrapSequence !== sequence ||
+          bootstrap.completeSignedWrapperHash !== floor.completeSignedWrapperHash) {
+        throw journalError('PEERIT_JOURNAL_SEQ29_BOOTSTRAP_FORK',
+          'Seq29 public INBOX bootstrap differs from the exact durable authority state.')
+      }
+      const state = validateSeq29PublicInboxState(
+        await tx.get(JOURNAL_STORES.META, stateKey), bootstrap)
+      return Object.freeze(Object.fromEntries(state.relays.map(relay =>
+        [relay.relayId, BigInt(relay.appendRevision)])))
+    })
+  }
+
+  async getSeq29PublicationAuthorHead (input) {
+    const scope = seq29PublicationScope(input)
+    return this._transaction([JOURNAL_STORES.META], 'readonly', 'Seq29 publication author-head read', async tx => {
+      if (!tx) return Object.freeze({ nextAuthorSequence: 0n, previousAuthorRecordId: null })
+      return validateSeq29PublicationHead(
+        await tx.get(JOURNAL_STORES.META, seq29PublicationAuthorHeadKey(scope)), scope)
+    })
+  }
+
+  async getSeq29PublicationIntent (input) {
+    const scope = seq29PublicationScope(input)
+    const key = seq29PublicationIntentKey(scope, input.logicalHash)
+    return this._transaction([JOURNAL_STORES.META], 'readonly', 'Seq29 publication intent read', async tx => {
+      if (!tx) return null
+      const value = await tx.get(JOURNAL_STORES.META, key)
+      return value == null ? null : validateSeq29PublicationIntent(value, scope)
+    })
+  }
+
+  async listSeq29PublicationIntents (input) {
+    const scope = seq29PublicationScope(input)
+    const prefix = SEQ29_PUBLICATION_INTENT_PREFIX + scope.authorityPublicKey + ':' +
+      scope.completeSignedWrapperHash + ':' + scope.authorPublicKey + ':'
+    const limit = Math.max(1, Math.min(64, Number(input.limit) || 32))
+    return this._transaction([JOURNAL_STORES.META], 'readonly', 'Seq29 publication intent scan', async tx => {
+      if (!tx) return []
+      const rows = await tx.scan(JOURNAL_STORES.META, { prefix, limit: limit + 1 })
+      if (rows.length > limit) {
+        throw journalError('PEERIT_JOURNAL_LIMIT', 'Seq29 publication recovery scan exceeds its bound.')
+      }
+      return rows.map(row => validateSeq29PublicationIntent(row.value, scope))
+    })
+  }
+
+  // The exact two APPEND frames and requests become durable in the same
+  // transaction that advances the local AuthorBind chain head. No network
+  // APPEND is permitted before this commit returns.
+  async commitSeq29PublicationIntent (input) {
+    const scope = seq29PublicationScope(input)
+    const logicalHash = seq29PublicInboxHex(input.logicalHash, 'Seq29 publication logicalHash')
+    const intentId = validateIntentId(input.intentId)
+    const authorSequence = seq29PublicInboxDecimal(
+      input.authorSequence, 'Seq29 publication authorSequence')
+    const previousAuthorRecordId = input.previousAuthorRecordId == null
+      ? null
+      : seq29PublicInboxHex(input.previousAuthorRecordId,
+        'Seq29 publication previousAuthorRecordId')
+    const authorRecordId = seq29PublicInboxHex(
+      input.authorRecordId, 'Seq29 publication authorRecordId')
+    const announcementBytes = seq29PublicationBytes(
+      input.announcementBytes, 'Seq29 publication announcementBytes', 1, 12288)
+    if (!Array.isArray(input.relays) || input.relays.length !== 2) {
+      throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'Seq29 publication requires two prepared APPEND relays.')
+    }
+    const relays = input.relays.map((value, index) => normalizeSeq29PreparedRelay(
+      value, scope.relayIds, `Seq29 publication relays[${index}]`))
+      .sort((left, right) => left.relayId.localeCompare(right.relayId))
+    if (relays[0].relayId === relays[1].relayId ||
+        relays.some((relay, index) => relay.relayId !== scope.relayIds[index])) {
+      throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'Seq29 publication relay set differs from its signed bootstrap.')
+    }
+    const key = seq29PublicationIntentKey(scope, logicalHash)
+    const headKey = seq29PublicationAuthorHeadKey(scope)
+    const floorKey = seq29PublicInboxBootstrapFloorKey(scope.authorityPublicKey)
+    const now = Number.isSafeInteger(input.createdAt) && input.createdAt >= 0
+      ? input.createdAt
+      : this.clock()
+    return this._transaction([
+      JOURNAL_STORES.META, JOURNAL_STORES.INTENTS
+    ], 'readwrite', 'Seq29 publication intent commit', async tx => {
+      const floor = validateSeq29PublicInboxBootstrapFloor(
+        await tx.get(JOURNAL_STORES.META, floorKey), scope.authorityPublicKey)
+      if (floor.completeSignedWrapperHash !== scope.completeSignedWrapperHash ||
+          BigInt(floor.highestAcceptedBootstrapSequence) !== scope.bootstrapSequence) {
+        throw journalError('PEERIT_JOURNAL_SEQ29_BOOTSTRAP_ROLLBACK',
+          'Seq29 publication is not bound to the current durable bootstrap.')
+      }
+      const authored = await tx.get(JOURNAL_STORES.INTENTS, intentId)
+      if (!authored || authored.logicalId !== logicalHash ||
+          authored.wireFormat !== PEERIT_INNER_OPERATION_BATCH_WIRE_FORMAT_V1) {
+        throw journalError('PEERIT_JOURNAL_BAD_INPUT',
+          'Seq29 publication does not name an exact ordinary authored intent.')
+      }
+      const existing = await tx.get(JOURNAL_STORES.META, key)
+      if (existing) {
+        const value = validateSeq29PublicationIntent(existing, scope)
+        const relayConflicts = value.relays.map((relay, index) =>
+          seq29PreparedRelayConflict(relay, relays[index]))
+        const relayConflict = relayConflicts.findIndex(Boolean)
+        if (value.intentId !== intentId || value.authorRecordId !== authorRecordId ||
+            !bytesEqual(value.announcementBytes, announcementBytes) ||
+            relayConflict !== -1) {
+          throw journalError('PEERIT_JOURNAL_CORRUPT',
+            `Seq29 publication logical identity conflicts with durable bytes${
+              relayConflict === -1
+                ? ''
+                : ` for ${value.relays[relayConflict].relayId} ${relayConflicts[relayConflict]}`}.`)
+        }
+        return Object.freeze({ duplicate: true, intent: value })
+      }
+      const head = validateSeq29PublicationHead(
+        await tx.get(JOURNAL_STORES.META, headKey), scope)
+      if (authorSequence !== head.nextAuthorSequence ||
+          previousAuthorRecordId !== head.previousAuthorRecordId) {
+        throw journalError('PEERIT_JOURNAL_SEQ29_AUTHOR_HEAD_STALE',
+          'Seq29 publication AuthorBind head changed before its durable commit.')
+      }
+      for (const relay of relays) relay.updatedAt = now
+      const value = {
+        key,
+        schema: 'PeeritSeq29PublicationIntentV1',
+        version: 1,
+        releaseSequence: SEQ29_PUBLIC_INBOX_RELEASE_SEQUENCE,
+        authorityPublicKey: scope.authorityPublicKey,
+        completeSignedWrapperHash: scope.completeSignedWrapperHash,
+        bootstrapSequence: String(scope.bootstrapSequence),
+        authorPublicKey: scope.authorPublicKey,
+        intentId,
+        logicalHash,
+        authorSequence: String(authorSequence),
+        previousAuthorRecordId,
+        authorRecordId,
+        announcementBytes,
+        relays,
+        createdAt: now,
+        updatedAt: now,
+        completedAt: 0
+      }
+      validateSeq29PublicationIntent(value, scope)
+      await tx.put(JOURNAL_STORES.META, value)
+      await tx.put(JOURNAL_STORES.META, {
+        key: headKey,
+        schema: 'PeeritSeq29PublicationAuthorHeadV1',
+        version: 1,
+        authorityPublicKey: scope.authorityPublicKey,
+        completeSignedWrapperHash: scope.completeSignedWrapperHash,
+        authorPublicKey: scope.authorPublicKey,
+        nextAuthorSequence: String(authorSequence + 1n),
+        previousAuthorRecordId: authorRecordId,
+        updatedAt: now
+      })
+      const meta = validateMeta(await tx.get(JOURNAL_STORES.META, META_KEY))
+      meta.revision++
+      if (!meta.createdAt) meta.createdAt = now
+      meta.updatedAt = Math.max(meta.updatedAt, now)
+      await tx.put(JOURNAL_STORES.META, meta)
+      return Object.freeze({ duplicate: false, intent: clone(value) })
+    })
+  }
+
+  async claimSeq29PublicationRelay (input) {
+    const scope = seq29PublicationScope(input)
+    const key = seq29PublicationIntentKey(scope, input.logicalHash)
+    const relayId = seq29PublicInboxRelayId(input.relayId)
+    const attemptToken = boundedString(input.attemptToken, 'Seq29 publication attemptToken', 256)
+    const now = Number.isSafeInteger(input.now) && input.now >= 0 ? input.now : this.clock()
+    const leaseUntil = Number.isSafeInteger(input.leaseUntil) && input.leaseUntil > now
+      ? input.leaseUntil
+      : now + 60_000
+    return this._transaction([JOURNAL_STORES.META], 'readwrite', 'Seq29 publication relay claim', async tx => {
+      const value = validateSeq29PublicationIntent(
+        await tx.get(JOURNAL_STORES.META, key), scope)
+      const relay = value.relays.find(row => row.relayId === relayId)
+      if (!relay) throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'Seq29 publication relay is absent.')
+      if (relay.stage === 'succeeded') return Object.freeze({ claimed: false, intent: value })
+      if (relay.attemptToken != null && relay.leaseUntil > now) {
+        return Object.freeze({ claimed: false, intent: value })
+      }
+      relay.stage = relay.stage === 'prepared' ? 'sending' : 'reconciling'
+      relay.attemptToken = attemptToken
+      relay.leaseUntil = leaseUntil
+      relay.attempts++
+      relay.updatedAt = now
+      value.updatedAt = now
+      await tx.put(JOURNAL_STORES.META, value)
+      const meta = validateMeta(await tx.get(JOURNAL_STORES.META, META_KEY))
+      meta.revision++
+      meta.updatedAt = Math.max(meta.updatedAt, now)
+      await tx.put(JOURNAL_STORES.META, meta)
+      return Object.freeze({ claimed: true, action: relay.stage, intent: clone(value) })
+    })
+  }
+
+  async markSeq29PublicationRelayAbsent (input) {
+    return this._mutateSeq29PublicationRelay(input, 'Seq29 publication authenticated absence',
+      (value, relay, now) => {
+        if (relay.stage !== 'reconciling') {
+          throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'Seq29 publication relay is not reconciling.')
+        }
+        relay.stage = 'sending'
+        relay.updatedAt = now
+        value.updatedAt = now
+      })
+  }
+
+  async completeSeq29PublicationRelay (input) {
+    return this._mutateSeq29PublicationRelay(input, 'Seq29 publication relay completion',
+      (value, relay, now) => {
+        relay.stage = 'succeeded'
+        relay.result = clone(input.result)
+        relay.attemptToken = null
+        relay.leaseUntil = 0
+        relay.lastError = null
+        relay.updatedAt = now
+        value.updatedAt = now
+        if (value.relays.every(row => row.stage === 'succeeded')) value.completedAt = now || 1
+      })
+  }
+
+  async failSeq29PublicationRelay (input) {
+    return this._mutateSeq29PublicationRelay(input, 'Seq29 publication relay ambiguous outcome',
+      (value, relay, now) => {
+        relay.stage = 'pending-unknown'
+        relay.attemptToken = null
+        relay.leaseUntil = 0
+        relay.lastError = String(input.errorCode || 'PEERIT_SEQ29_APPEND_AMBIGUOUS').slice(0, 128)
+        relay.updatedAt = now
+        value.updatedAt = now
+      })
+  }
+
+  async _mutateSeq29PublicationRelay (input, context, mutation) {
+    const scope = seq29PublicationScope(input)
+    const key = seq29PublicationIntentKey(scope, input.logicalHash)
+    const relayId = seq29PublicInboxRelayId(input.relayId)
+    const attemptToken = boundedString(input.attemptToken, 'Seq29 publication attemptToken', 256)
+    const now = Number.isSafeInteger(input.now) && input.now >= 0 ? input.now : this.clock()
+    return this._transaction([JOURNAL_STORES.META], 'readwrite', context, async tx => {
+      const value = validateSeq29PublicationIntent(
+        await tx.get(JOURNAL_STORES.META, key), scope)
+      const relay = value.relays.find(row => row.relayId === relayId)
+      if (!relay || relay.attemptToken !== attemptToken || relay.leaseUntil < now) {
+        throw journalError('PEERIT_JOURNAL_SEQ29_APPEND_CLAIM_STALE',
+          'Seq29 publication relay claim is absent or expired.')
+      }
+      mutation(value, relay, now)
+      validateSeq29PublicationIntent(value, scope)
+      await tx.put(JOURNAL_STORES.META, value)
+      const meta = validateMeta(await tx.get(JOURNAL_STORES.META, META_KEY))
+      meta.revision++
+      meta.updatedAt = Math.max(meta.updatedAt, now)
+      await tx.put(JOURNAL_STORES.META, meta)
+      return clone(value)
+    })
+  }
+
+  // Commits one complete dual-relay poll. The transaction deliberately opens
+  // only META and VIEW: remote discovery cannot create authored intents,
+  // targets, dedupe queue rows, or outbound work. A concurrent tab that won the
+  // same prior->next transition must reproduce its observation hash; a tab with
+  // any other stale prior is forced to re-poll from the newly durable floor.
+  async commitSeq29PublicInboxPoll (input) {
+    const bootstrap = normalizeSeq29PublicInboxBootstrap(input)
+    if (!Array.isArray(input.relayPolls) || input.relayPolls.length !== 2) {
+      throw journalError('PEERIT_JOURNAL_BAD_INPUT', 'Seq29 public INBOX poll must cover exactly two relays.')
+    }
+    const relayPolls = input.relayPolls.map(raw => {
+      const relayId = seq29PublicInboxRelayId(raw && raw.relayId)
+      const previousAppendRevision = seq29PublicInboxDecimal(
+        raw && raw.previousAppendRevision, `${relayId} previous append revision`)
+      const newAppendRevision = seq29PublicInboxDecimal(
+        raw && raw.newAppendRevision, `${relayId} new append revision`)
+      const observationHash = seq29PublicInboxHex(
+        raw && raw.observationHash, `${relayId} observationHash`)
+      if (newAppendRevision < previousAppendRevision) {
+        throw journalError('PEERIT_JOURNAL_SEQ29_APPEND_ROLLBACK',
+          `${relayId} authenticated append observation is below its requested floor.`)
+      }
+      return Object.freeze({ relayId, previousAppendRevision, newAppendRevision, observationHash })
+    }).sort((left, right) => left.relayId.localeCompare(right.relayId))
+    if (relayPolls[0].relayId === relayPolls[1].relayId ||
+        relayPolls.some((poll, index) => poll.relayId !== bootstrap.relayIds[index])) {
+      throw journalError('PEERIT_JOURNAL_BAD_INPUT',
+        'Seq29 public INBOX poll relay set differs from its signed bootstrap.')
+    }
+
+    const records = Array.isArray(input.records) ? input.records : []
+    if (records.length > this.limits.maxRecordsPerIntent * 64) {
+      throw journalError('PEERIT_JOURNAL_LIMIT',
+        'Seq29 public INBOX remote record count exceeds its atomic ingest bound.')
+    }
+    const normalizedByKey = new Map()
+    for (const record of records) {
+      const key = boundedString(record && record.key,
+        'Seq29 public INBOX record key', this.limits.maxRecordKeyBytes)
+      if (!record.value || typeof record.value !== 'object' || Array.isArray(record.value) ||
+          typeof record.value._sig !== 'string' || typeof record.value._k !== 'string') {
+        throw journalError('PEERIT_JOURNAL_BAD_INPUT',
+          'Seq29 public INBOX record is not an intrinsically authenticated Peerit row.')
+      }
+      const normalized = { key, value: clone(record.value) }
+      const prior = normalizedByKey.get(key)
+      if (!prior || discoveredRecordWins(normalized.value, prior.value)) normalizedByKey.set(key, normalized)
+    }
+    const normalizedRecords = [...normalizedByKey.values()]
+    const observedAt = Number.isSafeInteger(input.observedAt) && input.observedAt >= 0
+      ? input.observedAt
+      : this.clock()
+    const floorKey = seq29PublicInboxBootstrapFloorKey(bootstrap.authorityPublicKey)
+    const stateKey = seq29PublicInboxStateKey(
+      bootstrap.authorityPublicKey, bootstrap.completeSignedWrapperHash)
+    return this._transaction([JOURNAL_STORES.META, JOURNAL_STORES.VIEW], 'readwrite', 'Seq29 public INBOX atomic poll commit', async tx => {
+      const floor = validateSeq29PublicInboxBootstrapFloor(
+        await tx.get(JOURNAL_STORES.META, floorKey), bootstrap.authorityPublicKey)
+      if (BigInt(floor.highestAcceptedBootstrapSequence) !== bootstrap.bootstrapSequence ||
+          floor.completeSignedWrapperHash !== bootstrap.completeSignedWrapperHash) {
+        throw journalError('PEERIT_JOURNAL_SEQ29_BOOTSTRAP_ROLLBACK',
+          'Seq29 public INBOX poll is not bound to the current durable bootstrap.')
+      }
+      const state = validateSeq29PublicInboxState(
+        await tx.get(JOURNAL_STORES.META, stateKey), bootstrap)
+      const byRelay = new Map(state.relays.map(relay => [relay.relayId, relay]))
+      let advances = 0
+      let duplicates = 0
+      for (const poll of relayPolls) {
+        const relay = byRelay.get(poll.relayId)
+        const current = BigInt(relay.appendRevision)
+        const previousTransition = BigInt(relay.previousAppendRevision)
+        if (poll.newAppendRevision < current) {
+          throw journalError('PEERIT_JOURNAL_SEQ29_APPEND_ROLLBACK',
+            `${poll.relayId} authenticated append observation is below the durable floor.`)
+        }
+        if (poll.previousAppendRevision === current) {
+          if (poll.newAppendRevision === current) continue
+          relay.previousAppendRevision = String(current)
+          relay.appendRevision = String(poll.newAppendRevision)
+          relay.observationHash = poll.observationHash
+          advances++
+          continue
+        }
+        if (poll.previousAppendRevision === previousTransition &&
+            poll.newAppendRevision === current) {
+          if (relay.observationHash !== poll.observationHash) {
+            throw journalError('PEERIT_JOURNAL_SEQ29_APPEND_FORK',
+              `${poll.relayId} conflicts with the concurrently committed append transition.`)
+          }
+          duplicates++
+          continue
+        }
+        throw journalError('PEERIT_JOURNAL_SEQ29_APPEND_FLOOR_STALE',
+          `${poll.relayId} poll did not begin at the current durable append floor.`)
+      }
+      if (advances === 0) {
+        return Object.freeze({
+          duplicate: true,
+          changedKeys: Object.freeze([]),
+          appendFloors: Object.freeze(Object.fromEntries(state.relays.map(relay =>
+            [relay.relayId, BigInt(relay.appendRevision)]))),
+          duplicateTransitionCount: duplicates
+        })
+      }
+
+      const meta = validateMeta(await tx.get(JOURNAL_STORES.META, META_KEY))
+      let newViewRecords = 0
+      const changedKeys = []
+      for (const record of normalizedRecords) {
+        const existing = await tx.get(JOURNAL_STORES.VIEW, record.key)
+        if (!discoveredRecordWins(record.value, existing && existing.value)) continue
+        if (!existing) newViewRecords++
+        await tx.put(JOURNAL_STORES.VIEW, {
+          ...record,
+          intentId: null,
+          seq29PublicInboxAuthorityPublicKey: bootstrap.authorityPublicKey,
+          seq29PublicInboxCompleteSignedWrapperHash: bootstrap.completeSignedWrapperHash,
+          seq29PublicInboxBootstrapSequence: String(bootstrap.bootstrapSequence),
+          updatedAt: observedAt
+        })
+        changedKeys.push(record.key)
+      }
+      if (meta.viewRecordCount + newViewRecords > this.limits.maxViewRecords) {
+        throw journalError('PEERIT_JOURNAL_LIMIT',
+          'Seq29 public INBOX ingest exceeds the materialized-view record limit.')
+      }
+      state.updatedAt = observedAt
+      await tx.put(JOURNAL_STORES.META, state)
+      meta.revision++
+      if (changedKeys.length) meta.viewRevision++
+      meta.viewRecordCount += newViewRecords
+      if (!meta.createdAt) meta.createdAt = observedAt
+      meta.updatedAt = Math.max(meta.updatedAt, observedAt)
+      await tx.put(JOURNAL_STORES.META, meta)
+      return Object.freeze({
+        duplicate: false,
+        changedKeys: Object.freeze(changedKeys),
+        appendFloors: Object.freeze(Object.fromEntries(state.relays.map(relay =>
+          [relay.relayId, BigInt(relay.appendRevision)]))),
+        duplicateTransitionCount: duplicates
+      })
     })
   }
 

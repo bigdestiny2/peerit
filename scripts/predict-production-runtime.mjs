@@ -43,6 +43,7 @@ import {
 import {
   buildPeeritSubstrateRuntimeArtifactV1,
   PEERIT_APP_ARTIFACT_PATH,
+  PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE,
   PEERIT_SEED_BOOTSTRAP_MINIMUM_RELEASE_SEQUENCE,
   PEERIT_WEB_ASSET_MANIFEST_PATH
 } from './substrate-runtime-artifact.mjs'
@@ -115,6 +116,14 @@ function normalizeConfig (bytes) {
   }
   const relayHints = normalizePeeritReleaseRelayHintsV1(
     value.relayHints, 'production runtime prediction config')
+  const needsInbox = releaseSequence >= PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE
+  const inboxBundle = String(value.peeritLimitedPublicInboxBootstrapBundle || '')
+  const inboxAuthority = String(
+    value.peeritLimitedPublicInboxBootstrapAuthorityPublicKey || '')
+  if ((needsInbox && (!inboxBundle || !inboxAuthority)) ||
+      (!needsInbox && (inboxBundle || inboxAuthority))) {
+    fail('public INBOX bootstrap configuration must be present exactly from sequence 29')
+  }
   return Object.freeze({
     substrateProfile: 'blind-v1',
     relayHints: Object.freeze(relayHints),
@@ -123,6 +132,10 @@ function normalizeConfig (bytes) {
     peeritSeedDiscoveryAuthorityPublicKey: hex32(
       value.peeritSeedDiscoveryAuthorityPublicKey,
       'peeritSeedDiscoveryAuthorityPublicKey'),
+    peeritLimitedPublicInboxBootstrapBundle: inboxBundle,
+    peeritLimitedPublicInboxBootstrapAuthorityPublicKey: needsInbox
+      ? hex32(inboxAuthority, 'peeritLimitedPublicInboxBootstrapAuthorityPublicKey')
+      : '',
     releaseSequence,
     pinnedReleaseKey: hex32(value.pinnedReleaseKey, 'pinnedReleaseKey')
   })
@@ -191,6 +204,18 @@ async function seedBytes (options, root, config) {
   return readFileSync(path.absolute)
 }
 
+async function inboxBytes (options, root, config) {
+  if (config.releaseSequence < PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE) return null
+  if (options.fixtureOnly === true && options.limitedPublicInboxBootstrapBytes instanceof Uint8Array) {
+    return Buffer.from(options.limitedPublicInboxBootstrapBytes)
+  }
+  const path = canonicalRepoPath(
+    root,
+    config.peeritLimitedPublicInboxBootstrapBundle,
+    'peeritLimitedPublicInboxBootstrapBundle')
+  return readFileSync(path.absolute)
+}
+
 async function verifySeed (bytes, config) {
   const canonical = Buffer.from(encodePeeritSeedBootstrapV1(bytes))
   if (!canonical.equals(bytes)) fail('seed bootstrap bytes are not canonical')
@@ -251,6 +276,7 @@ export async function predictPeeritProductionRuntimeV1 (options = {}) {
     historyBytes, config, root, options.fixtureOnly === true)
   const bootstrapBytes = await seedBytes(options, root, config)
   const seed = await verifySeed(bootstrapBytes, config)
+  const publicInboxBytes = await inboxBytes(options, root, config)
   const sourceFiles = exactSourceFiles(root, options)
   const buildOptions = {
     sourceFiles,
@@ -260,7 +286,10 @@ export async function predictPeeritProductionRuntimeV1 (options = {}) {
     releaseKey: config.pinnedReleaseKey,
     productionPinHistoryBytes: historyBytes,
     seedBootstrapBytes: bootstrapBytes,
-    seedDiscoveryAuthorityPublicKey: config.peeritSeedDiscoveryAuthorityPublicKey
+    seedDiscoveryAuthorityPublicKey: config.peeritSeedDiscoveryAuthorityPublicKey,
+    limitedPublicInboxBootstrapBytes: publicInboxBytes,
+    limitedPublicInboxBootstrapAuthorityPublicKey:
+      config.peeritLimitedPublicInboxBootstrapAuthorityPublicKey
   }
   const first = buildPeeritSubstrateRuntimeArtifactV1(buildOptions)
   const second = buildPeeritSubstrateRuntimeArtifactV1(buildOptions)
@@ -288,6 +317,13 @@ export async function predictPeeritProductionRuntimeV1 (options = {}) {
       bootstrapSequence: 0,
       previousBootstrapHash: null
     },
+    publicInboxBootstrap: first.inboxBootstrap
+      ? {
+          runtimePath: first.inboxBootstrap.path,
+          sha256: first.inboxBootstrap.sha256,
+          authorityPublicKey: first.inboxBootstrap.authorityPublicKey
+        }
+      : null,
     appArtifactHash: first.appArtifactHashHex,
     webAssetManifestHash: first.webAssetManifestHashHex,
     sourceFilesSha256: sourceHashes(sourceFiles)

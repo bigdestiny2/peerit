@@ -19,13 +19,20 @@ import { createRequire } from 'module'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join, resolve } from 'path'
-import { assertPeeritBlindProductReleaseReady } from './js/substrate/product-release-status.mjs'
+import {
+  PEERIT_BLIND_PRODUCT_RELEASE_BLOCKERS,
+  assertPeeritBlindProductReleaseReady
+} from './js/substrate/product-release-status.mjs'
 import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from './js/substrate/production-release-authority.mjs'
 import {
   hashPeeritAppArtifactV1,
   hashPeeritWebAssetManifestV1
 } from './js/substrate/web-asset-manifest.mjs'
 import { verifyPeeritProductionPinHistoryReleaseV1 } from './scripts/production-pin-history-release.mjs'
+import {
+  PEERIT_SEQ29_DECISION_SHA256_V1,
+  verifyPinnedPeeritSeq29OwnerDecisionV1
+} from './scripts/seq29-owner-decision.mjs'
 import { buildPeeritSubstrateRuntimeArtifactV1 } from './scripts/substrate-runtime-artifact.mjs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
@@ -144,6 +151,13 @@ export const SUBSTRATE_SITE_FILES = Object.freeze([
   'js/substrate/browser-runtime-authority.mjs',
   'js/substrate/capability-vault.js',
   'js/substrate/cold-reader.mjs',
+  'js/substrate/inbox-discovery.mjs',
+  'js/substrate/inbox-pointer-frame-v1.mjs',
+  'js/substrate/inbox-pointer-publish.mjs',
+  'js/substrate/inbox-read-result-decode.mjs',
+  'js/substrate/inbox-topic-v1.mjs',
+  'js/substrate/public-inbox-boot-coordinator.mjs',
+  'js/substrate/seq29-public-inbox-sync.mjs',
   'js/substrate/descriptor-trust-backend.js',
   'js/substrate/local-identity.js',
   'js/substrate/legacy-rk-posture.mjs',
@@ -187,12 +201,22 @@ export const SUBSTRATE_SITE_FILES = Object.freeze([
   'js/vendor/noble-hashes/_md.js',
   'js/vendor/noble-hashes/_u64.js',
   'js/vendor/noble-hashes/utils.js',
+  'js/vendor/noble-ciphers/chacha.js',
+  'js/vendor/noble-ciphers/_arx.js',
+  'js/vendor/noble-ciphers/_poly1305.js',
+  'js/vendor/noble-ciphers/utils.js',
+  'js/vendor/noble-ciphers/LICENSE',
   'docs/PEERIT-BLIND-SUBSTRATE-PROFILE.md',
   'protocol/peerit-profile-v1.cenc',
   'protocol/vectors/peerit-profile-v1.manifest.cenc',
   'protocol/validator/peerit-validator-v1.bare.mjs',
   'protocol/validator/peerit-validator-v1.manifest.cenc',
   'protocol/availability-policy-v1.cenc',
+  'protocol/external-authority/hiverelay-blind-wire-v1.md',
+  'protocol/external-authority/hiverelay-blind-abi-v1.cenc',
+  'protocol/external-authority/hiverelay-blind-wire-vector-manifest-v1.cenc',
+  'protocol/external-authority/hiverelay-blind-client-composition-format-v1.cenc',
+  'protocol/external-authority/hiverelay-blind-client-composition-vector-manifest-v1.cenc',
   'protocol/vectors/peerit-recovery-contract-v2.manifest.json',
   'peerit-limited-cell-get-profile-v1.json',
   'peerit-limited-cell-put-profile-v1.json',
@@ -219,6 +243,7 @@ export const SITE_FILES = [
   'vendor/hiverelay-blind-client-v1/blind-client-control-v1.mjs', 'vendor/hiverelay-blind-client-v1/blind-client-control-v1.manifest.cenc', 'vendor/hiverelay-blind-client-v1/blind-client-control-v1.chromium-evidence.json', 'vendor/hiverelay-blind-client-v1/blind-client-control-v1.cross-host-evidence.json', 'vendor/hiverelay-blind-client-v1/authority.json',
   'vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.mjs', 'vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.manifest.cenc', 'vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.chromium-evidence.json', 'vendor/hiverelay-blind-cell-get-v1/blind-client-cell-get-v1.cross-host-evidence.json', 'vendor/hiverelay-blind-cell-get-v1/authority.json', 'peerit-limited-cell-get-profile-v1.json', 'peerit-limited-cell-put-profile-v1.json',
   'js/vendor/noble-hashes/sha2.js', 'js/vendor/noble-hashes/_md.js', 'js/vendor/noble-hashes/_u64.js', 'js/vendor/noble-hashes/utils.js',
+  'js/vendor/noble-ciphers/chacha.js', 'js/vendor/noble-ciphers/_arx.js', 'js/vendor/noble-ciphers/_poly1305.js', 'js/vendor/noble-ciphers/utils.js', 'js/vendor/noble-ciphers/LICENSE',
   'config/shard-roster.public.json'
 ]
 
@@ -227,6 +252,8 @@ export const SITE_FILES = [
 // private — the key isn't shared anywhere; only a peer you hand the key to (your
 // own PearBrowser on the same DHT) can fetch it, and only while this stays running.
 const LOCAL = process.argv.includes('--local')
+const CANARY_LIMITED_PUBLIC_TEST_V1 =
+  process.argv.includes('--canary-limited-public-test-v1')
 const REPLICAS = intEnv('REPLICAS', 4)
 const TTL_DAYS = intEnv('TTL_DAYS', 365)
 const ANCHOR_TIMEOUT_MS = intEnv('ANCHOR_TIMEOUT_MS', 120000)
@@ -287,6 +314,8 @@ export function createPublishedSiteFilesV1 (release) {
     throw new Error(`productionPinHistoryBundle must equal ${PEERIT_PRODUCTION_PIN_HISTORY_PATH.slice(1)}`)
   }
   const seedBootstrapBundle = String(release.peeritSeedBootstrapBundle || '').trim()
+  const inboxBootstrapBundle = String(
+    release.peeritLimitedPublicInboxBootstrapBundle || '').trim()
   const artifact = buildPeeritSubstrateRuntimeArtifactV1({
     sourceFiles,
     substrateProfile: release.substrateProfile,
@@ -300,9 +329,37 @@ export function createPublishedSiteFilesV1 (release) {
       ? readFileSync(resolve(__dir, seedBootstrapBundle))
       : null,
     seedDiscoveryAuthorityPublicKey: String(
-      release.peeritSeedDiscoveryAuthorityPublicKey || '').trim().toLowerCase()
+      release.peeritSeedDiscoveryAuthorityPublicKey || '').trim().toLowerCase(),
+    limitedPublicInboxBootstrapBytes: inboxBootstrapBundle
+      ? readFileSync(resolve(__dir, inboxBootstrapBundle))
+      : null,
+    limitedPublicInboxBootstrapAuthorityPublicKey: String(
+      release.peeritLimitedPublicInboxBootstrapAuthorityPublicKey || '').trim().toLowerCase()
   })
   return [...artifact.files].map(([path, content]) => ({ path: '/' + path, content }))
+}
+
+export function verifyPeeritSeq29CanaryPublicationV1 ({ root = __dir, release } = {}) {
+  if (!release || release.substrateProfile !== 'blind-v1' ||
+      release.releaseSequence !== 29) {
+    throw new Error('--canary-limited-public-test-v1 is restricted to the exact blind-v1 Sequence-29 release')
+  }
+  const verified = verifyPinnedPeeritSeq29OwnerDecisionV1({ root })
+  const request = JSON.parse(readFileSync(join(root, 'deploy', 'web-signing-request.json'), 'utf8'))
+  const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'))
+  const driveKey = String(request.driveKey || '')
+  if (!/^[0-9a-f]{64}$/.test(driveKey) ||
+      manifest.driveKey !== driveKey ||
+      manifest.url !== `hyper://${driveKey}/` ||
+      manifest.homepage !== `hyper://${driveKey}/`) {
+    throw new Error('Sequence-29 canary publication is not bound to one exact lowercase prepared drive key')
+  }
+  return Object.freeze({
+    driveKey,
+    decisionSha256: PEERIT_SEQ29_DECISION_SHA256_V1,
+    decidedAt: verified.decision.decided_at,
+    gaReleaseBlockers: Object.freeze([...PEERIT_BLIND_PRODUCT_RELEASE_BLOCKERS])
+  })
 }
 
 async function main () {
@@ -310,7 +367,13 @@ async function main () {
   // Public publication is an authority boundary, not merely a file-copy step.
   // Local Hyperdrive previews remain available, but no production artifact may
   // be announced while the replacement profile is incomplete.
-  if (!LOCAL) {
+  if (LOCAL && CANARY_LIMITED_PUBLIC_TEST_V1) {
+    throw new Error('--canary-limited-public-test-v1 is a public-only authority scope and cannot be combined with --local')
+  }
+  let canaryPublication = null
+  if (!LOCAL && CANARY_LIMITED_PUBLIC_TEST_V1) {
+    canaryPublication = verifyPeeritSeq29CanaryPublicationV1({ root: __dir, release })
+  } else if (!LOCAL) {
     assertPeeritBlindProductReleaseReady(release)
   }
   const manifestPath = join(__dir, 'manifest.json')
@@ -321,6 +384,9 @@ async function main () {
   const report = {
     appId: 'peerit',
     local: LOCAL,
+    canaryScope: canaryPublication ? 'LIMITED_PUBLIC_TEST_V1' : null,
+    canaryDecisionSha256: canaryPublication?.decisionSha256 || null,
+    gaReleaseBlockers: canaryPublication?.gaReleaseBlockers || [],
     strictAnchor: STRICT_ANCHOR,
     anchorTimeoutMs: ANCHOR_TIMEOUT_MS,
     minAnchorPeers: MIN_ANCHOR_PEERS,
@@ -357,15 +423,20 @@ async function main () {
   }
   report.siteFiles = files.length
   console.log('[peerit] publishing site drive (' + files.length + ' files)…')
-  const drive = await client.publish(files, {
+  const publishOptions = {
     appId: 'peerit',
     seed: !LOCAL,
     replicas: REPLICAS,
     ttlDays: TTL_DAYS,
     timeout: Math.min(60000, ANCHOR_TIMEOUT_MS),
     durability: process.env.DURABILITY || 'archive'
-  })
+  }
+  if (canaryPublication) publishOptions.key = canaryPublication.driveKey
+  const drive = await client.publish(files, publishOptions)
   const driveKey = drive.key.toString('hex')
+  if (canaryPublication && driveKey !== canaryPublication.driveKey) {
+    throw new Error('HiveRelay publication did not reopen the exact source-pinned Sequence-29 drive key')
+  }
   report.driveKey = driveKey
   report.url = 'hyper://' + driveKey + '/'
   console.log('[peerit] site drive key:', driveKey)

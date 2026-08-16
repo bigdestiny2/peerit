@@ -909,7 +909,12 @@ export async function executePeeritLimitedInboxTopicCeremonyV1 (input = {}) {
             requestDigest: objectDigest(outcomeRequest)
           })
         fail('PEERIT_LIMITED_INBOX_CEREMONY_CREATE_REJECTED',
-          `${relay.relayId} CREATE was rejected`)
+          `${relay.relayId} CREATE was rejected`, {
+            relayErrorCode: response?.error?.code ?? null,
+            relayErrorMessage: typeof response?.error?.message === 'string'
+              ? response.error.message
+              : null
+          })
       }
       try {
         const verified = await control.verifyOperationResult({
@@ -1142,7 +1147,10 @@ export async function executePeeritLimitedInboxTopicCeremonyV1 (input = {}) {
         lifecycleCompensationWrites: 0,
         recoveryPersisted,
         causeCode: cause?.code || null,
-        causeMessage: cause?.message || null
+        causeMessage: cause?.message || null,
+        ...(cause?.details && typeof cause.details === 'object'
+          ? { causeDetails: cause.details }
+          : {})
       })
   } finally {
     // A broken destroy hook for one capability must not prevent every other

@@ -323,11 +323,19 @@ if (direct) {
     if (Object.hasOwn(value, 'help')) process.stdout.write(value.help)
     else emit(value)
   }).catch(error => {
+    const detailTrail = []
+    for (let cursor = error; cursor; cursor = cursor.cause) {
+      if (cursor.details && typeof cursor.details === 'object') {
+        detailTrail.push({ code: String(cursor.code || ''), ...cursor.details })
+      }
+      if (detailTrail.length >= 4) break
+    }
     emit({
       schema: ERROR_SCHEMA,
       version: 1,
       state: 'BLOCKED',
-      code: String(error?.code || 'PEERIT_SEQ29_COMPLETION_FAILED')
+      code: String(error?.code || 'PEERIT_SEQ29_COMPLETION_FAILED'),
+      ...(detailTrail.length > 0 ? { details: detailTrail } : {})
     })
     process.exitCode = 1
   })

@@ -31,7 +31,7 @@ export const PEERIT_SEQ29_DECISION_PATH_V1 =
   'deploy/canary-decision-peerit-seq29-limited-public-inbox-20260813.json'
 // Mechanical source-pin step. Sequence-29 verify/publish stays fail-closed
 // while this is empty and unless the final decision bytes match it exactly.
-export const PEERIT_SEQ29_DECISION_SHA256_V1 = ''
+export const PEERIT_SEQ29_DECISION_SHA256_V1 = 'a6f56012c72acb4cb0fa956ea1928811fd865927640ac441c126aa84071d9863'
 export const PEERIT_SEQ29_EXPLICIT_CONFIRMATION_V1 =
   'AUTHORIZE_PEERIT_SEQ29_LIVE_PUBLIC_TEST_ONLY_BROWSER_ACTIVATION'
 export const PEERIT_SEQ29_DECISION_TEXT_V1 =

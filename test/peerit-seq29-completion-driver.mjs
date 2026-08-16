@@ -123,16 +123,32 @@ assert.equal(statusChild.status, 0)
 assert.equal(statusChild.stderr, '')
 const emittedStatus = JSON.parse(statusChild.stdout)
 assert.equal(emittedStatus.status.nextPhase, 'create')
-assert.equal(emittedStatus.status.state, 'INCOMPLETE',
-  'status must never report READY while the next phase has no installed handler')
+assert.equal(emittedStatus.status.state, 'READY',
+  'status reports READY only when every chain phase has an installed handler')
 assert.deepEqual(readdirSync(deploy).sort(), before,
   'driver status must be read-only')
 assertNoRelayInterface(emittedStatus, 'emitted status')
 assertNoRelayInterface(await runPeeritSeq29CompletionDriverV1(['status']),
   'in-process status')
-await assert.rejects(runPeeritSeq29CompletionDriverV1(['continue']), error =>
-  error.code === 'PEERIT_SEQ29_COMPLETION_PHASE_PENDING',
-'zero-argument resume must fail closed while the next phase is not installed')
+// A zero-argument `continue` at READY would attempt the live create phase,
+// so it is never invoked in tests. The fail-closed semantic the removed
+// PHASE_PENDING rejection pinned is covered directly against the receipts
+// library: an uninstalled next phase reports INCOMPLETE, and the driver
+// refuses to continue from any non-READY state.
+{
+  const base = process.platform === 'darwin' ? '/private/tmp' : tmpdir()
+  const incompleteRoot = mkdtempSync(join(base,
+    'peerit-seq29-driver-interface-incomplete-'))
+  mkdirSync(join(incompleteRoot, '.deploy'), { mode: 0o755 })
+  const uninstalled = createPeeritSeq29CompletionReceiptStoreV1({
+    root: incompleteRoot,
+    installedPhases: []
+  })
+  const pending = uninstalled.inspect()
+  assert.equal(pending.nextPhase, 'create')
+  assert.equal(pending.state, 'INCOMPLETE',
+    'a next phase without an installed handler must never report READY')
+}
 
 {
   const base = process.platform === 'darwin' ? '/private/tmp' : tmpdir()

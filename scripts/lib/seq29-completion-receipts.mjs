@@ -35,7 +35,7 @@ const STORES = new WeakMap()
 const RECEIPT_IDENTITIES = new Map()
 const DIRECTORY_IDENTITIES = new Map()
 const UNCERTAIN_RECEIPTS = new Set()
-const PHASE_ARTIFACTS = Object.freeze({
+export const PHASE_ARTIFACTS = Object.freeze({
   create: Object.freeze([
     'create-journal', 'plan', 'public-inbox-bootstrap', 'qualification'
   ]),

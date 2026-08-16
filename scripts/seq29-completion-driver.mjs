@@ -21,6 +21,18 @@ import {
   beginPeeritSeq29InitialWebPrepareV1,
   completePeeritSeq29InitialWebPrepareV1
 } from './lib/seq29-initial-web-prepare-journal.mjs'
+import {
+  PEERIT_SEQ29_COMPLETION_CREATE_ARTIFACTS_V1,
+  runPeeritSeq29CompletionCreatePhaseV1
+} from './lib/seq29-completion-live-create.mjs'
+import {
+  PEERIT_SEQ29_COMPLETION_DECISION_PIN_ARTIFACTS_V1,
+  PEERIT_SEQ29_COMPLETION_DEPLOY_WEB_ARTIFACTS_V1,
+  runPeeritSeq29CompletionDecisionPinPhaseV1,
+  runPeeritSeq29CompletionDeployWebPhaseV1,
+  runPeeritSeq29CompletionHistorySignPhaseV1,
+  runPeeritSeq29CompletionReleaseSignPhaseV1
+} from './lib/seq29-completion-static-phases.mjs'
 import { runPeeritSeq29WebReleasePhaseV1 } from './web-release.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -28,6 +40,7 @@ const STATUS_SCHEMA = 'peerit-seq29-completion-driver-result-v1'
 const ERROR_SCHEMA = 'peerit-seq29-completion-driver-error-v1'
 
 const FIXED_ARTIFACTS = Object.freeze({
+  create: PEERIT_SEQ29_COMPLETION_CREATE_ARTIFACTS_V1,
   'web-prepare': Object.freeze({
     'outer-manifest': Object.freeze(['web/asset-manifest.json', 0o644]),
     'prepare-journal': Object.freeze([
@@ -38,6 +51,7 @@ const FIXED_ARTIFACTS = Object.freeze({
   'release-sign': Object.freeze({
     'outer-signature': Object.freeze(['web/asset-manifest.sig', 0o644])
   }),
+  'decision-pin': PEERIT_SEQ29_COMPLETION_DECISION_PIN_ARTIFACTS_V1,
   'web-reprepare': Object.freeze({
     'app-artifact': Object.freeze(['web/peerit-app-artifact-v1.json', 0o644]),
     'canonical-manifest': Object.freeze(['web/peerit-web-assets-v1.cenc', 0o644]),
@@ -45,6 +59,7 @@ const FIXED_ARTIFACTS = Object.freeze({
     'outer-signature': Object.freeze(['web/asset-manifest.sig', 0o644]),
     'signing-request': Object.freeze(['deploy/web-signing-request.json', 0o644])
   }),
+  'deploy-web': PEERIT_SEQ29_COMPLETION_DEPLOY_WEB_ARTIFACTS_V1,
   'history-append': Object.freeze({
     'pin-history': Object.freeze(['deploy/web-release-pin-history.json', 0o644])
   }),
@@ -197,13 +212,17 @@ function fixedArtifacts (root, phase) {
     ([field, [path, mode]]) => [field, digestFixedFile(root, path, mode)])))
 }
 
-// Installed fixed phase handlers. Status honesty derives from this exact
-// set: a phase without an installed handler reports INCOMPLETE and
-// `continue` fails closed — the driver never claims it can run a phase it
-// cannot. Live authority (keyvault signing seed, relay writes, static
-// deploy) is exercised only inside the handler of the phase that needs it,
-// when the operator resumes; never during status.
+// Installed fixed phase handlers: every phase of the frozen chain now has
+// one. Status honesty still derives from this exact set — a phase without an
+// installed handler would report INCOMPLETE and `continue` would fail
+// closed; the receipts library pins that fail-closed semantic. Live
+// authority (keyvault signing seed, relay writes, static deploy) is
+// exercised only inside the handler of the phase that needs it, when the
+// operator resumes; never during status.
 const PHASE_HANDLERS = Object.freeze({
+  create: async (root) => {
+    await runPeeritSeq29CompletionCreatePhaseV1(root)
+  },
   'web-prepare': async (root) => {
     const prepared = beginPeeritSeq29InitialWebPrepareV1({ root })
     if (prepared.state !== 'COMPLETED') {
@@ -211,17 +230,34 @@ const PHASE_HANDLERS = Object.freeze({
       completePeeritSeq29InitialWebPrepareV1({ root })
     }
   },
+  'release-sign': async (root) => {
+    await runPeeritSeq29CompletionReleaseSignPhaseV1(root)
+  },
+  'decision-pin': async (root) => {
+    await runPeeritSeq29CompletionDecisionPinPhaseV1(root)
+  },
   'web-reprepare': async () => {
     await runPeeritSeq29WebReleasePhaseV1({ phase: 'prepare' })
   },
+  'deploy-web': async (root) => {
+    await runPeeritSeq29CompletionDeployWebPhaseV1(root)
+  },
   'history-append': async (root) => {
     appendPeeritSeq29PinHistoryJournaledV1({ root })
+  },
+  'history-sign': async (root) => {
+    await runPeeritSeq29CompletionHistorySignPhaseV1(root)
   },
   verify: async () => {
     await runPeeritSeq29WebReleasePhaseV1({ phase: 'verify' })
   }
 })
 const INSTALLED_PHASES = Object.freeze(Object.keys(PHASE_HANDLERS))
+
+// Exported for the offline phase-handler contract tests; the fixed evidence
+// set and installed-phase registry are part of the driver contract.
+export const PEERIT_SEQ29_COMPLETION_FIXED_ARTIFACTS_V1 = FIXED_ARTIFACTS
+export const PEERIT_SEQ29_COMPLETION_INSTALLED_PHASES_V1 = INSTALLED_PHASES
 
 async function continuePhase (root, phase) {
   const handler = PHASE_HANDLERS[phase]

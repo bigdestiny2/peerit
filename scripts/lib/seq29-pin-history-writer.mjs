@@ -417,6 +417,31 @@ function inspectFromPlan (root, file) {
   return inspectFile(join(root, file.relativePath), file.mode)
 }
 
+function currentSignatureBindsSuccessor (root, plan, snapshot) {
+  // The chain's history-sign phase rewrites the signature after the append.
+  // A re-entered append must therefore accept the intended end state: a
+  // valid pinned-key envelope over the sealed successor history bytes.
+  try {
+    const config = parseJson(readFileSync(join(root, plan.files.config.relativePath)),
+      'release config')
+    const key = String(config.pinnedReleaseKey || '').toLowerCase()
+    const envelope = parseJson(readFileSync(join(root, snapshot.relativePath)),
+      'current signature')
+    const historyBytes = readFileSync(join(root, plan.files.history.relativePath))
+    if (!HEX64.test(key) ||
+        envelope.schema !== 'peerit-blind-public-test-artifact-sig/v1' ||
+        envelope.alg !== 'ed25519' || envelope.key !== key ||
+        envelope.signedFile !== plan.files.history.relativePath ||
+        envelope.signedBytesSha256 !== hash(historyBytes) ||
+        !HEX128.test(String(envelope.sig || ''))) return false
+    return nodeVerify(null, historyBytes, createPublicKey({
+      key: Buffer.from(SPKI_PREFIX + key, 'hex'),
+      format: 'der',
+      type: 'spki'
+    }), Buffer.from(envelope.sig, 'hex')) === true
+  } catch { return false }
+}
+
 function assertUnchangedSources (root, plan, { historySuccessor = false } = {}) {
   for (const [field, snapshot] of Object.entries(plan.files)) {
     const current = inspectFromPlan(root, snapshot)
@@ -426,7 +451,8 @@ function assertUnchangedSources (root, plan, { historySuccessor = false } = {}) 
         fail('PEERIT_SEQ29_PIN_HISTORY_WRITE_PREIMAGE_DRIFT',
           'pin-history target is neither the sealed predecessor nor successor')
       }
-    } else {
+    } else if (!(field === 'signature' && historySuccessor &&
+        currentSignatureBindsSuccessor(root, plan, snapshot))) {
       assertSnapshot(snapshot, current, field)
     }
   }

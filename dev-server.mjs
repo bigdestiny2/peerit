@@ -22,7 +22,7 @@ const BUILT_BUNDLE_ALIASES = {
 }
 
 function isPublicPath (p) {
-  return PUBLIC_FILES.has(p) || /^\/js\/(?:[a-z0-9-]+\/)*[a-z0-9-]+\.(?:mjs|js)$/i.test(p) || /^\/config\/shard-roster(\.public)?\.json$/i.test(p)
+  return PUBLIC_FILES.has(p) || /^\/js\/(?:[a-z0-9_-]+\/)*[a-z0-9_-]+\.(?:mjs|js)$/i.test(p) || /^\/config\/shard-roster(\.public)?\.json$/i.test(p)
 }
 
 function isInsideRoot (file) {

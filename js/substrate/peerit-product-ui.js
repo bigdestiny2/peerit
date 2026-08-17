@@ -245,8 +245,9 @@ async function submitView (runtime, route) {
 
 async function profileView (runtime) {
   const me = runtime.identity.me()
+  const isHost = runtime.identity.isHost === true
   const profile = me.pubkey ? await runtime.data.getProfile(me.pubkey) : null
-  return `<section class="panel"><h1>Your identity</h1><div class="notice${me.pubkey ? '' : ' warn'}"><b>${me.pubkey ? 'Durable writer active' : 'Lurker mode'}</b><p>${me.pubkey ? `This device will keep using ${shortKey(me.pubkey)}.` : 'No key has been created. Your first explicit mutation will persist one encrypted device identity before signing.'}</p></div><form data-form="profile"><label>Display name<input name="name" maxlength="32" value="${esc(profile?.name || '')}"></label><label>Bio<textarea name="bio" maxlength="500" rows="5">${esc(profile?.bio || '')}</textarea></label><label>Color<input name="color" maxlength="32" value="${esc(profile?.color || '')}" placeholder="#4f8cff"></label><div class="form-actions"><button class="btn btn-primary" type="submit">Save signed profile</button></div></form></section>`
+  return `<section class="panel"><h1>Your identity</h1><div class="notice${me.pubkey ? '' : ' warn'}"><b>${me.pubkey ? 'Durable writer active' : 'Lurker mode'}</b><p>${me.pubkey ? (isHost ? `Signed in via your Pear Browser identity (${shortKey(me.pubkey)}).` : `This device will keep using ${shortKey(me.pubkey)}.`) : 'No key has been created. Your first explicit mutation will persist one encrypted device identity before signing.'}</p></div><form data-form="profile"><label>Display name<input name="name" maxlength="32" value="${esc(profile?.name || '')}"></label><label>Bio<textarea name="bio" maxlength="500" rows="5">${esc(profile?.bio || '')}</textarea></label><label>Color<input name="color" maxlength="32" value="${esc(profile?.color || '')}" placeholder="#4f8cff"></label><div class="form-actions"><button class="btn btn-primary" type="submit">Save signed profile</button></div></form></section>`
 }
 
 async function searchView (runtime, route, ui) {

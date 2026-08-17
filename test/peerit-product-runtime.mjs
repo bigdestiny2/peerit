@@ -3,7 +3,9 @@
 
 import assert from 'node:assert/strict'
 import { getPeeritCommittedIntentIdV1 } from '../js/data.js'
-import { createIdentityStore, memoryKv } from '../js/identity-store.js'
+import { genKeyPair, sign as edSign } from '../js/crypto.js'
+import { createIdentityStore, memoryKv, IDENTITY_FORGET_TOMBSTONE_KEY } from '../js/identity-store.js'
+import { createPeeritHostIdentityV1 } from '../js/substrate/host-identity.js'
 import { createPeeritLocalIdentityV1 } from '../js/substrate/local-identity.js'
 import {
   createMemoryJournalState,
@@ -237,6 +239,85 @@ async function main () {
   ok((await second.status()).sync.publication.relay.pendingIntents === 5,
     'the adopted event joins the exact existing local queue')
   second.destroy()
+
+  console.log('\n— host identity first write performs zero identity-store I/O —')
+  const appKey = await genKeyPair()
+  const siteKey = await genKeyPair()
+  const hostBacking = countedKv()
+  const hostStorage = storage()
+  const hostRuntime = createPeeritProductRuntimeV1({
+    identity: createPeeritHostIdentityV1({
+      async getPublicKey () { return { publicKey: appKey.pubHex, driveKey: siteKey.pubHex, algorithm: 'ed25519' } },
+      async sign (payload, namespace) {
+        return {
+          signature: await edSign(appKey.seedHex, `pear.app.${siteKey.pubHex}:${namespace}:${payload}`),
+          publicKey: appKey.pubHex,
+          algorithm: 'ed25519'
+        }
+      }
+    }),
+    identityStore: createIdentityStore({ kv: hostBacking.kv }),
+    sync: createPeeritSubstrateSync({
+      journal: createMemoryPeeritJournal({ shared: createMemoryJournalState() }),
+      relays: [],
+      autoFlush: false,
+      requireVerifiedRelayAdapters: true,
+      channelName: 'peerit-product-runtime-host'
+    }),
+    storage: hostStorage,
+    minBits: {
+      community: 0,
+      post: 0,
+      comment: 0,
+      vote: 0,
+      profile: 0,
+      modaction: 0,
+      blob: 0
+    }
+  })
+  await hostRuntime.ready()
+  await hostRuntime.data.createCommunity({ slug: 'hostmade', title: 'Host Made' })
+  ok(hostRuntime.identity.me().pubkey === appKey.pubHex,
+    'the first write activates the host per-app identity')
+  ok(hostBacking.calls.reads === 0 && hostBacking.calls.writes === 0,
+    'the first host-signed write performs zero identity-store I/O')
+  ok((await hostBacking.base.get('identity:v1')) == null,
+    'no browser-local device identity is persisted for a host writer')
+  const hostCommunity = await hostRuntime.data.getCommunity('hostmade')
+  ok(hostCommunity && hostCommunity._k === appKey.pubHex && hostCommunity._dk === siteKey.pubHex,
+    'the host-signed record carries the per-app subkey and the site drive key')
+  hostRuntime.destroy()
+
+  console.log('\n— forget tombstone still blocks a host writer —')
+  const tombstonedStorage = storage()
+  tombstonedStorage.setItem(IDENTITY_FORGET_TOMBSTONE_KEY, JSON.stringify({ pubkey: appKey.pubHex, at: 1 }))
+  const tombstonedRuntime = createPeeritProductRuntimeV1({
+    identity: hostRuntime.identity,
+    identityStore: createIdentityStore({ kv: countedKv().kv }),
+    sync: createPeeritSubstrateSync({
+      journal: createMemoryPeeritJournal({ shared: createMemoryJournalState() }),
+      relays: [],
+      autoFlush: false,
+      requireVerifiedRelayAdapters: true,
+      channelName: 'peerit-product-runtime-host-tombstone'
+    }),
+    storage: tombstonedStorage,
+    minBits: {
+      community: 0,
+      post: 0,
+      comment: 0,
+      vote: 0,
+      profile: 0,
+      modaction: 0,
+      blob: 0
+    }
+  })
+  await tombstonedRuntime.ready()
+  await assert.rejects(
+    tombstonedRuntime.data.createCommunity({ slug: 'blocked', title: 'Blocked' }),
+    error => error.code === 'PEERIT_IDENTITY_FORGET_INCOMPLETE')
+  ok(true, 'an incomplete identity forget blocks host authoring before any signing')
+  tombstonedRuntime.destroy()
 
   console.log(`\npeerit-product-runtime: ${passed} checks passed`)
 }

@@ -65,6 +65,21 @@ async function main () {
     'the closed network gate preserves local-first substrate authoring and queueing')
   ok(peeritProfileNetworkGate().releaseReady === false,
     'the actual runtime profile assertion reports this increment as network-blocked')
+  ok(cutover.identityOpts.forceDev === undefined,
+    'substrate + identity-capable host → no forceDev (the host per-app identity signs)')
+
+  // substrate + host bridge WITHOUT an identity surface → browser-local keys retained.
+  const cutoverNoIdentity = resolveRuntime({
+    rawPear: { sync: fullPear().sync },
+    doc: doc({ 'peerit-substrate': 'blind-v1' })
+  })
+  ok(cutoverNoIdentity.mode === 'web-substrate' && cutoverNoIdentity.substrateHost === 'pear-or-bare' &&
+    cutoverNoIdentity.identityOpts.forceDev === true && cutoverNoIdentity.identityOpts.lazy === true,
+    'substrate + bridge lacking identity → forceDev local signing is retained')
+  const cutoverWeb = resolveRuntime({ rawPear: null, doc: doc({ 'peerit-substrate': 'blind-v1' }) })
+  ok(cutoverWeb.mode === 'web-substrate' && cutoverWeb.substrateHost === 'web' &&
+    cutoverWeb.identityOpts.forceDev === true,
+    'substrate with no host bridge keeps browser-local forceDev signing')
 
   // relay meta only (no host bridge) → web: forceDev on IDENTITY only, remote sync, read-only default.
   const rt3 = resolveRuntime({ rawPear: null, doc: doc({ 'peerit-relay': 'https://relay.peerit.com', 'peerit-relay-token': 'pub' }) })

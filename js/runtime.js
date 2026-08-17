@@ -11,11 +11,12 @@
 //
 // The web branch can only be reached when there is NO host bridge present, so a
 // normal-browser deployment cannot change what PearBrowser users get. The relay
-// is untrusted by construction: signing stays in the browser (forceDev keeps
-// js/identity.js on DevIdentity/SubtleCrypto and away from /api/identity/sign),
-// and js/verify.js re-checks every record the relay delivers.
+// is untrusted by construction: signing stays in the browser unless the host
+// exposes an identity surface (forceDev keeps js/identity.js on
+// DevIdentity/SubtleCrypto and away from /api/identity/sign only when the host
+// lacks one), and js/verify.js re-checks every record the relay delivers.
 
-import { hasAnyPearBridgeSurface } from './pear-api.js'
+import { hasAnyPearBridgeSurface, hasIdentityPearSurface } from './pear-api.js'
 import { parseRelayList, readRelayRosterConfig } from './relay-roster.js'
 import { assertPeeritProfileReleaseReady } from './substrate/profile-status.mjs'
 
@@ -213,8 +214,10 @@ export function resolveRuntime ({ rawPear = null, doc = null } = {}) {
       profileReleaseBlockers: profileGate.releaseBlockers,
       // Default lurker behavior is local client state. No signer is created
       // until an explicit write; signed events remain queued locally with zero
-      // qualified relays while the release gate is closed.
-      identityOpts: { forceDev: true, lazy: true },
+      // qualified relays while the release gate is closed. A host that exposes
+      // its identity surface signs with the host per-app identity instead of a
+      // browser-local key; forceDev applies only when the host lacks one.
+      identityOpts: hasIdentityPearSurface(rawPear) ? {} : { forceDev: true, lazy: true },
       syncOpts: {
         mode: 'substrate',
         relayHints: substrate.relayHints,

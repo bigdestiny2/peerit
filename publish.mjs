@@ -159,6 +159,7 @@ export const SUBSTRATE_SITE_FILES = Object.freeze([
   'js/substrate/public-inbox-boot-coordinator.mjs',
   'js/substrate/seq29-public-inbox-sync.mjs',
   'js/substrate/descriptor-trust-backend.js',
+  'js/substrate/host-identity.js',
   'js/substrate/local-identity.js',
   'js/substrate/legacy-rk-posture.mjs',
   'js/substrate/limited-cell-get-profile.mjs',

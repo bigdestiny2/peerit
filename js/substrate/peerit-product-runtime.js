@@ -104,6 +104,18 @@ export class PeeritProductRuntimeV1 {
       error.code = 'PEERIT_IDENTITY_FORGET_INCOMPLETE'
       throw error
     }
+    // A host-backed identity is already durable (Pear Browser provisions it);
+    // the device identity store is never inspected or written for it.
+    if (this.identity.isHost === true) {
+      const me = await this.identity.ensureActive()
+      if (!me || !me.pubkey) {
+        const error = new Error('Pear host identity is unavailable; authoring remains blocked.')
+        error.code = 'PEERIT_HOST_IDENTITY_UNAVAILABLE'
+        throw error
+      }
+      this._emit()
+      return me
+    }
     if (!this._writerActivation) {
       this._writerActivation = ensureDurableIdentityForWrite(
         this.identity,

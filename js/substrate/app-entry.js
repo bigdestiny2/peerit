@@ -8,6 +8,7 @@ import {
 } from './browser-runtime-authority.mjs'
 import { loadPeeritProductionPinHistoryTerminalV1 } from './pin-history-bootstrap.mjs'
 import { createPeeritProductRuntimeV1 } from './peerit-product-runtime.js'
+import { createPeeritHostIdentityV1 } from './host-identity.js'
 import { mountPeeritProductUiV1 } from './peerit-product-ui.js'
 import {
   createPeeritSeq29PublicInboxBootCoordinatorV1
@@ -205,7 +206,16 @@ export async function bootPeeritReplacementOnly (options = {}) {
   const window = options.window || globalThis.window
   if (!document || !window) throw new Error('Peerit replacement entry requires a browser document and window')
 
-  const product = options.product || createPeeritProductRuntimeV1()
+  // Inside Pear Browser the host per-app identity signs; the substrate artifact
+  // cannot import js/pear-api.js (its retired /api writer tokens are banned from
+  // the closure), so the identity surface check mirrors hasIdentityPearSurface.
+  const pearIdentity = window.pear && window.pear.identity
+  const product = options.product || createPeeritProductRuntimeV1(
+    pearIdentity &&
+    typeof pearIdentity.getPublicKey === 'function' &&
+    typeof pearIdentity.sign === 'function'
+      ? { identity: createPeeritHostIdentityV1(pearIdentity) }
+      : {})
   let productUi = null
   let publicInbox = null
   let publicInboxPublisher = null

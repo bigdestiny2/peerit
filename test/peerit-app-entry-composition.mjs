@@ -166,4 +166,54 @@ assert.deepEqual(raceRelayAssignments, [],
   'an async boot continuation cannot install relays after page teardown')
 assert.equal(raceDestroyed, 1)
 
+// Host detection at boot: window.pear.identity selects the host-backed identity;
+// its absence keeps the browser-local durable identity.
+const originalFetchHost = globalThis.fetch
+globalThis.fetch = async () => ({
+  ok: false,
+  status: 404,
+  headers: { get: () => null },
+  async arrayBuffer () { return new ArrayBuffer(0) }
+})
+function plainWindow (pear) {
+  return {
+    pear,
+    location: { reload () {} },
+    addEventListener () {},
+    removeEventListener () {}
+  }
+}
+try {
+  const hostBoot = await bootPeeritReplacementOnly({
+    document,
+    window: plainWindow({
+      identity: {
+        async getPublicKey () {
+          return { publicKey: 'ab'.repeat(32), driveKey: 'cd'.repeat(32), algorithm: 'ed25519' }
+        },
+        async sign () { return { signature: 'ef'.repeat(64), publicKey: 'ab'.repeat(32) } }
+      }
+    }),
+    mountUi: () => ({ destroy () {} })
+  })
+  assert.equal(hostBoot.product.identity.isHost, true,
+    'boot with an identity-capable window.pear uses the host-backed identity')
+  assert.equal(hostBoot.product.identity.me().pubkey, 'ab'.repeat(32),
+    'the host identity resolves the host per-app public key at boot')
+  hostBoot.destroy()
+
+  const localBoot = await bootPeeritReplacementOnly({
+    document,
+    window: plainWindow(undefined),
+    mountUi: () => ({ destroy () {} })
+  })
+  assert.equal(localBoot.product.identity.isHost, undefined,
+    'boot without window.pear keeps the browser-local identity')
+  assert.equal(localBoot.product.identity.me().pubkey, null,
+    'the local identity still boots as a lurker')
+  localBoot.destroy()
+} finally {
+  globalThis.fetch = originalFetchHost
+}
+
 console.log('peerit-app-entry-composition: local product is ready with zero unverified relays, BFCache reload survives teardown, and stale async boot cannot revive')

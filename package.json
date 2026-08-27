@@ -176,7 +176,7 @@
     "@noble/hashes": "2.2.0",
     "@noble/secp256k1": "3.1.0",
     "b4a": "1.8.1",
-    "buffer": "5.1.0",
+    "buffer": "6.0.3",
     "compact-encoding": "3.3.0",
     "corestore": "7.12.0",
     "corestore6": "npm:corestore@6.18.4",

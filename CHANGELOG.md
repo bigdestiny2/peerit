@@ -20,6 +20,8 @@ artifact and deployment maturity.
   replacement runtime, signed Sequence 29 artifact and source/release split.
 - Expanded `PATTERNS.md` into an evidence-linked browser-P2P pattern catalogue
   with explicit maturity and rejected-claim labels.
+- Added a prominent README history of eight browser delivery approaches, what
+  each experiment established, and why it was kept, superseded or left unproven.
 - Added maintained status, architecture and documentation indexes plus
   contribution, security, issue and pull-request guidance.
 - Split deterministic protocol and browser CI, added repository/link/secret-path
@@ -31,6 +33,8 @@ artifact and deployment maturity.
 - Made the full ship gate hermetic by checking out the exact accepted HiveRelay
   fixture and binding its test-only ceremony authority to durable qualification
   evidence without relaxing the production journal.
+- Made the trusted loopback ceremony fixture select a real platform temp root so
+  the exact Node 22 ship gate runs on both macOS and Linux.
 - Raised the development floor to supported Node.js releases (22 and 24 in CI).
 - Removed an accidentally tracked machine-local `node_modules` symlink and
   broadened the private read-capability-vault ignore rule.

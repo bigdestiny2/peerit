@@ -78,6 +78,30 @@ client's moderation and ranking policy.
 This table prevents a recurring failure mode: source, experimental and released
 behavior must not be described as if they were the same thing.
 
+## What we tried to make P2P work in browsers
+
+Peerit did not arrive at the current design in one jump. These are the main
+approaches we implemented or investigated, what each one taught us, and why no
+single transport is presented as a magic “serverless web” answer.
+
+| Attempt | What worked and what we learned | Where it stands |
+| --- | --- | --- |
+| Local-only and multi-tab simulation | Proved that signing, a durable intent journal, deterministic merge and the product UI can remain useful with no network. It cannot provide cross-device discovery or remote durability. | **Development pattern**; still valuable for deterministic testing |
+| Per-author signed outboxes over HTTP/SSE | Let stock browsers compose many single-writer logs while keeping record authority with authors. The relay remains an availability and coordination dependency, and semantic relay APIs couple infrastructure to the app. | **Core ideas tested**; historical delivery family, not the Sequence 29 route |
+| Signed relay rosters, CAS and receipt quorums | Made rollback floors, ambiguous writes and “how many origins durably accepted this exact commit?” measurable. Receipts do not prove continued retrievability or independent custody, and a coordinating leader is still a choke point. | **Tested legacy pattern**; evidence model reused elsewhere |
+| Pear host identity plus native Hypercore/HyperDHT experiments | A capable host can provide keys, sockets and P2P storage that do not exist in an ordinary browser tab. Only the seedless host-signing adapter is implemented in current source; the direct swarm/storage paths are separate legacy experiments rather than a completed browser integration. | **Host identity implemented in source**; direct/native transport is historical/experimental and excluded from the web release |
+| WebSocket-to-DHT conduit | Allowed a browser to reach DHT-style peers through a compatible bridge. The conduit can observe metadata and withhold traffic, so this is reachability through infrastructure, not direct browser DHT participation. | **Compatibility experiment**, excluded from Sequence 29 |
+| BlindShard and split-transport designs | Explored ciphertext dispersal and separating ingress from storage so no single service necessarily holds a complete body. The benefit depends on independent operators plus tested repair, rotation and recovery. | **Experimental/design work**, not shipped |
+| Browser-native Hypercore/Corestore on IndexedDB | Could reduce the gap between native and web peers, but crash recovery, quota eviction, snapshots, iterators, multi-tab writers and browser transports need real evidence first. | **Design/unproven**, deliberately not a release claim |
+| Immutable blind Cells plus a small public INBOX | Separates encrypted content storage from discovery, persists intent before I/O, authenticates receipts/readback and keeps relays application-agnostic. This became the signed Sequence 29 bounded public-test path. | **Bounded release evidence**; current public network activation is blocked pending signed epoch rotation and runtime repair |
+
+The durable conclusion is not that stock browsers need no infrastructure. It is
+that infrastructure can be kept outside the authorship and validation boundary:
+the client signs, journals, verifies and materializes; transports carry opaque
+bytes and must produce narrowly stated availability evidence. The full
+[browser-P2P pattern catalogue](PATTERNS.md) turns those experiments into 13
+reusable implementation rules with code and test links.
+
 ## The reusable patterns
 
 The full [pattern catalogue](PATTERNS.md) labels each idea as released,

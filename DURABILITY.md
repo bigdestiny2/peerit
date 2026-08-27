@@ -1,5 +1,12 @@
 # peerit — availability, redundancy & persistence
 
+> **Status: Historical signed-outbox durability note.** This document explains
+> an earlier Pear sync/outbox deployment and a real two-core Hyperdrive failure
+> mode. It does not describe the signed Sequence 29 blind-substrate release.
+> Start with [`docs/CURRENT-STATUS.md`](docs/CURRENT-STATUS.md) and
+> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current release and
+> source boundaries.
+
 Straight answer to "what keeps it always available and stops data being lost
 between sessions or across users." There are **two separate planes**, with two
 separate durability stories. Conflating them is what makes a drive look "empty."

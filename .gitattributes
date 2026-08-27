@@ -1,0 +1,11 @@
+# Keep generated protocol/release material reviewable without allowing it to
+# dominate GitHub language statistics or collapse vendored code into app code.
+web/** linguist-generated=true
+protocol/vectors/** linguist-generated=true
+test/fixtures/** linguist-generated=true
+
+vendor/** linguist-vendored=true
+js/vendor/** linguist-vendored=true
+
+*.cenc binary
+*.bundle binary

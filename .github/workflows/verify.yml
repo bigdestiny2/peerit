@@ -8,17 +8,62 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
-    name: Node and browser verification
+  repository-surface:
+    name: Repository and documentation guard
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: npm run test:docs
+
+  node-and-protocol:
+    name: Node ${{ matrix.node-version }} — ${{ matrix.gate }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - node-version: 22
+            gate: full ship verification
+            command: npm run test:ship
+          - node-version: 24
+            gate: core compatibility
+            command: npm test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - run: npm ci
+      - run: ${{ matrix.command }}
+
+  browsers:
+    name: Browser and accessibility verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium firefox webkit
-      - run: npm run test:ci
+      - run: npx --no-install playwright install --with-deps chromium firefox webkit
+      - run: npm run test:browser-runtime-sri
+      - run: npm run test:browser:signed-release
+      - run: npm run test:browser
+      - run: npm run test:browser:mobile
+      - run: npm run test:browser:android
+      - run: npm run test:accessibility
+      - run: npm run test:browser:firefox
+      - run: npm run test:browser:webkit

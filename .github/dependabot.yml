@@ -1,0 +1,48 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/London
+    open-pull-requests-limit: 6
+    versioning-strategy: increase-if-necessary
+    labels:
+      - dependencies
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      browser-tooling:
+        patterns:
+          - playwright
+          - "@axe-core/*"
+          - esbuild
+        update-types:
+          - minor
+          - patch
+      holepunch-stack:
+        patterns:
+          - hypercore
+          - hyperbee
+          - hyperswarm
+          - corestore
+          - protomux
+          - compact-encoding
+          - "@hyperswarm/*"
+        update-types:
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:15"
+      timezone: Europe/London
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+    commit-message:
+      prefix: chore(actions)

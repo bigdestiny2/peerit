@@ -1,11 +1,23 @@
 # Identity and recovery protocol
 
-This protocol applies to peerit and to p2pbuilders, which reuses the same
-identity, signature, outbox, and gossip pattern.
+> **Status: mixed historical design and current-source note.** The root-mnemonic,
+> app-drive and signed-outbox sections document an earlier Pear Browser design;
+> they do not prove the current host API or signed Sequence 29 artifact. The web
+> identity section below reflects current source. Check
+> [`CURRENT-STATUS.md`](./CURRENT-STATUS.md) before making a release claim. In
+> current source, Peerit leaves host-key lifecycle to Pear Browser and cannot
+> display, export, confirm, or restore host recovery material. Users must rely
+> only on recovery facilities the host itself actually provides.
 
-## The answer to "is the mnemonic the identity?"
+The historical design was shared by peerit and p2pbuilders, which reuse identity,
+signature, outbox, and gossip patterns. It is retained as design context rather
+than current host-recovery instructions.
 
-Yes, with one important privacy layer.
+## Historical answer to "is the mnemonic the identity?"
+
+The earlier design answered yes, with one important privacy layer. The current
+host adapter does not expose enough lifecycle information for Peerit to make
+that promise today.
 
 PearBrowser has one root identity seed, backed up as a BIP-39 mnemonic. Apps do
 not receive that root key. For each app, PearBrowser derives a deterministic
@@ -31,7 +43,7 @@ voter, moderator, profile, and reputation identity.
 
 | Term | Meaning | User-facing handling |
 |---|---|---|
-| Root mnemonic | The PearBrowser recovery phrase for the root identity seed. | Highest sensitivity. Back up in PearBrowser, never inside a web app. |
+| Root mnemonic | Historical name for a PearBrowser recovery phrase. | Peerit cannot access or verify one; use only recovery options the host currently exposes. |
 | App drive key | The Hyperdrive key of the app code. | Must stay stable for production identity continuity. |
 | App public key | The per-app public identity derived by PearBrowser. | Safe to show as an identity fingerprint. |
 | Outbox/group key | The sync invite key for one app outbox. | Needed to rejoin, seed, and recover app data discovery. Not a signing key, but do not spray it casually. |
@@ -60,24 +72,25 @@ pear.app.<driveKey>:<namespace>:<canonical-record>
 7. A production app drive key must be treated as part of the app's identity
    domain. Do not re-key a production app without an explicit migration plan.
 
-## Backup protocol
+## Historical host backup protocol
 
-The user needs two backups for full recovery.
+The earlier design proposed two backups for full recovery. This section does
+not establish that current Pear Browser builds expose either workflow.
 
-### 1. PearBrowser identity backup
+### 1. Host-managed identity recovery
 
-This is the 12-word PearBrowser recovery phrase. It restores the root identity
-seed and therefore restores the same per-app public keys for every app whose
-drive key remains stable.
+The historical proposal used a 12-word PearBrowser recovery phrase to restore a
+root identity seed and derived per-app public keys. Current Peerit source neither
+observes nor tests that recovery lifecycle.
 
 Required user message:
 
-> Your identity lives in PearBrowser. Back up your 12-word PearBrowser recovery
-> phrase. peerit/p2pbuilders only see an app-specific public key and cannot
-> recover this phrase for you.
+> Your signing key is managed by PearBrowser. Use only recovery options shown by
+> PearBrowser itself. Peerit can neither export that key nor confirm that a host
+> backup will restore it.
 
-The apps should not export, import, store, or display the root mnemonic. That
-belongs in PearBrowser settings.
+The apps must not export, import, store, or display host recovery material. Any
+supported recovery workflow belongs to PearBrowser.
 
 ### 2. App recovery bundle
 
@@ -110,13 +123,18 @@ Required user message:
 
 ### 3. Web-mode identity export
 
-Everything above assumes PearBrowser, where the signing key is derived from the
-root mnemonic and never lives in the app. In a **normal browser or phone** there
-is no PearBrowser and no mnemonic: the runtime takes the `web`/`dev` path and the
-identity is a browser-local Ed25519 seed minted by `DevIdentity` and stored in
-`localStorage`. There is no phrase to back up, and the app data recovery bundle
-(section 2) does **not** contain this seed — so neither backup above can restore a
-web identity. Clearing site data or losing the device destroys it permanently.
+Everything above assumes the historical Pear Browser identity design. In a
+**normal browser or phone** there is no host mnemonic: the current source takes
+the `web` path and lazily mints a browser-local Ed25519 seed on the first explicit
+write. `DevIdentity` keeps the cleartext seed in memory. The device tier stores
+AES-256-GCM ciphertext beside a non-extractable WebCrypto wrapping-key handle in
+IndexedDB, then silently restores it on that device. This is API-level protection,
+not disk encryption: same-origin code can use the key, profile-level access can
+recover it, and clearing site data or losing the device still destroys it.
+
+There is no phrase to back up. The durable cross-device recovery mechanism is
+the passphrase-encrypted identity export below; legacy outbox recovery bundles
+do **not** contain the signing seed.
 
 To close that gap, web/dev mode exposes a **passphrase-encrypted identity export**
 (`js/identity-export.js`). Unlike the root mnemonic (which apps must never touch),
@@ -151,22 +169,24 @@ Security notes:
 - The export is a **bearer secret**: file + passphrase together = full ability to
   post as the user. Encryption-at-rest is mandatory (minimum passphrase length
   enforced); export is refused when no real Ed25519 backend is present.
-- Export **copies**, it does not move — the seed remains in the source browser's
-  `localStorage`.
+- Export **copies**, it does not move — the source browser keeps its encrypted
+  device identity in IndexedDB. If the user also saved a passphrase vault, that
+  encrypted envelope remains in `localStorage` until explicitly forgotten.
 - This applies only to the `web`/`dev` identity. On the PearBrowser bridge the key
-  is unreachable to the app, so no identity export exists there — back up the
-  mnemonic instead.
+  is unreachable to the app, so no Peerit identity export exists there. Use only
+  recovery facilities the host actually provides.
 
 Required user message (web/dev mode, replacing the PearBrowser phrase message):
 
 > This identity lives only in this browser. Export it to move it to another device
 > or keep a backup — peerit has no server that can recover it for you.
 
-## Restore protocol
+## Historical host restore protocol
 
-A correct restore has this order:
+The earlier design expected this order. Current Peerit cannot initiate or verify
+step 1, so this is not a present-tense recovery promise:
 
-1. Restore the PearBrowser mnemonic first.
+1. Use the host-provided identity recovery flow, if one is available.
 2. Open the same production app drive key.
 3. The app reads `window.pear.identity.getPublicKey()`.
 4. If importing an app recovery bundle, the app compares:
@@ -181,7 +201,7 @@ old identity. It should say:
 
 > This recovery bundle belongs to a different app identity. You can view or seed
 > the old public data, but you cannot edit, moderate, vote, or post as that old
-> identity unless you restore the matching PearBrowser phrase.
+> identity unless the host restores the matching signing identity.
 
 ## Session and device behavior
 
@@ -191,14 +211,14 @@ Same browser profile:
 - localStorage preserves the current outbox/group key and known-outboxes list;
 - normal restarts should keep the same identity and data pointers.
 
-New device or wiped profile:
+The historical design expected this behavior on a new device or wiped profile:
 
-- mnemonic alone restores signing identity;
+- successful host recovery restores signing identity;
 - app recovery bundle restores outbox discovery;
 - seeder or relay pinning restores availability while the original device is
   offline.
 
-No mnemonic:
+If host identity recovery is unavailable or does not restore the old key:
 
 - the user cannot prove continuity with the old identity;
 - old records remain valid but belong to the old key;
@@ -224,8 +244,8 @@ Each app should expose an Identity / Recovery panel with:
 
 - app identity fingerprint: short app public key;
 - app drive key fingerprint;
-- backup status: "PearBrowser phrase backed up" if PearBrowser can expose that
-  status, otherwise a button that opens PearBrowser backup instructions;
+- host-key status plus a link to host-provided recovery controls, when the host
+  exposes them; Peerit must not claim a host backup is complete;
 - copy/export app recovery bundle;
 - import app recovery bundle;
 - in web/dev mode (browser-local key), a passphrase-encrypted **identity export**
@@ -237,8 +257,9 @@ Each app should expose an Identity / Recovery panel with:
 
 Suggested copy:
 
-> Back up PearBrowser to keep your identity. Back up this app's recovery bundle
-> to keep your posts discoverable on a new device.
+> PearBrowser manages this signing identity; use any recovery options it
+> provides. This app's recovery bundle helps rediscover data but does not contain
+> the host signing key.
 
 ## Current implementation notes
 
@@ -264,22 +285,22 @@ Suggested copy:
   compatibility with the copied engine. New apps should choose an app-specific
   namespace from day one; changing this in a live app needs a dual-read migration.
 
-## Guarantees
+## Historical recovery properties, not current guarantees
 
-With mnemonic only:
+If a host recovery mechanism restores the same signing key:
 
-- the app signing identity can be recovered for the same drive key;
+- the app sees the same signing identity for the same drive key;
 - old app data may still be hard to discover if outbox/group keys were lost.
 
-With mnemonic plus app recovery bundle:
+With the same restored host identity plus a matching app recovery bundle:
 
-- the app can recover the same signing identity and rejoin known outboxes.
+- the app can rejoin known outboxes under that identity.
 
-With mnemonic, app recovery bundle, and an always-on seeder/relay-pinned outbox:
+With those inputs plus an always-on seeder or relay-pinned outbox:
 
 - the user can recover identity, rediscover data, and keep public records
   available while their own device is offline.
 
-Without the mnemonic:
+Without restoration of the same signing key:
 
 - identity continuity is lost by design.

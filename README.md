@@ -1,473 +1,242 @@
-# peerit — a peer-to-peer Reddit
+# peerit
 
-Communities, posts, threaded comments and votes live in signed per-author
-outboxes. In **PearBrowser** those outboxes replicate directly between peers;
-normal browsers at **[peerit.site](https://peerit.site)** verify the same signed
-records while using configured relay infrastructure for transport and storage.
+[![Verify](https://github.com/bigdestiny2/peerit/actions/workflows/verify.yml/badge.svg)](https://github.com/bigdestiny2/peerit/actions/workflows/verify.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-4f8cff.svg)](LICENSE)
 
-> **New here? Read [EXPLAINER.md](EXPLAINER.md)** — what peerit is and how it works,
-> in plain language.
+**Local-first community software and a browser P2P reference app.** Peerit has
+communities, posts, threaded comments, votes, profiles, moderation views and
+pluggable feeds. Authors sign operations at the edge; each client verifies and
+materializes its own view instead of asking a platform database what is true.
 
-![How peerit assembles your feed: each user writes a signed outbox; your device verifies every signature and merges them into your feed; forged records are dropped.](docs/how-peerit-works.svg)
+Peerit is also where we test reusable patterns for P2P applications that must
+work inside the real constraints of browsers: durable intent journals,
+host-backed and browser-local identity, blind capability storage, signed
+discovery, exact readback, deterministic convergence, rollback floors and
+verifiable releases.
 
-**Two ways to run it — same signed data, different availability and privacy ceilings:**
+> **Current boundary:** peerit.site serves the coherent signed **Sequence 29**
+> artifact under `LIVE_PUBLIC_TEST_ONLY`, but its sole public-INBOX epoch ended
+> on 2026-08-20. The shipped coordinator now fails closed to local-only mode:
+> the UI and previously materialized local records remain usable, while fresh
+> signed-seed recovery, public network publication, and discovery require
+> runtime repair and a signed rotation successor. The GA gate remains blocked.
+> See [Current status](docs/CURRENT-STATUS.md) before repeating a project claim.
 
-| Where | How |
-|---|---|
-| **PearBrowser** (fully P2P) | open `hyper://<driveKey>/` — joins Hyperswarm directly, no relay |
-| **Any normal browser** | open **[peerit.site](https://peerit.site)** — reaches the same P2P network through an **untrusted relay** ([peerit-relay](https://github.com/bigdestiny2/peerit-relay)). Your ed25519 key and every signature check stay in the browser, so the relay can carry or withhold data but can **never forge, tamper, or impersonate**. Full design: [docs/WEB-DEPLOYMENT.md](docs/WEB-DEPLOYMENT.md). |
+[Open peerit.site](https://peerit.site) ·
+[Plain-language explainer](EXPLAINER.md) ·
+[Browser-P2P patterns](PATTERNS.md) ·
+[Architecture](docs/ARCHITECTURE.md) ·
+[Documentation map](docs/README.md)
 
-The same audited ES modules run in both — the `<meta name="peerit-relay">` tag is
-ignored by PearBrowser, so adding web support never touched the native P2P build.
+![Each Peerit author signs and journals an operation locally. With current signed network authorities, the browser can publish encrypted cells and a discovery pointer for another client to verify before materializing it.](docs/how-peerit-works.svg)
 
----
+## What “peer-to-peer in a browser” means here
 
-## How it works
+Peerit separates **authority**, **storage**, **discovery**, **transport** and
+**presentation**. That distinction matters more than whether an HTTP request
+appears somewhere in the stack.
 
-PearBrowser serves a site (a plain folder of `index.html` + assets) over Hyperdrive
-and injects a `window.pear` bridge. peerit uses three parts of it:
+```text
+explicit user action
+        │
+        ▼
+durable identity ── host-owned in Pear Browser, device-owned on the web
+        │
+        ▼
+signed operation ── canonical fields, author binding, proof-of-work where required
+        │
+        ▼
+local journal + materialized view ── survives reloads and retry races
+        │
+        ├── encrypted immutable CELL replicas ── receipt + capability GET readback
+        │
+        └── small append-only INBOX pointer ── authenticated discovery
+                                      │
+                                      ▼
+another client verifies bootstrap → relay → pointer → cell → operation
+                                      │
+                                      ▼
+                           its own local feed and policy view
+```
 
-| Bridge API            | Used for |
-|-----------------------|----------|
-| `window.pear.sync`    | The shared, multi-writer Autobase+Hyperbee log — every community, post, comment, vote and mod action is an op on it. `create / join / append / get / list / range / count / status`. |
-| `window.pear.identity`| A stable per-app **ed25519** key (`getPublicKey`) + signatures (`sign`) → authorship. |
-| `window.pear.swarm`   | (reserved) live peer channels for the multi-writer upgrade — see roadmap. |
+The normal web path still has a website origin, relay connections, browser
+storage and browser lifecycle limits. A normal browser is not a native
+HyperDHT node. Relays may delay, observe transport metadata or withhold bytes;
+they are not trusted to forge an author, reinterpret a record, or decide the
+client's moderation and ranking policy.
 
-There is **no backend process and no build step**. Everything is vanilla ES
-modules in [`js/`](js/).
+## Current runtime surfaces
 
-## Public repo setup
+| Surface | Purpose | Status |
+| --- | --- | --- |
+| `web/` signed artifact | Exact browser bundle represented by the release ledger | Sequence 29 is deployed and coherent; its network activation is currently blocked on signed epoch rotation and limited Cell-GET runtime repair |
+| `js/substrate/` | Replacement local-first product runtime, authenticated boot and blind substrate composition | Active development on `main`; includes host-identity integration newer than the signed Sequence 29 artifact |
+| Root `index.html` + `js/app.js` | Legacy/compatibility UI and domain playground | Useful for tests and experiments; **not** the production entry point |
+| Pear Browser host bridge | Keeps the per-app signing seed behind `window.pear.identity` | Local record signing is implemented and tested on `main`; it is not in Sequence 29 and does not yet satisfy that path's `signAuthorBindV1` requirement |
+| Plain-browser development | Local storage, IndexedDB and controlled fixtures | Development only; status is shown explicitly |
 
-From a fresh machine or clean workspace:
+This table prevents a recurring failure mode: source, experimental and released
+behavior must not be described as if they were the same thing.
+
+## The reusable patterns
+
+The full [pattern catalogue](PATTERNS.md) labels each idea as released,
+implemented, experimental, specified or rejected and links to executable proof.
+The short version:
+
+| Pattern | Why it exists |
+| --- | --- |
+| Sign at the edge; verify after every transport | A relay or peer can carry a record but cannot become its author |
+| Persist intent before network I/O | A tab crash, reload or flaky relay does not erase or duplicate a signed action |
+| Immutable body cells + tiny discovery pointers | Large encrypted payloads and append-only discovery can evolve independently |
+| Capability URLs/frames, not semantic relay APIs | Infrastructure stores opaque bytes without understanding posts, votes or communities |
+| Read back before claiming publication | An acknowledgement is not proof that the exact bytes are retrievable |
+| Lazy identity with explicit mutation | Reading does not silently mint an identity; the first write crosses a visible trust boundary |
+| Deterministic local materialization | Replicas can receive records in different orders and still converge |
+| Signed bootstraps, descriptor floors and release history | Discovery and code updates fail closed on rollback or substitution |
+| Client-owned moderation and feed policy | Transport does not become the product's speech or ranking authority |
+| Honest capability ladders | Pear Browser, an ordinary browser and a local fixture expose different guarantees |
+
+The catalogue also records experiments that are useful but not shipped, including
+event-sourced multi-party workflows, private record envelopes, split transport
+and browser-native Hypercore storage.
+
+## Try the exact checked-in surfaces
+
+Requires a supported Node.js 22 or newer release. CI runs the full ship gate on
+Node.js 22 and checks core compatibility on Node.js 24.
 
 ```bash
-mkdir peerit-workspace
-cd peerit-workspace
 git clone https://github.com/bigdestiny2/peerit.git
 cd peerit
-node --version                 # needs Node 20+
-npm test
-npm run dev                    # opens the loopback dev server on 127.0.0.1:8777
-```
-
-The app itself has no install step and no runtime npm dependencies. Publishing is
-the only workflow that needs the HiveRelay client. For a public GitHub checkout,
-clone the stable HiveRelay source next to peerit and install its own dependencies.
-The stable operator/source baseline is `v0.24.3`; exact `0.24.3` HiveRelay
-packages were not published to npm, so do not substitute npm `latest` or an RC:
-
-```bash
-cd ..
-git clone https://github.com/bigdestiny2/p2p-hiverelay.git
-cd p2p-hiverelay
-git checkout v0.24.3
 npm ci
-cd ../peerit
-HIVERELAY_ROOT=../p2p-hiverelay npm run publish:local
 ```
 
-HiveRelay `v0.25.0-rc.*` and the separate blind-substrate track are opt-in
-candidate/development work. peerit's stable docs do not require or present them
-as the production relay baseline.
-
-`publish.mjs` resolves the HiveRelay client in this order:
-
-1. an installed `p2p-hiverelay-client` package in `peerit`;
-2. `HIVERELAY_CLIENT_PATH` pointing to `packages/client/index.js`, the client
-   directory, or the HiveRelay repo root;
-3. `HIVERELAY_ROOT` or `P2P_HIVERELAY_ROOT` pointing to the HiveRelay repo root;
-4. common workspace layouts such as `../p2p-hiverelay`,
-   `../hiverelay`, or `../../00-core/hiverelay`.
-
-For a real public publish:
+Preview the exact committed release artifact on a locked-down loopback server:
 
 ```bash
-HIVERELAY_ROOT=../p2p-hiverelay npm run ship:live
+npm run preview:release
+# http://127.0.0.1:8791
 ```
 
-### Data model — riding the bridge's generic reducer
-
-The bridge applies an op `{ type, data }` by writing `data` into Hyperbee at key
-`type!data.id` (last-write-wins). peerit encodes scope + identity into `data.id`
-so prefix/range scans give cheap feeds and threads:
-
-| Record    | Key                                          | Queried by |
-|-----------|----------------------------------------------|------------|
-| community | `community!<slug>`                           | `list('community!')` |
-| post      | `post!<community>!<cid>`                      | `list('post!<community>!')` |
-| comment   | `comment!<community>!<postCid>!<cid>`         | `list('comment!<community>!<postCid>!')` → tree by `parentCid` |
-| vote      | `vote!<targetCid>!<voterPubkey>`              | `list('vote!<cid>!')` → one vote per identity (LWW) |
-| profile   | `profile!<pubkey>`                           | `get('profile!<pub>')` |
-| modaction | `modaction!<community>!<actionId>`           | `list('modaction!<community>!')` → overlay |
-
-Edits/deletes re-write the full record (soft-delete via `deleted:true`) — correct
-for an append-only P2P log. Moderation is a **client-honored overlay**: mod actions
-signed by a community's moderator chain (founder → added mods) are applied when
-rendering (remove / lock / sticky / ban). See [`js/model.js`](js/model.js).
-
----
-
-## Run it
-
-### In a normal browser (dev fallback)
-
-No `window.pear`? peerit transparently swaps in a **localStorage + BroadcastChannel**
-backend that reimplements the bridge reducer exactly. Multiple tabs share one world,
-so you can simulate several peers.
+Run the legacy/domain source playground (useful for multi-tab UI experiments,
+but not the production entry point):
 
 ```bash
-# from the peerit repo root
-node dev-server.mjs              # serves only the public app files on 127.0.0.1
-# open http://localhost:8777
+npm run dev
+# http://127.0.0.1:8777
 ```
 
-- The first screen shows local starter cards. Click **Join r/welcome** (or another
-  starter community) to create/join a real community explicitly.
-- Open Settings → **Dev: switch user** (or the user menu) to act as different people.
-- Open a second tab to watch live cross-tab updates.
+Run the local blind-browser stand-up when working on the replacement runtime:
 
-### In PearBrowser (real P2P)
-
-Open `hyper://<driveKey>/` after publishing (below). The same code runs unchanged;
-`window.pear` is detected and the bridge backend is used.
-
----
-
-## Features
-
-- **Communities** (subreddits): create, browse, join/leave, about page, founder-moderated.
-- **Posts**: text (markdown), link, and image posts; per-community and aggregate feeds.
-- **Ranking**: Hot, New, Top (with time windows), Rising, Controversial — real Reddit formulas.
-- **Threaded comments**: unlimited nesting, collapse, inline reply, sort (Best/Top/New/Controversial/Old). "Best" uses the Wilson lower bound.
-- **Voting**: up/down on posts and comments, one vote per identity (last-write-wins), optimistic UI.
-- **Identity & profiles**: ed25519 per-app key, display name + bio, **karma** (post + comment).
-- **Moderation**: founders + added mods can remove/approve, lock/unlock, pin/unpin, ban/unban, and add moderators — enforced as a signed overlay.
-- **Search** across communities, posts and comments.
-- **Saved / hidden posts, subscriptions, sort prefs** — per-device, per-identity (local).
-- **Safe markdown** (escaped; only `http(s)/hyper/pear` links).
-- **Live updates** via the bridge poll / dev BroadcastChannel.
-
----
-
-## File structure
-
-```
-peerit/
-├── index.html          # shell + boot splash
-├── styles.css          # dark theme
-├── icon.svg
-├── js/
-│   ├── util.js         # ids, time, slugs, routing, escaping
-│   ├── markdown.js     # safe markdown renderer
-│   ├── ranking.js      # hot/top/controversial/wilson/rising + sorts
-│   ├── model.js        # key scheme, comment tree, mod overlay
-│   ├── sync.js         # BridgeSync (window.pear.sync) | DevSync (localStorage)
-│   ├── identity.js     # BridgeIdentity (window.pear.identity) | DevIdentity (multi-user)
-│   ├── prefs.js        # per-device local prefs
-│   ├── recovery.js     # app data recovery bundle + peerit-seeder command helpers
-│   ├── identity-export.js # web-mode: passphrase-encrypted signing-key export/import
-│   ├── qr.js           # QR encode (Nayuki port) + scan (BarcodeDetector) for exports
-│   ├── onboarding.js   # local starter feed + welcome community metadata
-│   ├── data.js         # domain API (CRUD + queries + vote tallies + karma + mod)
-│   └── app.js          # router + views + event delegation + live refresh
-├── manifest.json       # PearBrowser catalog manifest (driveKey filled by publish.mjs)
-├── dev-server.mjs      # locked-down loopback static preview
-├── publish.mjs         # publish to HiveRelay + register in catalog (outward-facing)
-├── scripts/            # launch, browser smoke, and availability proof commands
-└── test/               # headless verification of core logic + gossip security
+```bash
+npm run dev:local-blind-browser
 ```
 
-## Test
+The local stand-up exercises controlled development infrastructure. It does not
+turn fixture evidence into a production claim.
+
+## Verify it
+
+Fast repository and documentation guard:
+
+```bash
+npm run test:docs
+```
+
+Core, protocol and release-source checks:
 
 ```bash
 npm test
-# or run the files directly:
-node test/smoke.mjs      # core checks: data layer, ranking, threading, votes, moderation, markdown
-node test/gossip.mjs     # signed gossip, convergence, forgery rejection
+npm run test:peerit-substrate
+npm run test:peerit-operation-authority
 ```
 
-Repeatable browser and availability gates live outside the default dependency-free
-test suite:
+As of 2026-08-27, the aggregate `npm test` / `test:ship` path intentionally
+stops at `peerit-cutover-gates`: the committed Sequence 29 INBOX epoch is stale.
+That red gate is current-state evidence, not permission to bypass expiry checks;
+see [Current status](docs/CURRENT-STATUS.md#what-is-deployed-versus-currently-active).
+
+Browser behavior and accessibility:
 
 ```bash
-npm run proof:availability
-
-# with npm run dev already running in another terminal:
-npm run proof:availability -- --url http://127.0.0.1:8777
-
-# representative user-data availability proof:
-npm run proof:outbox-availability
-npm run proof:outbox-availability:report
-
-# generated Peerit web build through local HiveRelay OutboxLog:
-npm run proof:hiverelay-outboxlog -- --out reports/hiverelay-outboxlog-convergence-2026-07-01.json
-
-# browser UI gates (pinned in devDependencies and required in CI)
-npx playwright install chromium firefox webkit
+npx --no-install playwright install chromium firefox webkit
+npm run test:browser:signed-release
 npm run test:browser
 npm run test:browser:mobile
 npm run test:browser:android
-npm run test:accessibility
 npm run test:browser:firefox
 npm run test:browser:webkit
-
-# strict live evidence gate; expects fresh .deploy publish/ship reports
-npm run proof:availability:live
+npm run test:accessibility
 ```
 
-`npm run test:browser` starts the dev server when no `--url` is supplied, then
-creates a community, creates a post, edits the post body, edits/deletes comments,
-soft-deletes the post, and verifies the cross-tab update path from two
-tabs/users. Playwright is deliberately not a runtime dependency.
-The mobile-host gates exercise the authenticated PearBrowser host API through
-iPhone- and Android Chrome-shaped Chromium contexts. `npm run test:accessibility`
-enforces automated WCAG 2.0/2.1 A and AA checks in the two-user write path;
-these emulations supplement, rather than replace, real-device and human
-assistive-technology release checks.
-`npm run proof:availability` verifies the published file list, static module
-imports, manifest drive key, sibling seeder/mirror tooling, optional HTTP asset
-fetches, live publish durability reports when present, and the checked-in
-representative outbox availability report. `npm run proof:outbox-availability`
-builds a fresh-client user-data proof: a new reader with empty storage recovers
-a representative profile/community/post/comment/vote set only after seeder-style
-byte catch-up is confirmed. `npm run proof:outbox-availability:report` refreshes
-the checked-in JSON evidence under `reports/`.
-`npm run proof:hiverelay-outboxlog` starts the sibling HiveRelay checkout's real
-RelayAPI with `OutboxLogApp`, runs Peerit's generated `web/js` client modules
-through HTTP+SSE, and proves create/post/vote/comment/edit/reload convergence.
-
-For the current local command surface, known gaps, and operator-run publish/runtime
-gates, see [`TEST-COMMAND-MATRIX-2026-07-01.md`](TEST-COMMAND-MATRIX-2026-07-01.md).
-
-## Publish (outward-facing — run deliberately)
-
-`publish.mjs` publishes the site folder as a Hyperdrive, writes the resulting
-`driveKey` into `manifest.json`, then seeds it on the live HiveRelay fleet and
-registers it in the PearBrowser catalog so it appears in the app's store. It now
-waits for relay byte-replication evidence after seed acceptance; use
-`STRICT_ANCHOR=1` for release publishes that should fail instead of warning when
-the drive is not durably reachable yet. The guarded `ship:live` flow publishes
-strictly, builds the final web candidate exactly once with the resulting key,
-hands `asset-manifest.json` to an external/offline signer, and continues only
-with build-free verification of the returned `asset-manifest.sig`.
+Or run the same aggregate gate used by GitHub Actions:
 
 ```bash
-npm run ship:check          # preflight + one build; pause/resume for offline signature
-npm run ship:live           # preflight, strict publish, one build, sign handoff, verify-only
-npm run web:prepare         # build once + deploy/web-signing-request.json
-npm run release:sign        # optional local signer; an HSM/keyvault wrapper may replace it
-npm run web:verify          # hash every artifact + verify signature; NEVER builds
-npm run web:release         # compatibility alias for web:verify
-npm run proof:availability  # local static + availability evidence summary
-npm run publish:local       # local PearBrowser test, not cataloged or seeded
-npm run publish             # alias for the guarded ship:live flow
-npm run publish:raw         # raw publisher, for debugging only
-KEEP=1 npm run publish:raw  # manual long-running seed hold; bypasses ship guards
-STRICT_ANCHOR=1 npm run publish
+npm run test:ci
 ```
 
-`ship:live` sets `STRICT_ANCHOR=1`, `DURABILITY=archive`, and a longer
-`ANCHOR_TIMEOUT_MS=240000` by default. It writes ignored operator evidence to
-`.deploy/last-ship.json`, `.deploy/last-publish.json`, and
-`.deploy/last-web-release.json`. If strict anchoring fails after `manifest.json`
-was updated, `publish.mjs` restores the previous manifest so a partial relay
-anchor does not masquerade as the current release. By default the ship check
-blocks when release files are dirty in git. Live publish rejects `--allow-dirty`,
-`--no-test`, and `--no-web`/`SKIP_WEB_RELEASE`; `--allow-dirty` is available only
-for an intentional non-publishing check. When the release config is read-only,
-the live preflight also runs `proof:production-readonly` and blocks unless the
-production edge rejects create/append while health and existing reads still work;
-it also runs `audit:live-legacy-pow`. Offline `ship:check` runs neither live probe.
-The packaged web commands and live ship are strict: any warning blocks release.
-`KEEP=1` is deliberately ignored by `ship:live`, because the ship process must
-regain control after `publish.mjs` writes the new drive key so it can finish the
-signing handoff and verify the frozen web bundle.
+Live proofs are deliberately separate from deterministic CI because they make
+network and deployment claims. See [Current status](docs/CURRENT-STATUS.md) and
+the [test command matrix](TEST-COMMAND-MATRIX-2026-07-01.md) for the appropriate
+operator-run evidence.
 
-In a terminal, `ship` pauses until the operator returns
-`web/asset-manifest.sig`. In non-interactive use it records a hash-bound pending
-handoff and exits with status 2; after the external signer returns the file, run
-`npm run ship:live -- --resume-signature` (or `ship:check` for a non-public
-candidate). Resume never republishes or rebuilds. `--sign-command '<wrapper>'`
-is available for an explicitly operator-controlled HSM/keyvault wrapper; do not
-put the seed in the command string or on the deployment host.
-The standard scoped signer invocation is
-`keyvault exec --only peerit/release/signing-seed -- npm run release:sign`;
-keyvault injects `PEERIT_RELEASE_SIGNING_SEED` only for that process.
-The pending handoff binds the exact publish-report bytes and resume rechecks
-strict metadata plus full-blob durability evidence before accepting the report.
+## Repository map
 
-The web release source of truth is [`deploy/web-release.json`](deploy/web-release.json).
-Its positive `releaseSequence` is signed into the artifact. Increment it for every
-changed signed candidate (including a new published drive key); prepare rejects a
-lower sequence or a different candidate reusing the sequence recorded by the
-committed `deploy/web-signing-request.json`. Returning normal browsers retain a
-best-effort key-scoped local floor, while first-visit full-byte assurance comes
-from `npm run proof:web-deploy -- --url https://peerit.site` rather than an
-expensive fetch of every module on every boot.
-When rotating the relay fleet, edit that file and run
-`PEERIT_ROSTER_SEED=<offline seed> npm run web:prepare -- --drive-key <key>`;
-without the seed, prepare verifies the committed signed roster and fails on any mismatch. A
-roster signing-key rotation is explicit: update `pinnedRosterKey` and the signed
-roster together.
+```text
+peerit/
+├── js/
+│   ├── substrate/       # replacement runtime, journal, boot authority, blind transport
+│   ├── data.js          # signed domain operations and query API
+│   ├── model.js         # record types and key model
+│   ├── moderation.js    # client-owned policy views
+│   ├── feed-algorithms.js
+│   └── verify.js        # record authority checks
+├── protocol/            # canonical profiles, validators and conformance vectors
+├── deploy/              # signed release inputs, decisions and pin history
+├── web/                 # exact generated/signed browser release artifact
+├── scripts/             # deterministic builders, drills and evidence gates
+├── test/                # unit, protocol, fault, browser and release verification
+├── docs/                # current guides plus dated design/evidence records
+├── PATTERNS.md           # reusable browser-P2P pattern catalogue
+├── EXPLAINER.md          # plain-language product and trust model
+└── SECURITY.md           # reporting and threat-model entry points
+```
 
-The publisher loads `p2p-hiverelay-client` from an installed package, an explicit
-HiveRelay env path, or a discoverable sibling/workspace checkout. This puts
-peerit on the public network — it is never invoked by the app or any build step.
+Start code reading at
+[`js/substrate/app-entry.js`](js/substrate/app-entry.js),
+[`js/substrate/peerit-product-runtime.js`](js/substrate/peerit-product-runtime.js),
+[`js/substrate/peerit-journal.js`](js/substrate/peerit-journal.js) and
+[`js/substrate/public-inbox-boot-coordinator.mjs`](js/substrate/public-inbox-boot-coordinator.mjs).
 
-See [`docs/availability.md`](docs/availability.md) for the exact persistence and
-availability guarantees for the static app drive versus user-generated data.
-See [`docs/identity-recovery-protocol.md`](docs/identity-recovery-protocol.md)
-for how PearBrowser's mnemonic, per-app identity, and app outbox recovery fit
-together.
-Inside the app, Settings -> Identity / Recovery shows identity fingerprints,
-the current Group key, recovery bundle export/import, and a ready-to-copy
-`peerit-seeder` command for user data availability. In web/dev mode — where the
-identity is a browser-local key rather than a PearBrowser sub-key — it also offers
-a passphrase-encrypted **identity export/import** (file, copy, or QR) so you can
-move or back up the signing key itself; the recovery bundle only carries public
-discovery data, never the key.
+## Security and honest limits
 
----
+- **Two owner-operated relays are not decentralization.** Sequence 29 records
+  bounded activation evidence, not independent custody or censorship resistance;
+  its public-INBOX epoch currently needs a signed rotation.
+- **Opaque is not anonymous.** Relays can observe timing, sizes, IP/network
+  metadata and the capabilities presented to them even when they cannot parse
+  Peerit semantics.
+- **The web origin remains a code-delivery trust point on first visit.** Signed
+  manifests, pin history and the service worker make substitution visible and
+  improve continuity; they do not make DNS or hosting disappear.
+- **Browser storage is evictable and origin-scoped.** Durable local journaling is
+  a recovery mechanism, not permanent custody. Export and replication still
+  matter.
+- **Sybil resistance is partial.** Proof-of-work and reputation can raise cost;
+  neither proves one human per key.
+- **Client policy is plural.** Moderation and ranking are verifiable local views,
+  not a universal consensus handed down by a relay.
 
-## Architecture: multi-writer gossip + security model
+Read [SECURITY.md](SECURITY.md), [Architecture](docs/ARCHITECTURE.md) and
+[Current status](docs/CURRENT-STATUS.md) before reviewing or extending a trust
+boundary.
 
-See [`docs/pattern.md`](docs/pattern.md) for the reusable pattern behind this
-app: per-user signed outboxes, peer gossip, deterministic merge, and a
-client-honored moderation overlay.
+## Contributing
 
-The PearBrowser bridge's sync groups are single-writer (the creator writes; peers
-`join` read-only). So peerit uses the **per-user outbox + gossip aggregation**
-pattern (the proven `peartube` shape): each user writes only their own outbox; peers
-discover and replicate each other's outboxes and merge them into one view. The
-backend lives behind [`js/sync.js`](js/sync.js)/[`js/gossip.js`](js/gossip.js); the
-UI and [`js/data.js`](js/data.js) are unchanged by the swap.
+Bug reports, protocol counterexamples and new pattern experiments are welcome.
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) first: changes that affect a public
+claim need matching tests and an explicit maturity label. Never commit identity
+seeds, capability vaults, custodian material or live operator evidence.
 
-**Authenticity = signatures, not transport.** Every record is Ed25519-signed
-([`js/crypto.js`](js/crypto.js), over SubtleCrypto / `node:crypto`). On merge
-([`mergeOutboxes`](js/gossip.js)) a record is admitted only if (1) its storage key
-equals the key recomputed from its own fields, (2) its signer equals its claimed
-author, and (3) its signature verifies. **Which outbox relayed a record carries no
-authority** — so a malicious peer can rebroadcast a victim-labelled outbox full of
-fabricated posts/comments/votes/mod-actions and every one is rejected. Forgeries are
-dropped at ingest too, so they can't evict real records. Community names are
-**sticky**: once a replica has seen r/<slug> for a creator, a different creator can
-never replace it. This model was hardened against a multi-agent adversarial audit
-(forgery, tamper, key-collision, eviction, convergence). See [`test/gossip.mjs`](test/gossip.mjs).
-
-### Durability & censorship-resistance (implemented)
-
-Authenticity was never the problem — every record is Ed25519-signed and re-verified in
-your browser, so a relay **can't forge**. The problem is a relay that **withholds** or
-serves **stale** data. peerit closes that in layers; each defeats one attack, and the
-relay ends up a *swappable, verifiable cache, never the source of truth*. Full design +
-honest ceiling: [`docs/P2P-DURABILITY-SPEC.md`](docs/P2P-DURABILITY-SPEC.md).
-
-![defense in depth](docs/durability-design.svg)
-
-**Two runtimes.** PearBrowser users are already fully P2P (own Hypercore outboxes over
-Hyperswarm) and never touch a relay. The layers below bring *normal-browser* users as
-close to that as browsers allow.
-
-| Attack by a relay | Defense | Where |
-|---|---|---|
-| Forge / impersonate | Ed25519 signature on every record, re-verified at merge | always on |
-| Withhold rows silently | **signed head** `head!<author>` = `{version, count, root}` census; `auditOutbox` flags a root mismatch | **A** ([`canon.js`](js/canon.js) · [`gossip.js`](js/gossip.js)) |
-| Roll back / strip / withhold *online* | **multi-relay pool**: fan-out + **cross-relay head** (highest signed version wins) + **recover** (read around the bad relay) | **B** ([`relay-pool.js`](js/relay-pool.js)) |
-| Roll back across your restart, or all relays collude | **durable head floor** in `localStorage` — a relay can't talk you below a version you've already seen | **C** ([`gossip.js`](js/gossip.js)) |
-
-**How it works** (write once, verify everywhere): an author signs each record + a head and
-fans the write to the relay pool; a reader takes the **highest signed head across relays**,
-audits its rows against it, **recovers** from a good relay on a shortfall, and **rejects any
-head below its durable floor**. Result: a locally-verified view + a withholding/rollback flag
-on `status()`.
-
-![write to read flow](docs/durability-flow.svg)
-
-Tests: [`outbox-head.mjs`](test/outbox-head.mjs) (A) · [`relay-pool.mjs`](test/relay-pool.mjs) (B) ·
-[`head-floor.mjs`](test/head-floor.mjs) (C, incl. detection surviving a client restart).
-
-**Current production posture:** the signed roster carries **one relay**.
-`peerit.site` is live as a writable canary: its single ingress provides locally durable,
-atomic, idempotent receipts, but it cannot keep accepting writes or guarantee no loss if
-that one relay fails. Durable head floors can detect a rollback below a version a
-returning browser has already seen, but there is no live second relay to recover missing
-rows or protect a first-time visitor from a stale single origin. General availability,
-anti-collusion claims, and any "no single origin" promise remain gated on at least two
-independent failure domains. The durable floor is active. See the current
-[`production-readiness matrix`](reports/2026-07-10-PRODUCTION-READINESS-MATRIX.md).
-Grow the pool by self-hosting another relay with one `docker compose up`
-([`deploy/peerit-relay/`](deploy/peerit-relay/)); the optional blind in-browser DHT
-transport has its own bundle ([`deploy/dht-relay/`](deploy/dht-relay/)).
-
-### Operator blindness: from readable-host toward blind-host
-
-peerit's normal-browser relay is, today, a **readable host**: records are stored under
-plaintext semantic keys (`post!<community>!<cid>`, `vote!<target>!<author>`), so an operator
-can read bodies and the social graph at rest — the weakest liability position. Two designs
-move it toward a **blind host**: an operator that holds opaque bytes it must *affirmatively
-decrypt and reconstruct* to read — no passive grep, no semantic enumeration, content-neutral
-storage, drop-by-opaque-id takedown. Full analysis:
-[`docs/OPERATOR-LIABILITY.md`](docs/OPERATOR-LIABILITY.md).
-
-> **Honest ceiling (load-bearing, not marketing).** A *public* forum's read key must reach
-> every reader, so "blind" can **never** mean confidentiality or anonymity — the operator
-> holds the key and *can* decrypt any public post, and can confirm a specific guess in O(1).
-> The win is **no passive reading, no semantic enumeration, content-neutrality, deniability**
-> — not secrecy. peerit does **not** claim "the operator can't read your posts."
-
-- **Blind-Outbox key scheme (Opaque-Log v2) — *live*.** The relay key is now an opaque
-  `v2!<okey>` (a keyed hash over author + type + id), with structural fields sealed in the
-  value, so the relay can no longer grep or prefix-index the graph; feed/thread/vote
-  aggregation happens in the browser. This moves the web tier from readable-host to blind-host.
-  The primitives ([`js/seal.js`](js/seal.js)) are landed, the write/read paths are wired in
-  [`js/data.js`](js/data.js), and the live seed outbox on peerit-relay is already opaque (see
-  `test/live-v2-decrypt.mjs`). Full design + migration notes:
-  [`docs/BLIND-OUTBOX-MIGRATION.md`](docs/BLIND-OUTBOX-MIGRATION.md).
-- **BlindShard — *implemented and wired, active when a shard cohort is available*.** Long post
-  bodies are convergent-encrypted and erasure-dispersed as opaque `shard:<hash>` fragments
-  across a pool, so **no single relay holds a readable *or* complete copy** of a body (fewer
-  than K shards, no key). The client path is built in [`js/blind-dealer.mjs`](js/blind-dealer.mjs),
-  the browser recovery bundle ships as [`js/reader-bundle.js`](js/reader-bundle.js), and
-  [`js/app.js`](js/app.js) enables dispersal automatically when a shard cohort is configured.
-  When no cohort is reachable the write path falls back to a single v2 blob. Live deployment
-  across ≥3 independent operators is what makes dispersal meaningful; same-owner cohorts are
-  supported for testing but do not provide operator separation. Design:
-  [`docs/BLINDSHARD-DESIGN.md`](docs/BLINDSHARD-DESIGN.md).
-
-**The tiers, honestly.** PearBrowser (`hyper://`) is already a **pure conduit** —
-content-addressed, zero origin, the operator serves nothing. The normal-browser relay is a
-readable host today, moving to blind host via the work above. A fully transitory
-`dht-relay-ws` byte-pipe (the operator relays encrypted P2P frames, stores nothing) is
-wire-validated on a local testnet but gated on upstream `@hyperswarm/dht-relay` reaching
-production readiness.
-
-### Honest limitations
-- **Public content is sealed at rest, not plaintext.** With Opaque-Log v2 live, record keys are
-  opaque and values are sealed, so a relay cannot passively grep or prefix-index the graph.
-  BlindShard adds body dispersal when a cohort is available. A relay/seeder still cannot forge
-  or silently withhold across the pool, but metadata (counts, timing, sizes, IPs) still leaks.
-  Because the read key is public, a determined operator can still run the client and decrypt —
-  the win is **deniability + no passive index + content-neutral storage**, not secrecy.
-- **Rollback resistance ends at all-relays collusion against a first-time visitor.** The
-  durable floor (Phase C) catches a rollback across your own restart and an all-relays-collude
-  rollback *for content you've seen*; the signed directory (Phase D) extends that to a **fresh**
-  visitor for a *single* relay rolling back (the pool takes the cross-relay max). What's left
-  open: a brand-new visitor where *every* relay serves the same stale directory — that needs an
-  **independent** anchor (a HiveRelay-pinned directory the browser reads out-of-band), the
-  remaining Phase D work. Detection isn't content-recovery: if no relay serves the newer content
-  you're flagged but shown the stale set. A closed tab can't seed, so cold-start needs an
-  always-on provider. **Roadmap:** this data plane is being generalized into **OutboxLog**, a
-  first-class *blind* HiveRelay service any P2P web app can use (append-log + live gossip, run by
-  many independent operators) — see [`docs/HIVERELAY-OUTBOXLOG-PLAN.md`](docs/HIVERELAY-OUTBOXLOG-PLAN.md)
-  + the [handover spec](docs/OUTBOXLOG-HANDOVER-SPEC.md).
-- **Sybil / vote weight.** Identities are free to mint, so each can cast one valid
-  vote — raw scores are *advisory*, not Sybil-resistant. Real resistance needs an
-  identity-cost or web-of-trust layer (out of scope).
-- **Name squatting at genesis.** You can't *hijack* an established community, but the
-  *first* claimant of a brand-new slug wins it (createdAt is self-asserted). Global
-  unique naming is unsolvable in pure gossip without a registry/PoW (Zooko's triangle).
-  peerit's guarantee is **content authenticity**, not global name ownership.
-- **Dev fallback.** A browser with no SubtleCrypto Ed25519 (and no `node:crypto`) runs
-  a *cooperative, insecure* mode (`status().secure === false`, mode `gossip-dev-insecure`)
-  for local simulation only. The deployment target (PearBrowser / modern browsers /
-  Node 20+) always has Ed25519, so signatures are enforced in production.
+Peerit is available under the [MIT License](LICENSE).

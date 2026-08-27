@@ -41,7 +41,8 @@ import {
 import {
   PEERIT_APP_ARTIFACT_PATH,
   PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE,
-  PEERIT_WEB_ASSET_MANIFEST_PATH
+  PEERIT_WEB_ASSET_MANIFEST_PATH,
+  verifyPeeritLimitedPublicInboxBootstrapArtifactV1
 } from '../scripts/substrate-runtime-artifact.mjs'
 
 const key = 'ab'.repeat(32)
@@ -369,6 +370,8 @@ assert.throws(() => verifyPeeritSeq29OwnerDecisionV1({
 const decisionRoot = mkdtempSync(join(tmpdir(), 'peerit-seq29-decision-'))
 mkdirSync(join(decisionRoot, 'deploy'), { recursive: true })
 mkdirSync(join(decisionRoot, 'web'), { recursive: true })
+const decisionTime = '2026-08-13T20:00:00.000Z'
+const staleRuntimeTime = '2026-08-27T12:00:00.000Z'
 const inboxSigningSeed = '7c'.repeat(32)
 const inboxPrivateKey = createPrivateKey({
   key: Buffer.concat([
@@ -384,7 +387,7 @@ const inboxFixture = JSON.parse(readFileSync(new URL(
   './fixtures/peerit-seq29-limited-public-test-v1/positive-bootstrap.json',
   import.meta.url)))
 const inboxPayload = structuredClone(inboxFixture.payload)
-const inboxNow = BigInt(Date.now())
+const inboxNow = BigInt(Date.parse(decisionTime))
 inboxPayload.artifactClass = 'LIMITED_PUBLIC_TEST_RELEASE'
 inboxPayload.authorityPublicKey = decisionInboxAuthority
 inboxPayload.issuedUnixMillis = String(inboxNow - 1000n)
@@ -404,6 +407,20 @@ const inboxBytes = Buffer.from(JSON.stringify({
   payload: inboxPayload,
   signature: inboxSignature
 }, null, 2) + '\n')
+assert.equal(verifyPeeritLimitedPublicInboxBootstrapArtifactV1({
+  bytes: inboxBytes,
+  expectedAuthorityPublicKey: decisionInboxAuthority,
+  expectedReleaseSequence: 29,
+  referenceUnixMillis: BigInt(Date.parse(decisionTime))
+}).releaseSequence, 29,
+  'the signed bootstrap authenticates at the canonical historical decision time')
+assert.throws(() => verifyPeeritLimitedPublicInboxBootstrapArtifactV1({
+  bytes: inboxBytes,
+  expectedAuthorityPublicKey: decisionInboxAuthority,
+  expectedReleaseSequence: 29,
+  referenceUnixMillis: BigInt(Date.parse(staleRuntimeTime))
+}), /outside the bounded public INBOX bootstrap lifetime|epoch or one-stripe shape is invalid/,
+  'the same signed bootstrap fails closed against a stale runtime wall clock')
 const seedBytes = Buffer.from('exact-seed-bootstrap\n')
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
 const decisionReleasePrivateKey = createPrivateKey({
@@ -565,7 +582,7 @@ const materializationInput = {
   draftBytes: decisionDraftBytes,
   expectedDraftSha256: digest(decisionDraftBytes),
   explicitConfirmation: PEERIT_SEQ29_EXPLICIT_CONFIRMATION_V1,
-  decidedAt: '2026-08-13T20:00:00.000Z',
+  decidedAt: decisionTime,
   artifacts: materializationArtifacts
 }
 assert.throws(() => materializePeeritSeq29OwnerDecisionV1({
@@ -609,6 +626,26 @@ assert.equal(verifyPeeritSeq29OwnerDecisionV1({
   decisionBytes: materializedDecisionBytes,
   expectedDecisionSha256: materializedDecisionSha256
 }).status, 'decided')
+const staleTimeDecision = structuredClone(materializedDecision)
+staleTimeDecision.decided_at = staleRuntimeTime
+const staleTimeDecisionBytes = Buffer.from(
+  JSON.stringify(staleTimeDecision, null, 2) + '\n')
+assert.throws(() => verifyPeeritSeq29OwnerDecisionV1({
+  root: decisionRoot,
+  decisionBytes: staleTimeDecisionBytes,
+  expectedDecisionSha256: digest(staleTimeDecisionBytes)
+}), /not authenticated/,
+  'repinning a substituted current decision time cannot revive a stale bootstrap')
+const noncanonicalTimeDecision = structuredClone(materializedDecision)
+noncanonicalTimeDecision.decided_at = decisionTime.replace('.000Z', 'Z')
+const noncanonicalTimeDecisionBytes = Buffer.from(
+  JSON.stringify(noncanonicalTimeDecision, null, 2) + '\n')
+assert.throws(() => verifyPeeritSeq29OwnerDecisionV1({
+  root: decisionRoot,
+  decisionBytes: noncanonicalTimeDecisionBytes,
+  expectedDecisionSha256: digest(noncanonicalTimeDecisionBytes)
+}), /not fully materialized/,
+  'an equivalent but noncanonical decision-time spelling is rejected')
 assert.deepEqual(writePeeritSeq29OwnerDecisionCreateOnlyV1({
   root: decisionRoot,
   materialized
@@ -635,7 +672,7 @@ const decisionCli = spawnSync(process.execPath, [
   'materialize',
   '--root', decisionCliRoot,
   '--expected-draft-sha256', digest(decisionDraftBytes),
-  '--decided-at', '2026-08-13T20:00:00.000Z',
+  '--decided-at', decisionTime,
   '--explicit-confirmation', PEERIT_SEQ29_EXPLICIT_CONFIRMATION_V1
 ], { encoding: 'utf8' })
 assert.equal(decisionCli.status, 0, decisionCli.stderr)

@@ -12,6 +12,7 @@ import { PEERIT_BROWSER_RUNTIME_ASSET_PATHS } from '../js/substrate/browser-runt
 import {
   buildPeeritSubstrateRuntimeArtifactV1,
   PEERIT_APP_ARTIFACT_PATH,
+  PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH,
   PEERIT_WEB_ASSET_MANIFEST_PATH,
   verifyPeeritSubstrateRuntimeArtifactV1
 } from '../scripts/substrate-runtime-artifact.mjs'
@@ -24,8 +25,12 @@ import {
   createPeeritSeedBootstrapV1,
   encodePeeritSeedBootstrapV1
 } from '../js/substrate/seed-bootstrap-v1.mjs'
+import { verifyPinnedPeeritSeq29OwnerDecisionV1 } from '../scripts/seq29-owner-decision.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+const historicalDecision = verifyPinnedPeeritSeq29OwnerDecisionV1({ root })
+const historicalInboxReferenceUnixMillis = BigInt(
+  Date.parse(historicalDecision.decision.decided_at))
 const served = new Set(SUBSTRATE_SITE_FILES)
 
 for (const forbiddenFile of [
@@ -117,9 +122,25 @@ const candidateConfigDirectory = mkdtempSync(join(tmpdir(), 'peerit-substrate-ca
 const candidateConfigPath = join(candidateConfigDirectory, 'web-release.json')
 writeFileSync(candidateConfigPath, JSON.stringify(candidateRelease, null, 2) + '\n')
 
+const wrongSequenceConfigPath = join(candidateConfigDirectory, 'web-release-seq28.json')
+writeFileSync(wrongSequenceConfigPath, JSON.stringify({
+  ...candidateRelease,
+  releaseSequence: 28
+}, null, 2) + '\n')
+const wrongSequenceBuild = spawnSync(process.execPath, [
+  'build-web.mjs', '--config', wrongSequenceConfigPath,
+  '--out', join(candidateConfigDirectory, 'wrong-sequence-output'),
+  '--historical-seq29-owner-decision'
+], { cwd: root, encoding: 'utf8' })
+assert.notEqual(wrongSequenceBuild.status, 0,
+  'the historical decision audit flag cannot build another release sequence')
+assert.match(wrongSequenceBuild.stderr,
+  /historical-seq29-owner-decision requires the Sequence-29 blind-substrate release/)
+
 const output = mkdtempSync(join(tmpdir(), 'peerit-substrate-build-'))
 const build = spawnSync(process.execPath, [
-  'build-web.mjs', '--config', candidateConfigPath, '--out', output
+  'build-web.mjs', '--config', candidateConfigPath, '--out', output,
+  '--historical-seq29-owner-decision'
 ], {
   cwd: root,
   encoding: 'utf8'
@@ -128,7 +149,8 @@ assert.equal(build.status, 0, `${build.stdout}\n${build.stderr}`)
 
 const variantOutput = mkdtempSync(join(tmpdir(), 'peerit-substrate-build-variant-'))
 const variantBuild = spawnSync(process.execPath, [
-  'build-web.mjs', '--config', candidateConfigPath, '--out', variantOutput
+  'build-web.mjs', '--config', candidateConfigPath, '--out', variantOutput,
+  '--historical-seq29-owner-decision'
 ], {
   cwd: root,
   encoding: 'utf8',
@@ -154,6 +176,9 @@ assert.equal(manifest.webRelease.transport, 'blind-substrate')
 assert.deepEqual(new Set(Object.keys(manifest.files)), new Set([
   ...SUBSTRATE_SITE_FILES,
   ...(candidateRelease.peeritSeedBootstrapBundle ? ['peerit-seed-bootstrap-v1.json'] : []),
+  ...(candidateRelease.peeritLimitedPublicInboxBootstrapBundle
+    ? [PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH]
+    : []),
   'sw-register.js',
   PEERIT_APP_ARTIFACT_PATH,
   PEERIT_WEB_ASSET_MANIFEST_PATH,
@@ -169,8 +194,17 @@ const builtRuntimeFiles = new Map(Object.keys(manifest.files).map(file => [
 const verifiedRuntime = verifyPeeritSubstrateRuntimeArtifactV1({
   files: builtRuntimeFiles,
   releaseSequence: candidateRelease.releaseSequence,
-  releaseKey: candidateRelease.pinnedReleaseKey
+  releaseKey: candidateRelease.pinnedReleaseKey,
+  limitedPublicInboxReferenceUnixMillis: historicalInboxReferenceUnixMillis
 })
+assert.throws(() => verifyPeeritSubstrateRuntimeArtifactV1({
+  files: builtRuntimeFiles,
+  releaseSequence: candidateRelease.releaseSequence,
+  releaseKey: candidateRelease.pinnedReleaseKey,
+  limitedPublicInboxReferenceUnixMillis:
+    historicalInboxReferenceUnixMillis + (8n * 24n * 60n * 60n * 1000n)
+}), /public INBOX bootstrap epoch or one-stripe shape is invalid/,
+  'an explicit later audit instant cannot revive the historical public-INBOX epoch')
 assert.equal(verifiedRuntime.appArtifactHashHex, manifest.webRelease.appArtifactHash)
 assert.equal(verifiedRuntime.webAssetManifestHashHex,
   manifest.webRelease.canonicalWebAssetManifestHash)
@@ -189,7 +223,8 @@ assert.equal(manifest.webRelease.productionPinHistory,
 assert.throws(() => verifyPeeritSubstrateRuntimeArtifactV1({
   files: new Map([...builtRuntimeFiles, ['js/app.js', Buffer.from('legacy writer')]]),
   releaseSequence: candidateRelease.releaseSequence,
-  releaseKey: candidateRelease.pinnedReleaseKey
+  releaseKey: candidateRelease.pinnedReleaseKey,
+  limitedPublicInboxReferenceUnixMillis: historicalInboxReferenceUnixMillis
 }), /outside its exact canonical closure/,
 'an extra signed legacy writer cannot sit outside canonical WebAssetManifestV1')
 assert.throws(() => createPublishedSiteFilesV1({ ...officialRelease, releaseSequence: 6 }),

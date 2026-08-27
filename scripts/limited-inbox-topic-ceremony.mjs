@@ -410,9 +410,11 @@ export async function createPeeritSeq29LimitedInboxCeremonyAuthorityV1 (input = 
 // opts in, and it accepts only .invalid relay plans. It is never used by the
 // CLI or the production authority factory.
 export function createPeeritSeq29LimitedInboxCeremonyFixtureAuthorityV1 (input = {}) {
+  const hasAttemptBinding = Object.hasOwn(input, 'attemptBinding')
   exact(input, [
     'allowFixture', 'plan', 'control', 'runtime', 'endpointByRelay',
-    'admissionProviderByRelay', 'clientNonceByRelay', 'transportCreate'
+    'admissionProviderByRelay', 'clientNonceByRelay', 'transportCreate',
+    ...(hasAttemptBinding ? ['attemptBinding'] : [])
   ], 'fixture ceremony authority input')
   if (process.env[TEST_ONLY_FIXTURE_ENV] !== '1' || input.allowFixture !== true) {
     fail('PEERIT_LIMITED_INBOX_CEREMONY_AUTHORITY_INVALID',
@@ -423,6 +425,17 @@ export function createPeeritSeq29LimitedInboxCeremonyFixtureAuthorityV1 (input =
     .endsWith('.invalid') !== true)) {
     fail('PEERIT_LIMITED_INBOX_CEREMONY_AUTHORITY_INVALID',
       'fixture ceremony authority requires reserved .invalid relay names')
+  }
+  if (hasAttemptBinding) {
+    exact(input.attemptBinding, ['persistedQualification'],
+      'fixture ceremony durable attempt binding')
+    if (input.attemptBinding.persistedQualification?.planHash !==
+        peeritLimitedInboxTopicCeremonyPlanHashV1(plan) ||
+        input.attemptBinding.persistedQualification?.referenceUnixMillis !==
+          plan.referenceUnixMillis) {
+      fail('PEERIT_LIMITED_INBOX_CEREMONY_AUTHORITY_INVALID',
+        'fixture durable attempt binding differs from the exact ceremony plan')
+    }
   }
   const authority = Object.freeze({
     schema: 'peerit-seq29-limited-inbox-ceremony-fixture-authority-v1',
@@ -439,7 +452,12 @@ export function createPeeritSeq29LimitedInboxCeremonyFixtureAuthorityV1 (input =
       admissionProvider: input.admissionProviderByRelay?.get(relay.relayId),
       clientNonce: input.clientNonceByRelay?.get(relay.relayId)
     })])),
-    attemptBinding: null,
+    attemptBinding: hasAttemptBinding
+      ? Object.freeze({
+          persistedQualification: structuredClone(
+            input.attemptBinding.persistedQualification)
+        })
+      : null,
     fixtureOnly: true,
     transportCreate: input.transportCreate
   }))

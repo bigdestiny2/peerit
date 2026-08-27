@@ -152,10 +152,12 @@ npm run test:peerit-substrate
 npm run test:peerit-operation-authority
 ```
 
-As of 2026-08-27, the aggregate `npm test` / `test:ship` path intentionally
-stops at `peerit-cutover-gates`: the committed Sequence 29 INBOX epoch is stale.
-That red gate is current-state evidence, not permission to bypass expiry checks;
-see [Current status](docs/CURRENT-STATUS.md#what-is-deployed-versus-currently-active).
+Historical owner-decision and artifact-reconstruction audits evaluate
+time-bounded authority at the canonical externally pinned decision time. Live
+browser activation independently evaluates the same authority against its
+current wall clock, so green repository checks do not reactivate an expired
+network epoch; see
+[Current status](docs/CURRENT-STATUS.md#what-is-deployed-versus-currently-active).
 
 Browser behavior and accessibility:
 

@@ -2,7 +2,7 @@ name: Verify
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
 
 permissions:
@@ -45,7 +45,21 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci
+      - name: Check out accepted HiveRelay fixture
+        if: matrix.node-version == 22
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: bigdestiny2/P2P-Hiverelay
+          ref: adeacef07c5de4d17d5ed1389fee7a35095b862f
+          path: .ci/hiverelay
+          persist-credentials: false
+      - name: Install HiveRelay fixture dependencies
+        if: matrix.node-version == 22
+        working-directory: .ci/hiverelay
+        run: npm ci
       - run: ${{ matrix.command }}
+        env:
+          HIVERELAY_BLIND_ROOT: ${{ github.workspace }}/.ci/hiverelay
 
   browsers:
     name: Browser and accessibility verification

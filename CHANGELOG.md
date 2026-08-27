@@ -25,6 +25,12 @@ artifact and deployment maturity.
 - Split deterministic protocol and browser CI, added repository/link/secret-path
   guards, a deterministic smoke for the exact signed replacement artifact,
   pinned GitHub Actions by commit, and added dependency update policy.
+- Made historical signed-authority and artifact-reconstruction audits validate
+  time-bounded authority at the canonical externally pinned decision timestamp
+  while preserving current wall-clock expiry in the live browser runtime.
+- Made the full ship gate hermetic by checking out the exact accepted HiveRelay
+  fixture and binding its test-only ceremony authority to durable qualification
+  evidence without relaxing the production journal.
 - Raised the development floor to supported Node.js releases (22 and 24 in CI).
 - Removed an accidentally tracked machine-local `node_modules` symlink and
   broadened the private read-capability-vault ignore rule.

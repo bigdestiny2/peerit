@@ -282,9 +282,13 @@ export function verifyPeeritSeq29OwnerDecisionV1 (input = {}) {
     fail(`Sequence-29 public INBOX decision remains an unresolved draft: ${decision.unresolved.join(', ')}`,
       'PEERIT_SEQ29_OWNER_DECISION_DRAFT')
   }
+  const decidedAtUnixMillis = typeof decision.decided_at === 'string'
+    ? Date.parse(decision.decided_at)
+    : NaN
   if (decision.status !== 'DECIDED' ||
       typeof decision.decided_at !== 'string' ||
-      Number.isNaN(Date.parse(decision.decided_at)) ||
+      Number.isNaN(decidedAtUnixMillis) ||
+      new Date(decidedAtUnixMillis).toISOString() !== decision.decided_at ||
       authority.explicit_browser_activation_confirmation !== true ||
       typeof decision.decision !== 'string' ||
       !decision.decision.startsWith(
@@ -349,10 +353,13 @@ export function verifyPeeritSeq29OwnerDecisionV1 (input = {}) {
   let appBinding
   let canonicalManifest
   try {
+    // Audit the immutable acceptance decision at its canonical decision time.
+    // Live activation performs its own wall-clock verification in the browser.
     signedInboxBinding = verifyPeeritLimitedPublicInboxBootstrapArtifactV1({
       bytes: inboxBytes,
       expectedAuthorityPublicKey: inbox.authority_public_key,
-      expectedReleaseSequence: inbox.release_sequence
+      expectedReleaseSequence: inbox.release_sequence,
+      referenceUnixMillis: BigInt(decidedAtUnixMillis)
     })
     appBinding = verifyPeeritAppArtifactReleaseBindingsV1(appBytes)
     canonicalManifest = decodePeeritWebAssetManifestV1(canonicalManifestBytes)
@@ -484,7 +491,9 @@ export function materializePeeritSeq29OwnerDecisionV1 (input = {}) {
       'PEERIT_SEQ29_OWNER_DECISION_CONFIRMATION_REQUIRED')
   }
   const decidedAt = String(input.decidedAt || '')
-  if (Number.isNaN(Date.parse(decidedAt)) || new Date(decidedAt).toISOString() !== decidedAt) {
+  const decidedAtUnixMillis = Date.parse(decidedAt)
+  if (Number.isNaN(decidedAtUnixMillis) ||
+      new Date(decidedAtUnixMillis).toISOString() !== decidedAt) {
     fail('Sequence-29 decidedAt must be an exact canonical ISO-8601 instant',
       'PEERIT_SEQ29_OWNER_DECISION_TIME_INVALID')
   }
@@ -498,6 +507,8 @@ export function materializePeeritSeq29OwnerDecisionV1 (input = {}) {
   let outer
   let inboxBinding
   try {
+    // Materialization proves authority at the proposed decision instant; it does
+    // not extend that authority's live runtime lifetime.
     outer = JSON.parse(artifacts.outerAssetManifest)
     const inboxEnvelope = JSON.parse(artifacts.publicInboxBootstrap)
     const inboxAuthorityPublicKey = String(
@@ -508,7 +519,8 @@ export function materializePeeritSeq29OwnerDecisionV1 (input = {}) {
     inboxBinding = verifyPeeritLimitedPublicInboxBootstrapArtifactV1({
       bytes: artifacts.publicInboxBootstrap,
       expectedAuthorityPublicKey: inboxAuthorityPublicKey,
-      expectedReleaseSequence: 29
+      expectedReleaseSequence: 29,
+      referenceUnixMillis: BigInt(decidedAtUnixMillis)
     })
   } catch (cause) {
     fail(`Sequence-29 materialization artifact is not authenticated: ${cause.message}`)

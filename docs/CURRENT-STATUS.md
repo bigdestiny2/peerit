@@ -18,7 +18,7 @@ its accepted decision win and this page must be corrected.
 | Deployed signed browser artifact | **Sequence 29 is served and internally coherent** | [`deploy/web-release.json`](../deploy/web-release.json#L1-L13), [signed manifest](../web/asset-manifest.json), [accepted decision](../deploy/canary-decision-peerit-seq29-limited-public-inbox-20260813.json#L1-L19) |
 | Public-INBOX publication and discovery | **Currently blocked: signed epoch 2954 ended 2026-08-20; current epoch is 2956** | [signed bootstrap](../web/peerit-limited-public-inbox-bootstrap-v1.json), [wall-clock epoch check](../web/js/substrate/public-inbox-boot-coordinator.mjs#L1304-L1308), [normative rotation rule](./SEQ29-LIMITED-PUBLIC-TEST-CONTRACT.md#L113-L129) |
 | Fresh signed-seed recovery | **Currently blocked by the signed runtime's exact Cell-GET control-surface check** | [fail-closed entry](../web/js/substrate/app-entry.js#L313-L334), [exact module check](../web/js/substrate/relay-consumer.js#L1237-L1248) |
-| Aggregate CI release gate | **Currently red by design: the pinned Sequence 29 decision no longer authenticates a current INBOX epoch** | [cutover assertion](../test/peerit-cutover-gates.mjs#L346-L355), [decision verifier](../scripts/seq29-owner-decision.mjs#L352-L361) |
+| Historical decision/build audit | **Authenticates the pinned Sequence 29 authority at its canonical decision time; live runtime expiry remains independent** | [cutover assertions](../test/peerit-cutover-gates.mjs), [build closure](../test/peerit-substrate-build-closure.mjs), [decision verifier](../scripts/seq29-owner-decision.mjs) |
 | General availability | **Blocked** | [decision boundary](../deploy/canary-decision-peerit-seq29-limited-public-inbox-20260813.json#L37-L40), [product gate](../js/substrate/product-release-status.mjs#L137-L173) |
 | Public-test operator topology | **Two owner-operated relays; not independent operators** | [contract](./SEQ29-LIMITED-PUBLIC-TEST-CONTRACT.md#L20-L45) |
 | Signed app entry | **Replacement-only blind substrate UI** | [`web/index.html`](../web/index.html#L11-L25), [artifact identity](../web/peerit-app-artifact-v1.json#L1-L21) |
@@ -56,6 +56,12 @@ therefore rejects the old epoch before installing its publisher or discovery
 reader. This is the intended fail-closed behavior; restoring network activation
 requires a separately signed rotation successor, not a documentation or test
 exception.
+
+Repository audit code separately reconstructs the accepted owner decision and
+artifact closure at its canonical `decided_at` instant. That historical check
+answers whether the signed authority was valid when it was accepted; it cannot
+extend the signed authority or alter the browser runtime's current wall-clock
+decision.
 
 A fresh runtime check also currently stops signed-seed recovery because the
 authenticated limited Cell-GET module does not match the exact two-export

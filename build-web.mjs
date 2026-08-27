@@ -45,6 +45,7 @@ import {
 import { PEERIT_PRODUCTION_PIN_HISTORY_PATH } from './js/substrate/production-release-authority.mjs'
 import { normalizePeeritReleaseRelayHintsV1 } from './js/substrate/release-relay-hints.mjs'
 import { verifyPeeritProductionPinHistoryReleaseV1 } from './scripts/production-pin-history-release.mjs'
+import { verifyPinnedPeeritSeq29OwnerDecisionV1 } from './scripts/seq29-owner-decision.mjs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const arg = (name) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : null }
@@ -114,6 +115,18 @@ if (IS_SUBSTRATE_RELEASE && (!Number.isSafeInteger(RELEASE_SEQUENCE) ||
     RELEASE_SEQUENCE < PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE)) {
   throw new Error(`blind-substrate replacement releaseSequence must be at least ${PEERIT_REPLACEMENT_MINIMUM_RELEASE_SEQUENCE}; sequence 6 belongs to the retired legacy artifact`)
 }
+// Audit-only reconstruction may evaluate the exact Sequence-29 authority at
+// its externally pinned decision time. The default build and shipped browser
+// runtime continue to use their current wall clocks and reject stale authority.
+const HISTORICAL_SEQ29_OWNER_DECISION = hasArg('--historical-seq29-owner-decision')
+if (HISTORICAL_SEQ29_OWNER_DECISION &&
+    (!IS_SUBSTRATE_RELEASE || RELEASE_SEQUENCE !== 29)) {
+  throw new Error('--historical-seq29-owner-decision requires the Sequence-29 blind-substrate release')
+}
+const HISTORICAL_INBOX_REFERENCE_UNIX_MILLIS = HISTORICAL_SEQ29_OWNER_DECISION
+  ? BigInt(Date.parse(
+      verifyPinnedPeeritSeq29OwnerDecisionV1({ root: __dir }).decision.decided_at))
+  : null
 const SEED_BOOTSTRAP_BUNDLE = IS_SUBSTRATE_RELEASE
   ? String(releaseConfig.peeritSeedBootstrapBundle || '').trim()
   : ''
@@ -313,7 +326,8 @@ if (IS_SUBSTRATE_RELEASE) {
     seedBootstrapBytes: SEED_BOOTSTRAP_BYTES,
     seedDiscoveryAuthorityPublicKey: SEED_DISCOVERY_AUTHORITY_PUBLIC_KEY,
     limitedPublicInboxBootstrapBytes: INBOX_BOOTSTRAP_BYTES,
-    limitedPublicInboxBootstrapAuthorityPublicKey: INBOX_BOOTSTRAP_AUTHORITY_PUBLIC_KEY
+    limitedPublicInboxBootstrapAuthorityPublicKey: INBOX_BOOTSTRAP_AUTHORITY_PUBLIC_KEY,
+    limitedPublicInboxReferenceUnixMillis: HISTORICAL_INBOX_REFERENCE_UNIX_MILLIS
   })
   if (PRODUCTION_PIN_HISTORY_BYTES) {
     await verifyPeeritProductionPinHistoryReleaseV1({

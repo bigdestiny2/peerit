@@ -1,5 +1,12 @@
 # The peerit Pattern
 
+> **Status: Historical pattern family.** This page preserves the legacy
+> signed-outbox architecture. It is still useful as a tested design, but it is
+> not the topology of the signed Sequence 29 browser release. Use the current
+> maturity-labelled [`PATTERNS.md`](../PATTERNS.md),
+> [`ARCHITECTURE.md`](./ARCHITECTURE.md), and
+> [`CURRENT-STATUS.md`](./CURRENT-STATUS.md) for present-tense claims.
+
 peerit uses a reusable pattern for multi-writer, serverless social apps on top of
 a simple P2P key-value log:
 

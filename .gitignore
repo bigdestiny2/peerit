@@ -12,7 +12,7 @@ dist/
 .seed-personas-store.json
 
 # launch seed ops (private — never commit to the public repo)
-launch/.seed-readcap-vault.json
+launch/.seed-readcap-vault*.json
 launch/seed-identities.json
 launch/seed-identities.pubkey-map.example.json
 launch/seed-posts/

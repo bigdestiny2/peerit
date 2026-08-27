@@ -110,6 +110,14 @@
 
 <main class="wrap">
 
+  <div class="callout danger">
+    <h4>Historical snapshot — no longer the repository authority</h4>
+    <p>This explainer records the cutover state at the time it was written. For
+       current release and source claims, use <code>docs/CURRENT-STATUS.md</code>,
+       <code>docs/ARCHITECTURE.md</code>, and the exact signed release decision.
+       Statuses below have not been silently rewritten to describe Sequence 29.</p>
+  </div>
+
   <div class="callout" style="border-color:var(--cutover);background:rgba(34,211,238,.08)">
     <h4 style="color:var(--cutover)">📡 Live update — blind substrate cutover in progress (this week)</h4>
     <p>The blind substrate (<code>hiverelay-blind/1</code>) is no longer just spec'd — it is being
@@ -134,7 +142,7 @@
        <em>"the reader's browser runs a real HyperDHT node."</em> A normal browser physically cannot
        do this. That's not a gap to close with more code; it's a hard limit of the web platform.
        Repeating it in public would cost the project credibility it can't recover.</p>
-    <p>This document is the authoritative correction. It catalogs every overstatement found in the
+    <p>At the time of this snapshot, this document was the authoritative correction. It catalogs every overstatement found in the
        companion docs, presents the <strong>strongest defensible version</strong> of each claim, and
        shows the full architecture honestly distinguished by <em>what ships today</em> vs
        <em>what's target</em> vs <em>what's fantasy</em>.</p>
@@ -958,7 +966,8 @@
     <p><strong>Purpose.</strong> This document supersedes overstated claims in
        <code>BLIND-SUBSTRATE-EXPLAINER.html</code> and
        <code>BLINDSHARD-AND-PURE-PIPE-EXPLAINER.html</code>. Where those docs conflict with this one
-       on what's shipped vs target, <strong>this one is authoritative</strong>.</p>
+       on what was shipped vs target at this snapshot, <strong>this one was authoritative then</strong>.
+       Current claims defer to <code>docs/CURRENT-STATUS.md</code>.</p>
     <p><strong>Sources.</strong> Every status badge is grounded in the actual specs and the live
        deployment evidence: <code>BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md</code> (explicit: "does
        not describe the current production deployment"), <code>BLINDSHARD-DESIGN.md</code> §5.0

@@ -1,5 +1,10 @@
 # Roadmap — post-cutover: self-hosted serving + the unsolved list
 
+> **Status: Historical roadmap snapshot (Sequence 20 era).** Retained for its
+> problem statements and decision history; unchecked items are not the current
+> roadmap and checked prose is not a Sequence 29 release claim. See
+> [`CURRENT-STATUS.md`](./CURRENT-STATUS.md) for the present boundary.
+
 **Status:** drafted 2026-07-31, after the vNext cutover went live (peerit.site on the seq-20 bundle, 34 seed records on both blind relays, Chromium gate PASS ×3).
 **Claim boundary:** LIVE_PUBLIC_TEST_ONLY — two owner-operated relays, GA gate closed (22 blockers disclosed-open).
 

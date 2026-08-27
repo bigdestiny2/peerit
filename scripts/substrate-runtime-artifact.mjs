@@ -422,7 +422,8 @@ function inboxReleaseBinding (value) {
 
 function inboxBuildInput (options, releaseSequence) {
   const supplied = options.limitedPublicInboxBootstrapBytes != null ||
-    String(options.limitedPublicInboxBootstrapAuthorityPublicKey || '').length > 0
+    String(options.limitedPublicInboxBootstrapAuthorityPublicKey || '').length > 0 ||
+    options.limitedPublicInboxReferenceUnixMillis != null
   if (releaseSequence < PEERIT_LIMITED_PUBLIC_INBOX_MINIMUM_RELEASE_SEQUENCE) {
     if (supplied) throw new Error('public INBOX bootstrap composition requires releaseSequence 29 or later')
     return null
@@ -436,7 +437,8 @@ function inboxBuildInput (options, releaseSequence) {
   const verified = verifyPeeritLimitedPublicInboxBootstrapArtifactV1({
     bytes,
     expectedAuthorityPublicKey: authorityPublicKey,
-    expectedReleaseSequence: releaseSequence
+    expectedReleaseSequence: releaseSequence,
+    referenceUnixMillis: options.limitedPublicInboxReferenceUnixMillis
   })
   return Object.freeze({
     bytes,
@@ -583,7 +585,8 @@ export function verifyPeeritSubstrateRuntimeArtifactV1 (options = {}) {
     verifyPeeritLimitedPublicInboxBootstrapArtifactV1({
       bytes: inboxBytes,
       expectedAuthorityPublicKey: inboxBinding.authorityPublicKey,
-      expectedReleaseSequence: inboxBinding.releaseSequence
+      expectedReleaseSequence: inboxBinding.releaseSequence,
+      referenceUnixMillis: options.limitedPublicInboxReferenceUnixMillis
     })
   } else if (source.has(PEERIT_LIMITED_PUBLIC_INBOX_BOOTSTRAP_PATH)) {
     throw new Error('pre-sequence-29 replacement runtime cannot carry public INBOX bootstrap bytes')
@@ -827,7 +830,9 @@ export function buildPeeritSubstrateRuntimeArtifactV1 (options = {}) {
   verifyPeeritSubstrateRuntimeArtifactV1({
     files,
     releaseSequence,
-    releaseKey
+    releaseKey,
+    limitedPublicInboxReferenceUnixMillis:
+      options.limitedPublicInboxReferenceUnixMillis
   })
 
   return Object.freeze({

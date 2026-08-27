@@ -1,171 +1,185 @@
-# What is peerit?
+# Peerit, honestly
 
-**peerit is a peer-to-peer Reddit.** Communities, posts, threaded comments,
-up/down votes, moderation, karma — everything you'd expect — but with **no
-servers, no company, and no central database** that can be seized, sold, or
-censored. The whole thing is a folder of HTML and JavaScript; the "backend" is
-the people using it.
+Peerit is a local-first community application for experimenting with verifiable
+social data and peer-to-peer delivery patterns in browsers. Its deployed signed
+web artifact is **Sequence 29**. That artifact was accepted as a bounded public
+test; it is not a general-availability release and it is not evidence that every
+Peerit or HiveRelay design in this repository is deployed.
 
-On ordinary Reddit, one company owns the servers, the data, and the rules. It
-can delete a community, ban an account, hand data to whoever asks, or simply be
-shut down. peerit has no such single point. There is no server to seize, no
-master database to subpoena, and no account you didn't create yourself that
-anyone can suspend. Content is trusted because it's **cryptographically signed**,
-not because a server vouches for it.
+The exact release decision labels Sequence 29
+[`LIVE_PUBLIC_TEST_ONLY`](deploy/canary-decision-peerit-seq29-limited-public-inbox-20260813.json#L17-L40),
+and the product release gate deliberately remains blocked
+([gate implementation](js/substrate/product-release-status.mjs#L137-L173),
+[gate test](test/peerit-product-release-gate.mjs#L38-L61)). See
+[`docs/CURRENT-STATUS.md`](docs/CURRENT-STATUS.md) before relying on a feature or
+security property.
 
----
+As checked on 2026-08-27, `peerit.site` serves the coherent Sequence 29 bytes and
+local authoring works, but fresh public publication and discovery fail closed.
+The artifact's sole public-INBOX epoch is no longer current, and fresh signed
+seed recovery is blocked by the limited Cell-GET runtime surface. Rotation and
+runtime repair are required before calling that network path active. The exact
+evidence is recorded in
+[`docs/CURRENT-STATUS.md`](docs/CURRENT-STATUS.md#what-is-deployed-versus-currently-active).
 
-## How it works, in four ideas
+## What the signed artifact contains
 
-![How peerit assembles your feed: each user writes a signed outbox; your device verifies every signature and merges them into your feed; forged records are dropped.](docs/how-peerit-works.svg)
+The Sequence 29 browser artifact presents a small community product surface:
 
-### 1. Everyone writes only their own "outbox"
-When you create a community, post, comment, or vote, peerit writes a **signed
-record** to *your own* append-only log — your outbox. You never write to anyone
-else's. Your outbox is yours alone, secured by your private key.
+- browse a locally materialized, verified view of communities, posts, and
+  comments;
+- create communities, text or link posts, comments, and profiles;
+- vote, edit, delete, report, vouch, search, and choose feed and moderation
+  views; and
+- keep a local mutation durable before attempting network publication.
 
-### 2. Peers copy each other's outboxes
-Your device pulls copies of other people's outboxes over a peer-to-peer network.
-Nobody's outbox is "the database" — there are just lots of personal outboxes
-replicating across the network. (How a post stays reachable when its author is
-offline is covered under [Durability](#under-the-hood-for-the-curious) below.)
+Those are claims about the replacement UI in the signed artifact, not every
+feature that appears in the older `js/app.js` application. The active routes are
+enumerated in the replacement UI
+([route parser](js/substrate/peerit-product-ui.js#L55-L68),
+[view dispatch](js/substrate/peerit-product-ui.js#L268-L275)), and authored
+actions enter the publication seam only after a local operation commits
+([UI hand-off](js/substrate/peerit-product-ui.js#L341-L370)).
 
-### 3. Your device merges them into the feed you see
-peerit combines everyone's outboxes — on your device — into one view: the list
-of communities, the posts in each, the comment threads, the vote tallies. The
-feed you read is assembled locally from many signed sources. There's no server
-deciding what you see; your client does the merge.
+The release contains a signed 39-record seed and two limited public INBOX
+bindings. The accepted release evidence records both the seed and the two
+bindings
+([Sequence 29 decision](deploy/canary-decision-peerit-seq29-limited-public-inbox-20260813.json#L42-L66)).
 
-The merge is **deterministic**, so everyone converges on the same result: when a
-post is edited, the newest version wins; a deleted post stays deleted even if an
-older copy resurfaces; and a community name belongs permanently to whoever
-validly created it first, so an established community can't be hijacked.
+## The data path
 
-### 4. Signatures are the only authority
-Every record carries an **Ed25519 digital signature**. Before showing anything,
-your client checks it. A forged or tampered record fails the check and is thrown
-away. So it doesn't matter *who handed you* a record — only whether its signature
-is valid.
+An authored action always begins locally. When the signed network authorities
+are current and the limited runtime qualifies, the full path is:
 
-> This is the whole trick. Because authenticity is math, not permission, **no
-> server needs to be trusted.** Anyone can relay data; nobody can fake it.
+1. The browser creates a signed Peerit record.
+2. A bounded IndexedDB journal commits the record, the exact operation bytes,
+   and its delivery intent in one local transaction. The journal also maintains
+   the materialized local view
+   ([journal contract](js/substrate/peerit-journal.js#L1-L42)).
+3. The Sequence 29 publication seam can be reached only from a trusted,
+   explicit browser action. Reload, timers, navigation, and connectivity changes
+   do not publish by themselves
+   ([composition test](test/peerit-seq29-public-inbox-coordinator-entry.mjs#L57-L70)).
+4. The publisher prepares independent CELL writes for both authenticated relay
+   endpoints, requires readback evidence, then appends a discovery pointer to
+   both public INBOX topics
+   ([composition test](test/peerit-seq29-public-inbox-coordinator-entry.mjs#L76-L86),
+   [UI test](test/peerit-seq29-explicit-user-publication-ui.mjs#L156-L174)).
+5. Readers poll the signed INBOX bindings, open the pointer frames, retrieve the
+   capability-addressed Cells, and admit only records that pass the intrinsic
+   Peerit authority.
 
-A record is only accepted if all three hold:
-1. it's filed exactly where its own contents say it belongs — a post's place is
-   fixed by its community and ID, so no one can relabel another person's record to
-   pass it off as yours,
-2. the key it was signed with matches the author it claims to be from (you can't
-   sign as someone else), and
-3. the Ed25519 signature actually verifies.
+Steps 3–5 currently remain blocked at qualification on the deployed artifact;
+the browser preserves the local operation and does not reinterpret that as a
+network success.
 
----
+The two public-test relays are owner-operated and are **not represented as
+independent operators**. The INBOX topics are global public-discovery topics,
+not one topic per community or author. The contract says this explicitly and
+also enumerates the properties the test does not claim
+([honest boundary](docs/SEQ29-LIMITED-PUBLIC-TEST-CONTRACT.md#L20-L45)).
 
-## What that gets you
+## Identity: release versus current source
 
-- **Nothing central to seize or censor.** Take down any one machine and the
-  network is unaffected.
-- **No impersonation.** Only you hold your key, so only you can post as you.
-- **No silent edits.** Change a record and its signature breaks; peers drop it.
-- **Verifiable moderation.** A moderator's actions (remove, lock, ban, …) are
-  *themselves* signed records, honored only when they come from a current
-  moderator of that community (the founder is always one, and can delegate to
-  others). Authority is checked cryptographically at the merge, so a fake "ban"
-  from a non-moderator is simply ignored. You see the effects (e.g. *[removed by
-  moderators]*) and the moderator list; the underlying records can be audited.
-- **Spam costs something.** Each post carries a small **proof-of-work** — a brief
-  computation done when it's created — and every peer re-checks it at the merge,
-  so a post without valid work never reaches anyone's feed. No central filter
-  needed.
+The signed Sequence 29 web artifact uses a browser-local device identity. It
+creates no key during lurker boot; the first explicit mutation persists or
+adopts the device writer before signing
+([runtime](web/js/substrate/peerit-product-runtime.js#L85-L129)).
 
----
+`main` now also contains a Pear Browser host-identity adapter. When an
+identity-capable `window.pear.identity` is present, the current replacement
+entry selects the host-backed identity
+([entry composition](js/substrate/app-entry.js#L204-L218)). The adapter asks the
+host to sign and never receives a private seed
+([adapter](js/substrate/host-identity.js#L1-L9),
+[no-seed test](test/peerit-host-identity.mjs#L103-L108)). Host-signed records are
+verified by the same record verifier
+([round-trip test](test/peerit-host-identity.mjs#L42-L70)).
 
-## What's actually in it
+That work is **on `main`, but it is not in the signed Sequence 29 release**.
+The checked-in signed entry constructs the default product runtime without the
+host adapter
+([signed entry](web/js/substrate/app-entry.js#L203-L209)), and its signed asset
+manifest has no `host-identity.js`
+([Sequence 29 manifest](web/asset-manifest.json#L27-L56)). A later release must
+build, verify, sign, and activate a new artifact before host identity can be
+described as released. The current adapter also leaves key lifecycle with the
+host and rejects unsupported lifecycle methods
+([adapter boundary](js/substrate/host-identity.js#L66-L99)).
+Its proven source scope is local Peerit record signing: the adapter currently
+rejects `signAuthorBindV1`, while the Sequence 29 publication authority calls
+that method before public delivery
+([host boundary](js/substrate/host-identity.js#L85-L100),
+[publication authority](js/substrate/peerit-product-runtime.js#L218-L223)).
+End-to-end host-backed Sequence 29 publication is therefore not claimed.
 
-Communities · text / link / image posts · unlimited-depth threaded comments ·
-Hot / New / Top / Rising / Controversial ranking (and a Wilson-score "Best" sort
-for comments) · one vote per identity · Ed25519 identities with profiles and
-karma · per-community moderation (remove, approve, lock, sticky, ban, add-mod,
-with a founder→mod chain) · search · saved / hidden posts · community
-subscriptions. All of it runs as plain ES modules — no build step.
+## What the relays can and cannot do
 
----
+The browser does not treat a configured URL as a trusted Peerit database.
+Release and descriptor checks qualify endpoints before they become delivery
+targets, and received application records still pass Peerit's signature and
+intrinsic validation.
 
-## Three ways to run it
+The limited relays handle generic operations, opaque Cell or frame bytes,
+capabilities presented to that relay, timing, transport metadata, and bounded
+size information. This reduces semantic exposure; it does **not** provide
+anonymity or hide network metadata. A relay can be unavailable, delay or omit
+traffic, and observe the requests it serves. Because both public-test relays are
+under one operator boundary, Sequence 29 does not establish operator
+independence or censorship resistance.
 
-peerit's security model is the same everywhere; only the transport changes.
+The browser is also bootstrapped by a web origin. A signed manifest and
+pin-history chain narrow what the release accepts, but the repository's own GA
+gate still records unresolved first-visit, service-worker CAS, portable
+rollback-recovery, and post-eviction continuity work
+([browser gate fields](js/substrate/product-release-status.mjs#L75-L94),
+[blockers](js/substrate/product-release-status.mjs#L96-L134)).
 
-| | how peers are reached | trust |
-|---|---|---|
-| **PearBrowser** (strongest) | direct on the Hyperswarm DHT — true peer-to-peer, no middleman | fully trustless |
-| **A normal browser (peerit.site)** | through an **untrusted relay** that shuttles data | relay can withhold, never forge |
-| **A normal browser, no relay** | nothing — a local-only sandbox on one device | not networked |
+## What is not one current product claim
 
-**PearBrowser** loads peerit as a content-addressed `hyper://` site and gives it
-real peer-to-peer access. This is the fully trustless mode.
+This repository preserves several useful P2P application patterns: direct
+Pear host bridges, signed per-author outboxes, local multi-tab simulation,
+opaque relay storage, capability-addressed Cells, public INBOX discovery,
+threshold dispersal, and DHT-over-WebSocket experiments. They have different
+maturity and trust boundaries.
 
-**peerit.site** exists because a normal web page *can't* join a peer-to-peer
-network directly. So it connects through a relay. The key design choice: **your
-keys never leave your browser, and your client still verifies every record** — so
-the relay can pass messages along but can never forge, tamper, or impersonate. It
-can be blocked (an availability risk), but it can't be made to lie (integrity is
-preserved). Honest caveat: a website hands you its JavaScript on every visit, so
-whoever runs the site could in principle ship modified code. For the highest
-assurance, use PearBrowser; the web build says as much in its own banner.
+In particular:
 
----
+- the root development page still loads the legacy `js/app.js` entry
+  ([source page](index.html#L14-L20));
+- the signed Sequence 29 page loads the replacement-only substrate entry
+  ([signed page](web/index.html#L11-L25)); and
+- the substrate release closure deliberately excludes the legacy app, sync,
+  host API, and dispersal modules
+  ([closure test](test/peerit-substrate-build-closure.mjs#L351-L391)).
 
-## Under the hood (for the curious)
+Therefore “present in the repository,” “works in a development harness,” “on
+`main`,” and “in the signed public release” are four different statements. The
+architecture and pattern catalogue keep them separate:
 
-Each record is a value in a per-user
-[Hyperbee](https://github.com/holepunchto/hyperbee) log. Logically it's keyed by
-structure — a post belongs to a community and id, a vote to a target and author —
-but on the default build those keys are stored **opaque** (an HMAC of the fields)
-and the fields themselves are **sealed**, so a relay operator can't enumerate the
-social graph just by reading keys off disk. The merge is **deterministic and
-order-independent**: edits resolve last-write-wins by timestamp, a delete
-(tombstone) always wins a tie so content can't be resurrected, and a community
-name is **sticky** — the first valid creator keeps it, so an established community
-can't be hijacked. Identities sign with Ed25519 via the browser's WebCrypto; the
-relay (when used) implements a small token-gated HTTP/streaming contract and holds
-no keys.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — runtime boundaries and pattern
+  maturity;
+- [`docs/CURRENT-STATUS.md`](docs/CURRENT-STATUS.md) — the current release/source
+  matrix; and
+- [`docs/README.md`](docs/README.md) — documentation map and historical labels.
 
-When you're offline, your posts still live on your own device and on any peer that
-has replicated your outbox. For always-on availability there's a separate,
-opt-in tool — the **peerit-seeder** — that anyone can run on a cheap always-up
-box to replicate and pin outboxes so content survives the author logging off.
-Without a seeder, a post's reach depends on other peers staying online.
+## Honest limits
 
----
+- Free cryptographic identities are not proof of one human per account.
+- Signed data provides authenticity, not guaranteed availability, privacy, or
+  agreement on ranking and moderation policy.
+- Opaque storage reduces relay-visible semantics but does not hide timing,
+  endpoint, capability, or size metadata.
+- Two relay replicas under one operator boundary provide bounded redundancy,
+  not proven independent failure domains or governance.
+- Local durability is device-scoped unless an explicitly supported recovery or
+  host-identity path applies.
+- A browser origin remains part of first-visit trust. Sequence 29 records a
+  bounded test of a mitigation stack, not a claim that this problem is solved.
+- A passing test suite validates the exercised contracts; it does not promote
+  an experimental pattern or a source-only change into a signed release.
 
-## The honest limits
-
-peerit is built to be honest about what cryptography can and can't do:
-
-- **Sybil resistance.** Identities are free to mint, so votes are *advisory* —
-  they signal, they don't guarantee one-human-one-vote.
-- **Genesis name-squatting.** This is a deliberate tradeoff. With no central
-  authority to decide who "owns" a name, peerit makes names permanently sticky so
-  established communities can't be hijacked — the price is that the first person
-  to claim a brand-new name keeps it (the classic Zooko's-triangle bind: names
-  can't be human-readable, decentralized, and squat-proof all at once).
-- **The web trusts the origin's code.** As above, peerit.site keeps your records
-  unforgeable but can't prove the JavaScript you ran is the audited JavaScript.
-  PearBrowser, which you pin by content key, doesn't have this gap.
-- **Privacy on the web.** A normal-browser visit reveals your IP address to the
-  relay (and WebRTC can leak local-network IPs); PearBrowser's Hyperswarm layer
-  doesn't expose you the same way. For privacy-sensitive use, prefer PearBrowser
-  or front the web build with Tor.
-
-None of these break the core promise: **your content is yours, signed by you, and
-no server can forge it, silently change it, or make it disappear from everyone at
-once.**
-
----
-
-## Learn more
-
-- **Run it fully trustless:** install [PearBrowser](https://pears.com/) and open
-  peerit's `hyper://` drive.
-- **Put it on a normal website:** see [`docs/WEB-DEPLOYMENT.md`](docs/WEB-DEPLOYMENT.md).
-- **Prove it's really P2P:** see [`docs/BRIDGE_VERIFICATION.md`](docs/BRIDGE_VERIFICATION.md).
-- **The untrusted relay:** [github.com/bigdestiny2/peerit-relay](https://github.com/bigdestiny2/peerit-relay).
+That narrower description is the useful one: Peerit is a working laboratory
+and deployed bounded-release artifact for local-first, cryptographically
+admitted community data, with explicit evidence for what shipped, what is
+active, and what currently fails closed.

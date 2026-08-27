@@ -265,6 +265,15 @@ async function temporaryRoot (label) {
 
 function journalAndAuthority (root) {
   const value = plan()
+  const planHash = peeritLimitedInboxTopicCeremonyPlanHashV1(value)
+  const persistedQualification = Object.freeze({
+    schema: 'peerit-seq29-live-inbox-create-plan-continuity-v1',
+    version: 1,
+    planHash,
+    referenceUnixMillis: value.referenceUnixMillis,
+    seedBootstrapSha256: sha256Hex('fixture-seed-bootstrap-v1'),
+    limitedCellPutProfileSha256: sha256Hex('fixture-limited-cell-put-profile-v1')
+  })
   const harness = ceremonyControl()
   const journal = createPeeritSeq29FilesystemAttemptJournalV1({
     directory: path.join(root, 'journal')
@@ -277,6 +286,7 @@ function journalAndAuthority (root) {
     plan: value,
     control: harness.control,
     runtime: {},
+    attemptBinding: { persistedQualification },
     endpointByRelay,
     admissionProviderByRelay: new Map(value.relays.map(relay => [relay.relayId, async () => ({})])),
     clientNonceByRelay: new Map(value.relays.map(relay => [relay.relayId, null])),
@@ -285,7 +295,6 @@ function journalAndAuthority (root) {
       return { ok: true, body: Uint8Array.of(1) }
     }
   })
-  const planHash = peeritLimitedInboxTopicCeremonyPlanHashV1(value)
   return {
     value,
     planHash,

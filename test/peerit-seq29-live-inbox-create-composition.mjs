@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs'
 import { createServer } from 'node:https'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -759,7 +760,9 @@ function assertNoCallables (value, seen = new Set()) {
   for (const child of Object.values(value)) assertNoCallables(child, seen)
 }
 
-const root = await fs.mkdtemp('/private/tmp/peerit-seq29-exact-source-e2e-')
+const tempRoot = process.platform === 'darwin' ? '/private/tmp' : tmpdir()
+const root = await fs.mkdtemp(path.join(tempRoot,
+  'peerit-seq29-exact-source-e2e-'))
 const keyDirectory = path.join(root, 'custodian-keys')
 custodyDirectory = path.join(root, 'custody')
 preNetworkCustodyDirectory = path.join(root, 'pre-network-custody')

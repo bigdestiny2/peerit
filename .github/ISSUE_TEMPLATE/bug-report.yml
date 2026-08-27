@@ -1,0 +1,98 @@
+name: Bug report
+description: Report reproducible incorrect behavior in Peerit.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Peerit. Do not include secrets, identity exports, private keys, read capabilities, credentials, or private operator URLs. Suspected vulnerabilities must use private vulnerability reporting instead of this form.
+
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      description: Where did the problem occur?
+      options:
+        - PearBrowser host runtime
+        - peerit.site in a normal browser
+        - Local browser development fallback
+        - Node.js test or tooling
+        - Protocol, release, or operator tooling
+        - Unsure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or release
+      description: Provide the commit SHA, signed release sequence, site build, or branch when available.
+      placeholder: "commit 0123abcd / release sequence 29"
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, browser or PearBrowser version, and Node.js version when relevant.
+      placeholder: "macOS 15, Firefox 142 / Node.js 22"
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and its user impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Give the smallest deterministic sequence that reproduces the problem. Prefer local fixtures over live data.
+      placeholder: |
+        1. Start ...
+        2. Open ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: Paste relevant logs, screenshots, failing test output, or a minimal repository. Remove all secrets, capabilities, identity material, credential-bearing URLs, and private paths.
+      render: shell
+
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Regression status
+      options:
+        - Worked in an earlier version
+        - Has never worked for me
+        - Unknown
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I searched for an existing issue describing this behavior.
+          required: true
+        - label: I removed secrets, private key material, capabilities, credentials, and private operator details.
+          required: true
+        - label: This is not a vulnerability report. If it is, I will use GitHub private vulnerability reporting.
+          required: true

@@ -1,0 +1,81 @@
+name: Browser-P2P pattern proposal
+description: Document or propose a reusable pattern discovered through Peerit work.
+title: "[Pattern]: "
+body:
+  - type: textarea
+    id: constraint
+    attributes:
+      label: Constraint or failure mode
+      description: What browser, P2P, storage, identity, transport, or release constraint motivated this pattern?
+    validations:
+      required: true
+
+  - type: textarea
+    id: pattern
+    attributes:
+      label: Pattern
+      description: Describe the reusable shape independently of Peerit's product vocabulary.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: maturity
+    attributes:
+      label: Current maturity
+      options:
+        - CORE / TESTED
+        - BOUNDED RELEASE
+        - INTEGRATION PROOF
+        - DESIGN / UNPROVEN
+    validations:
+      required: true
+
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Authority and trust boundary
+      description: Identify who can write, sign, relay, observe, withhold, recover, or change the code a user runs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: guarantees
+    attributes:
+      label: Guarantees
+      description: List only properties demonstrated by the attached implementation and evidence.
+    validations:
+      required: true
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals and honest limits
+      description: State what this pattern does not solve, including topology assumptions and first-visit or offline limits.
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Minimal implementation and evidence
+      description: Point to the smallest code path, adversarial tests, browser proof, measurements, or experiment notes. Do not include private infrastructure or credentials.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reuse
+    attributes:
+      label: Reuse guidance
+      description: Explain the API boundary, failure handling, migration needs, and what another browser app would need to replace.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Claim checks
+      options:
+        - label: The maturity label matches the evidence and deployment topology.
+          required: true
+        - label: Guarantees and non-goals are separated explicitly.
+          required: true
+        - label: No secret, private capability, identity material, credential, or private operator detail is included.
+          required: true
